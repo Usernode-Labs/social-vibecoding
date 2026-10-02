@@ -11,11 +11,14 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const conversationsSvc = require('../services/conversations');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
   groupChatWriteLimiter,
   messageBookmarkLimiter,
+  userDirectoryLimiter,
 } = require('../middleware/rate-limits');
 
 // #194's topic threads, plus #2387's reply threads ('message', ref = the
@@ -203,7 +206,7 @@ function stagingMockGeneralStream(appId) {
 // issue 900008's Discussion), so they must not depend on nobody having typed
 // there. The empty-transcript rule above assumed a check sees an untouched
 // database, but a preview is a live, shared stack: a reviewer trying the
-// composer on the demo issue, or an evidence replay doing the same, leaves one
+// composer on the demo issue, or a shots run doing the same, leaves one
 // real row, and from then on every load of that preview answered with that row
 // alone and the chip check failed on proposals that never touched it. A thread
 // listed here keeps its mock rows on every first page in demo mode and shows
@@ -544,7 +547,7 @@ function chatRoutes(config) {
     const { rows } = await db.query(
       `SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
               m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via,
-              m.deleted_at
+              m.deleted_at, m.moderation_hidden_at
          FROM chat_messages m
          LEFT JOIN users u ON m.user_id = u.id
         WHERE ${where}
@@ -607,10 +610,10 @@ function chatRoutes(config) {
     if (quotedIds.length) {
       const { rows: quoted } = await pool.query(
         `SELECT quoted.id, (quoted.deleted_at IS NOT NULL) AS deleted,
-                EXISTS (
+                (quoted.moderation_hidden_at IS NOT NULL OR EXISTS (
                   SELECT 1 FROM user_blocks blocked
                    WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = quoted.user_id
-                ) AS hidden
+                )) AS hidden
            FROM chat_messages quoted
           WHERE quoted.id = ANY($2::int[])`,
         [viewerId, quotedIds]
@@ -892,9 +895,9 @@ function chatRoutes(config) {
     }
   }
 
-  router.post('/api/apps/:slug/messages/read', appChatReadLimiter,
+  router.post('/api/apps/:slug/messages/read', appChatReadLimiter, sameOriginBrowserOnly,
     (req, res) => moveReadCursor(req, res, 'read'));
-  router.post('/api/apps/:slug/messages/unread', appChatReadLimiter,
+  router.post('/api/apps/:slug/messages/unread', appChatReadLimiter, sameOriginBrowserOnly,
     (req, res) => moveReadCursor(req, res, 'unread'));
 
   // ── #1280: saving (bookmarking) a group-chat message ─────────────
@@ -942,7 +945,7 @@ function chatRoutes(config) {
     return messageId;
   }
 
-  router.put('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+  router.put('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
@@ -958,7 +961,7 @@ function chatRoutes(config) {
     }
   });
 
-  router.delete('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+  router.delete('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
@@ -986,6 +989,11 @@ function chatRoutes(config) {
   router.post(
     '/api/apps/:slug/chat-attachments',
     attachmentUploadLimiter,
+    // Uploading is posting, so it takes joining too (403 join_required),
+    // as POST /messages does: the storage cap below is per app, and a
+    // non-member could otherwise fill it. Before the body parser, so a
+    // refusal reads no bytes.
+    communities.requireAppMembership(pool),
     // Limit must exceed the largest single-file cap (10 MB binaries).
     express.raw({ type: 'application/octet-stream', limit: '11mb' }),
     async (req, res) => {
@@ -1057,7 +1065,8 @@ function chatRoutes(config) {
       const { rows } = await pool.query(
         `SELECT kind, filename, content_type, data, message_id, user_id
            FROM chat_message_attachments
-          WHERE id = $1 AND app_id = $2`,
+          WHERE id = $1 AND app_id = $2
+            AND NOT EXISTS (SELECT 1 FROM chat_messages hidden WHERE hidden.id = chat_message_attachments.message_id AND hidden.moderation_hidden_at IS NOT NULL)`,
         [attId, app.id]
       );
       if (!rows.length) return res.status(404).end();
@@ -1078,7 +1087,7 @@ function chatRoutes(config) {
       res.set('Content-Disposition', attachmentDisposition(
         inline ? 'inline' : 'attachment', att.filename
       ));
-      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      res.set('Cache-Control', 'private, no-store');
       return res.send(att.data);
     } catch (err) {
       log.error('chat', 'Chat attachment serve failed', { attId, err: err.message });
@@ -1105,7 +1114,8 @@ function chatRoutes(config) {
       const { rows } = await pool.query(
         `SELECT kind, filename, data, message_id, user_id
            FROM chat_message_attachments
-          WHERE id = $1 AND app_id = $2`,
+          WHERE id = $1 AND app_id = $2
+            AND NOT EXISTS (SELECT 1 FROM chat_messages hidden WHERE hidden.id = chat_message_attachments.message_id AND hidden.moderation_hidden_at IS NOT NULL)`,
         [attId, app.id]
       );
       if (!rows.length || rows[0].kind !== 'html') return res.status(404).end();
@@ -1122,7 +1132,7 @@ function chatRoutes(config) {
       res.set('Referrer-Policy', 'no-referrer');
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Content-Disposition', attachmentDisposition('inline', att.filename || 'file.html'));
-      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      res.set('Cache-Control', 'private, no-store');
       return res.send(att.data);
     } catch (err) {
       log.error('chat', 'Chat attachment view failed', { attId, err: err.message });
@@ -1135,12 +1145,19 @@ function chatRoutes(config) {
   //   1. distinct authors of this app's chat messages,
   //   2. the app's active users (same definition that gates voting,
   //      so suggestions match who can actually act on a mention),
-  //   3. the app creator.
-  // De-duplicated, alphabetical, capped. The client caches this once per
-  // app mount and filters by prefix locally; usernames are returned in
+  //   3. the app creator,
+  //   4. the members of the app's community (#3361), after the three above.
+  // De-duplicated, alphabetical, capped. The chat composer caches this once
+  // per app mount and filters by prefix locally. #3361: `?q=` narrows it on
+  // the server instead (the hub's channel composer), with the conversation
+  // list's prefix rules (conversations.mentionPrefixQuery) and a cap of 25,
+  // so in a community past the 500-row cap a new member is still found by
+  // name; usernames are returned in
   // canonical casing so the inserted @mention renders correctly. Auth is
-  // enforced by the global JWT gate (this is a GET under /api/).
-  router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
+  // enforced by the global JWT gate (this is a GET under /api/). A
+  // per-keystroke search over people, so it shares the user-directory
+  // searches' per-user bucket, as /mention-candidates does.
+  router.get('/api/apps/:slug/mention-suggestions', userDirectoryLimiter, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
@@ -1150,6 +1167,10 @@ function chatRoutes(config) {
       }
       const appId = app.id;
       const createdBy = app.created_by;
+      // Only after the access check: a refused viewer learns nothing from q.
+      const prefixed = req.query.q !== undefined;
+      const query = prefixed ? conversationsSvc.mentionPrefixQuery(req.query.q) : null;
+      if (prefixed && query === null) return res.json({ users: [] });
 
       // Active-user ids, via the shared definition. Non-fatal: if this
       // lookup fails we still return chat authors + creator.
@@ -1173,25 +1194,46 @@ function chatRoutes(config) {
       // #2386: the viewer's friends lead, flagged `friend: true`. Every
       // caller filters this list by prefix in the order it arrives, so the
       // order is the whole benefit.
+      // #3361: and the project's community members, who are the people
+      // this channel is FOR — somebody who joined but has not spoken yet
+      // was not offered at all. Members come after the people above (who
+      // have spoken, are active or made it), so a large public community
+      // cannot push those people out of the cap. Not on the platform's own project, whose
+      // community is every account: its channel is #general now, which
+      // answers from GET /api/conversations/:id/mention-candidates by prefix
+      // instead of listing everybody here.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name,
+        `WITH engaged AS (
+           SELECT unnest($2::int[]) AS user_id
+           UNION
+           SELECT m.user_id FROM chat_messages m
+            WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+         ), members AS (
+           SELECT cm.user_id FROM community_members cm
+             JOIN apps a ON a.community_id = cm.community_id
+            WHERE a.id = $1 AND NOT $4::boolean
+         )
+         SELECT u.username, LOWER(u.username) AS sort_name,
                 EXISTS (SELECT 1 FROM friendships f
                          WHERE f.status = 'accepted'
                            AND f.user_low_id = LEAST(u.id, $3::int)
-                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend
+                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend,
+                u.id IN (SELECT user_id FROM engaged) AS engaged
            FROM users u
           WHERE NOT EXISTS (
                   SELECT 1 FROM user_blocks blocked
                    WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = u.id
                 )
-            AND (u.id = ANY($2::int[])
-             OR u.id IN (
-               SELECT m.user_id FROM chat_messages m
-                WHERE m.app_id = $1 AND m.user_id IS NOT NULL
-             ))
-          ORDER BY friend DESC, sort_name
-          LIMIT 500`,
-        [appId, ids, req.user.id]
+            AND (u.id IN (SELECT user_id FROM engaged)
+             OR u.id IN (SELECT user_id FROM members))
+            AND ($5::text IS NULL OR LOWER(u.username) LIKE LOWER($5::text) || '%' ESCAPE '\\')
+          ORDER BY friend DESC, engaged DESC, sort_name
+          LIMIT $6`,
+        [
+          appId, ids, req.user.id, !!app.self_hosted,
+          prefixed ? conversationsSvc.escapeMentionLike(query) : null,
+          prefixed ? conversationsSvc.MENTION_CANDIDATES_MAX : 500,
+        ]
       );
 
       res.json({

@@ -223,6 +223,8 @@
       // Pass the payload through so the sheet doesn't fetch a second time.
       // Native gets the blocking modal; web keeps the dismissible sheet.
       TermsFirstRun._presented = true;
+      // A step of the person's path (#3369).
+      window.UITelemetry?.navigate?.('terms_sheet');
       window.Settings.showTermsSheet(null, {
         firstRun: true,
         blocking: native,
@@ -234,6 +236,7 @@
         onClosed: () => {
           TermsFirstRun._presented = false;
           TermsFirstRun._resolve();
+          window.App?._renotifyNavigation?.();
         },
       });
     },

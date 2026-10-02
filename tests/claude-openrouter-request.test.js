@@ -438,3 +438,57 @@ test('the worker image ships the adapter beside the runner', () => {
   const adapter = fs.readFileSync(path.join(ROOT, 'worker', 'claude-openrouter-request.js'), 'utf8');
   assert.ok(!/internal\/openrouter|PLATFORM_URL/.test(adapter));
 });
+
+test('#3426: a model OpenRouter lists as taking images gets them; documents stay text', () => {
+  const body = applyTurnPolicy({
+    model: 'x', max_tokens: 10,
+    messages: [
+      { role: 'user', content: [
+        { type: 'text', text: 'look' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+      ] },
+      { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 't1', content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BBBB' } },
+        ] },
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'CCCC' } },
+      ] },
+    ],
+  }, { model: GLM, maxOutputTokens: 10, imageInput: true });
+  assert.deepEqual(body.messages[0].content[1].source.data, 'AAAA', 'the screenshot reaches the model');
+  assert.deepEqual(body.messages[1].content[0].content[0].source.data, 'BBBB', 'and one a tool read');
+  assert.deepEqual(body.messages[1].content[1], { type: 'text', text: '[document omitted: this model reads text only]' });
+  // Only exactly true opens it.
+  for (const imageInput of [undefined, false, '1', 1]) {
+    const plain = applyTurnPolicy({ messages: [{ role: 'user', content: [{ type: 'image', source: {} }] }] },
+      { model: GLM, maxOutputTokens: 10, imageInput });
+    assert.equal(plain.messages[0].content[0].type, 'text', String(imageInput));
+  }
+  // The runner reads the worker's env: '1' only.
+  const src = require('node:fs').readFileSync(require.resolve('../worker/claude-openrouter-request.js'), 'utf8');
+  assert.match(src, /imageInput: env\.AGENT_MODEL_SUPPORTS_IMAGES === '1',/);
+  assert.match(src, /model, maxOutputTokens, countTokens, reasoningEffort, imageInput, documentInput,/);
+});
+
+test('#3557: a model OpenRouter lists as taking files gets PDFs; any other gets a note', () => {
+  const pdf = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'CCCC' } };
+  const request = () => ({
+    model: 'x', max_tokens: 10,
+    messages: [
+      { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 't1', content: [pdf] },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+      ] },
+    ],
+  });
+  const reads = applyTurnPolicy(request(), { model: GLM, maxOutputTokens: 10, documentInput: true });
+  assert.deepEqual(reads.messages[0].content[0].content[0], pdf, 'a PDF the Read tool returned reaches the model');
+  assert.equal(reads.messages[0].content[1].type, 'text', 'file input does not open images');
+  for (const documentInput of [undefined, false, '1', 1]) {
+    const plain = applyTurnPolicy(request(), { model: GLM, maxOutputTokens: 10, documentInput });
+    assert.deepEqual(plain.messages[0].content[0].content[0],
+      { type: 'text', text: '[document omitted: this model reads text only]' }, String(documentInput));
+  }
+  const src = require('node:fs').readFileSync(require.resolve('../worker/claude-openrouter-request.js'), 'utf8');
+  assert.match(src, /documentInput: env\.AGENT_MODEL_SUPPORTS_FILES === '1',/);
+});

@@ -13,9 +13,10 @@
 // #800: Haiku 4.5 was removed from this allowlist — it is the weakest
 // tier for multi-step coding work. The platform still uses
 // `claude-haiku-4-5` DIRECTLY (not via this map) for cheap housekeeping
-// calls — session / PR / issue titling and progress estimates in
+// calls — session / issue titling and progress estimates in
 // src/services/llm.js, plus src/routes/auth.js — so those are
-// unaffected. Anyone who had it selected is coerced to DEFAULT_MODEL by
+// unaffected. PR titling moved to Sonnet 5.5 (llm.PR_METADATA_MODEL),
+// also called directly. Anyone who had it selected is coerced to DEFAULT_MODEL by
 // resolve() server-side and by DevChat._sanitizeStoredModel()
 // client-side.
 //
@@ -38,12 +39,14 @@
 // routes/anthropic-proxy.js) and has no reader yet.
 
 const MODELS = {
-  'claude-sonnet-5': {
-    label: 'Sonnet 5',
+  // #3579: Sonnet 5.5 replaces Sonnet 5 as the Sonnet entry, at the same
+  // published $2 in / $10 out per MTok (15 was the 4.6 generation's rate,
+  // carried over once when the id moved). services/llm.js's per-1k table
+  // reads the same figures, and the copy below is the same product opinion
+  // about the Sonnet tier it always was.
+  'claude-sonnet-5-5': {
+    label: 'Sonnet 5.5',
     tier: 'sonnet',
-    // Sonnet 5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
-    // rate, carried over when the id moved. services/llm.js's per-1k table
-    // reads the same figures.
     outputCostPerMTok: 10,
     changeSize: {
       short: 'simple, small changes',
@@ -88,6 +91,8 @@ const DEFAULT_MODEL = 'claude-opus-5-5';
 // only where a model is about to be RUN.
 const RETIRED_MODELS = Object.freeze({
   'claude-opus-5': 'claude-opus-5-5',
+  // #3579: a session, browser or setting that saved Sonnet 5 runs on 5.5.
+  'claude-sonnet-5': 'claude-sonnet-5-5',
 });
 
 function isAllowed(m) {

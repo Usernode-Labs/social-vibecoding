@@ -64,7 +64,45 @@ const Home = {
     return !!App.user?.canCreateApps;
   },
 
-  async load() {
+  // ── One catalog load at a time ─────────────────────────────────────
+  //
+  // load() is called from a dozen live paths — every app_status,
+  // app_redeploy_status, app_version_changed and session_update on the
+  // socket, the late-arrival correction, pull-to-refresh, the card menu's
+  // actions — and each call was a full GET /api/apps, the platform's largest
+  // read (300-700 KB). They arrive in bursts: one redeploy is several status
+  // frames, and a warm boot is a correction plus a session update. Measured
+  // on a 1.6 Mbps link, a warm open of Home pulled the catalog five times in
+  // five seconds, all five downloading at once and sharing the link, so the
+  // one that mattered finished last.
+  //
+  // So a call that lands while a load is running does not start a second: it
+  // queues exactly ONE more, which starts when the running one settles, and
+  // every later caller in that window shares it. Nothing is dropped — the
+  // queued load begins after the last trigger, so the grid always ends on an
+  // answer at least as new as the newest event, which parallel loads could
+  // not promise (whichever finished last painted, however old its request).
+  // A caller that awaits load() after its own write gets the queued load, so
+  // it still sees its change.
+  _loadInFlight: null,
+  _loadQueued: null,
+
+  load() {
+    if (Home._loadInFlight) {
+      if (!Home._loadQueued) {
+        const rerun = () => { Home._loadQueued = null; return Home.load(); };
+        Home._loadQueued = Home._loadInFlight.then(rerun, rerun);
+      }
+      return Home._loadQueued;
+    }
+    const run = Home._loadOnce();
+    Home._loadInFlight = run;
+    const settle = () => { if (Home._loadInFlight === run) Home._loadInFlight = null; };
+    run.then(settle, settle);
+    return run;
+  },
+
+  async _loadOnce() {
     // Re-render guard: Home.load() is invoked from many WS/event paths
     // (app_status / app_update in app.js, notifications.js), any of
     // which would wholesale-replace the grid mid-drag and yank the
@@ -1006,7 +1044,7 @@ const Home = {
       forkName,
       // The tile's audience mark (communities, stage 4): GET /api/apps
       // derives it per row, and anything it does not say reads as a
-      // community, which draws no mark.
+      // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
   },
@@ -1399,6 +1437,7 @@ const Home = {
       // this viewer on this row — the same bit that decides whether starting
       // a session is offered anywhere else.
       readOnly: !row.can_collaborate,
+      canReport: row.can_report === true,
       // Nothing to share through the APP share dialog: the platform row has no
       // per-slug app URL, which is also why opening it lands on Dev rather
       // than the App tab. About Homeroom shares the platform's own address
@@ -1436,6 +1475,7 @@ const Home = {
       version: null,
       deploying: false,
       readOnly: true,
+      canReport: false,
       canShare: false,
     };
   },
@@ -1488,7 +1528,7 @@ const Home = {
     }
     const cached = Home._cachedImproveTarget();
     if (cached) {
-      window.Improve.setTarget(cached);
+      window.Improve.setTarget({ ...cached, canReport: false });
       return;
     }
     const known = resolver?.known?.();
@@ -2084,7 +2124,7 @@ const Home = {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2221,7 +2261,7 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
     } catch (err) {
       Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
@@ -2426,9 +2466,9 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'
+        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Your apps` : `Add ${escapeHtml(app.name)} to Your apps`
+        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -3554,16 +3594,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Your apps' : 'Remove from Your apps',
+        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
         title: app.your_apps_hidden
-          ? 'Show this app in Your apps again. You keep your builder access either way.'
-          : 'Hide this app from Your apps. It stays live and you keep your builder access.',
+          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
+          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
+        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
@@ -3722,6 +3762,10 @@ const Home = {
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
+    if (App.user && app.slug && app.can_report === true) items.push({
+      key: 'report', label: 'Report app',
+      run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
+    });
     return items;
   },
 

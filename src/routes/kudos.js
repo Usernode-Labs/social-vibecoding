@@ -6,6 +6,7 @@ const ws = require('../services/ws');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   WEEKLY_KUDOS_LIMIT,
   WEEKLY_BOUNTY_LIMIT,
@@ -171,7 +172,7 @@ function kudosRoutes(config) {
   //   409 conflict     — already gave kudos to this PR
   //   429 too_many     — weekly quota exceeded
   // --------------------------------------------------------------
-  router.post('/api/sessions/:id/kudos', async (req, res) => {
+  router.post('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {
@@ -349,7 +350,7 @@ function kudosRoutes(config) {
   // current-week row frees a slot while deleting an old-week row
   // changes nothing for this week.
   // --------------------------------------------------------------
-  router.delete('/api/sessions/:id/kudos', async (req, res) => {
+  router.delete('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {
@@ -553,7 +554,7 @@ function kudosRoutes(config) {
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
-                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
                  NULL AS awarded_username, NULL::timestamptz AS awarded_at
             FROM pr_kudos pk
             JOIN chat_sessions cs ON cs.id = pk.session_id
@@ -566,7 +567,7 @@ function kudosRoutes(config) {
                  NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
                  NULL AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
-                 ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
                  wu.username AS awarded_username, ib.awarded_at
             FROM issue_bounties ib
             JOIN apps a ON a.id = ib.app_id
@@ -580,7 +581,7 @@ function kudosRoutes(config) {
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
-                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
                  NULL AS awarded_username, NULL::timestamptz AS awarded_at
             FROM pr_votes pv
             JOIN chat_sessions cs ON cs.id = pv.session_id
@@ -593,7 +594,7 @@ function kudosRoutes(config) {
                  NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
                  NULL AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
-                 i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind,
+                 i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind, i.id AS issue_id,
                  NULL AS awarded_username, NULL::timestamptz AS awarded_at
             FROM issue_votes iv
             JOIN issues i ON i.id = iv.issue_id
@@ -630,7 +631,9 @@ function kudosRoutes(config) {
             item.awarded = { username: r.awarded_username || null, at: r.awarded_at };
           }
         } else if (r.type === 'proposal_vote') {
-          item.issue = { number: r.issue_number, title: r.issue_title, kind: r.issue_kind };
+          // `id` is the proposal's own, which its page is addressed by
+          // (#app/<slug>/dev/governance/<id>): Me's Your votes links there.
+          item.issue = { id: r.issue_id, number: r.issue_number, title: r.issue_title, kind: r.issue_kind };
         }
         return item;
       });

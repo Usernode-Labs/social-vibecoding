@@ -33,6 +33,7 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const attrs = require('../services/topic-attributes');
 const { attributeVoteLimiter } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function parseTarget(req) {
   const targetType = String(req.params.targetType || '');
@@ -184,7 +185,7 @@ function topicAttributeRoutes(config) {
   // drag-to-Unassigned gesture (remove your assignee vote) — the card only
   // becomes unassigned when no other votes remain. Collab-gated + rate-limited
   // like the POST; returns the refreshed option list (same shape as GET/POST).
-  router.delete('/api/apps/:slug/topics/:targetType/:targetRef/attributes', attributeVoteLimiter, async (req, res) => {
+  router.delete('/api/apps/:slug/topics/:targetType/:targetRef/attributes', attributeVoteLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS

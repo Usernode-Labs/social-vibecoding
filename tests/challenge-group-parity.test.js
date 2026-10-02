@@ -12,7 +12,7 @@
 //     (frontend/src/features/home/home-panels.js)
 //
 // This fails the moment either copy drifts: a heading renamed on one side, a
-// group's order changed, or the "finished Get started goes last" rule
+// group's order changed, or the "finished First challenges goes last" rule
 // changed in only one file.
 //
 // Run with: node --test tests/challenge-group-parity.test.js
@@ -78,7 +78,7 @@ test('the two group tables are the same table', () => {
   assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), plain(TAB.GROUPS));
   assert.deepEqual(plain(HOME.OTHER_GROUP), plain(TAB.OTHER_GROUP));
   assert.deepEqual(plain(TAB.GROUPS), {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   }, 'the owner-decided headings, with the keys unchanged');
@@ -96,9 +96,9 @@ test('the two rank rules agree for every group, setup unfinished and finished', 
     assert.deepEqual(homeRanks, tabRanks, `setupFinished=${String(finished)}`);
   }
   assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, false)), [0, 1, 2, 3, 3],
-    'unfinished: Get started leads; no group ranks as Season challenges');
+    'unfinished: First challenges leads; no group ranks as Season challenges');
   assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, true)), [4, 1, 2, 3, 3],
-    'finished: only Get started moves, to the end');
+    'finished: only First challenges moves, to the end');
 });
 
 test('the two "setup finished" rules agree, each fed rows in its own shape', () => {
@@ -172,7 +172,7 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
   }
   assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [4, 8, 3, 9, 6, 5, 7, 1, 2],
     "the viewer's own progress decides on every card: a finished card sinks inside its group and "
-    + 'an organiser-closed one the viewer never did does not; featured lifts; finished Get started goes last');
+    + 'an organiser-closed one the viewer never did does not; featured lifts; finished First challenges goes last');
   assert.deepEqual(tabIds(setupOpen, null), [2, 1, 4, 8, 3, 9, 6, 5, 7],
     'setup unfinished leads, its open card first');
 

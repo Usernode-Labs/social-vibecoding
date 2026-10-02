@@ -103,8 +103,15 @@ const FOOTER_STYLE =
 const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
   + 'place on the waitlist. We only send mail you asked for.';
 
-const HTML_SHELL = (body, why = WHY_DEFAULT) =>
+// The inbox preview line a template may set. Hidden in the body, and FIRST in
+// it: clients take the preview from the first text they find, which would
+// otherwise be the logo's alt text.
+const PREHEADER_STYLE =
+  'display:none;max-height:0;overflow:hidden;opacity:0;font-size:1px;line-height:1px;color:transparent';
+
+const HTML_SHELL = (body, why = WHY_DEFAULT, preheader = null) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
+  + (preheader ? `<div style="${PREHEADER_STYLE}">${esc(preheader)}</div>` : '')
   + '<div style="' + CARD_STYLE + '">'
   + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
   + `style="${LOGO_STYLE}">`
@@ -297,39 +304,109 @@ function waitlistCode(payload) {
   return { subject: 'Your Homeroom waitlist confirmation code', text, html };
 }
 
-// Waitlist release. The no-account link carries the released address, and
-// opening it asks for a sign-in code straight away, so say so: the recipient
-// should be expecting a second email rather than hunting for a button. The
-// 10-minute figure must match OTP_TTL_MS in src/services/email-signup.js.
+// Waitlist release, the "you're in" welcome (copy from the Early Testing
+// Acceptance doc's wider email). The no-account link carries the released
+// address, and opening it asks for a sign-in code straight away, so say so:
+// the recipient should be expecting a second email rather than hunting for a
+// button. The 10-minute figure must match OTP_TTL_MS in
+// src/services/email-signup.js.
 const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
 
+const RELEASE_HEADLINE = 'AI app-building, now multiplayer.';
+const RELEASE_CAN_DO = [
+  'Vibecode apps solo or with a friend.',
+  'Use and improve apps with others.',
+  'Suggest, preview, and vote on changes.',
+  'Complete a few early challenges along the way.',
+];
+
+// Install steps per platform, each with the one step that is a link. The
+// links are the published store listings (services/mobile-store-links.js), so a
+// platform whose listing is cleared drops out instead of pointing nowhere.
+const RELEASE_MOBILE = [
+  {
+    os: 'ios',
+    name: 'iPhone',
+    steps: (a) => [
+      'Download TestFlight from the App Store.',
+      `${a('Open the Homeroom invite')}.`,
+      'Install Homeroom and sign in with your waitlist email.',
+    ],
+  },
+  {
+    os: 'android',
+    name: 'Android',
+    steps: (a) => [
+      `${a('Open the Homeroom testing link')} while signed into Google Play with your waitlist email.`,
+      'Join the test and install Homeroom.',
+      'Sign in with your waitlist email.',
+    ],
+  },
+];
+
+const inlineLink = (url, label) =>
+  `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(label)}</a>`;
+const bulletList = (items) =>
+  '<ul style="margin:0 0 16px;padding-left:20px">'
+  + items.map((i) => `<li>${i}</li>`).join('')
+  + '</ul>';
+const numberedList = (items) =>
+  '<ol style="margin:0 0 16px;padding-left:20px">'
+  + items.map((i) => `<li>${i}</li>`).join('')
+  + '</ol>';
+
 function waitlistReleased(payload) {
   const url = payload.url;
-  const text = payload.hasAccount
-    ? "Good news, you're off the Homeroom waitlist and your account now has platform access.\n\n"
-      + `Sign in to get started: ${url}`
-    : "Good news, you're off the Homeroom waitlist.\n\n"
-      + `Create your account with this email address to get started: ${url}\n\n`
-      + RELEASE_CODE_NOTE;
+  const hasAccount = !!payload.hasAccount;
+  const mobile = payload.mobile || {};
+  const platforms = RELEASE_MOBILE.filter((m) => mobile[m.os]);
+
+  const youreIn = hasAccount
+    ? "Thanks for your interest in Homeroom. You're in, and your account now has platform access."
+    : "Thanks for your interest in Homeroom. You're in.";
+  const how = hasAccount
+    ? 'Sign in with your waitlist email to get started.'
+    : 'Create your account with this email address, the one you used for the waitlist.';
+
+  let text = `${RELEASE_HEADLINE}\n\n${youreIn}\n\n${how}\n${url}`;
+  if (!hasAccount) text += `\n\n${RELEASE_CODE_NOTE}`;
+  text += "\n\nOnce you're inside you can:\n"
+    + RELEASE_CAN_DO.map((i) => `- ${i}`).join('\n');
+
+  let html = p(`<strong style="font-size:18px">${esc(RELEASE_HEADLINE)}</strong>`)
+    + p(esc(youreIn))
+    // #1540: the mail's one action is a button rather than a URL printed
+    // mid-paragraph.
+    + button(url, hasAccount ? 'Sign in' : 'Create my account')
+    + p(esc(how))
+    // #1548: the no-account link sends a code the moment it is opened, so
+    // say so here. Somebody who is not told to expect a SECOND email goes
+    // hunting for a button that is not there.
+    + (hasAccount ? '' : p(esc(RELEASE_CODE_NOTE)))
+    + p("<strong>Once you're inside you can:</strong>")
+    + bulletList(RELEASE_CAN_DO.map(esc));
+
+  if (platforms.length) {
+    text += '\n\nWant to test Homeroom on mobile?';
+    html += p('<strong>Want to test Homeroom on mobile?</strong>');
+    for (const m of platforms) {
+      const link = mobile[m.os];
+      const textSteps = m.steps((label) => `${label} (${link})`);
+      text += `\n\n${m.name}\n` + textSteps.map((st, i) => `${i + 1}. ${st}`).join('\n');
+      html += p(`<strong>${esc(m.name)}</strong>`)
+        + numberedList(m.steps((label) => inlineLink(link, label)));
+    }
+  }
+
+  text += '\n\nSee you there,\nEvan from Homeroom';
+  html += p('See you there,<br>Evan from Homeroom');
+
   return {
-    subject: 'Your Homeroom access is ready',
+    subject: "You're in. Welcome to Homeroom",
+    preheader: "AI app-building, now multiplayer. Here's how to get started.",
     text,
-    html: (
-      p(payload.hasAccount
-        ? "Good news, you're off the Homeroom waitlist and your account now has platform access."
-        : "Good news, you're off the Homeroom waitlist.")
-      + p(payload.hasAccount
-        ? 'Sign in to get started.'
-        : 'Create your account with this email address to get started.')
-      // #1540: this mail is one link with a sentence around it, so the link
-      // is the button rather than a URL printed mid-paragraph.
-      + button(url, payload.hasAccount ? 'Sign in' : 'Create my account')
-      // #1548: the no-account link now sends a code the moment it is opened,
-      // so say so here. Somebody who is not told to expect a SECOND email
-      // goes hunting for a button that is not there.
-      + (payload.hasAccount ? '' : p(RELEASE_CODE_NOTE))
-    ),
+    html,
   };
 }
 
@@ -401,7 +478,7 @@ function projectInvite(payload) {
   const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
   const project = payload.project || 'a project';
   const url = payload.url || '';
-  const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
+  const lead = `${inviter} invited you to ${project}, a private community on Homeroom, where communities build the apps they use together.`;
   const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
   return {
     why: 'You are receiving this because someone on Homeroom invited this address to a project. '
@@ -448,8 +525,8 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const { why, ...message } = template(payload);
-  return { ...message, html: HTML_SHELL(message.html, why) };
+  const { why, preheader, ...message } = template(payload);
+  return { ...message, html: HTML_SHELL(message.html, why, preheader) };
 }
 
 // Every kind this module can render, for the admin console and for tests

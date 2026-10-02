@@ -501,48 +501,61 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
-test('a hosted Codex evidence turn cannot dispatch without the planning contract', async () => {
-  const { worker, calls, restore } = loadWorker();
+// Every shots turn runs on Claude Code. An OpenRouter evidence
+// turn, on either harness, is refused before a token is minted, a context
+// file is written, or the provider is touched.
+test('a shots turn on an OpenRouter backend is refused before anything is dispatched', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8304);
-    await assert.rejects(
-      () => worker.execInWorker(8304, {
-        ...DISPATCH_ARGS,
-        mode: 'evidence',
-        agentBackend: 'codex_openrouter',
-        systemPrompt: null,
-        evidenceRunId: '1'.repeat(32),
-        evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-        evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-      }),
-      /hosted Codex evidence requires systemPrompt/,
-    );
-    assert.equal(calls.length, 0, 'validation fails before the provider is touched');
+    for (const [sessionId, agentHarness] of [[8304, null], [8305, 'codex'], [8306, 'claude']]) {
+      warmSession(worker, sessionId);
+      await assert.rejects(
+        () => worker.execInWorker(sessionId, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'codex_openrouter',
+          agentHarness,
+          agentModel: 'z-ai/glm-5.3-flash',
+          agentModelMetadata: { supportsTools: true },
+          openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+        }),
+        /execInWorker: shots turns run on Claude Code/,
+        String(agentHarness),
+      );
+    }
+    assert.equal(calls.length, 0, 'validation fails before either context file or the provider is touched');
   } finally { restore(); }
 });
 
-test('Codex evidence dispatch carries the planning contract file to its runner', async () => {
+test('a shots turn refuses a clip size that is not WIDTHxHEIGHT before anything is dispatched', async () => {
   const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8305);
-    await worker.execInWorker(8305, {
-      mode: 'evidence',
-      prompt: 'open the run context',
-      systemPrompt: 'Use evidence_get_context first and submit through evidence_run_plan.',
-      branchName: 'dev/test',
-      agentBackend: 'codex_openrouter',
-      agentModel: 'z-ai/glm-5.3-flash',
-      agentModelMetadata: { supportsTools: true },
-      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
-      evidenceRunId: '1'.repeat(32),
-      evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-      evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-    });
-    const dispatch = calls.find(isDispatch);
-    assert.ok(dispatch, 'Codex evidence turn was dispatched');
-    assert.ok(dispatch.args.includes('MODE=evidence'));
-    assert.ok(dispatch.args.includes('SYSTEM_PROMPT_FILE=/home/node/.claude/turn-system-prompt.txt'));
-    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')));
+    warmSession(worker, 8307);
+    for (const shotsClipSize of ['390', '390x844 --flag', '0x844', 12]) {
+      await assert.rejects(
+        () => worker.execInWorker(8307, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'claude_code',
+          model: 'claude-sonnet-5-5',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+          shotsRecordClips: true,
+          shotsClipSize,
+        }),
+        /execInWorker: shots clip size must be WIDTHxHEIGHT/,
+        String(shotsClipSize),
+      );
+    }
+    assert.equal(calls.length, 0);
   } finally { restore(); }
 });
 
@@ -596,6 +609,7 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
         supportsReasoning: true,
         reasoningEfforts: ['low', 'medium', 'high'],
         supportsTools: true,
+        supportsImages: true,
       },
       openrouterApiKey: 'sk-or-must-not-appear-in-argv',
       openrouterApiBase: 'https://openrouter.ai/api/v1',
@@ -611,12 +625,43 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
       'AGENT_MODEL_SUPPORTS_REASONING=1',
       'AGENT_MODEL_REASONING_EFFORTS=low,medium,high',
       'AGENT_MODEL_SUPPORTS_TOOLS=1',
+      // #3426: the catalog builder declares image input from this.
+      'AGENT_MODEL_SUPPORTS_IMAGES=1',
     ]) {
       assert.ok(dispatch.args.includes(expected), `${expected} reaches the runner`);
     }
+    // Text only unless the catalog said images, on both OpenRouter runtimes.
+    const workerSrc = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/g) || []).length, 2);
+    // #3557: PDFs only on the Claude Code runtime, whose Read tool sends them.
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata\?\.supportsFiles === true \? '1' : '';/g) || []).length, 1);
     assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
       'Docker copies the secret from the host environment by name');
     assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),
       'the OpenRouter key value never enters docker argv');
+  } finally { restore(); }
+});
+
+
+test('immediate Stop kills the process tree without a TERM grace window and confirms before the journal marker', () => {
+  const { worker, restore } = loadWorker();
+  try {
+    const script = worker.buildTurnStopScript('/tmp/turn.log', { force: true });
+    assert.doesNotMatch(script, /kill -TERM/);
+    assert.ok(script.indexOf('kill -STOP') < script.indexOf('kill -KILL'), 'freeze before collecting descendants');
+    assert.match(script, /PPid:/, 'tool subprocesses are included');
+    assert.ok(script.indexOf('kill -KILL') < script.indexOf('__USERNODE_EXIT__ 137'));
+    assert.ok(script.indexOf('exit 75') < script.indexOf('__USERNODE_EXIT__ 137'), 'a live survivor is an error, never a fake exit');
+  } finally { restore(); }
+});
+
+test('immediate stop errors reach the caller, and its remote command has a short timeout', async () => {
+  const { worker, calls, restore } = loadWorker({ onExec: async () => { throw new Error('runtime unavailable'); } });
+  try {
+    await assert.rejects(worker.stopTurn(4242, { force: true }), /runtime unavailable/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.timeout, 5000);
+    assert.match(calls[0].args[4], /kill -KILL/);
+    assert.doesNotMatch(calls[0].args[4], /kill -TERM/);
   } finally { restore(); }
 });

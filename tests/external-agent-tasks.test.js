@@ -35,8 +35,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const svc = require('../src/services/external-agent-tasks');
-const evidenceContract = require('../src/services/visual-evidence-plan');
-const evidenceFixture = require('./fixtures/visual-evidence');
+const shotsContract = require('../src/services/visible-changes');
+const shotsFixture = require('./fixtures/shots');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/external-agent-tasks.js'), 'utf8'
@@ -909,19 +909,17 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
       return { number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88', head: { repo: { owner: { login: 'SomeUser' } } } };
     },
   });
-  const visualEvidence = evidenceContract.parseIntent(evidenceFixture.intent());
-  const visualEvidencePlan = {
-    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
-    planHash: evidenceContract.planHash(evidenceFixture.plan()),
-    plan: evidenceContract.parseReplayPlan(evidenceFixture.plan()),
-  };
+  const visibleChanges = shotsContract.parseIntent(shotsFixture.intent());
+  // A caller still sending the retired author plan. Nothing reads it now:
+  // the shots agent takes the shots, so only the declaration travels.
+  const visualEvidencePlan = { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), plan: {} };
 
   const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
       body: 'Adds a toggle.',
-      visualEvidence, visualEvidencePlan,
+      visibleChanges, visualEvidencePlan,
       importProposal: async (slug, prNumber, extra) => {
         imports.push({ slug, prNumber, extra });
         return { ok: true, status: 200, body: { sessionId: 55 } };
@@ -942,8 +940,9 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
   // caller's token — this service never inserts a chat_sessions row itself.
   assert.equal(imports[0].slug, 'recipe-box');
   assert.equal(imports[0].prNumber, 88);
-  assert.deepEqual(imports[0].extra.visualEvidence, visualEvidence);
-  assert.deepEqual(imports[0].extra.visualEvidencePlan, visualEvidencePlan);
+  assert.deepEqual(imports[0].extra.visibleChanges, visibleChanges);
+  assert.equal('visualEvidencePlan' in imports[0].extra, false, 'an author plan is never forwarded');
+  assert.doesNotMatch(SRC, /visualEvidencePlan/);
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
 
   // The only thing stamped afterwards is the badge column, scoped to the
@@ -1168,7 +1167,7 @@ test('the service never opens a proposal itself', () => {
   // The linked-issue set travels WITH the import (#1217) for the same reason
   // the testing metadata does — the route is what creates the session row —
   // but the row is still the route's to write, not this service's.
-  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*visualEvidence/);
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*shots/);
 });
 
 // ── #1217: a proposal built from a request is linked to it ─────────────
@@ -2463,9 +2462,21 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
   assert.match(order, /IF THE USERNODE TOOLS ARE NOT AVAILABLE/);
-  // The push comes before the submit, and the patch after both.
-  assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
-  assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
+  // #2460: the patch comes first — it needs no fork and no push — and the
+  // branch push is the fallback, both before the submit that names them.
+  const patchAt = order.indexOf('git format-patch');
+  const pushAt = order.indexOf('git push -u origin HEAD');
+  assert.ok(patchAt > 0 && pushAt > 0);
+  assert.ok(patchAt < pushAt, 'the patch step precedes the push step');
+  assert.ok(pushAt < order.indexOf('SUBMIT IT YOURSELF'));
+  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH/);
+  assert.match(order, /the patch text from step 1 as `patch`/);
+  assert.match(order, /Patches over about 250 KB are refused/);
+  assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
+  // The exact identifiers the fallback needs are all still printed.
+  assert.match(order, /Homeroom task id:\s+31/);
+  assert.match(order, /with taskId 31 and the patch text/);
+  assert.match(order, /Suggested branch name: +usernode\/recipe-box-issue-4-abc123/);
   // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
@@ -2485,11 +2496,11 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   // And under WHEN YOU ARE DONE.
   assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
-  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /The work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 2/);
   // Started by a chat assistant: hand it back, patch included.
-  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
-  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
+  assert.match(assistant, /or print the branch name, if you pushed one/);
   assert.match(assistant, /If they started from the Homeroom tab instead/);
   assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
@@ -2497,7 +2508,7 @@ test('the work order tells an agent with no Homeroom tools what that means and h
 
   // Started from the browser walkthrough: that tab's Submit button finishes.
   const walkthrough = fullOrder({ startedFromWalkthrough: true });
-  assert.match(walkthrough, /Otherwise finish from Homeroom: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /Otherwise finish from Homeroom: push the branch as in step 1\. The\n {3}walkthrough that produced this work order checks for the pushed branch/);
   assert.match(walkthrough, /its Submit button opens the proposal/);
   assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
 
@@ -2820,6 +2831,41 @@ test('the work order scopes the local test run to the files the change touched',
   assert.ok(block.indexOf('npm run test:changed') < block.indexOf('fatal: not a valid object name'));
 });
 
+// Both closing trees tell the agent how to declare its visible changes for
+// before/after shots. The replay-era instructions (a typed plan, a local
+// replay, a separate plan tool) are gone, and a stale copy would send an
+// agent looking for a tool that no longer exists.
+test('the work order explains declared changes for before/after shots, and nothing of replay', () => {
+  const create = fullOrder();
+  const update = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } });
+  for (const [label, order] of [['create', create], ['update', update]]) {
+    assert.match(order, /`visibleChanges` for this (exact )?revision: the changes a\s+(person will )?/,
+      `${label}: names the field and what it is for`);
+    assert.match(order, /before\/after shots/, `${label}: in the new words`);
+    assert.match(order, /declare_visible_changes/, `${label}: the helper, when present`);
+    assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
+      `${label}: and the direct shape when it is not`);
+    assert.match(order, /blocker/, `${label}: a state that cannot be reached is reported, not declared none`);
+    assert.match(order, /one to three(\s+)declared(\s+)changes/, `${label}: declared changes`);
+    assert.match(order, /intent\.controlledFailurePath/, `${label}: the controlled failure stays`);
+    assert.match(order, /"Controlled test: deliberately block the declared API GET on\s+both revisions\."/);
+    for (const gone of [/visualEvidencePlan/, /submit_visual_evidence_plan/, /replay/i,
+      /executable flow/, /submission\.json/, /evidence/i]) {
+      assert.doesNotMatch(order, gone, `${label}: no ${gone}`);
+    }
+  }
+  // The create path spells out each field of a declared change, including
+  // the motion clip and the optional hints.
+  assert.match(create, /\(motion gets a short before\/after clip\)/);
+  assert.match(create, /Optional hints help\s+the shots agent go straight there/);
+  assert.match(create, /setup \(data to create first\)/);
+  assert.match(create, /expectText \(words visible once it shows\)/);
+  assert.match(create, /focusTarget \(a locator\)/);
+  assert.match(create, /Never include secrets or personal data/);
+  // The update path says the shots are fresh for every new revision.
+  assert.match(update, /shots agent takes fresh\s+before\/after shots of every new revision/);
+});
+
 // ── Caller-supplied branch and fork name ───────────────────────────────
 
 test('a caller-supplied branch is validated, then used in place of the suggestion', async () => {
@@ -2980,9 +3026,9 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
           ok: false,
           status: 500,
           body: {
-            error: 'PR import failed while recording visualEvidence.',
-            stage: 'visual_evidence_intent',
-            field: 'visualEvidence',
+            error: 'PR import failed while recording the visible changes.',
+            stage: 'visible_changes',
+            field: 'visibleChanges',
             retryable: true,
           },
         }),
@@ -2994,8 +3040,8 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
   assert.equal(result.retryable, true);
   assert.equal(result.recovery, 'retry_existing_pr');
   assert.equal(result.prNumber, 99);
-  assert.equal(result.stage, 'visual_evidence_intent');
-  assert.equal(result.field, 'visualEvidence');
+  assert.equal(result.stage, 'visible_changes');
+  assert.equal(result.field, 'visibleChanges');
   assert.equal(cleaned, false, 'the PR head is the recovery handle, not litter');
   assert.match(result.message, /PR #99 remains open/);
   assert.match(result.message, /slug "recipe-box" and prNumber 99/);

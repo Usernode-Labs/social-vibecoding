@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const analyticsDemo = require('../services/analytics-demo');
+const analyticsFunnels = require('../services/analytics-funnels');
 // #892: read-only access to the estimator's COMMITTED run-length priors so
 // the estimator card can show them beside the live numbers and say when a
 // refresh is due. This is a plain module-constant read — it does NOT call
@@ -17,20 +18,16 @@ const llm = require('../services/llm');
 // dapp-usage and PR-promotion funnels convert, and how growth + retention
 // are trending.
 //
-// Source-of-truth note: the append-only `events` table (schema.sql) is
-// the long-term canonical analytics log and is now both backfilled and
-// emitted live. The v1 queries below, however, derive their numbers
-// straight from the domain tables (users, apps, app_activity,
-// chat_messages, chat_session_messages, chat_sessions, pr_votes,
-// pr_kudos, app_favorites). Two reasons:
-//   1. Those tables hold the complete history with no cutover seam, and
-//      they keep being written on every action, so the dashboard is
-//      correct from day one.
-//   2. The locked-in "active = any tracked action that day" definition
-//      maps directly onto app_activity / chat_messages /
-//      chat_session_messages — the canonical activity surfaces.
-// The events table is what a future, richer analytics layer reads; these
-// endpoints intentionally stay on the primary tables for fidelity.
+// Source-of-truth note: activity primarily comes from the domain tables
+// that own positive project-use heartbeats and human messages, votes, and
+// kudos. Mutable vote/kudos rows cannot retain an action after retraction or
+// a later edit, so activityDaysSql() also unions their best-effort append-only
+// events. Explicit user favorite toggles count only through a provenance-
+// marked event because app_favorites is also written by seeds and invite
+// release. The hybrid cannot reconstruct rows removed before an emitter
+// shipped, or favorite actions from before provenance-marked emission.
+// Ordered funnels use provenance-bearing events for the milestones whose
+// historical domain-table state cannot establish chronology.
 
 // Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
 // is false (the default) every analytics query drops rows attributed to
@@ -73,6 +70,11 @@ function wantsAdmins(req) {
   return req.query.includeAdmins === 'true';
 }
 
+// Analytics days are UTC regardless of the PostgreSQL session timezone.
+// app_activity.date is already a stored calendar-day fact; every TIMESTAMPTZ
+// source and each rolling-window spine is normalized explicitly here.
+const UTC_TODAY_SQL = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
+
 // Admin-membership split for the colour differentiation (#341). When
 // `includeAdmins` is on, the affected endpoints keep their existing column as
 // the NON-ADMIN value (admins always excluded, via `FILTER (WHERE NOT
@@ -82,37 +84,85 @@ function wantsAdmins(req) {
 // the admin companions evaluate to 0 and the non-admin column equals the old
 // aggregate — the payload is byte-for-byte unchanged.
 
-// "Active" surface: one row per (user, day) the user did anything we
-// count as activity. Reused by retention + WAU/MAU. `day` is a DATE.
-// Built per-request so the admin-exclusion filter can be woven into each
-// UNION arm (each already constrains user_id IS NOT NULL).
+// "Active" surface: one row per (user, UTC calendar day) with recorded
+// participation. Positive project-use heartbeats count; the independent
+// heartbeat-engagement work will tighten their legacy idle behavior. Every
+// other arm is a deliberate human action. Passive reads and system,
+// assistant, or generated rows do not count. Owner-scoped conversations
+// (Mayor and Global Chat) join back to their human owner; every other source
+// carries its actor directly. UNION, rather than UNION ALL, keeps the result
+// de-duplicated when one person acts more than once or on several surfaces.
+// Current-state vote/kudos tables preserve the rows still present; their
+// best-effort events preserve captured actions after a later edit or
+// retraction. A favorite counts only from the explicit user-toggle event,
+// never from app_favorites state that non-user workflows also populate.
+// Actions removed before their event existed cannot be rebuilt.
+//
+// Built per request so the same admin-exclusion predicate (users.is_admin,
+// which includes full and view-only admins) is present in every UNION arm.
 function activityDaysSql(includeAdmins) {
-  const aa = adminFilter('user_id', includeAdmins);
-  const cm = adminFilter('user_id', includeAdmins);
+  const aa = adminFilter('aa.user_id', includeAdmins);
+  const cm = adminFilter('cm.user_id', includeAdmins);
   const cs = adminFilter('cs.user_id', includeAdmins);
+  const ags = adminFilter('ags.user_id', includeAdmins);
+  const messages = adminFilter('m.sender_id', includeAdmins);
+  const globalChat = adminFilter('gct.user_id', includeAdmins);
+  const prVotes = adminFilter('pv.user_id', includeAdmins);
+  const issueVotes = adminFilter('iv.user_id', includeAdmins);
+  const kudos = adminFilter('pk.giver_user_id', includeAdmins);
+  const durable = adminFilter('e.user_id', includeAdmins);
   return `
-  SELECT user_id, date AS day FROM app_activity WHERE user_id IS NOT NULL ${aa}
+  SELECT aa.user_id, aa.date AS day
+    FROM app_activity aa
+   WHERE aa.user_id IS NOT NULL AND aa.seconds_spent > 0 ${aa}
   UNION
-  SELECT user_id, created_at::date AS day FROM chat_messages WHERE user_id IS NOT NULL ${cm}
+  SELECT cm.user_id, (cm.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM chat_messages cm
+   WHERE cm.user_id IS NOT NULL AND cm.msg_type = 'message' ${cm}
   UNION
-  SELECT cs.user_id, csm.created_at::date AS day
+  SELECT cs.user_id, (csm.created_at AT TIME ZONE 'UTC')::date AS day
     FROM chat_session_messages csm
     JOIN chat_sessions cs ON cs.id = csm.session_id
    WHERE cs.user_id IS NOT NULL AND csm.role = 'user' ${cs}
+  UNION
+  SELECT ags.user_id, (csm.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM chat_session_messages csm
+    JOIN agent_sessions ags ON ags.id = csm.agent_session_id
+   WHERE csm.session_id IS NULL AND csm.role = 'user' ${ags}
+  UNION
+  SELECT m.sender_id, (m.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM conversation_messages m
+   WHERE m.sender_id IS NOT NULL AND m.msg_type = 'message' ${messages}
+  UNION
+  SELECT gct.user_id, (gcm.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM global_chat_messages gcm
+    JOIN global_chat_threads gct ON gct.id = gcm.thread_id
+   WHERE gcm.role = 'user' ${globalChat}
+  UNION
+  SELECT pv.user_id, (pv.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM pr_votes pv
+   WHERE pv.user_id IS NOT NULL ${prVotes}
+  UNION
+  SELECT iv.user_id, (iv.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM issue_votes iv
+   WHERE iv.user_id IS NOT NULL ${issueVotes}
+  UNION
+  SELECT pk.giver_user_id, (pk.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM pr_kudos pk
+   WHERE pk.giver_user_id IS NOT NULL ${kudos}
+  UNION
+  SELECT e.user_id, (e.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM events e
+   WHERE e.user_id IS NOT NULL
+     AND (
+       e.event_type IN ('pr_vote_cast','issue_vote_cast','kudos_given')
+       OR (
+         e.event_type = 'app_favorited'
+         AND e.metadata->>'source' = 'user_favorite_toggle'
+       )
+     )
+     ${durable}
 `;
-}
-
-// Map the ?cohort= query param to a created_at lower bound (or null for
-// "all time"). Used to scope the funnels to recent signups so lifetime
-// power users don't dominate the conversion picture.
-function cohortSince(raw) {
-  if (raw === '1d') return "NOW() - INTERVAL '1 day'";
-  if (raw === '3d') return "NOW() - INTERVAL '3 days'";
-  if (raw === '7d') return "NOW() - INTERVAL '7 days'";
-  if (raw === '14d') return "NOW() - INTERVAL '14 days'";
-  if (raw === '30d') return "NOW() - INTERVAL '30 days'";
-  if (raw === '90d') return "NOW() - INTERVAL '90 days'";
-  return null;
 }
 
 function dashboardRoutes(config) {
@@ -158,8 +208,8 @@ function dashboardRoutes(config) {
         pool.query(
           `WITH activity AS (${activityDaysSql(includeAdmins)})
            SELECT
-             COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 6)::int  AS wau,
-             COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 29)::int AS mau
+             COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 6)::int  AS wau,
+             COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 29)::int AS mau
            FROM activity`
         ),
         pool.query(
@@ -203,112 +253,23 @@ function dashboardRoutes(config) {
 
   // ── Funnels ────────────────────────────────────────────────
   //
-  // Both funnels report, per stage, the count of distinct subjects (users
-  // or sessions) that reached that milestone — see the plan's funnel
-  // definitions. Stages are ordered along the product journey; the
-  // frontend renders each bar as a fraction of the first stage and labels
-  // the step-over-step conversion.
+  // Ordered, same-subject journeys with explicit observation windows.
+  // Incomplete, pre-instrumentation and ambiguous/bypassed rows are returned
+  // as coverage instead of being mislabeled as abandonment.
   router.get('/api/admin/analytics/funnels', async (req, res) => {
-    const since = cohortSince(req.query.cohort);
     const includeAdmins = wantsAdmins(req);
-    // Build a reusable "user is in cohort" predicate. When all-time,
-    // it's just TRUE so the SQL stays uniform.
-    const userCohort = since ? `u.created_at >= ${since}` : 'TRUE';
-    const sessUserCohort = since ? `usr.created_at >= ${since}` : 'TRUE';
-
     try {
-      // Dapp-usage funnel — distinct users reaching each milestone. `base`
-      // carries each user's is_admin flag so every stage can be split into a
-      // non-admin count and an `_admin` companion (#341). When admins are
-      // excluded, base holds no admin rows so the companions are all 0.
-      const dapp = await pool.query(
-        `WITH base AS (
-           SELECT u.id AS user_id, u.is_admin FROM users u
-            WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)}
-         ),
-         flags AS (
-           SELECT b.user_id, b.is_admin,
-             EXISTS (SELECT 1 FROM app_activity aa WHERE aa.user_id = b.user_id) AS opened,
-             (SELECT COUNT(DISTINCT aa.date) FROM app_activity aa
-                WHERE aa.user_id = b.user_id) >= 2 AS returned,
-             (EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM pr_kudos pk WHERE pk.giver_user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM app_favorites af WHERE af.user_id = b.user_id)
-             ) AS engaged,
-             EXISTS (SELECT 1 FROM apps a WHERE a.created_by = b.user_id
-                       AND COALESCE(a.self_hosted, FALSE) = FALSE) AS creator
-           FROM base b
-         )
-         SELECT
-           COUNT(*) FILTER (WHERE NOT is_admin)::int AS signed_up,
-           COUNT(*) FILTER (WHERE is_admin)::int     AS signed_up_admin,
-           COUNT(*) FILTER (WHERE opened AND NOT is_admin)::int AS opened_dapp,
-           COUNT(*) FILTER (WHERE opened AND is_admin)::int     AS opened_dapp_admin,
-           COUNT(*) FILTER (WHERE returned AND NOT is_admin)::int AS returned,
-           COUNT(*) FILTER (WHERE returned AND is_admin)::int     AS returned_admin,
-           COUNT(*) FILTER (WHERE engaged AND NOT is_admin)::int AS engaged,
-           COUNT(*) FILTER (WHERE engaged AND is_admin)::int     AS engaged_admin,
-           COUNT(*) FILTER (WHERE creator AND NOT is_admin)::int AS creators,
-           COUNT(*) FILTER (WHERE creator AND is_admin)::int     AS creators_admin
-         FROM flags`
-      );
-
-      // PR-promotion funnel — session-level conversion (counts of dev
-      // sessions) plus distinct-user reach at each step. Reverts inserted
-      // directly as 'promoted' have no promoted_at, so the promoted test
-      // also accepts the terminal statuses.
-      const sessCohort = since ? `cs.created_at >= ${since}` : 'TRUE';
-      // Session-level conversion, each stage split non-admin vs admin via the
-      // session owner's is_admin flag (#341).
-      const sessions = await pool.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE NOT COALESCE(usr.is_admin, FALSE))::int AS started,
-           COUNT(*) FILTER (WHERE COALESCE(usr.is_admin, FALSE))::int     AS started_admin,
-           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT COALESCE(usr.is_admin, FALSE))::int AS produced_pr,
-           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND COALESCE(usr.is_admin, FALSE))::int     AS produced_pr_admin,
-           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
-                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS promoted,
-           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
-                              AND COALESCE(usr.is_admin, FALSE))::int     AS promoted_admin,
-           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
-                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS received_vote,
-           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
-                              AND COALESCE(usr.is_admin, FALSE))::int     AS received_vote_admin,
-           COUNT(*) FILTER (WHERE cs.status = 'merged' AND NOT COALESCE(usr.is_admin, FALSE))::int AS merged,
-           COUNT(*) FILTER (WHERE cs.status = 'merged' AND COALESCE(usr.is_admin, FALSE))::int     AS merged_admin
-         FROM chat_sessions cs
-         LEFT JOIN users usr ON usr.id = cs.user_id
-         WHERE ${sessCohort} ${adminFilter('cs.user_id', includeAdmins)}`
-      );
-
-      const usersReach = await pool.query(
-        `SELECT
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE NOT usr.is_admin)::int AS started,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE usr.is_admin)::int     AS started_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT usr.is_admin)::int AS produced_pr,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND usr.is_admin)::int     AS produced_pr_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged')) AND NOT usr.is_admin)::int AS promoted,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged')) AND usr.is_admin)::int     AS promoted_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND NOT usr.is_admin)::int AS merged,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND usr.is_admin)::int     AS merged_admin
-         FROM chat_sessions cs
-         JOIN users usr ON usr.id = cs.user_id
-         WHERE ${sessUserCohort} ${adminFilter('usr.id', includeAdmins)}`
-      );
-
-      // Staging demo: substituted when the first funnel stage is empty.
-      if (wantsDemo(req) && !Number(dapp.rows[0]?.signed_up)) {
-        return res.json({ cohort: req.query.cohort || 'all', ...analyticsDemo.funnels() });
-      }
-      res.json({
-        cohort: req.query.cohort || 'all',
-        dappUsage: dapp.rows[0],
-        prSessions: sessions.rows[0],
-        prUsers: usersReach.rows[0],
+      const funnels = await analyticsFunnels.fetchFunnels(pool, {
+        cohort: req.query.cohort || 'all', includeAdmins,
       });
+      // A genuine zero remains visible. Demo data substitutes only before
+      // either opening stream has produced even one trustworthy receipt.
+      if (wantsDemo(req)
+        && funnels.dappUsage.coverage.status === 'awaiting_events'
+        && funnels.prSessions.coverage.status === 'awaiting_events') {
+        return res.json({ ...funnels, ...analyticsDemo.funnels() });
+      }
+      res.json(funnels);
     } catch (err) {
       log.error('dashboard', 'funnels failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -396,7 +357,7 @@ function dashboardRoutes(config) {
   //
   // The classic signup-week retention triangle. For each signup cohort
   // and each week offset since signup, the share of the cohort that was
-  // active that week (active = any tracked action). Capped to the most
+  // active that week (active = recorded participation). Capped to the most
   // recent 12 cohorts for readability. The frontend re-pivots this same
   // payload into either a calendar-aligned or cohort-age-aligned grid;
   // the old WAU/MAU stickiness series it used to return is superseded by
@@ -406,12 +367,13 @@ function dashboardRoutes(config) {
     try {
       const cohorts = await pool.query(
         `WITH cohorts AS (
-           SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk
+           SELECT id AS user_id,
+                  date_trunc('week', created_at AT TIME ZONE 'UTC')::date AS cohort_wk
            FROM users WHERE TRUE ${adminFilter('id', includeAdmins)}
          ),
          activity AS (${activityDaysSql(includeAdmins)}),
          active_weeks AS (
-           SELECT DISTINCT user_id, date_trunc('week', day::timestamptz)::date AS wk
+           SELECT DISTINCT user_id, date_trunc('week', day::timestamp)::date AS wk
            FROM activity
          ),
          sizes AS (
@@ -471,12 +433,14 @@ function dashboardRoutes(config) {
 
   // ── General users (DAU / WAU / MAU, daily rolling windows) ──
   //
-  // "General user" = anyone counted active that day, using the same
-  // canonical activity surface as retention/overview (activityDaysSql:
-  // app_activity ∪ chat_messages ∪ user dev-session messages). There is
-  // no login/sign-in event and the sessions table has no created_at, so
-  // "active = any tracked action that day" is the faithful, historically
-  // complete proxy for "signed in".
+  // "General user" = anyone counted active that day, using the same human-
+  // action surface as retention/overview (activityDaysSql: project use;
+  // human project, private/group/channel, change, Mayor, and Global Chat
+  // messages; proposal/request votes; proposal kudos; explicit favorites).
+  // There is no login/sign-in event, so these recorded actions are the best
+  // available historical proxy for "signed in". Old idle-inclusive heartbeat
+  // rows and actions removed before durable emission remain known limits;
+  // pre-emitter favorite actions are unavailable.
   //
   //   dau — distinct general users active on day d.
   //   wau — distinct general users active in the trailing 7 days [d-6, d]
@@ -493,7 +457,7 @@ function dashboardRoutes(config) {
     try {
       const { rows } = await pool.query(
         `WITH days AS (
-           SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d
+           SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d
          ),
          activity AS (
            SELECT DISTINCT user_id, day FROM (${activityDaysSql(includeAdmins)}) a

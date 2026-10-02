@@ -2,6 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const { loadShellRelease } = require('./src/services/shell-release');
+const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
+// The baked artifact is authoritative even when a runtime omits build args.
+// loadShellRelease rejects an explicitly different runtime revision.
+if (shellRelease && shellRelease.revision !== 'dev') process.env.GIT_SHA = shellRelease.revision;
 const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
 const {
@@ -14,6 +19,7 @@ const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
 const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
 const { githubWebhookRoutes } = require('./src/routes/github-webhook');
+const { mobileAppLinkRoutes } = require('./src/routes/mobile-app-links');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
@@ -37,6 +43,7 @@ const { adminRoutes } = require('./src/routes/admin');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
 const { adminUserMergeRoutes } = require('./src/routes/admin-user-merge');
 const { dashboardRoutes } = require('./src/routes/dashboard');
+const { uiTelemetryRoutes } = require('./src/routes/ui-telemetry');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
@@ -46,7 +53,7 @@ const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
-const { visualEvidenceRoutes } = require('./src/routes/visual-evidence');
+const { shotsRoutes } = require('./src/routes/shots');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const { avatarRoutes } = require('./src/routes/avatars');
@@ -67,6 +74,7 @@ const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
+const { sinceSummaryRoutes } = require('./src/routes/since-summary');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
@@ -146,6 +154,7 @@ const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { publicApiCors } = require('./src/middleware/public-cors');
+const { responseCompression } = require('./src/middleware/response-compression');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -165,6 +174,13 @@ app.use(trustedProxyClientIp({
   trustDirectPeer: config.appRuntime === 'kubernetes',
 }));
 
+// Brotli / gzip for the shell's own text responses — its scripts, styles,
+// document and JSON. Nothing in front of this process compresses, so without
+// it every byte crossed the network as written. Mounted ahead of every route
+// so each one's answer passes through it; GET/HEAD only, and never a stream.
+// See src/middleware/response-compression.js.
+app.use(responseCompression());
+
 // Cross-origin support for the anonymous `/api/public/*` tier, and for
 // nothing else. Marketing pages the platform does not host (the waitlist
 // join + check-my-status forms) call it from the browser, so those responses
@@ -174,6 +190,10 @@ app.use(trustedProxyClientIp({
 // bearer, no parser, no route. See src/middleware/public-cors.js for why a
 // wildcard origin with no credentials is the safe shape for this prefix.
 app.use(publicApiCors());
+
+// OS domain verification is anonymous and must never reach login redirects
+// or the SPA/static fallback (which does not serve dot directories).
+app.use(mobileAppLinkRoutes());
 
 // Global CLI authentication has a hard staging/enablement gate before any
 // body parser, cookie lookup, bearer lookup, or static fallback. Public
@@ -243,6 +263,10 @@ app.use((req, res, next) => {
           || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build|commits)$/.test(req.path))) {
     return next();
   }
+  // The browser diagnostics collector owns a stricter 32 KiB parser in
+  // routes/ui-telemetry.js. Leave its stream untouched here so that lower
+  // bound is enforced before JSON decoding.
+  if (req.method === 'POST' && req.path === '/api/ui-telemetry/batch') return next();
   // Private conversation uploads carry raw bytes and own a bounded 21 MB
   // parser in routes/conversations.js. In particular, a .json file may have
   // application/json content-type; letting this global parser consume it
@@ -259,14 +283,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser.
-  // PR import parses here; the dedicated plan route mounts its own parser.
+  // A PR import carries the description and the declared changes, which
+  // together can exceed the global 100kb parser.
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
   }
-  if (req.method === 'POST'
-      && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -537,6 +559,13 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+// Every admin write, on whichever router declares it, answers only the
+// Homeroom page itself (middleware/same-site-browser.js). Mounted ahead of
+// all of them; the CLI's bearer calls carry no Sec-Fetch-Site and pass.
+app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-browser').sameOriginBrowserWrites);
+app.use(require('./src/middleware/moderation').moderationGuard(config));
+app.use(require('./src/routes/moderation').moderationRoutes(config));
+app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 worker.setAccountDeletionGuard(sessionId => require('./src/services/account-deletion-cleanup')
   .assertWorkerAllowed(getPool(config), sessionId));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
@@ -573,7 +602,7 @@ app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
 app.use(voteRoutes(config));
-app.use(visualEvidenceRoutes(config));
+app.use(shotsRoutes(config));
 // Demo mode: a creator's synthetic partner proposes, votes and resets, on a
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
 // it borrows recordVote/checkAndMerge from.
@@ -595,6 +624,7 @@ app.use(adminRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
+app.use(uiTelemetryRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
@@ -610,6 +640,8 @@ app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
 app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
+// The hub's since-your-last-visit line (services/since-summary.js).
+app.use(sinceSummaryRoutes(config));
 // The top-level Workshop screen's per-app counts (#workshop): one query for
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
@@ -865,6 +897,16 @@ app.use('/usernode-bridge', (_req, res, next) => {
 // Same files as the handler below serves at their plain paths; see
 // src/services/static-cache.js.
 app.use(buildScopedAssetHandler(path.join(__dirname, 'public')));
+app.get('/sw.js', (_req, res, next) => {
+  if (!shellRelease) return next();
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.type('application/javascript').sendFile(path.join(__dirname, 'public', 'shell', 'worker.js'));
+});
+app.get('/shell/release.json', (_req, res, next) => {
+  if (!shellRelease) return next();
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.json(shellRelease);
+});
 
 // Serve the shell's static assets, but force HTML/JS/CSS to revalidate on
 // every load (see src/services/static-cache.js). Without this, mobile
@@ -1010,54 +1052,73 @@ async function becomeLeader() {
     runCliAuthCleanup();
   }, 6 * 60 * 60 * 1000).unref?.();
 
-  // Visual evidence is private, revision-scoped data. Recover runs whose
+  // Before & after shots is private, revision-scoped data. Recover runs whose
   // worker died, remove their deterministic paired runtimes/databases, and
   // enforce the shorter failed-media and bounded audit-retention windows.
-  const visualEvidenceGc = require('./src/services/visual-evidence-gc');
-  let evidenceGcRunning = false;
-  const runVisualEvidenceGc = () => {
-    if (evidenceGcRunning) return;
-    evidenceGcRunning = true;
-    visualEvidenceGc.sweep(config, getPool(config))
+  const shotsGc = require('./src/services/shots-gc');
+  let shotsGcRunning = false;
+  const runShotsGc = () => {
+    if (shotsGcRunning) return;
+    shotsGcRunning = true;
+    shotsGc.sweep(config, getPool(config))
       .then((counts) => {
         if (Object.values(counts).some((count) => count > 0)) {
-          log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
+          log.info('shots', 'Retention/recovery sweep completed', counts);
         }
       })
-      .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }))
-      .finally(() => { evidenceGcRunning = false; });
+      .catch((err) => log.warn('shots', 'Retention/recovery sweep failed', { err: err.message }))
+      .finally(() => { shotsGcRunning = false; });
   };
-  runVisualEvidenceGc();
-  setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
-  // Evidence runs execute after their scheduling HTTP request has returned.
+  runShotsGc();
+  setInterval(runShotsGc, 6 * 60 * 60 * 1000).unref?.();
+  // Shots runs execute after their scheduling HTTP request has returned.
   // A platform rollout can terminate that process mid-build; heartbeats stop
   // then, and this short recovery poll releases the abandoned proposal slot.
   // The six-hour sweep above still owns retention and orphan-file pruning.
-  const recoverInterruptedEvidence = () => {
-    if (evidenceGcRunning) return;
-    evidenceGcRunning = true;
-    visualEvidenceGc.recoverInterrupted(config, getPool(config))
+  const recoverInterruptedShots = () => {
+    if (shotsGcRunning) return;
+    shotsGcRunning = true;
+    shotsGc.recoverInterrupted(config, getPool(config))
       .then(({ failed, cancelled, cleanupRetried }) => {
         if (failed || cancelled || cleanupRetried) {
-          log.warn('visual-evidence', 'Interrupted visual evidence runs recovered', {
+          log.warn('shots', 'Interrupted before & after shots runs recovered', {
             failed, cancelled, cleanupRetried,
           });
         }
       })
-      .catch((err) => log.warn('visual-evidence', 'Interrupted evidence recovery failed', { err: err.message }))
-      .finally(() => { evidenceGcRunning = false; });
+      .catch((err) => log.warn('shots', 'Interrupted shots recovery failed', { err: err.message }))
+      .finally(() => { shotsGcRunning = false; });
   };
-  setInterval(recoverInterruptedEvidence, 2 * 60 * 1000).unref?.();
+  setInterval(recoverInterruptedShots, 2 * 60 * 1000).unref?.();
   // Recover intent-only proposals separately from the six-hour retention
   // sweep. A missed checks hand-off should start within minutes, while the
   // durable run claim ensures this cannot duplicate a live runner.
-  const runUnstartedEvidence = () => visualEvidenceGc.recoverUnstarted(config, getPool(config))
+  const runUnstartedShots = () => shotsGc.recoverUnstarted(config, getPool(config))
     .then(({ scheduled }) => {
-      if (scheduled) log.info('visual-evidence', 'Recovered unstarted visual evidence claims', { scheduled });
+      if (scheduled) log.info('shots', 'Recovered unstarted before & after shots claims', { scheduled });
     })
-    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }));
-  runUnstartedEvidence();
-  setInterval(runUnstartedEvidence, 2 * 60 * 1000).unref?.();
+    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }));
+  runUnstartedShots();
+  setInterval(runUnstartedShots, 2 * 60 * 1000).unref?.();
+  // A rollout interrupts runs through no fault of the proposal; start the
+  // same head again (bounded) rather than waiting for someone to click Retry.
+  // Its own, shorter timer: the run is marked interrupted as the old process
+  // exits, the sweep waits 30 seconds past that, and a card that says "trying
+  // again" should not then sit for up to two more minutes. The query is one
+  // indexed read that usually finds nothing.
+  let shotsRetryRunning = false;
+  const retryInterruptedShots = () => {
+    if (shotsRetryRunning) return;
+    shotsRetryRunning = true;
+    shotsGc.retryInterrupted(config, getPool(config))
+      .then((result) => {
+        if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
+      })
+      .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
+      .finally(() => { shotsRetryRunning = false; });
+  };
+  retryInterruptedShots();
+  setInterval(retryInterruptedShots, 30 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -1190,6 +1251,10 @@ async function becomeLeader() {
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
   require('./src/services/weekly-digest').start(config);
+  // Welcome messages: somebody let in gets a group with the people an admin
+  // chose. Leader-only so one Pod sends; the queue row's lock and the
+  // message's idempotency key keep a retry from sending twice anyway.
+  require('./src/services/welcome-dm').start(config);
   // Season challenges are read from the points ledger, and until this ran
   // only two of them ever wrote to it without an admin typing the rows in.
   // Leader-only and advisory-locked on top of that, because a tick costs
@@ -1239,6 +1304,16 @@ async function becomeLeader() {
     .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
   void runAccountDeletionCleanup();
   setInterval(runAccountDeletionCleanup, 60_000).unref();
+
+  // A project created with a description files it as its first request once
+  // it runs (services/homeroom-bot-dm.js). The creation hook in
+  // app-creator.js does it; this files one the hook missed or could not
+  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
+    .sweepFirstVersions(getPool(config), config)
+    .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
+    .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
+  setInterval(runFirstRequestSweep, 5 * 60 * 1000).unref();
 
   // #2779: delegated connector grants — the agent-session Mayor's, one or two
   // a turn — are dead the moment their turn ends. Keep a week for the audit
@@ -1327,11 +1402,17 @@ async function becomeLeader() {
   // Job. No-op outside the Kubernetes capture runtime.
   const checkHarvest = require('./src/services/check-harvest');
   const mainWatch = require('./src/services/main-watch');
+  const mergeFollowups = require('./src/services/merge-followup-recovery');
   checkHarvest.sweep(config, { reason: 'boot' })
     .catch((err) => {
       log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
     })
     .then(() => recoverStuckMerges(config))
+    .then(() => {
+      mergeFollowups.recover(config).catch((err) => {
+        log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
+      });
+    })
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, re-run any stuck/never-recorded
     // proposal checks so PRs left permanently "still running its tests" by a
@@ -1359,6 +1440,7 @@ async function becomeLeader() {
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
   mainWatch.start(config);
+  mergeFollowups.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1654,19 +1736,23 @@ async function auditExistingRepoPrivacy(pool) {
 // We ask GitHub the truth rather than guessing. Bounded concurrency keeps
 // the boot scan cheap; genuinely-open PRs simply report merged=false and
 // are left untouched (only 'merging' rows are demoted to 'promoted').
-async function recoverStuckMerges(config) {
+async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
+  const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
 
   let rows;
   try {
     ({ rows } = await pool.query(
       `SELECT cs.id, cs.status, cs.pr_number, cs.merge_commit_sha,
+              cs.merge_attempt_at,
               a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status IN ('promoted', 'merging')`
+        WHERE cs.status IN ('promoted', 'merging')
+          AND (NOT $1::boolean OR cs.status = 'merging' OR cs.merge_attempt_at IS NOT NULL)`,
+      [attemptedOnly]
     ));
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
@@ -1674,23 +1760,11 @@ async function recoverStuckMerges(config) {
   }
   if (!rows.length) return;
 
-  // Without GitHub auth we can't ask the truth. Preserve the original
-  // crash-recovery behavior for 'merging' rows (flip back to 'promoted')
-  // and leave 'promoted' rows alone.
+  // Without GitHub auth the outcome is unknown. Keep the claim until a
+  // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
   if (!github.isEnabled()) {
-    try {
-      const { rows: flipped } = await pool.query(
-        `UPDATE chat_sessions SET status = 'promoted'
-          WHERE status = 'merging' RETURNING id`
-      );
-      if (flipped.length) {
-        log.info('server', 'Unstuck merging sessions on startup (no GitHub auth)', {
-          count: flipped.length, ids: flipped.map((r) => r.id),
-        });
-      }
-    } catch (err) {
-      log.warn('server', 'recoverStuckMerges fallback flip failed', { err: err.message });
-    }
+    const merging = rows.filter((row) => row.status === 'merging').length;
+    if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
     return;
   }
 
@@ -1705,66 +1779,59 @@ async function recoverStuckMerges(config) {
   async function worker() {
     while (queue.length) {
       const row = queue.shift();
-      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!m || !row.pr_number) {
-        // Can't ask GitHub. Only demote 'merging' (crash recovery); leave
-        // 'promoted' rows as-is.
-        if (row.status === 'merging') {
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
-        }
-        continue;
-      }
-      const [, owner, repo] = m;
+      const release = await mergeLock.acquire(pool, row.id, { tryOnly: true });
+      if (!release) continue; // A live process still owns this merge.
       try {
-        const pr = await github.getPR(owner, repo, row.pr_number);
-        if (pr && pr.merged) {
-          const { rowCount } = await pool.query(
-            `UPDATE chat_sessions
-                SET status = 'merged',
-                    merged_at = COALESCE(merged_at, $2),
-                    merge_commit_sha = COALESCE(merge_commit_sha, $3)
-              WHERE id = $1 AND status IN ('promoted', 'merging')`,
-            [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
-          );
-          if (rowCount) {
-            healed++;
-            log.info('server', 'Reconciled merged-on-GitHub session to merged', {
-              sessionId: row.id, prNumber: row.pr_number,
-              repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
-            });
+        const oldAttempt = !row.merge_attempt_at
+          || Date.now() - new Date(row.merge_attempt_at).getTime() >= 5 * 60 * 1000;
+        const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+        if (!m || !row.pr_number) {
+          // The repository or PR identity is missing; there is no safe
+          // inference about the irreversible GitHub operation.
+          continue;
+        }
+        const [, owner, repo] = m;
+        try {
+          const pr = await github.getPR(owner, repo, row.pr_number);
+          if (pr && pr.merged) {
+            const { rowCount } = await pool.query(
+              `UPDATE chat_sessions
+                  SET status = 'merged',
+                      merged_at = COALESCE(merged_at, $2, NOW()),
+                      merge_commit_sha = COALESCE(merge_commit_sha, $3)
+                WHERE id = $1 AND status IN ('promoted', 'merging')`,
+              [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
+            );
+            if (rowCount) {
+              healed++;
+              log.info('server', 'Reconciled merged-on-GitHub session to merged', {
+                sessionId: row.id, prNumber: row.pr_number,
+                repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
+              });
+            }
+          } else if (row.status === 'merging' && oldAttempt) {
+            // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
+            // demote so the next vote/retry can redrive.
+            const { rowCount } = await pool.query(
+              `UPDATE chat_sessions SET status = 'promoted'
+                WHERE id = $1 AND status = 'merging'
+                  AND (merge_attempt_at IS NULL OR merge_attempt_at < NOW() - interval '5 minutes')`,
+              [row.id]
+            ).catch(() => ({ rowCount: 0 }));
+            if (rowCount) demoted++;
           }
-        } else if (row.status === 'merging') {
-          // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
-          // demote so the next vote/retry can redrive.
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
+          // Not merged + 'promoted' == genuinely open proposal: leave alone.
+        } catch (err) {
+          errors++;
+          log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
+            sessionId: row.id, prNumber: row.pr_number,
+            repo: `${owner}/${repo}`, err: err.message,
+          });
+          // A failed lookup is not proof the merge failed. The next timer
+          // sweep retries without changing this session's status.
         }
-        // Not merged + 'promoted' == genuinely open proposal: leave alone.
-      } catch (err) {
-        errors++;
-        log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
-          sessionId: row.id, prNumber: row.pr_number,
-          repo: `${owner}/${repo}`, err: err.message,
-        });
-        // On a lookup error, fall back to the safe crash-recovery move for
-        // 'merging' rows only.
-        if (row.status === 'merging') {
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
-        }
+      } finally {
+        await release();
       }
     }
   }
@@ -1976,6 +2043,9 @@ function startEligibleMergeSweeper(config) {
     if (!github.isEnabled()) return;
     running = true;
     Promise.resolve()
+      // A merge request may outlive a leader rollout. Revisit attempts even
+      // after demotion, since GitHub may report their merge a little later.
+      .then(() => recoverStuckMerges(config, { attemptedOnly: true }))
       .then(() => reconcileStuckChecks(config))
       .then(() => reconcileEligibleMerges(config))
       .catch((err) => {
@@ -2410,6 +2480,14 @@ function scheduleRetainedOrphanRecovery(orphan, deps) {
       });
       return false;
     },
+    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES). The reservation
+    // is released and the durable turn left in place, so the stale-turn
+    // watchdog ends it like any unowned turn and tells the user.
+    onExhausted: async (err, { failures }) => {
+      log.error('server', 'Retained orphan recovery gave up; leaving the turn to the stale-turn watchdog', {
+        name: orphan.name, sessionId, failures, err: err.message, code: err.code || null,
+      });
+    },
     onComplete: () => log.info('server', 'Retained orphan recovery completed', {
       name: orphan.name, sessionId,
     }),
@@ -2505,22 +2583,22 @@ async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }
   }
 }
 
-// A visual-evidence turn cannot outlive the process that dispatched it: its
+// A shots turn cannot outlive the process that dispatched it: its
 // MCP bridge calls back to that process's pod address, and the run it
 // answers to exists only in that process's control registry. Resumed, the
 // agent retries tool calls that can no longer succeed, holding the session
 // busy and spending the user's model credit with no bound. End it instead,
-// without chat narration — evidence turns never write chat rows, and the
-// visual-evidence GC fails the run itself with a retryable reason once the
+// without chat narration — shots turns never write chat rows, and the
+// shots GC fails the run itself with a retryable reason once the
 // run goes idle.
-async function abandonOrphanEvidenceTurn({
+async function abandonOrphanShotsTurn({
   pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
 }) {
   // A follower promoted to leader recovers its own workers too, and one of
-  // them may be executing an evidence run this process dispatched and still
+  // them may be executing a shots run this process dispatched and still
   // bounds.
-  if (worker.getActiveTurnMode(sessionId) === 'evidence') {
-    log.info('server', 'Evidence turn is live in this process; leaving it to its run', {
+  if (worker.getActiveTurnMode(sessionId) === 'shots') {
+    log.info('server', 'Shots turn is live in this process; leaving it to its run', {
       containerName, sessionId,
     });
     return;
@@ -2533,12 +2611,12 @@ async function abandonOrphanEvidenceTurn({
     // dispatch — the user's preview retry — skip as stopped during spin-up.
     worker.clearPendingStop(sessionId);
     if (await worker.isWorkerExecuting(containerName) !== false) {
-      throw retryRuntimeRecovery('Orphaned visual-evidence turn is not confirmed stopped');
+      throw retryRuntimeRecovery('Orphaned shots turn is not confirmed stopped');
     }
   }
   await abandonCodexAttempt(pool, sessionId, activeTurn, {
-    label: 'Orphaned visual-evidence',
-    errorDetail: 'Visual-evidence turn was abandoned after the platform process that dispatched it exited.',
+    label: 'Orphaned shots',
+    errorDetail: 'Visual-shots turn was abandoned after the platform process that dispatched it exited.',
   });
   recoveryRetry.requireDurableTurnCleanup(
     containerRunning
@@ -2546,12 +2624,56 @@ async function abandonOrphanEvidenceTurn({
       : await worker.clearActiveTurn(sessionId, args),
     args,
   );
-  log.warn('server', 'Abandoned orphaned visual-evidence turn after restart', {
+  log.warn('server', 'Abandoned orphaned shots turn after restart', {
     containerName, sessionId,
     turnId: turnLifecycle.turnIdentity(activeTurn),
     backend: activeTurn.backend || null,
   });
   if (!containerRunning) await worker.destroyWorker(containerName);
+}
+
+function homeroomBotRecovery() {
+  return require('./src/services/homeroom-bot');
+}
+
+/**
+ * #3401: a worker of the Homeroom bot's that outlived a restart. With a
+ * turn in flight, the journal is followed to its end as any recovered turn
+ * is, and resumeDetachedTurnInner hands the result to the bot instead of
+ * the dev-chat tail; the build holds its lane slot meanwhile. With nothing
+ * to follow (the worker is gone, or idle between the spec and the build),
+ * the bot puts its run back in the queue unspent.
+ */
+async function adoptBotOrphan({
+  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+}) {
+  const bot = homeroomBotRecovery();
+  const activeTurn = session.active_turn || null;
+  if (containerState === 'running' && activeTurn && activeTurn.journal) {
+    log.info('server', 'Adopting a Homeroom bot turn for the bot to finish', {
+      sessionId, containerName, mode: activeTurn.mode,
+    });
+    worker.adoptWarmWorker(sessionId, containerName);
+    await bot.holdSlotDuringRecovery(pool, sessionId, resumeDetachedTurn({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
+    }));
+    // #3471: a live build is proposed (or said to have failed) only now,
+    // with the session free, the order the live path promotes in.
+    await bot.completeRecoveredLive({ pool, config, sessionId });
+    return;
+  }
+  if (activeTurn) {
+    const cleanupArgs = turnCleanupArgs(activeTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, cleanupArgs),
+      cleanupArgs,
+    );
+  }
+  await worker.destroyWorker(containerName).catch(() => {});
+  await bot.abandonRecoveredTurn({
+    pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
+  });
+  await bot.completeRecoveredLive({ pool, config, sessionId });
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
@@ -2567,7 +2689,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // wrap-up gets the same system prompt a live turn would (the
     // self-hosted block changes what the Mayor is allowed to say).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
-            a.self_hosted AS app_self_hosted, u.username
+            a.self_hosted AS app_self_hosted, u.username,
+            u.is_synthetic AS user_is_synthetic
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -2642,8 +2765,18 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     }
   }
 
-  if (session.active_turn?.mode === 'evidence') {
-    await abandonOrphanEvidenceTurn({
+  // #3401: the Homeroom bot's own turns are the bot's to finish. A shadow
+  // build must leave no PR, staging, wrap-up or notification, which is what
+  // the dev-chat tail below would give it.
+  if (homeroomBotRecovery().isRecoveredBotSession(session)) {
+    await adoptBotOrphan({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+    });
+    return;
+  }
+
+  if (session.active_turn?.mode === 'shots') {
+    await abandonOrphanShotsTurn({
       pool, sessionId, containerName,
       activeTurn: session.active_turn,
       containerRunning: containerState === 'running',
@@ -3198,6 +3331,9 @@ async function finalizeRecoveredTurn({
     await persistCompletionRow(recoveredCcSummary, noChangeOutcome);
     if (result.fatalError) {
       summaryParts.push(`The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`);
+    } else if (result.branchMismatch) {
+      summaryParts.push('The coding agent ended up working on a different branch that does not build on this '
+        + 'change, so nothing from the turn was saved. Tell the user to send the request again.');
     } else if (!recoveryAgent.isOpenRouter) {
       summaryParts.push('The coding agent finished without committing any changes.');
     }
@@ -3964,6 +4100,24 @@ async function resumeDetachedTurnInner({
     emit('done', {});
   };
 
+  // #3401: a bot turn keeps the bot's own clock across the restart. The
+  // live path stopped it at its budget; recovery would otherwise follow it
+  // for as long as the agent cares to run.
+  const botTurn = homeroomBotRecovery().isRecoveredBotSession(session);
+  let botTimedOut = false;
+  let botClock = null;
+  if (botTurn) {
+    const deadline = await homeroomBotRecovery()
+      .recoveryDeadline(pool, config, session, activeTurn).catch(() => null);
+    if (deadline != null) {
+      botClock = setTimeout(() => {
+        botTimedOut = true;
+        Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
+      }, Math.max(0, deadline - Date.now()));
+      if (typeof botClock.unref === 'function') botClock.unref();
+    }
+  }
+
   let result;
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
@@ -3992,6 +4146,7 @@ async function resumeDetachedTurnInner({
       onProgress: onRecoveredProgress,
     });
   } catch (err) {
+    if (botClock) clearTimeout(botClock);
     // #1378: the stop machinery kills the agent process and appends an exit
     // marker, so a stopped turn usually resolves rather than throwing — but
     // when it does throw, the user still asked for this to end. Close it as
@@ -4043,6 +4198,19 @@ async function resumeDetachedTurnInner({
         throw ledgerErr;
       }
     }
+    // #3401: the bot's run goes back in the queue unspent; no breadcrumb
+    // or stalled notification, which nobody reads on the bot's session.
+    if (botTurn) {
+      const botCleanup = turnCleanupArgs(activeTurn);
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(sessionId, botCleanup),
+        botCleanup,
+      );
+      await homeroomBotRecovery().abandonRecoveredTurn({
+        pool, session, why: `the journal replay failed: ${err.message}`,
+      });
+      return;
+    }
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
     // replay produced no lines at all, append to the persisted row
@@ -4083,6 +4251,7 @@ async function resumeDetachedTurnInner({
     );
     return;
   }
+  if (botClock) clearTimeout(botClock);
   flushProgress();
 
   // #1378: the tail is done and the user had asked for this turn to stop.
@@ -4172,6 +4341,24 @@ async function resumeDetachedTurnInner({
       sessionId, err: err.message,
     });
     throw err;
+  }
+
+  // #3401: the journal is followed and the attempt settled; the rest is the
+  // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
+  // turn must not get. The bot records the result on its run, then the
+  // turn record is cleared. Recording first: a failed clear is retried by
+  // the retained-recovery timer, and the bot's writes are guarded so the
+  // repeat records nothing twice.
+  if (botTurn) {
+    await homeroomBotRecovery().finishRecoveredTurn({
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
+    });
+    const botCleanup = turnCleanupArgs(recoveryActiveTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, botCleanup),
+      botCleanup,
+    );
+    return;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
@@ -4489,6 +4676,7 @@ function startConversationAttachmentSweeper(config) {
             AND created_at < NOW() - INTERVAL '24 hours'`
       );
       if (rowCount) log.info('server', 'GC\'d orphaned conversation attachments', { count: rowCount });
+      await require('./src/services/moderation').purgeExpired(pool);
     } catch (err) {
       log.warn('server', 'Orphaned conversation attachment sweep failed', { err: err.message });
     }
@@ -5050,11 +5238,14 @@ function startSessionAutoPauseSweeper(config) {
     // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
     // the stale rest (merged / abandoned / paused / session-gone), so the next
     // Preview click rebuilds with current env behind the existing loader.
-    // Together they replace #850's one-off admin sweep.
+    // Together they replace #850's one-off admin sweep. It also takes any
+    // preview whose session merged, was archived or is gone, current env or
+    // not: a failed merge-time teardown has no other retry.
     //
     // Throttled to its own long interval rather than given a timer of its
-    // own — this sweeper already ticks, and a `docker ps` + teardown of a few
-    // containers every 15 minutes has no business running every 60 seconds.
+    // own — this sweeper already ticks, and listing the previews (Docker
+    // containers or Kubernetes Deployments) + tearing down a few every 15
+    // minutes has no business running every 60 seconds.
     // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
     try {
       // The interval + "is it due" bookkeeping lives in the service, so this
@@ -5623,7 +5814,7 @@ const DRAIN_TIMEOUT_MS = 5000;
 // below grace — so a
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
-const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
+const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
@@ -5765,17 +5956,17 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
-  const evidenceRuns = require('./src/services/visual-evidence-orchestrator').inFlightSnapshot;
+  const shotsRuns = require('./src/services/shots-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
-  const startingEvidence = evidenceRuns();
+  const startingShots = shotsRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
     activeWorkers: startingCount,
-    activeEvidenceRuns: startingEvidence.slice(0, 20),
+    activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && evidenceRuns().length === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
@@ -5784,10 +5975,10 @@ async function cleanup() {
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
       remainingWorkers: getActiveWorkerCount(),
-      remainingEvidenceRuns: evidenceRuns().slice(0, 20),
+      remainingShotsRuns: shotsRuns().slice(0, 20),
     });
-  } else if (startingCount > 0 || startingEvidence.length > 0) {
-    log.info('server', 'All handlers and visual evidence runs drained');
+  } else if (startingCount > 0 || startingShots.length > 0) {
+    log.info('server', 'All handlers and before & after shots runs drained');
   }
   await pushStop;
   await agentTurnsEnded;
@@ -5796,24 +5987,28 @@ async function cleanup() {
   // when the drain expires, record the actual shutdown now so its owner can
   // retry immediately. The recovery sweep remains the fallback for SIGKILL,
   // crashes, and a database that cannot accept this bounded write.
-  const interruptedEvidence = require('./src/services/visual-evidence-orchestrator').inFlightRunSnapshot();
-  if (interruptedEvidence.length && shutdownPool) {
+  const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
+  if (interruptedShots.length && shutdownPool) {
+    const shotsState = require('./src/services/shots-state');
     let markTimer = null;
-    const marking = Promise.allSettled(interruptedEvidence.map((runId) =>
-      require('./src/services/visual-evidence-state').transitionRun(shutdownPool, runId, 'failed', {
-        failureCode: 'evidence_run_interrupted',
-        failureReason: 'The platform process shut down while this visual change preview was running. You can retry the preview run.',
+    const marking = Promise.allSettled(interruptedShots.map((runId) =>
+      shotsState.transitionRun(shutdownPool, runId, 'failed', {
+        failureCode: 'shots_run_interrupted',
+        failureReason: shotsState.SHUTDOWN_INTERRUPTED_REASON,
+        // A rollout, not the run: the automatic retry does not count it
+        // against the tighter budget for unexplained interruptions.
+        traceMerge: { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION },
       })
     ));
     const result = await Promise.race([
       marking,
       new Promise((resolve) => {
-        markTimer = setTimeout(() => resolve(null), EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS);
+        markTimer = setTimeout(() => resolve(null), SHOTS_SHUTDOWN_MARK_TIMEOUT_MS);
       }),
     ]);
     if (markTimer) clearTimeout(markTimer);
-    log.info('server', 'Marked active visual evidence runs interrupted on shutdown', {
-      attempted: interruptedEvidence.length,
+    log.info('server', 'Marked active before & after shots runs interrupted on shutdown', {
+      attempted: interruptedShots.length,
       marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
       timedOut: result === null,
     });

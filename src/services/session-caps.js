@@ -40,11 +40,25 @@ function positiveIntOr(value, fallback) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+// The Homeroom bot's own ceiling on proposals up for a vote (#3576): its
+// per-app cap times its live apps, in place of the per-user cap, which it
+// ran into with four live apps. Only its in-process promote
+// (homeroom-bot-live.promoteAsBot) sets it, and as a Symbol nothing a
+// client sends can: req.user is built by the auth middleware.
+const BOT_PROMOTED_CEILING = Symbol('homeroom-bot-promoted-ceiling');
+
 // { activeSessions, promotedSessions } for this requester. `user` may be
 // undefined (unauthenticated / internal callers) — that resolves to the
 // base tier.
 function effectiveSessionCaps(config, user) {
   const cfg = config || {};
+  const botCeiling = user ? user[BOT_PROMOTED_CEILING] : undefined;
+  if (Number.isInteger(botCeiling) && botCeiling > 0) {
+    return {
+      activeSessions: positiveIntOr(cfg.maxUserSessions, DEFAULT_USER_SESSIONS),
+      promotedSessions: botCeiling,
+    };
+  }
   const isFullAdmin = !!(user && user.canAdminWrite);
   if (isFullAdmin) {
     return {
@@ -60,6 +74,7 @@ function effectiveSessionCaps(config, user) {
 
 module.exports = {
   effectiveSessionCaps,
+  BOT_PROMOTED_CEILING,
   DEFAULT_USER_SESSIONS,
   DEFAULT_USER_PROMOTED,
   DEFAULT_ADMIN_SESSIONS,

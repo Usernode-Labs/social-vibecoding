@@ -59,6 +59,11 @@ const INTERRUPTED_TEXT = 'The Mayor was interrupted by a platform update before 
 // answer, and the user asked for one.
 const RETRY_NOTE = '[HOMEROOM] Your last answer to this was cut off by a platform restart before it finished, and '
   + 'the user pressed Retry. Answer their last message now. Do not mention the restart unless it matters.';
+// What the model is told when a round ends the turn with no words for the
+// person: some models call tools (suggest_replies among them), then end the
+// next round with nothing to say. It gets one more round, without tools.
+const EMPTY_REPLY_NOTE = '[HOMEROOM] Your last reply had no text for the person. Answer them now in plain words, '
+  + 'using what the tools returned. Do not call more tools.';
 
 // The wrap-up is offered no tool but suggest_replies, so it cannot act on a
 // dispatch that failed. Without this it has promised "Retrying now."
@@ -447,6 +452,12 @@ async function runAgentTurn({
   // stale window, and only a turn whose process died should lose it.
   const leaseTimer = setInterval(() => {
     d.agentSessions.renewTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
+    if (!stop.stopped && typeof d.agentSessions.readTurnStopRequest === 'function') {
+      d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId }).then((request) => {
+        if (!request || stopRegistry.get(agentSessionId) !== stop) return;
+        return require('../agent-session-stop').requestStop({ pool, user, agentSessionId, scheduleInteractiveRecovery });
+      }).catch((err) => log.warn('agent-mayor', 'Could not apply durable stop', { agentSessionId, err: err.message }));
+    }
   }, LEASE_RENEW_MS);
   if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
 
@@ -646,6 +657,8 @@ async function runAgentTurn({
       sendAgent: send,
       res,
       onStopHandle: (handle) => { stop.change = handle; },
+      shouldStop: async () => stop.stopped || !!(typeof d.agentSessions.readTurnStopRequest === 'function'
+        && await d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId })),
       scheduleInteractiveRecovery,
       deps: d.dispatchDeps,
     });
@@ -806,8 +819,12 @@ async function runAgentTurn({
     let dispatchUse = null;
     let pendingResults = null;
     let claimChecked = false;
+    let emptyNudged = false;
     for (let round = 0; ; round += 1) {
-      const lastRound = round >= MAX_TOOL_ROUNDS;
+      // The nudge round is the turn's last whatever its number: it may be
+      // one past MAX_TOOL_ROUNDS, and it runs at most once.
+      const nudgeRound = emptyNudged;
+      const lastRound = nudgeRound || round >= MAX_TOOL_ROUNDS;
       const offer = await toolOffer();
       roundText = '';
       const result = await mayor.client.streamChat({
@@ -821,7 +838,7 @@ async function runAgentTurn({
         apiKey: mayor.apiKey,
         telemetryContext: {
           pool, appId: null, sessionId: null, backend: 'mayor',
-          component: round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration',
+          component: nudgeRound ? 'mayor_empty_retry' : (round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration'),
         },
       });
       const cents = costOf(mayor, result, d);
@@ -845,6 +862,15 @@ async function runAgentTurn({
             : withTrailingUserText(convo, note);
           continue;
         }
+      }
+      // The turn is ending with no words for the person: ask once more,
+      // without tools, before falling back to EMPTY_REPLY_TEXT. An empty
+      // assistant message is not replayable, so the note joins the last
+      // user message.
+      if ((!toolUses.length || lastRound) && !stop.stopped && !visibleText && !cards.length && !emptyNudged) {
+        emptyNudged = true;
+        convo = withTrailingUserText(convo, EMPTY_REPLY_NOTE);
+        continue;
       }
       if (stop.stopped || !toolUses.length || lastRound) break;
 
@@ -991,11 +1017,22 @@ async function compactHistory({ pool, config, user, agentSessionId, mayor, summa
 // change's: its stop goes through POST /api/sessions/:changeId/stop, which
 // confirms the kill and escalates, so this answers with the change to stop.
 // The wrap-up cannot be stopped.
-function stopAgentTurn(agentSessionId, { by = null } = {}) {
+function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}) {
   const handle = stopRegistry.get(agentSessionId);
   if (!handle) return { stopped: false, reason: 'no_active_turn' };
+  if (expectedTurnId && handle.turnId !== expectedTurnId) return { stopped: false, reason: 'turn_changed' };
   if (handle.phase === 'mayor2') return { stopped: false, reason: 'wrap_up_not_stoppable' };
   if (handle.phase === 'cc') {
+    handle.stopped = true;
+    handle.stoppedBy = by;
+    if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
+    const child = handle.change?.handle;
+    if (child && child.phase !== 'mayor2') {
+      child.stopped = true;
+      child.stoppedBy = by;
+      child.stopRequestedAt ||= handle.stopRequestedAt;
+      try { child.abort.abort(); } catch { /* already aborted */ }
+    }
     return {
       stopped: false,
       reason: 'dispatch_running',
@@ -1004,9 +1041,21 @@ function stopAgentTurn(agentSessionId, { by = null } = {}) {
   }
   handle.stopped = true;
   handle.stoppedBy = by;
+  if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
   try { handle.send('stopping', { by }); } catch { /* best effort */ }
   try { handle.abort.abort(); } catch { /* already aborted */ }
   return { stopped: true, phase: handle.phase };
+}
+
+// Cross-process notifications are a wake-up, never permission to stop an
+// arbitrary run. Re-read the durable intent and match the exact local turn.
+async function receiveStopRequest(pool, { agentSessionId, turnId } = {}, deps = {}) {
+  const handle = stopRegistry.get(Number(agentSessionId));
+  if (!pool || !handle || handle.turnId !== turnId) return false;
+  const request = await (deps.agentSessions || require('../agent-sessions')).readTurnStopRequest(pool, { agentSessionId, turnId });
+  if (!request || stopRegistry.get(Number(agentSessionId)) !== handle) return false;
+  stopAgentTurn(Number(agentSessionId), { by: request.stopRequestedBy, expectedTurnId: turnId });
+  return true;
 }
 
 // Where the running turn is, for a client that joins mid-turn.
@@ -1017,6 +1066,7 @@ function turnState(agentSessionId) {
     id: handle.turnId || null,
     phase: handle.phase,
     stopping: !!handle.stopped,
+    stopRequestedAt: handle.stopRequestedAt || null,
     changeId: handle.change ? handle.change.changeId : null,
     // What the screen's clock counts from: the build once one was
     // dispatched (the wrap-up keeps counting it), else the turn.
@@ -1032,9 +1082,9 @@ function recoveredRunState(agentSessionId, changeId, deps = {}) {
   if (stopRegistry.has(agentSessionId) || !changeId) return null;
   const d = defaults(deps);
   if (!d.isChangeBusy(changeId)) return null;
-  // The change's visual change preview is not the coding agent: the
+  // The change's before/after shots are not the coding agent: the
   // conversation shows it as its own capture (activeChange.previewCapture).
-  if (d.activeTurnMode(changeId) === 'evidence') return null;
+  if (d.activeTurnMode(changeId) === 'shots') return null;
   return { phase: 'cc', stopping: false, changeId };
 }
 
@@ -1180,6 +1230,7 @@ module.exports = {
   EMPTY_REPLY_TEXT,
   INTERRUPTED_TEXT,
   RETRY_NOTE,
+  EMPTY_REPLY_NOTE,
   IMMEDIATE_WRITE_TOOLS,
   SWITCH_ACTIVE_CHANGE_TOOL,
   SET_FOCUS_APP_TOOL,
@@ -1198,7 +1249,7 @@ module.exports = {
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
-  stopAgentTurn,
+  stopAgentTurn, receiveStopRequest,
   turnState,
   handBackOrphanedTurn,
   handBackAfterRecovery,

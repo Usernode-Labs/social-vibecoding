@@ -2,17 +2,41 @@
 
 const { boundedText, collectPodDiagnostics, conditionDetails } = require('./kubernetes-diagnostics');
 
+// Waits the kubelet reports while it cannot even start the container. None
+// of them clears inside a setup window, so waiting out the full timeout only
+// delays the same answer. Each maps to a typed reason the route layer words
+// for the user; the Kubernetes name stays in the logged message.
+const STUCK_WAITING_REASONS = Object.freeze({
+  ImagePullBackOff: 'image_unavailable',
+  ErrImagePull: 'image_unavailable',
+  InvalidImageName: 'image_unavailable',
+  CreateContainerConfigError: 'config_error',
+});
+// Short graces, not zero: a registry blip can show ErrImagePull once, the
+// Secret written just before the Deployment can briefly read as a config
+// error, and a fresh volume can leave a Pod unschedulable for a few seconds.
+const STUCK_WAITING_GRACE_MS = 30 * 1000;
+const UNSCHEDULABLE_GRACE_MS = 60 * 1000;
+
+function workerCouldNotStart(reason, detail) {
+  const err = new Error(`worker could not start (${detail})`);
+  Object.defineProperty(err, 'bootstrapReason', { value: reason, configurable: true, writable: true });
+  return err;
+}
+
 // Observe setup while the readiness probe is still false. Waiting for the
 // Deployment first hides clone failures and all setup progress until timeout.
 async function waitForWorkerBootstrap(core, apps, {
   namespace, name, imageRef, environmentChecksum, generation = 0,
-  onProgress, timeoutMs = 5 * 60 * 1000,
+  onProgress, timeoutMs,
 }) {
+  if (!(timeoutMs > 0)) timeoutMs = 5 * 60 * 1000;
   const deadline = Date.now() + timeoutMs;
   let phase = null;
   let recent = [];
   let podName = null;
   let lastReadError = null;
+  let stuck = null;
   const warnings = new Set();
   const emit = text => { try { onProgress?.(text); } catch { /* observer only */ } };
   const read = async fn => {
@@ -65,6 +89,19 @@ async function waitForWorkerBootstrap(core, apps, {
         if (worker?.state?.terminated || worker?.state?.waiting?.reason === 'CrashLoopBackOff') {
           throw new Error(`warm wrapper exited before warm-ready (${worker.state.terminated?.reason || worker.state.waiting.reason})`);
         }
+        const waiting = worker?.state?.waiting?.reason;
+        const unschedulable = pod.status?.conditions?.some(c => c.type === 'PodScheduled'
+          && c.status === 'False' && c.reason === 'Unschedulable');
+        const stuckKey = STUCK_WAITING_REASONS[waiting] ? `${podName}/${waiting}`
+          : (unschedulable ? `${podName}/Unschedulable` : null);
+        if (!stuckKey) stuck = null;
+        else if (stuck?.key !== stuckKey) stuck = { key: stuckKey, since: Date.now() };
+        else if (Date.now() - stuck.since >= (unschedulable && !STUCK_WAITING_REASONS[waiting]
+          ? UNSCHEDULABLE_GRACE_MS : STUCK_WAITING_GRACE_MS)) {
+          throw STUCK_WAITING_REASONS[waiting]
+            ? workerCouldNotStart(STUCK_WAITING_REASONS[waiting], waiting)
+            : workerCouldNotStart('unschedulable', 'Unschedulable');
+        }
         const status = deployment.status || {};
         if (!deployment.metadata?.deletionTimestamp && status.observedGeneration >= generation
             && status.updatedReplicas === 1 && status.replicas === 1 && status.availableReplicas >= 1
@@ -94,4 +131,4 @@ async function waitForWorkerBootstrap(core, apps, {
   }
 }
 
-module.exports = { waitForWorkerBootstrap };
+module.exports = { waitForWorkerBootstrap, STUCK_WAITING_REASONS, STUCK_WAITING_GRACE_MS, UNSCHEDULABLE_GRACE_MS };

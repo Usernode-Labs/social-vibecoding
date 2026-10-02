@@ -2,7 +2,9 @@
 // src/routes/chat.js): the upload endpoint's classification + caps, and
 // the serve/preview header matrix. Security contracts pinned here:
 //
-//  - upload is collab-gated (404 when getAppForUser denies);
+//  - upload is collab-gated (404 when getAppForUser denies) and, like
+//    POST /messages, membership-gated (403 join_required to a
+//    non-member, before any bytes are stored);
 //  - serving is view-gated; unlinked rows (message_id NULL) are only
 //    readable by their uploader;
 //  - the plain serve route NEVER sends text/html — markdown/html/text
@@ -43,7 +45,9 @@ require.cache[appAccessId] = {
       lastAccessLevel = level;
       return accessGrants[level] || null;
     },
-    checkAppAccess: async () => true,
+    // The membership gate (services/communities.js) asks this before it
+    // refuses: only someone who could otherwise take part is told to join.
+    checkAppAccess: async (_pool, _app, _user, level) => !!accessGrants[level],
   },
 };
 
@@ -63,6 +67,15 @@ const ATT_ID = 'c'.repeat(32);
 
 function urlFor(server, path) {
   return `http://127.0.0.1:${server.address().port}${path}`;
+}
+
+// The row the membership gate reads (communities.GATE_COLUMNS).
+const isGateLookup = (sql) => /FROM apps a WHERE a\.slug = \$1/.test(sql);
+function gateRow(isMember) {
+  return {
+    id: 7, slug: 'demo', name: 'Demo', community_id: 3,
+    collab_visibility: 'public', view_visibility: 'public', is_member: isMember,
+  };
 }
 
 // ── Upload ──────────────────────────────────────────────────────────
@@ -97,10 +110,16 @@ test('upload classifies a markdown file, inserts it, and returns the id', async 
   }
 });
 
-test('upload 404s for non-collaborators without touching the DB', async () => {
+test('upload 404s for non-collaborators without touching attachments', async () => {
   accessGrants = { view: { id: 7 }, collab: null };
   let queried = false;
-  poolQueryHandler = async () => { queried = true; return { rows: [] }; };
+  poolQueryHandler = async (sql) => {
+    // Not a member either: the membership gate must still fall through to
+    // the collab guard's 404 rather than reveal the app with a Join.
+    if (isGateLookup(sql)) return { rows: [gateRow(false)] };
+    queried = true;
+    return { rows: [] };
+  };
   const server = await startServer();
   try {
     const res = await fetch(urlFor(server, '/api/apps/demo/chat-attachments?filename=notes.md'), {
@@ -110,6 +129,55 @@ test('upload 404s for non-collaborators without touching the DB', async () => {
     });
     assert.equal(res.status, 404);
     assert.equal(queried, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('upload answers join_required to a non-member and stores nothing', async () => {
+  accessGrants = { view: { id: 7 }, collab: { id: 7 } };
+  const seen = [];
+  poolQueryHandler = async (sql) => {
+    seen.push(sql);
+    if (isGateLookup(sql)) return { rows: [gateRow(false)] };
+    return { rows: [{ total: '0' }] };
+  };
+  const server = await startServer();
+  try {
+    const res = await fetch(urlFor(server, '/api/apps/demo/chat-attachments?filename=notes.md'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: Buffer.from('# Hello\n', 'utf8'),
+    });
+    assert.equal(res.status, 403);
+    const body = await res.json();
+    assert.equal(body.code, 'join_required');
+    assert.equal(body.app.slug, 'demo');
+    assert.ok(!seen.some((sql) => /chat_message_attachments/.test(sql)),
+      'neither the quota sum nor the INSERT ran');
+  } finally {
+    server.close();
+  }
+});
+
+test('upload still lands for a member', async () => {
+  accessGrants = { view: { id: 7 }, collab: { id: 7 } };
+  let inserted = false;
+  poolQueryHandler = async (sql) => {
+    if (isGateLookup(sql)) return { rows: [gateRow(true)] };
+    if (/SUM\(size_bytes\)/.test(sql)) return { rows: [{ total: '0' }] };
+    if (/INSERT INTO chat_message_attachments/.test(sql)) inserted = true;
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const res = await fetch(urlFor(server, '/api/apps/demo/chat-attachments?filename=notes.md'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: Buffer.from('# Hello\n', 'utf8'),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(inserted, true);
   } finally {
     server.close();
   }
@@ -179,7 +247,7 @@ test('html via the plain route serves as text/plain + attachment (never text/htm
     assert.match(res.headers.get('content-type'), /^text\/plain/);
     assert.match(res.headers.get('content-disposition'), /^attachment/);
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(res.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+    assert.equal(res.headers.get('cache-control'), 'private, no-store');
   } finally {
     server.close();
   }

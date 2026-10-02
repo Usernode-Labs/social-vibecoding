@@ -25,6 +25,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const agentModels = require('../services/agent-models');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function credentialRoutes(config) {
   const router = Router();
@@ -197,7 +198,7 @@ function credentialRoutes(config) {
   });
 
   // ── Claim the one company-funded OpenRouter child key ─────────────
-  router.post('/api/me/credentials/openrouter/managed', async (req, res) => {
+  router.post('/api/me/credentials/openrouter/managed', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
@@ -312,7 +313,6 @@ function credentialRoutes(config) {
         });
         return credential;
       });
-      agentModels.invalidateUser(req.user.id);
       log.info('credentials', 'OpenRouter key saved and selected as default', { userId: req.user.id });
       res.json({ ok: true, last4, revision: saved?.revision, keyInfo, defaultModel });
     } catch (err) {
@@ -325,7 +325,7 @@ function credentialRoutes(config) {
   });
 
   // ── Delete (revoke) OpenRouter key ─────────────────────────────────
-  router.delete('/api/me/credentials/openrouter', async (req, res) => {
+  router.delete('/api/me/credentials/openrouter', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const managedState = await managedOpenRouter.stateForUser(pool, req.user.id);
@@ -333,7 +333,6 @@ function credentialRoutes(config) {
         return res.status(409).json({ error: 'Company-funded keys can only be blocked or removed by an admin.' });
       }
       await credentialStore.revoke({ pool, userId: req.user.id, ...OPENROUTER });
-      agentModels.invalidateUser(req.user.id);
       // Key-removal consistency (review #8, plan 9.4): if Codex/OpenRouter
       // is the user's DEFAULT coding agent, reset the default back to
       // Claude — otherwise every future ordinary/headless session copies the
@@ -432,10 +431,10 @@ function credentialRoutes(config) {
     if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
     }
-    // Validate the model against the user's permitted catalog (review P1) —
+    // Validate the model against the OpenRouter catalog (review P1) —
     // model ids become executable Codex config.toml, so arbitrary strings
     // (with quotes/newlines) could inject TOML/MCP sections. Only allow
-    // a model the user's key can actually access. Wrapped in try/catch
+    // a model the catalog lists. Wrapped in try/catch
     // (review P6): listOpenRouterModels rethrows on failure, and Express 4
     // does not catch rejected async handlers — a transient catalog outage
     // must become a clean 400, never an unhandled rejection.
@@ -458,7 +457,7 @@ function credentialRoutes(config) {
       });
       const allowed = catalog.models.some((m) => m.id === model);
       if (!allowed) {
-        return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+        return res.status(400).json({ error: 'That model is not in the OpenRouter catalog.' });
       }
       } catch (err) {
         log.warn('credentials', 'model validation failed; rejecting safe', { userId: req.user.id, err: err.message });
@@ -497,11 +496,12 @@ function credentialRoutes(config) {
     }
   });
 
-  // ── User-filtered model catalog ────────────────────────────────────
+  // ── Model catalog ──────────────────────────────────────────────────
+  // The platform's shared OpenRouter catalog (services/agent-models.js),
+  // answered from what is held, with this user's stars on it.
   router.get('/api/me/coding-agent/models', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    // This is live, private account state. In particular, do not let the PWA
-    // API cache outlive OpenRouter's own key-filtered answer.
+    // The stars are private account state: no shared or PWA cache.
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Pragma', 'no-cache');
     const backend = (req.query.backend || 'codex_openrouter');
@@ -514,14 +514,13 @@ function credentialRoutes(config) {
       ]);
       res.json(decorateCatalogFavorites(catalog, favoriteOverrides));
     } catch (err) {
-      const msg = err.code === 'invalid_key' ? 'OpenRouter rejected the key.' : 'Failed to load models.';
       log.warn('credentials', 'model catalog failed', { userId: req.user.id, err: err.message });
-      res.status(400).json({ error: msg });
+      res.status(400).json({ error: 'Failed to load models.' });
     }
   });
 
   // Persist one star independently of the selected/default model. TRUE is
-  // validated against the same key-filtered catalog as selection; FALSE is
+  // validated against the same catalog as selection; FALSE is
   // also stored, rather than deleting the row, so a platform-recommended
   // model a user unstarred does not reappear as a favorite on the next read.
   router.patch('/api/me/coding-agent/models/favorite', async (req, res) => {
@@ -544,7 +543,7 @@ function credentialRoutes(config) {
           return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
         }
         if (!(catalog.models || []).some((model) => model.id === modelId)) {
-          return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+          return res.status(400).json({ error: 'That model is not in the OpenRouter catalog.' });
         }
       }
       if (favorite) {

@@ -194,33 +194,45 @@ test('cleanup is idempotent — SIGTERM then SIGINT must not tear down twice', a
 
 test('shutdown marks an unfinished visual replay with its actual interruption reason before closing the pool', async () => {
   const { server, restore } = loadServer();
-  const orchestrator = require('../src/services/visual-evidence-orchestrator');
-  const evidenceState = require('../src/services/visual-evidence-state');
+  const orchestrator = require('../src/services/shots-orchestrator');
+  const shotsState = require('../src/services/shots-state');
   const lifecycle = require('../src/services/lifecycle');
   const saved = {
     keys: orchestrator.inFlightSnapshot, ids: orchestrator.inFlightRunSnapshot,
-    transition: evidenceState.transitionRun, waitFor: lifecycle.waitFor,
+    transition: shotsState.transitionRun, waitFor: lifecycle.waitFor,
   };
   const runId = 'a'.repeat(32);
   const order = [];
+  const marks = [];
   orchestrator.inFlightSnapshot = () => ['42:head'];
   orchestrator.inFlightRunSnapshot = () => [runId];
   lifecycle.waitFor = async () => false;
-  evidenceState.transitionRun = async (_pool, id, next, patch) => {
+  // Recorded, not asserted, in here: the shutdown handler settles every mark
+  // with Promise.allSettled, so an assertion thrown inside this stub would be
+  // swallowed and could never fail the test.
+  shotsState.transitionRun = async (_pool, id, next, patch) => {
     order.push('marked');
-    assert.equal(id, runId);
-    assert.equal(next, 'failed');
-    assert.equal(patch.failureCode, 'evidence_run_interrupted');
-    assert.match(patch.failureReason, /platform process shut down/);
+    marks.push({ id, next, patch });
   };
   try {
     const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
     await runCleanup(server, { listener: fakeListener(), pool });
     assert.deepEqual(order, ['marked', 'poolEnd']);
+    assert.equal(marks.length, 1);
+    const [{ id, next, patch }] = marks;
+    assert.equal(id, runId);
+    assert.equal(next, 'failed');
+    assert.equal(patch.failureCode, 'shots_run_interrupted');
+    assert.equal(patch.failureReason, shotsState.SHUTDOWN_INTERRUPTED_REASON);
+    assert.match(patch.failureReason, /Homeroom restarted/);
+    // Tagged as a rollout, merged into the trace rather than replacing the
+    // run's diagnostics, so the retry sweep spends only the ceiling on it.
+    assert.deepEqual(patch.traceMerge, { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION });
+    assert.equal(patch.traceSummary, undefined);
   } finally {
     orchestrator.inFlightSnapshot = saved.keys;
     orchestrator.inFlightRunSnapshot = saved.ids;
-    evidenceState.transitionRun = saved.transition;
+    shotsState.transitionRun = saved.transition;
     lifecycle.waitFor = saved.waitFor;
     restore();
   }

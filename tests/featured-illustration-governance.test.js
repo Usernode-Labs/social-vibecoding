@@ -354,13 +354,13 @@ test('the sweepers, the by-id read and the share resolver carry the kind', () =>
 
 test('the staging mock row is served under ?demo=1 and is what the declared checks read', () => {
   const issues = read('src/routes/issues.js');
-  assert.match(issues, /mk\(9100008, 'featured_illustration', '\[Mock\] Change the featured illustration'/);
+  assert.match(issues, /mk\(9100077, 'featured_illustration', '\[Mock\] Change the featured illustration'/);
   const dapp = JSON.parse(read('dapp.json'));
   const checks = dapp.tests.filter((t) => /#2086/.test(t.name));
   assert.equal(checks.length, 2);
   for (const t of checks) {
     assert.match(t.path, /demo=1/);
-    assert.match(t.expectSelector, /\[data-gov-row='9100008'\] \[data-illustration-preview\]/);
+    assert.match(t.expectSelector, /\[data-gov-row='9100077'\] \[data-illustration-preview\]/);
     assert.match(t.expectSelector, /img\[alt\]$/);
   }
 });
@@ -397,7 +397,7 @@ function makeAppView({ user = { id: 1, username: 'me' } } = {}) {
 }
 
 const CARD_ROW = (over) => ({
-  id: 9100008, app_id: 0, kind: 'featured_illustration',
+  id: 9100077, app_id: 0, kind: 'featured_illustration',
   title: 'Change the featured illustration',
   description: 'maker proposed changing the featured illustration.',
   status: 'open',
@@ -411,7 +411,7 @@ const CARD_ROW = (over) => ({
 test('the card previews the proposed image beside the current one, as images and never links', () => {
   const AppView = makeAppView();
   const html = govCardHtml(AppView, CARD_ROW());
-  assert.match(html, /data-gov-row="9100008"/);
+  assert.match(html, /data-gov-row="9100077"/);
   assert.match(html, /Change the featured illustration/);
   const preview = html.slice(html.indexOf('data-illustration-preview="1"'));
   assert.ok(preview.length > 1, 'the preview block renders');

@@ -535,28 +535,57 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-function previewDatabaseAffinity(cfg, environment) {
-  if (environment !== 'staging' || !cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+// Previews and apps prefer to run near their database: first in the CNPG
+// primary's zone, then on its host. A page makes many sequential queries, so
+// a pod in another data centre pays that round trip on every one. When the
+// only preference was the primary's HOST, a full host left every other node
+// equally good, and previews landed in Falkenstein while the database ran in
+// Helsinki: those previews took a third longer to check, and 8 of 10 runs
+// there failed 60 to 240 checks on data that arrived too late (2026-10-01,
+// sessions 5588, 5664 and 5674).
+//
+// Both are preferences, so other eligible nodes stay available when the zone
+// is full. A node without `topology.kubernetes.io/zone` matches no zone, so
+// a cluster whose nodes carry no zone labels keeps the host preference alone.
+// Select the primary role, not a Pod/node name, so new scheduling follows
+// CNPG failover without moving already-running pods.
+function databaseAffinity(cfg, environment) {
+  if (environment !== 'staging' && environment !== 'production') return {};
+  if (!cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+  const primary = {
+    namespaces: [cfg.previewDatabaseNamespace],
+    labelSelector: { matchLabels: {
+      'cnpg.io/cluster': cfg.previewDatabaseCluster,
+      'cnpg.io/instanceRole': 'primary',
+    } },
+  };
   return {
     affinity: {
       podAffinity: {
-        // A preference leaves other eligible nodes available immediately.
-        // Select the primary role, not a Pod/node name, so new scheduling
-        // follows CNPG failover without moving already-running previews.
-        preferredDuringSchedulingIgnoredDuringExecution: [{
-          weight: 100,
-          podAffinityTerm: {
-            namespaces: [cfg.previewDatabaseNamespace],
-            labelSelector: { matchLabels: {
-              'cnpg.io/cluster': cfg.previewDatabaseCluster,
-              'cnpg.io/instanceRole': 'primary',
-            } },
-            topologyKey: 'kubernetes.io/hostname',
-          },
-        }],
+        preferredDuringSchedulingIgnoredDuringExecution: [
+          { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
+          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
+        ],
       },
     },
   };
+}
+
+// The node an app's ready Pod was scheduled on, for the deploy log. Best
+// effort: a lookup that fails or finds no ready Pod returns null and never
+// fails the deploy that just succeeded.
+async function scheduledNode(core, namespace, name, imageRef) {
+  try {
+    const pods = await core.listNamespacedPod({ namespace,
+      labelSelector: `social.usernode.io/runtime-name=${name}` });
+    const pod = (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
+      && item.spec?.nodeName
+      && item.spec?.containers?.some((c) => c.name === 'app' && c.image === imageRef)
+      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True'));
+    return pod ? pod.spec.nodeName : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Platform assets on every app's own origin ─────────────────────────
@@ -798,9 +827,15 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [],
+  command = [], runAsUser = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  // runAsUser is an explicit override for an image that names no user and
+  // so would run as root; nothing sets it unless the caller asks. The pod
+  // still runs with runAsNonRoot, so 0 is refused here, not by the kubelet.
+  if (runAsUser != null && (!Number.isSafeInteger(runAsUser) || runAsUser <= 0)) {
+    throw new Error('Kubernetes runAsUser must be a positive integer');
+  }
   if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
     throw new Error('Kubernetes container command must be an array of non-empty strings');
   }
@@ -841,8 +876,10 @@ async function deployApplication(config, {
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
           automountServiceAccountToken: false,
-          securityContext: podSecurityContext(),
-          ...previewDatabaseAffinity(cfg, environment),
+          securityContext: runAsUser == null
+            ? podSecurityContext()
+            : { ...podSecurityContext(), runAsUser, runAsGroup: runAsUser },
+          ...databaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ...(command.length ? { command } : {}),
@@ -920,10 +957,12 @@ async function deployApplication(config, {
     }
     throw err;
   }
+  const node = await scheduledNode(core, namespace, name, imageRef);
   return {
     runtimeKind: 'kubernetes', runtimeName: name, imageRef,
     hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
+    ...(node ? { node } : {}),
   };
 }
 
@@ -1167,7 +1206,7 @@ const VOLUME_QUOTA_RETRIES = 10;
 // drops only once the controller observes those deletions, so the claim is
 // retried for a short while rather than once.
 async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
-  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS, timeoutMs, retryAttempt = null }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1221,7 +1260,13 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels, ...workerContractLabels },
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
+          // A setup retry re-applies an otherwise identical Deployment, which
+          // would leave the stuck Pod in place. Stamping the attempt changes
+          // the template, so the Recreate strategy stops that Pod and starts a
+          // fresh one on the same Deployment, Secret and volume: a retry owns
+          // exactly the objects a first dispatch does.
+          annotations: { 'social.usernode.io/env-checksum': envChecksum(env),
+            ...(retryAttempt ? { 'social.usernode.io/setup-attempt': String(retryAttempt) } : {}) },
         },
         spec: {
           serviceAccountName: cfg.workerServiceAccount,
@@ -1246,7 +1291,7 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
   });
   await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
     imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
-    generation: deployed?.metadata?.generation || 0 });
+    generation: deployed?.metadata?.generation || 0, timeoutMs });
   return { runtimeKind: 'kubernetes', runtimeName: name, pvcName: temporary ? null : pvcName };
 }
 
@@ -1369,6 +1414,41 @@ async function listWorkers(config) {
     sessionId: Number(deployment.metadata.labels?.['social.usernode.io/session-id']),
     state: deploymentState(deployment) === 'creating' ? 'created' : deploymentState(deployment),
   })).filter((item) => Number.isFinite(item.sessionId));
+}
+
+// appResourceName's preview spelling. The name is the identity: evidence
+// replays (`sv-evidence-*`) share the staging environment label and carry a
+// session id too, but they belong to the evidence runner, not to a session's
+// preview, so the label selector alone would sweep them up.
+const PREVIEW_NAME_RE = /^sv-preview-(\d+)-s(\d+)$/;
+
+// Every preview Deployment in the app namespace, whatever the session rows
+// say about it. This is the Kubernetes counterpart of `docker ps -a` for the
+// stale-preview sweep (services/staging-reap.js): a preview whose row was
+// nulled, or whose row is gone, is visible only from this side.
+async function listPreviews(config) {
+  const namespace = config.kubernetes.appNamespace;
+  const deployments = await getClients().apps.listNamespacedDeployment({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`,
+  });
+  const previews = [];
+  for (const deployment of deployments.items || []) {
+    const name = deployment.metadata?.name || '';
+    const labelsMap = deployment.metadata?.labels || {};
+    const match = PREVIEW_NAME_RE.exec(name);
+    if (!match || labelsMap['social.usernode.io/session-id'] !== match[2]) continue;
+    const state = deploymentState(deployment);
+    previews.push({
+      name,
+      appId: Number(match[1]),
+      sessionId: Number(match[2]),
+      state: state === 'creating' ? 'created' : state,
+      image: deployment.spec?.template?.spec?.containers?.find((c) => c.name === 'app')?.image || null,
+      labels: labelsMap,
+    });
+  }
+  return previews;
 }
 
 // Every worker state volume, with whether a worker Deployment still mounts it.
@@ -1631,26 +1711,23 @@ async function runCaptureJob(config, options) {
   return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'capture');
 }
 
-async function runEvidenceJob(config, options) {
-  return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'evidence');
-}
-
 async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
 }
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
-  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
-        && !name.startsWith(`sv-evidence-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
@@ -1750,7 +1827,6 @@ async function runCheckJob(config, {
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
-  const evidence = kind === 'evidence';
   const cpuLimit = String(cpus);
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
@@ -1765,12 +1841,7 @@ async function runCheckJob(config, {
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
   const runName = `sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`;
-  // One evidence run launches two clean replay passes, and a repair may
-  // launch more. Finished Jobs remain for their TTL, so the run id is a
-  // correlation label, not a unique Job name. Keep the suffix even if the
-  // base must be truncated to fit Kubernetes' DNS name limit. Reserve room
-  // for the input Secret's "-input" suffix without truncating the nonce.
-  const name = evidence ? withSuffix(runName, crypto.randomBytes(8).toString('hex'), 57) : dnsName(runName);
+  const name = dnsName(runName);
   const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
@@ -1790,9 +1861,7 @@ async function runCheckJob(config, {
   const podVolumes = [];
   if (!unitSuite && inputSecretName) {
     container.command = ['sh', '-c'];
-    container.args = [evidence
-      ? 'exec node /app/evidence-replay.js < /var/run/usernode-capture/tests.json'
-      : 'exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
+    container.args = ['exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
     container.volumeMounts = [{
       name: 'capture-input', mountPath: '/var/run/usernode-capture', readOnly: true,
     }];
@@ -2296,10 +2365,10 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, isQuotaExceeded,
+  listWorkerVolumes, listPreviews, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

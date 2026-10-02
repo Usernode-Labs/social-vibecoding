@@ -259,12 +259,14 @@ const Improve = {
         repoUrl: null,
         iconUrl: null,
         iconEmoji: null,
+        iconColor: null,
         version: null,
         deploying: false,
         appUpdateReady: false,
         readOnly: false,
         showTerminal: false,
         canShare: false,
+        canReport: false,
         // Back to App.currentTab's own initial value, so the next target does
         // not inherit the last one's half.
         tab: 'app',
@@ -291,12 +293,14 @@ const Improve = {
       repoUrl: target.repoUrl || null,
       iconUrl: target.iconUrl || null,
       iconEmoji: target.iconEmoji || null,
+      iconColor: target.iconColor || null,
       version: target.version || null,
       deploying: !!target.deploying,
       // A build that landed for the PREVIOUS app is not this one's news.
       appUpdateReady: slugChanged ? false : !!prev.appUpdateReady,
       readOnly: !!target.readOnly,
       canShare: !!target.canShare,
+      canReport: target.canReport === true,
       // The terminal is only meaningful while an iframe is on screen, and
       // DevConsole owns that fact — a target change alone never turns it on.
       showTerminal: slugChanged ? false : prev.showTerminal,
@@ -609,7 +613,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'canReport', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);
@@ -989,87 +993,41 @@ const Improve = {
   },
 
   /**
-   * New change: the entry point for starting a session on desktop and touch.
+   * New change: the entry point for starting new work on desktop and touch.
+   * Improve's "New change" and the Workshop's "Start here" both come through
+   * here.
    *
-   * ── A NEW CHANGE IS AN AGENT CONVERSATION (#2770, #2772) ──────────────
+   * ── A NEW CHANGE IS AN AGENT SESSION (#2779) ─────────────────────────
    *
-   * It went through the app's Workshop — `_withApp` opened the board, then
-   * `AppView.createProposal()` hopped to the unsent-change screen — so the
-   * first thing a phone showed after New change was the Workshop tab, and
-   * back from the change led to the board. A change is a conversation with
-   * the agent that builds, and Messages is where those are listed now, so:
-   *
-   *   - it goes STRAIGHT to /dev/sessions/new, the screen createProposal's
-   *     plain path always ended on, with no board painted on the way;
-   *   - that screen lights the Messages tab (App._syncPlatformTabs), and
-   *   - its back arrow goes up to Messages, recorded here as the origin.
-   *
-   * Nothing is created by the click (#2241): the row appears on the first
-   * send, when DevChat.createSession publishes it through
-   * `onSessionCreated` — which is what puts it in Messages → Agents at once.
-   * The one-shot hint is the one createProposal set on the same path.
+   * New work starts in a conversation with the Mayor, focused on the app
+   * Improve is pointed at. It used to open that app's classic new-session
+   * screen (/dev/sessions/new, #2241); classic sessions are no longer
+   * created, and the server takes POST /api/apps/:slug/sessions only from
+   * the Mayor's start_change. Nothing is created by the click: the unsent
+   * conversation becomes a session on its first message.
    */
   startSession() {
     Improve.close();
-    // #2779: with agent sessions on, new work starts in a conversation with
-    // the Mayor, focused on the app Improve is pointed at (Improve's "New
-    // change" and the Workshop's "Start here" both come through here).
-    if (Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' })) return;
-    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
-    // THE SIDE PANEL (desktop): New change on a running app opens the unsent
-    // change in a panel BESIDE the app, which keeps running
-    // (frontend/src/features/side-panel/). The one-shot hint rides along to
-    // the panel's own document, where the screen is drawn. Declined whenever
-    // that is not the moment, and the change opens here as before.
-    const { slug } = improveStore.get();
-    const panel = window.UsernodeReact?.sidePanel;
-    if (slug && panel?.take?.(`app/${encodeURIComponent(slug)}/dev/sessions/${ref}`,
-      { proposalHint: true })) return;
-    Improve._nextSessionOrigin = '#messages';
-    if (window.AppView) window.AppView._proposalHint = true;
-    Improve._withApp(null, { subTab: 'sessions', ref });
+    Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' });
   },
 
   /**
-   * #2779: start an agent session instead of a classic one, when the viewer
-   * has them on. True when it took the start; false leaves the caller to go
-   * on as before. The hint carries whatever the entry point knows, and the
-   * server drops an app the viewer cannot see rather than refusing.
+   * #2779: open an unsent agent session with whatever the entry point knows.
+   * The server drops an app the viewer cannot see rather than refusing.
+   *
+   * The controller is published by the shell bundle at module scope, before
+   * anything can be clicked; without it (a shell that failed to boot) the
+   * address still opens an unsent conversation, only without the hint.
    */
   _startAgentSession(hint) {
-    const agent = window.UsernodeReact?.agentSession;
-    if (window.App?.user?.agentSessionsEnabled !== true || !agent) return false;
     const clean = {};
     if (hint && typeof hint.slug === 'string' && hint.slug) clean.slug = hint.slug;
     if (hint && Number.isInteger(hint.issueNumber)) clean.issueNumber = hint.issueNumber;
     if (hint && Number.isInteger(hint.proposalId)) clean.proposalId = hint.proposalId;
     if (hint && typeof hint.entry === 'string') clean.entry = hint.entry;
-    void agent.start(clean);
-    return true;
-  },
-
-  /**
-   * New change on a NAMED app (#2778): Messages' "+" → Agent chat, once the
-   * viewer has picked which app. The same destination startSession reaches —
-   * `/dev/sessions/new`, lighting the Messages tab, back arrow up to
-   * Messages — for an app that need not be the one Improve is pointed at.
-   * Nothing is created until the first send, exactly as there.
-   *
-   * A later change will point this at a platform-wide agent session instead;
-   * the caller does not need to know which.
-   */
-  async startSessionFor(slug) {
-    if (!slug || !window.App) return;
-    Improve.close();
-    if (Improve._startAgentSession({ slug, entry: 'messages' })) return;
-    Improve._nextSessionOrigin = '#messages';
-    if (window.AppView) window.AppView._proposalHint = true;
-    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
-    if (window.App.currentApp === slug) {
-      await window.App.switchTab('dev', ref, 'sessions');
-    } else {
-      await window.App.navigateToApp(slug, 'dev', ref, 'sessions');
-    }
+    const agent = window.UsernodeReact?.agentSession;
+    if (agent) void agent.start(clean);
+    else window.location.hash = '#agent/new';
   },
 
   /**

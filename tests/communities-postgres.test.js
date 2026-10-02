@@ -129,7 +129,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     let m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, false);
     assert.equal(m.audience, 'open');
-    assert.equal(m.audience_label, 'Community');
+    assert.equal(m.audience_label, 'Public community');
     await communities.join(pool, a, joiner.id);
     m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, true);
@@ -227,7 +227,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       let got = await call('GET', `/api/apps/${a.slug}/community`);
       assert.equal(got.status, 200);
       assert.equal(got.body.is_member, false);
-      assert.equal(got.body.audience_label, 'Community');
+      assert.equal(got.body.audience_label, 'Public community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
       assert.deepEqual(got.body.approval, { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 });
       assert.deepEqual(got.body.channel, {
@@ -547,5 +547,41 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.leave(pool, swap, me.id);
     const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);
     assert.deepEqual(after.map((f) => f.title), ['Older change']);
+  });
+
+  await t.test('an app suspended by moderation leaves the Messages and Workshop lists, admins included', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const { DISCUSSIONS_SQL } = require('../src/routes/messages-overview');
+    const me = await user();
+    const author = await user();
+    const kept = await app({ createdBy: author.id });
+    const suspended = await app({ createdBy: author.id });
+    const owedIds = {};
+    for (const a of [kept, suspended]) {
+      await communities.join(pool, a, me.id);
+      const { rows: [s] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title) VALUES ($1, $2, 'promoted', 'Owed vote') RETURNING id`,
+        [a.id, author.id]);
+      owedIds[a.slug] = s.id;
+    }
+    await pool.query('UPDATE apps SET moderation_suspended_at = NOW() WHERE id = $1', [suspended.id]);
+    for (const isAdmin of [false, true]) {
+      const discussions = (await pool.query(DISCUSSIONS_SQL, [me.id, isAdmin])).rows.map((r) => r.slug);
+      assert.ok(discussions.includes(kept.slug), 'the live app is still a discussion');
+      assert.ok(!discussions.includes(suspended.slug), 'the suspended one is not');
+      const counted = (await pool.query(overview.COUNTS_SQL, [me.id, isAdmin, isAdmin])).rows;
+      const counts = counted.map((r) => r.slug);
+      assert.ok(counts.includes(kept.slug) && !counts.includes(suspended.slug), 'no count for a suspended app');
+      // #3526: and WHICH votes the count is, in the keys the client's Needs
+      // you record uses (frontend/src/features/workshop/needs-seen.ts), so a
+      // vote swiped past can be taken off it and a new one cannot.
+      assert.deepEqual(counted.find((r) => r.slug === kept.slug).owed, [`proposal:${owedIds[kept.slug]}@0`]);
+      const items = (await pool.query(overview.ITEMS_SQL,
+        [me.id, isAdmin, isAdmin, overview.ITEMS_PER_APP, overview.ITEMS_TOTAL])).rows.map((r) => r.slug);
+      assert.ok(items.includes(kept.slug) && !items.includes(suspended.slug), 'no items for a suspended app');
+      const feed = (await pool.query(overview.NEEDS_FEED_SQL,
+        [me.id, isAdmin, isAdmin, overview.NEEDS_FEED_MAX])).rows.map((r) => r.slug);
+      assert.ok(feed.includes(kept.slug) && !feed.includes(suspended.slug), 'no Needs you card for a suspended app');
+    }
   });
 });

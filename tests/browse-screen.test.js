@@ -142,7 +142,7 @@ function makeBrowse(opts = {}) {
           const items = opts.contributors || [];
           return { slug: 'x', total: opts.contribTotal ?? items.length, contributors: items };
         }
-        if (/^\/api\/apps\/[^/?]+$/.test(url)) return { app: opts.coldApp || null };
+        if (/^\/api\/apps\/[^/?]+(?:\?manifest=summary)?$/.test(url)) return { app: opts.coldApp || null };
         return { apps: opts.apps || [] };
       };
       return { ok, status: ok ? 200 : 500, json };
@@ -976,8 +976,9 @@ test('syncFrom adopts an externally-fetched payload and repaints', () => {
 });
 
 test('Home.load hands its fresh payload to an open browse screen', () => {
+  // load() is the single-flight gate; the load itself is _loadOnce().
   const load = HOME_SRC.slice(
-    HOME_SRC.indexOf('async load() {'),
+    HOME_SRC.indexOf('async _loadOnce() {'),
     HOME_SRC.indexOf('// ===== Rendering')
   );
   assert.ok(load.length > 200, 'located Home.load');
@@ -1001,7 +1002,7 @@ test('detailActionsFor: filters favorite + add-to-homescreen + app-details', () 
   // tested) permission gates inside menuItemsFor.
   Home.menuItemsFor = () => ([
     { key: 'app-details', label: 'App details', run: () => {} },
-    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
     { key: 'add-to-homescreen', label: 'Add to Homeroom widget', run: () => {} },
     { key: 'retry', label: 'Retry', run: () => {} },
     { key: 'build-log', label: 'View build log', run: () => {} },
@@ -1037,7 +1038,7 @@ test('detailActionsFor: derives from Home.menuItemsFor, never re-derived', () =>
 test('the detail page describes Open, Add/Remove and the action rows', () => {
   const { Browse, Home, state } = makeBrowse();
   Home.menuItemsFor = () => ([
-    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
     { key: 'fork', label: 'Fork this app', run: () => {} },
     { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
   ]);
@@ -1049,7 +1050,7 @@ test('the detail page describes Open, Add/Remove and the action rows', () => {
   assert.equal(d.slug, 'detail-me');
   assert.equal(d.canOpen, true, 'Open is the primary action');
   assert.equal(d.openLabel, 'Open');
-  assert.equal(d.favLabel, 'Add to Your apps');
+  assert.equal(d.favLabel, 'Add to Shortcuts');
   assert.deepEqual(d.actions.map((a) => a.label), ['Fork this app', 'Delete app'],
     'favorite is NOT duplicated as an action row');
   assert.equal(d.actions[1].danger, true, 'the danger row is flagged');
@@ -1313,7 +1314,7 @@ test('a cold deep link falls back to GET /api/apps/:slug', async () => {
   assert.equal(state.detail.state, 'loading');
   await flush();
   await flush();
-  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app'),
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app?manifest=summary'),
     'fetched the single app');
 });
 

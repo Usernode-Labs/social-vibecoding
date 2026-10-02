@@ -45,6 +45,13 @@ export interface IssueCommentView {
   createdAt: string;
   /** Sanitized markdown, already rendered by the module. */
   bodyHtml: string;
+  /**
+   * #3490: Homeroom bot's spec, split off its comment by the module
+   * (`AppView._botSpecOf`): the spec's title, and the rest as sanitized
+   * markdown. `bodyHtml` is then the bot's sentence alone. Null on every
+   * other comment.
+   */
+  spec?: { title: string | null; html: string } | null;
 }
 
 export interface IssueCommentsState {

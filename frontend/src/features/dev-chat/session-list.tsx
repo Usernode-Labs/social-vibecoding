@@ -64,6 +64,28 @@ async function call(fn: string, args: unknown[]): Promise<string | null> {
   return (await dc[fn](...args)) || null;
 }
 
+/**
+ * One action button's click: the busy label while the call runs, then its
+ * answer. A null answer means the row is about to be replaced (or was
+ * restored on failure) — either way the label goes back. A handler that
+ * THROWS restores it too: without this the button sat on its busy label,
+ * disabled, until the next publish, which a failed call never sends.
+ */
+export async function runSessionAction(
+  a: Pick<SessionAction, 'fn' | 'args' | 'busy'>,
+  setPending: (label: string | null) => void,
+): Promise<void> {
+  setPending(a.busy);
+  let flash: string | null = null;
+  try {
+    flash = await call(a.fn, a.args);
+  } catch (err) {
+    console.warn(`[session-list] ${a.fn} failed`, err);
+  } finally {
+    setPending(flash);
+  }
+}
+
 function ActionButton({ a }: { a: SessionAction }): ReactNode {
   const [pending, setPending] = useState<string | null>(null);
   return (
@@ -75,10 +97,7 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
       onClick={async (e) => {
         e.stopPropagation();
         if (pending) return;
-        setPending(a.busy);
-        // A null answer means the row is about to be replaced (or was
-        // restored on failure) — either way the label goes back.
-        setPending(await call(a.fn, a.args));
+        await runSessionAction(a, setPending);
       }}
     >
       {pending || a.label}
@@ -177,10 +196,35 @@ function EmptyPitch(): ReactNode {
   );
 }
 
-export function SessionListView({ rows }: SessionListState): ReactNode {
+/**
+ * The list's last row when it left finished sessions out: one quiet line,
+ * the same weight as a row's own actions, that reads the whole history.
+ */
+function OlderRow({ older }: { older: number }): ReactNode {
+  const [pending, setPending] = useState(false);
+  return (
+    <button
+      type="button"
+      className="dc-session-older w-full px-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+      disabled={pending}
+      onClick={async () => {
+        if (pending) return;
+        setPending(true);
+        await call('showOlderSessions', []);
+        setPending(false);
+      }}
+    >
+      {pending ? 'Loading…' : `Show ${older.toLocaleString()} older ${older === 1 ? 'session' : 'sessions'}`}
+    </button>
+  );
+}
+
+export function SessionListView({ rows, older = 0 }: SessionListState): ReactNode {
   if (!rows) return null;
-  if (!rows.length) return <EmptyPitch />;
-  return <>{rows.map((row) => <Row key={row.id} row={row} />)}</>;
+  if (!rows.length && !older) return <EmptyPitch />;
+  const listed = rows.map((row) => <Row key={row.id} row={row} />);
+  if (!older) return <>{listed}</>;
+  return <>{listed}<OlderRow older={older} /></>;
 }
 
 export function SessionList(): ReactNode {

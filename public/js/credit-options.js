@@ -105,11 +105,18 @@
   }
 
   // The one sentence every surface uses to answer "when do I get them
-  // back?". Names the boundary the server names (#2571: Monday 00:00 UTC,
-  // the week the one account-wide allowance runs over), then translates a
-  // daily one, because almost nobody reading it is on UTC and "tomorrow"
-  // was the old, wrong shorthand. A payload with no window at all keeps
-  // the pre-#1788 daily spelling.
+  // back?". The server's boundary is UTC (#2571: Monday 00:00 UTC, the
+  // week the one account-wide allowance runs over), but almost nobody
+  // reading it is on UTC, so #3230 names the reader's own moment instead
+  // ("Free credits reset Sunday at 8:00 PM") through window.ResetTime,
+  // which the bundle publishes (frontend/src/lib/reset-time.ts), and
+  // resetTitle() below carries the exact UTC instant for a `title`. Where
+  // ResetTime is absent (a bare unit sandbox) the sentence keeps naming the
+  // UTC boundary as the server states it.
+  function resetTime() {
+    return (typeof window !== 'undefined' && window.ResetTime) || null;
+  }
+
   function resetSentence(state, nowMs) {
     var s = state || {};
     if (s.level === 'locked') {
@@ -118,26 +125,35 @@
     if (s.level === 'unavailable') {
       return 'Credit eligibility is temporarily unavailable.';
     }
-    var resetLabel = s.resetLabel || 'midnight UTC';
-    var parts = s.capWindow === 'weekly'
-      ? 'Free credits reset ' + resetLabel
-      : 'Free credits reset at ' + resetLabel;
+    var weekly = s.capWindow === 'weekly';
+    var RT = resetTime();
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
-    if (at && Number.isFinite(at.getTime())) {
-      var local = null;
-      try {
-        // Only worth translating for a reader who is not already on UTC —
-        // otherwise it prints "midnight UTC — 12:00 AM your time", which
-        // is the same fact twice.
-        if (at.getTimezoneOffset() !== 0 && s.capWindow !== 'weekly') {
-          local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-        }
-      } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
-      if (local) parts += ' (' + local + ' your time)';
+    if (at && !Number.isFinite(at.getTime())) at = null;
+    var parts;
+    if (RT) {
+      parts = 'Free credits reset ' + RT.resetWhen(weekly ? 'weekly' : 'daily',
+        { at: at, now: nowMs == null ? undefined : nowMs });
+    } else {
+      var resetLabel = s.resetLabel || 'midnight UTC';
+      parts = weekly
+        ? 'Free credits reset ' + resetLabel
+        : 'Free credits reset at ' + resetLabel;
+    }
+    if (at) {
       var left = resetIn(s.resetsAt, nowMs);
       if (left) parts += ', about ' + left + ' from now';
     }
     return parts + '.';
+  }
+
+  // The exact UTC instant of that reset, for the `title` of whatever
+  // renders resetSentence(). null when there is nothing to say it with.
+  function resetTitle(state, nowMs) {
+    var s = state || {};
+    var RT = resetTime();
+    if (!RT || s.level === 'locked' || s.level === 'unavailable') return null;
+    return RT.resetUtc(s.capWindow === 'weekly' ? 'weekly' : 'daily',
+      { at: s.resetsAt || null, now: nowMs == null ? undefined : nowMs });
   }
 
   // Normalises either budget payload into one state. The composer reads
@@ -509,7 +525,8 @@
   // `state.error` is the platform's own billing message (limits.checkBudget
   // → "Weekly limit reached ($50.00). Resets Monday 00:00 UTC."). It is
   // escaped, never injected — it is server text, but the card must not be
-  // an HTML sink regardless.
+  // an HTML sink regardless. Its UTC boundary is reworded into the reader's
+  // clock (#3230) the same way resetSentence() words it.
   function cardHtml(state) {
     var s = state || {};
     var list = options(s);
@@ -522,7 +539,8 @@
       + '<div class="dc-credits-card" data-credits-card="1">'
       + '<div class="dc-credits-card-lead">' + escapeHtml(lead(s)) + '</div>'
       + (s.error
-        ? '<div class="dc-credits-card-detail">' + escapeHtml(s.error) + '</div>'
+        ? '<div class="dc-credits-card-detail">' + escapeHtml(
+          resetTime() ? resetTime().localizeResetText(s.error) : s.error) + '</div>'
         : '')
       + '<div class="dc-credits-card-intro">' + escapeHtml(introFor(list)) + '</div>'
       + optionsHtml(split.primary)
@@ -624,6 +642,7 @@
     money: money,
     resetIn: resetIn,
     resetSentence: resetSentence,
+    resetTitle: resetTitle,
     creditState: creditState,
     meterParts: meterParts,
     meterTone: meterTone,

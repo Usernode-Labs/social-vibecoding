@@ -133,6 +133,36 @@ test('tier 0 — derived deployment state distinguishes live, pending, and stall
   assert.equal(stalled.tone, 'blocked');
 });
 
+test('merged child proposals say whether delivery is pending, failed or confirmed; unknown reads as plain Merged', () => {
+  const AppView = makeAppView();
+  const state = deployment_state => AppView.statusPillState(PR({
+    status: 'merged', deployment_kind: 'child', deployment_state,
+  }));
+  assert.equal(state('deployed').label, '✓ Deployed');
+  assert.equal(state('pending').label, 'Merged · awaiting deployment');
+  assert.equal(state('failed').label, 'Merged · deploy failed');
+  assert.equal(state('failed').tone, 'blocked');
+  // #3368: `unknown` is the absence of evidence (e.g. a container deployed
+  // before revision labels existed), not a problem to flag on every row.
+  assert.equal(state('unknown').label, '✓ Merged');
+  assert.equal(state('unknown').key, 'merged');
+  assert.equal(state('unknown').tone, 'ok');
+  assert.equal(state(undefined).label, '✓ Merged');
+});
+
+test('the Done summary reports a child app’s latest delivery outcome', () => {
+  const AppView = makeAppView();
+  const status = state => {
+    AppView._mergedCtx = { deployment: { kind: 'child', state,
+      runningSha: 'abcdef0123456789abcdef0123456789abcdef01' } };
+    return AppView._doneDeploymentStatus();
+  };
+  assert.match(status('pending').text, /awaiting deployment/);
+  assert.match(status('failed').text, /deploy failed/);
+  assert.equal(status('unknown'), null, 'no evidence either way is not worth a summary line (#3368)');
+  assert.match(status('deployed').text, /abcdef0/);
+});
+
 test('tier 1 — merging stays in the bar; resolving became a tag', () => {
   const AppView = makeAppView();
   // Merging, even with failing checks and a conflict recorded: the merge is

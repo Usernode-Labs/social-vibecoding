@@ -13,6 +13,9 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
+const proposalDescriptionEdit = require('../services/proposal-description-edit');
+const platformIssueBlock = require('../services/platform-issue-block');
+const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
@@ -53,6 +56,7 @@ const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Imported pull requests are proposal-shaped work before they are promoted:
 // their GitHub description, testing notes, check run and community attributes
@@ -73,7 +77,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
-            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.branch_name,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.branch_name,
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
@@ -170,6 +174,7 @@ const { listDrafts } = require('./chat-drafts');
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
+const listTestResults = require('../services/list-test-results');
 const communities = require('../services/communities');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
@@ -245,6 +250,27 @@ const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
   message: 'headless_wrapup_message',
   spend: 'headless_wrapup_spend',
 });
+
+// Who may read a session's checks, details and live status: its owner, an
+// admin, anyone while its owner has shared it and it is still underway, and
+// anyone once it is a proposal up for a vote (or merging/merged). `session`
+// needs `user_id`, `status` and `shared_at`.
+function canViewSession(session, user) {
+  if (!session || !user) return false;
+  return session.user_id === user.id || !!user.isAdmin
+    || (!!session.shared_at && ['active', 'paused'].includes(session.status))
+    || ['promoted', 'merging', 'merged'].includes(session.status);
+}
+
+// A session that will not change again, for the session list's `?recent=N`.
+const FINISHED_SESSION_STATUSES = new Set(['merged', 'archived']);
+// `?recent=N` as a count of finished rows to keep: 1..200, or null to list
+// them all.
+function recentFinishedLimit(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 200);
+}
 
 // Content-free caller context for services/llm.js. This object is consumed
 // locally by the telemetry wrapper and is never spread into a provider
@@ -466,6 +492,17 @@ async function scheduleRetainedInteractiveTurn({
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 const MANUAL_SESSION_TITLE_MAX = 256;
 
+// #2779: classic dev sessions — a per-change chat created straight from the
+// browser — are phased out. New work starts in an agent session, whose
+// Mayor creates each change through POST /api/apps/:slug/sessions on a
+// delegated grant; nothing else may create one any more (not a browser, a
+// shell cached before the switch, a CLI token, nor Global Chat's loopback),
+// and forking a chat into a new classic session is retired with them.
+// Sessions that already exist keep working exactly as they did: only the
+// creation routes read this.
+const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
+  + 'Start one from Messages or New change.';
+
 // #1038: identifies THIS platform process to the client's session-state
 // store. Live busy state is in-process memory (see services/session-state),
 // so a restart or a blue-green cutover invalidates every override a client
@@ -513,6 +550,7 @@ const recheckInFlight = new Set();
 function stagingMockOwnSession(userId, appSlug) {
   return {
     id: 990101, branch_name: 'mock/my-session', pr_number: null,
+    preview_placeholder: true,
     user_id: userId,
     pr_url: null, pr_title: null,
     session_title: '[Mock] Your in-progress session',
@@ -530,6 +568,117 @@ function stagingMockOwnSession(userId, appSlug) {
     // appended after the map that computes the real verdict.
     awaiting_input: true,
   };
+}
+
+// One source for the display-only rows in the list and their detail reads.
+function stagingMockOwnSessions(userId, appSlug) {
+  return [
+  stagingMockOwnSession(userId, appSlug),
+  // Card-as-pointer revision: a PRIVATE session that already has a
+  // PR, so the muted/draft shell renders WITH the icon Preview
+  // affordance beside its ⋯. Both other private rows have
+  // pr_number: null, so without this one the muted-plus-preview
+  // combination is unreviewable in a preview.
+  {
+    id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your private session with a preview',
+    status: 'active', linked_issues: [900011], shared_at: null,
+    created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // Busy own session — exercises the "working…" state (spinner tag
+  // beside the title, which the single-row shell keeps uncrushed).
+  {
+    id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Busy own session with a fairly long title to verify the working-state layout',
+    status: 'active', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+    last_activity_at: new Date().toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: true,
+  },
+  // Visible (shared) own session — renders below the archived
+  // toggle under the "Visible to everyone." caption, with the
+  // Preview (#689: pr_number set) + Open chat + Share chat + Hide
+  // buttons. transcript_shared_at is NULL here, so this row is the
+  // "visible, chat still private" half of the chip pair.
+  {
+    id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
+    pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
+    session_title: '[Mock] Your visible session',
+    status: 'active', linked_issues: [],
+    shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+    transcript_shared_at: null,
+    created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // The other half: visible AND transcript-published, so the card
+  // renders the "Chat shared" toggle plus the "· chat readable"
+  // subtitle. A live seed can't hold both states at once (one row,
+  // one flag), which is exactly what the demo path is for.
+  {
+    id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your visible session with the chat shared',
+    status: 'active', linked_issues: [],
+    shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // #747: promoted own session whose id matches the first mock
+  // proposal (stagingMockProposals in votes.js), which the
+  // /api/me/proposals demo block also returns — so the work
+  // drawer's de-dup is reviewable via ?demo=1: this row must
+  // render under "Your proposals" only, never "Your sessions".
+  {
+    id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
+    pr_url: null,
+    pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+    session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+    status: 'promoted', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // A proposal-in-vote row so the dev drawer's violet "Proposed"
+  // card state is reviewable in a demo preview. Unlike 9000001
+  // above, this id is deliberately NOT in the mock proposals list,
+  // so it renders in the session list (the "proposals fetch
+  // failed" fallback the work drawer documents) — which is exactly
+  // the card the promoted-cap copy talks about. Appended AFTER
+  // totals like every other mock, so the "(x/y)" numerator stays
+  // honest and the denominators come from `caps` below.
+  {
+    id: 990105, branch_name: 'mock/my-proposal-in-vote', pr_number: 990105,
+    pr_url: null, pr_title: '[Mock] Proposal up for vote',
+    session_title: '[Mock] Proposal up for vote',
+    status: 'promoted', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // #1808: the row PAST the relative form's seven-day floor. Every
+  // other mock here is minutes or hours old, so the session rows'
+  // stamp read "5m ago" on all of them and the branch that prints a
+  // real date was unreachable in a preview. A session parked a
+  // fortnight ago is also the case the old code got worst: it
+  // bucketed at thirty days and then months, so this row read "0mo
+  // ago" once and "5mo ago" later, neither of which is a day.
+  {
+    id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your session from a couple of weeks ago',
+    status: 'active', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  }
+].map((sample) => ({ ...sample, preview_placeholder: true }));
 }
 
 function stagingMockSharedSessions() {
@@ -765,10 +914,8 @@ function stagingMockTranscript(sessionId) {
       transcript_shared_at: t(30),
       message_count: raw.length,
       is_owner: false,
-      // Forking a mock id 404s harmlessly (no such row), same posture as
-      // voting on a mock proposal — but the button must RENDER so the
-      // read-only layout is reviewable in a demo preview.
-      can_fork: true,
+      // Retired with classic sessions (#2779); see the transcript read.
+      can_fork: false,
     },
     messages: transcriptShare.sanitizeTranscript(raw),
     truncated: false,
@@ -1573,7 +1720,7 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     ? catalog.models.find((candidate) => candidate.id === modelId)
     : null;
   if (!selectedCatalogModel) {
-    throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
+    throw new AgentSelectionError(400, 'That model is not in the OpenRouter catalog.');
   }
 
   return {
@@ -1822,6 +1969,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // collab-level access. 404 on deny so private apps' sessions aren't
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
+  // Reader-facing description, shared by the menu editor and MCP. Reading
+  // just this resource avoids downloading the author's private build chat.
+  router.get('/api/sessions/:id/description', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    try {
+      const session = await proposalDescriptionEdit.readEditable(pool, id, req.user.id);
+      if (!session) return res.status(404).json({ error: 'Change not found or no longer editable.' });
+      return res.json(proposalDescriptionEdit.snapshot(session));
+    } catch (err) {
+      log.warn('sessions', 'Description read failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not load the description.' });
+    }
+  });
+
+  router.patch('/api/sessions/:id/description', drainGuard, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    let input;
+    try { input = proposalDescriptionEdit.parseEdit(req.body); }
+    catch (err) { return res.status(400).json({ error: 'invalid_request', message: err.message }); }
+    try {
+      const result = await proposalDescriptionEdit.edit({ pool, sessionId: id, userId: req.user.id, input });
+      if (result.status === 200) {
+        try {
+          require('../services/ws').pushSessionUpdate({
+            action: 'description_updated', sessionId: id,
+            appId: result.session.app_id, appSlug: result.session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'Description broadcast failed', { sessionId: id, message: err.message });
+        }
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      log.warn('sessions', 'Description edit failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not save the description. Your draft has been kept.' });
+    }
+  });
 
   // PATCH /api/sessions/:id/linked-issues (#2028)
   //
@@ -2094,6 +2281,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   on the ?demo=1 path.
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
+      await require('../services/staging-review-session').ensure(pool, config, req.user);
       // Imported PRs have no dev-chat worker. Keep them out of callers that
       // use this endpoint as a cross-app worker/session list; the Dev board
       // opts in so it can render the owner's imported In-progress cards.
@@ -2207,113 +2395,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // server-side. Its read-only detail projection exists so declared
       // checks can open the full change page without a console-erroring 404.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        sessions.push(
-          stagingMockOwnSession(req.user.id, config.selfAppSlug),
-          // Card-as-pointer revision: a PRIVATE session that already has a
-          // PR, so the muted/draft shell renders WITH the icon Preview
-          // affordance beside its ⋯. Both other private rows have
-          // pr_number: null, so without this one the muted-plus-preview
-          // combination is unreviewable in a preview.
-          {
-            id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your private session with a preview',
-            status: 'active', linked_issues: [900011], shared_at: null,
-            created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // Busy own session — exercises the "working…" state (spinner tag
-          // beside the title, which the single-row shell keeps uncrushed).
-          {
-            id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Busy own session with a fairly long title to verify the working-state layout',
-            status: 'active', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-            last_activity_at: new Date().toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: true,
-          },
-          // Visible (shared) own session — renders below the archived
-          // toggle under the "Visible to everyone." caption, with the
-          // Preview (#689: pr_number set) + Open chat + Share chat + Hide
-          // buttons. transcript_shared_at is NULL here, so this row is the
-          // "visible, chat still private" half of the chip pair.
-          {
-            id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
-            pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
-            session_title: '[Mock] Your visible session',
-            status: 'active', linked_issues: [],
-            shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-            transcript_shared_at: null,
-            created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // The other half: visible AND transcript-published, so the card
-          // renders the "Chat shared" toggle plus the "· chat readable"
-          // subtitle. A live seed can't hold both states at once (one row,
-          // one flag), which is exactly what the demo path is for.
-          {
-            id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your visible session with the chat shared',
-            status: 'active', linked_issues: [],
-            shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-            transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // #747: promoted own session whose id matches the first mock
-          // proposal (stagingMockProposals in votes.js), which the
-          // /api/me/proposals demo block also returns — so the work
-          // drawer's de-dup is reviewable via ?demo=1: this row must
-          // render under "Your proposals" only, never "Your sessions".
-          {
-            id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
-            pr_url: null,
-            pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
-            session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
-            status: 'promoted', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // A proposal-in-vote row so the dev drawer's violet "Proposed"
-          // card state is reviewable in a demo preview. Unlike 9000001
-          // above, this id is deliberately NOT in the mock proposals list,
-          // so it renders in the session list (the "proposals fetch
-          // failed" fallback the work drawer documents) — which is exactly
-          // the card the promoted-cap copy talks about. Appended AFTER
-          // totals like every other mock, so the "(x/y)" numerator stays
-          // honest and the denominators come from `caps` below.
-          {
-            id: 990105, branch_name: 'mock/my-proposal-in-vote', pr_number: 990105,
-            pr_url: null, pr_title: '[Mock] Proposal up for vote',
-            session_title: '[Mock] Proposal up for vote',
-            status: 'promoted', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // #1808: the row PAST the relative form's seven-day floor. Every
-          // other mock here is minutes or hours old, so the session rows'
-          // stamp read "5m ago" on all of them and the branch that prints a
-          // real date was unreachable in a preview. A session parked a
-          // fortnight ago is also the case the old code got worst: it
-          // bucketed at thirty days and then months, so this row read "0mo
-          // ago" once and "5mo ago" later, neither of which is a day.
-          {
-            id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your session from a couple of weeks ago',
-            status: 'active', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          }
-        );
+        sessions.push(...stagingMockOwnSessions(req.user.id, config.selfAppSlug));
       }
       // #1417: the work the viewer has handed to a coding agent through the
       // connector, which is NOT in chat_sessions and never will be until the
@@ -2376,8 +2458,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (row.source !== 'imported') delete row.test_results;
         if (summary.total) row.failing_checks = summary;
       }
+      // `?results=failing` (services/list-test-results.js): the imported rows
+      // above keep their raw results by contract; the shell's list form trims
+      // those to the failures too.
       res.json({
-        sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
+        sessions: listTestResults.forListing(req, sessions),
+        totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
       });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
@@ -2525,6 +2611,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
       const appRows = [app];
+      await require('../services/staging-review-session').ensure(pool, config, req.user, { ...app, slug: req.params.slug });
 
       // has_spec (#894): a boolean, never the spec body — the dev chat's
       // quick-reply fallback picks between the post-build and post-spec
@@ -2576,23 +2663,50 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                   AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
+           AND ($3::text IS NULL OR status = $3)
          ORDER BY created_at DESC`,
-        [appRows[0].id, req.user.id]
+        // `?status=archived`: the Workshop reads this list only for its
+        // "Show archived" rows, and a prolific author's whole history is
+        // over a thousand merged rows it discarded on arrival (700 KB on
+        // production). Only that one status is accepted; without it the
+        // whole list is answered, as it always was.
+        [appRows[0].id, req.user.id, req.query.status === 'archived' ? 'archived' : null]
       );
+
+      // `?recent=N`: every session still under way, and only the N newest
+      // finished (merged or archived) ones, with a count of the rest. The dev
+      // chat's own list asks for it: a prolific author's history on the
+      // platform app is over a thousand finished rows (1,015 merged and 97
+      // archived, 693 KB on production), re-read on every open of a change
+      // and every session event while it is on screen. "Show older" reads
+      // the whole list again. Without the parameter it is answered whole.
+      const recent = req.query.status === 'archived' ? null : recentFinishedLimit(req.query.recent);
+      let listed = rows;
+      let olderFinished = 0;
+      if (recent) {
+        let finished = 0;
+        listed = rows.filter((s) => {
+          if (!FINISHED_SESSION_STATUSES.has(s.status)) return true;
+          finished += 1;
+          return finished <= recent;
+        });
+        olderFinished = rows.length - listed.length;
+      }
 
       // `warm` = a worker container currently exists for the session. The
       // session list uses it to decide whether a promoted row still has a
       // worker to free (and the create-session cap counts the same thing).
       const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
-      for (const s of rows) s.warm = warmIds.has(s.id);
+      for (const s of listed) s.warm = warmIds.has(s.id);
 
       // Staging-only demo row (?demo=1): a mock archived session so the
       // "Show archived" toggle — the anchor the visible-sessions group
       // renders beneath — is present for any demo viewer. Same read-only
-      // 99xxxx convention as the other mocks (Unarchive 404s server-side).
+      // 99xxxx convention as the other mocks (Unarchive 404s server-side),
+      // with an id of its own: 990104 is the chat-shared session mock.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        rows.push({
-          id: 990104, branch_name: 'mock/archived-session', pr_number: null,
+        listed.push({
+          id: 990109, branch_name: 'mock/archived-session', pr_number: null,
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
           staging_url: null, status: 'archived', linked_issues: [],
@@ -2602,7 +2716,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      res.json({ sessions: rows });
+      res.json({ sessions: listed, ...(recent ? { older_finished: olderFinished } : {}) });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2723,7 +2837,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessions.push(...stagingMockSharedSessions());
       }
 
-      res.json({ sessions });
+      // `?results=failing`: the shell's list form (services/list-test-results.js).
+      res.json({ sessions: listTestResults.forListing(req, sessions) });
     } catch (err) {
       log.error('sessions', 'Failed to list shared sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2732,8 +2847,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
   // Create a new session. No branch and no PR yet (#1350): the branch is
   // minted on the first chat turn, the PR after the first commit.
-  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
+      // #2779: only an agent session's Mayor starts a change (a delegated
+      // grant that names the session); a classic session is no longer
+      // created for anyone else. See CLASSIC_SESSIONS_RETIRED.
+      const agentSessionId = req.mcpDelegation && req.mcpDelegation.kind === 'agent_mayor'
+        ? req.mcpDelegation.agentSessionId || null : null;
+      if (!agentSessionId) {
+        return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
+      }
+
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
@@ -2767,14 +2891,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
-      // #2779: a change started by an agent session's Mayor (a delegated
-      // grant that names the session) becomes that session's active change,
+      // #2779: the new change becomes the Mayor's session's active change,
       // and the one it was working on is parked first — which also frees its
       // slot before the cap below counts it. The grant's own liveness check
       // has already refused an archived or foreign session; this re-checks
       // at the write.
-      const agentSessionId = req.mcpDelegation && req.mcpDelegation.kind === 'agent_mayor'
-        ? req.mcpDelegation.agentSessionId || null : null;
       if (agentSessionId) {
         try {
           await agentSessions.prepareChangeStart(pool, { agentSessionId, userId: req.user.id });
@@ -2994,7 +3115,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // preview, but never opens a PR — the PR is created lazily on a cloned
   // session's branch at propose time (see runClaudeCodeTool's `headless`
   // flag).
-  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -3203,7 +3324,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // memory volume so the agent resumes with full context. A follow-up
   // assistant message tells the new owner where things stand and how to
   // proceed (review spec / answer question / ask for PR + staging).
-  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), async (req, res) => {
+  //
+  // #2779: the browser no longer clones a run into a classic dev chat (its
+  // "Start work" on a finished run opens an agent session instead). The
+  // hosted connector's submit_platform_build still takes ownership of a
+  // build this way before proposing it, so an external connector token (not
+  // a delegated grant) is the one caller left.
+  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
+    if (!req.connectorClientId || req.mcpDelegation) {
+      return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
+    }
     try {
       const { rows: srcRows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -3496,8 +3626,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
-          || (Number(req.params.id) === 990101
-            ? stagingMockOwnSession(req.user.id, config.selfAppSlug) : null);
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id));
         if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
       }
       const { rows } = await pool.query(
@@ -3507,8 +3636,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
                 cs.checks_base_verdict, cs.checks_base_behind_by,
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
-                cs.visual_evidence_state, cs.visual_evidence_run_id,
-                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+                cs.shots_state, cs.shots_run_id,
+                cs.shots_detail, cs.shots_updated_at,
                 a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
@@ -3517,10 +3646,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
-      const visible = session.user_id === req.user.id || req.user.isAdmin
-        || (session.shared_at && ['active', 'paused'].includes(session.status))
-        || ['promoted', 'merging', 'merged'].includes(session.status);
-      if (!visible) return res.status(404).json({ error: 'Session not found' });
+      if (!canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
       const detail = req.path.endsWith('/details')
         ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
         : session;
@@ -3539,12 +3665,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const proposal = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] });
           detail.proposal_state = proposal.revisionState || proposal.state;
         }
-        detail.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        detail.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug)
           : null;
       }
-      res.set('Cache-Control', 'no-store').json({ session: detail });
+      // `?results=failing`: the change page's own read, which lists passing
+      // checks only when their fold is opened (services/list-test-results.js).
+      res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
@@ -3746,11 +3874,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
       } catch { session.visuals = null; }
       try {
-        session.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        session.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, session, session.app_slug)
           : null;
-      } catch { session.visualEvidence = null; }
+      } catch { session.shots = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`
@@ -3814,7 +3942,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   timer run on a short (~5 min) worker-eviction-aligned window
   //   without pausing sessions someone is actively reading. One indexed
   //   UPDATE; only bumps 'active'/'promoted' rows owned by the caller.
-  router.post('/api/sessions/:id/activity', async (req, res) => {
+  router.post('/api/sessions/:id/activity', sameOriginBrowserOnly, async (req, res) => {
     try {
       await pool.query(
         `UPDATE chat_sessions SET last_activity_at = NOW()
@@ -3837,7 +3965,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // earlier visibility-arm — are harmless. Accepts navigator.sendBeacon
   // payloads: a same-origin JSON Blob rides through express.json() and
   // cookie auth applies as usual.
-  router.post('/api/sessions/:id/notify-on-done', async (req, res) => {
+  router.post('/api/sessions/:id/notify-on-done', sameOriginBrowserOnly, async (req, res) => {
     try {
       const armed = !!(req.body && req.body.armed);
       const { rowCount } = await pool.query(
@@ -4053,9 +4181,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   };
 
-  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'confirm'));
-  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'dismiss'));
 
   // Archive a session. Reversible: tears down staging + worker and closes
@@ -4063,7 +4191,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // within the retention window (a background GC purges the volume only
   // after ARCHIVED_RETENTION_MS). Use the service so the stale-PR sweeper
   // archives the exact same way.
-  router.post('/api/sessions/:id/archive', async (req, res) => {
+  router.post('/api/sessions/:id/archive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4103,7 +4231,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   no longer claim it, and a later promote puts it up for a fresh vote.
   //   Owner-scoped like /archive. All the safety lives in
   //   sessionLifecycle.unpromoteSession's single guarded UPDATE.
-  router.post('/api/sessions/:id/unpromote', async (req, res) => {
+  router.post('/api/sessions/:id/unpromote', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isInteger(sessionId) || sessionId <= 0) {
@@ -4142,7 +4270,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the warm worker. Only allowed on an idle, owned, non-archived
   //   session. For codex_openrouter the caller must have a valid
   //   OpenRouter credential.
-  router.post('/api/sessions/:id/reset-agent-context', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/reset-agent-context', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
@@ -4260,7 +4388,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   neither — the transcript, the branch and the proposal all stay exactly
   //   as they are, which is the promise the venue sheet makes when it says
   //   an in-chat venue "keeps this chat, this branch and this proposal".
-  router.post('/api/sessions/:id/build-venue', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/build-venue', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
@@ -4301,7 +4429,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the UI then auto-resumes via the normal path. If the CC volume was
   //   already GC'd (cc_purged), the restore still works but Claude starts
   //   fresh — we surface that so the UI can warn.
-  router.post('/api/sessions/:id/unarchive', async (req, res) => {
+  router.post('/api/sessions/:id/unarchive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (req.cliAuthenticated) {
@@ -4340,7 +4468,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   transcript_shared_at untouched, so today's behaviour is unchanged
   //   byte for byte: making a session visible never publishes the chat by
   //   accident.
-  router.post('/api/sessions/:id/share', async (req, res) => {
+  router.post('/api/sessions/:id/share', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const withTranscript = !!(req.body && req.body.transcript);
@@ -4375,7 +4503,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Unshare clears BOTH stamps. Making a session private again must never
   // leave the transcript readable behind a card nobody can see any more —
   // the reader could still hold (or bookmark) the session id.
-  router.post('/api/sessions/:id/unshare', async (req, res) => {
+  router.post('/api/sessions/:id/unshare', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4406,7 +4534,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   two flags can never disagree in the "readable but invisible"
   //   direction. Both stamps use COALESCE so re-sharing is idempotent and
   //   doesn't reshuffle the board's oldest-shared-first ordering.
-  router.post('/api/sessions/:id/share-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/share-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4442,7 +4570,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // board with its discussion thread intact. Deliberately NOT
   // status-filtered: revoking must work on any row whose flag is set,
   // including one that has since been promoted or archived.
-  router.post('/api/sessions/:id/unshare-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/unshare-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4544,13 +4672,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           transcript_shared_at: row.transcript_shared_at,
           message_count: row.message_count,
           is_owner: isOwner,
-          // A fork spends the caller's own AI budget and needs collab
-          // access; the guard has already proven collab for writes, but a
-          // read-only viewer reaches THIS route legitimately, so the flag
-          // tells the client whether to render the button at all. Forking
-          // your own chat is meaningless (use "Start a new change").
-          can_fork: !isOwner
-            && row.shared_at != null && row.transcript_shared_at != null,
+          // "Fork this chat" is retired with classic sessions (#2779).
+          // Still reported, as false, so a shell cached before that does
+          // not draw a button whose POST now answers 410.
+          can_fork: false,
         },
         messages,
         truncated,
@@ -4562,197 +4687,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // POST /api/sessions/:id/fork
-  //   Fork a shared, transcript-published dev chat into the CALLER's own new
-  //   session. Collab-gated by the sessionCollabGuard (POST → 'collab'), so a
-  //   read-only viewer who can read the transcript still can't fork it.
-  //
-  //   Modelled on /clone-headless with ONE deliberate difference: the source
-  //   session's Claude Code memory volume is NOT cloned. Copying it would
-  //   hand the fork's agent everything the sanitiser withholds from the
-  //   reader (raw logs, attachment bytes) — reopening by proxy exactly what
-  //   transcript sharing closed. The fork starts with fresh CC memory;
-  //   context still reaches the model because buildMayorMessages folds the
-  //   copied history (including ccOutput summaries) into every turn.
-  //
-  //   Many people can fork the same chat independently, and the source
-  //   session is never touched — its owner sees nothing change.
-  router.post('/api/sessions/:id/fork', drainGuard, async (req, res) => {
-    try {
-      const { rows: srcRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
-                u.username AS owner_username
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-           LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.id = $1 AND cs.is_headless = FALSE
-            AND cs.shared_at IS NOT NULL
-            AND cs.transcript_shared_at IS NOT NULL`,
-        [req.params.id]
-      );
-      if (!srcRows.length) {
-        return res.status(404).json({ error: 'This chat is not shared for reading.' });
-      }
-      const src = srcRows[0];
-      if (src.user_id === req.user.id) {
-        return res.status(400).json({
-          error: "That's your own chat. Use “Start a new change” to branch off it.",
-        });
-      }
-
-      // The fork is an ordinary dev-chat session, so the usual caps apply.
-      // Per-user cap counts only 'active' sessions (#193) and the ceiling is
-      // per-requester (full admins get a raised cap) — identical to the
-      // clone-headless block above.
-      const caps = effectiveSessionCaps(config, req.user);
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
-           AND source IS DISTINCT FROM 'imported'`,
-        [req.user.id]
-      );
-      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
-      }
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
-      }
-
-      // Fork the branch off the source's branch so any commit it pushed
-      // carries over; fall back to main if that branch is gone.
-      //
-      // #1350 carve-out: not deferred, for the same reason as the headless
-      // clone above — the point of a fork is to start from the source's
-      // commits, and `fromBranch` is where that happens. A source that has
-      // not run a turn yet has no branch at all now, so name main
-      // explicitly rather than asking GitHub for `heads/null`.
-      const branchName = branchNames.devBranchName(req.user.username);
-      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (github.isEnabled() && repoOwner && repoName) {
-        try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
-        } catch (err) {
-          log.warn('sessions', 'Branch fork off shared session failed — falling back to main', { err: err.message, from: src.branch_name });
-          try {
-            await github.createBranch(repoOwner, repoName, branchName);
-          } catch (err2) {
-            log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
-          }
-        }
-      }
-
-      const forkTitle = src.session_title || src.pr_title || 'Forked dev chat';
-
-      const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
-         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, forkTitle]
-      );
-      const session = rows[0];
-      await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
-
-      // Copy the conversation THROUGH THE SANITISER — the fork must never
-      // carry content the forker wasn't allowed to read. Done row-by-row in
-      // JS rather than as an INSERT…SELECT precisely so the allowlist runs;
-      // an in-SQL copy would smuggle ccLog / attachment ids across.
-      //
-      // Costs are left at their zero defaults: the forker didn't pay for the
-      // original run and the per-message figures would double-count.
-      //
-      // Every row is stamped `inheritedFrom` (the source id), which is what
-      // the dev-chat renderer keys the collapsed-by-default Claude Code
-      // disclosures and the greyed inherited-history styling off (#647). The
-      // follow-up appended below deliberately does NOT carry it — that
-      // message belongs to this session.
-      const { rows: srcMessages } = await pool.query(
-        `SELECT id, role, content, model, metadata FROM chat_session_messages
-          WHERE session_id = $1 ORDER BY id ASC`,
-        [src.id]
-      );
-      for (const raw of srcMessages) {
-        const clean = transcriptShare.sanitizeTranscriptMessage(raw);
-        if (!clean) continue;
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [session.id, clean.role, clean.content, clean.model || null,
-           JSON.stringify({ ...(clean.metadata || {}), inheritedFrom: src.id })]
-        );
-      }
-      // Carry the spec version history too, so the spec viewer shows v1…vN.
-      await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
-         SELECT $1, version, content, built_at, commit_sha, pr_number
-         FROM chat_session_specs WHERE session_id = $2`,
-        [session.id, src.id]
-      ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
-
-      // The orientation message: where the original left off, what carried
-      // over, and — load-bearing — that the AGENT's own memory did not, so
-      // the new owner restates anything important instead of assuming it.
-      //
-      // #1001: same treatment as the auto-session clone — the fork's first
-      // pills are authored from where the forked conversation actually got
-      // to, with FORK_FOLLOWUP_REPLIES as the fallback rather than the
-      // guaranteed answer.
-      const forkFollowUp = transcriptShare.buildForkFollowUpMessage(src);
-      const forkTail = srcMessages
-        .filter((r) => r && (r.role === 'user' || r.role === 'assistant'))
-        .slice(-6)
-        .map((r) => ({ role: r.role, content: r.content }));
-      const forkPills = await resolveTurnPills({
-        pool,
-        dataKey: config.dataEncryptionKey,
-        // `src` carries app_name from its JOIN; the fresh row does not.
-        session: { id: session.id, app_name: src.app_name },
-        userId: req.user.id,
-        apiKey: null,
-        model: null,
-        modelPills: null,
-        outcome: 'chat',
-        hasPr: false,
-        hasSpec: !!(src.spec_md || '').trim(),
-        staticFallback: buildForkFollowUpQuickReplies(),
-        replyText: forkFollowUp,
-        transcriptTail: forkTail,
-        state: 'this session was just forked from a shared dev chat; the new owner is picking up where it left off',
-      });
-      log.info('sessions', 'quick replies resolved', {
-        sessionId: session.id, phase: 'fork-followup',
-        source: forkPills.source, kind: forkPills.kind || null,
-      });
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
-        [session.id, forkFollowUp, JSON.stringify(quickReplyMeta(forkPills))]
-      );
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
-        userId: req.user.id,
-        appId: src.app_id,
-        sessionId: session.id,
-        metadata: { forkedFromSession: src.id },
-      });
-
-      log.info('sessions', 'Forked shared dev chat', { src: src.id, sessionId: session.id, user: req.user.username });
-      res.status(201).json({ session });
-    } catch (err) {
-      log.error('sessions', 'Fork shared chat failed', { message: err.message, stack: err.stack });
-      res.status(500).json({ error: 'Internal server error' });
-    }
+  //   Forked a shared, transcript-published dev chat into a new classic
+  //   session of the caller's. Retired with classic sessions (#2779): new
+  //   work starts in an agent session, and a shell cached before the switch
+  //   is told so rather than getting a 404. The transcript read above
+  //   reports can_fork false, so no current page offers it.
+  router.post('/api/sessions/:id/fork', sameOriginBrowserOnly, (req, res) => {
+    res.status(410).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
   });
 
   // POST /api/sessions/:id/pause
@@ -4772,7 +4713,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   Idempotent on the status side — re-pausing a paused session is
   //   a no-op rather than an error, since the state we'd land in is
   //   the same.
-  router.post('/api/sessions/:id/pause', async (req, res) => {
+  router.post('/api/sessions/:id/pause', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4836,7 +4777,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //       fall back to a 429.
   //   We deliberately do NOT pre-spawn the worker here; first-turn lazy
   //   boot is what every other path uses.
-  router.post('/api/sessions/:id/resume', async (req, res) => {
+  router.post('/api/sessions/:id/resume', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
@@ -4860,7 +4801,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     clean          — merged + pushed without LLM
   //     resolved       — CC resolved conflicts; merged + pushed
   //     conflict       — CC couldn't resolve; merge aborted, no push
-  router.post('/api/sessions/:id/sync-main', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/sync-main', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
 
@@ -5470,7 +5411,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // full-spec affordance; the underlying chat_messages row carries
   // metadata.specShare so the renderer knows to upgrade it from a
   // plain system line.
-  router.post('/api/sessions/:id/specs/:version/share', async (req, res) => {
+  router.post('/api/sessions/:id/specs/:version/share', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
     if (Number.isNaN(sessionId) || Number.isNaN(version)) {
@@ -5725,6 +5666,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
     }
 
+    // Same visibility rule as /checks and /details: the progress log, spend,
+    // estimate and runner name below are the session's own, so a caller who
+    // may not see the session gets the same 404 as for a missing one.
+    try {
+      const { rows: seen } = Number.isNaN(sessionId) ? { rows: [] } : await pool.query(
+        'SELECT user_id, status, shared_at FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      );
+      if (!canViewSession(seen[0], req.user)) return res.status(404).json({ error: 'Session not found' });
+    } catch (err) {
+      log.warn('sessions', 'Status visibility lookup failed', { sessionId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
     let progress = [];
     let progressAgentBackend = null;
     let progressAgentModel = null;
@@ -5904,241 +5859,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // the CC phase. Deliberately does NOT abort Mayor phase-2 — by then
   // the commit + PR + staging already exist, and stopping the summary
   // would leave the user without context for changes that are real.
-  router.post('/api/sessions/:id/stop', async (req, res) => {
+  router.post('/api/sessions/:id/stop', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
-
-    // #1378: owner OR an admin who is allowed to WRITE. GET
-    // /api/sessions/:id is admin-readable and GET .../status has no
-    // ownership guard at all, so an admin could already watch someone
-    // else's runaway turn — but this route was owner-only, so their stop
-    // came back 404 and the client rendered "Couldn't stop the agent". An
-    // admin who can see a turn burning platform capacity must be able to
-    // end it.
-    //
-    // Deliberately `canAdminWrite` and not `isAdmin`: the latter includes
-    // view-only admins, and killing someone's in-flight turn is a
-    // privileged mutation (same gate middleware/admin.js uses). POST /chat
-    // stays owner-only — reading and stopping are not writing on someone
-    // else's behalf.
-    const stopAsAdmin = req.user?.canAdminWrite === true;
     try {
-      const { rows } = await pool.query(
-        `SELECT id, user_id FROM chat_sessions WHERE id = $1 AND (user_id = $2 OR $3::boolean)`,
-        [sessionId, req.user.id, stopAsAdmin]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      if (rows[0].user_id !== req.user.id) {
-        log.info('sessions', 'Admin stopping another user\'s turn', {
-          sessionId, by: req.user.username, ownerId: rows[0].user_id,
-        });
-      }
+      const result = await requestSessionStop({
+        pool, sessionId, user: req.user, force: req.body?.force === true, scheduleInteractiveRecovery,
+      });
+      return res.status(result.status).json(result.body);
     } catch (err) {
-      log.error('sessions', 'Stop session lookup failed', { message: err.message });
-      return res.status(500).json({ error: 'Internal server error' });
+      log.error('sessions', 'Stop failed', { sessionId, message: err.message });
+      return res.status(503).json({ error: 'Could not confirm that the agent stopped. Retry Stop.', code: 'stop_unconfirmed' });
     }
-
-    // #937: `{ force: true }` is the escape hatch the client offers after a
-    // normal stop has visibly failed to land (its 40s rung). Strictly
-    // second-order: it is only honoured once a stop is already pending for
-    // this turn, so it can never be the first thing that runs.
-    const forceRequested = req.body?.force === true;
-
-    const handle = stopRegistry.get(sessionId);
-    // #937: one pure classifier owns the branching (see services/stop-
-    // policy) so the force path can't quietly acquire a way past the
-    // ordinary stop as this handler grows.
-    const action = stopPolicy.classifyStopRequest({ handle, force: forceRequested });
-
-    if (action === 'no_active_turn') {
-      // #1378: this used to return silently, which is why the production
-      // report had nothing to go on — the click landed, the server said
-      // "nothing to stop", and the only trace was the user watching a turn
-      // keep running. Log the disagreement between what the client can see
-      // (`busy`) and what this process holds (`handle`), because that gap
-      // IS the bug class: a turn adopted by another process, or one whose
-      // handle was cleared while the tail is still unwinding.
-      let hasDurableTurn = false;
-      try {
-        hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
-      } catch {}
-      log.warn('sessions', 'Stop request had no active turn', {
-        sessionId,
-        busy: isSessionBusy(sessionId),
-        hasDurableTurn,
-        by: req.user.username,
-      });
-      return res.json({
-        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
-      });
-    }
-    if (action === 'force_orphan') {
-      // The turn already ended, but its bookkeeping may not have — this is
-      // how a client whose turn died without unwinding gets it cleaned up.
-      // #907: that bookkeeping now includes a local turn row, which is what
-      // a machine that went to sleep mid-turn leaves behind.
-      await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
-      await forceStopSession(pool, sessionId, req.user.username, null);
-      await scheduleRetainedInteractiveTurn({
-        pool, sessionId, scheduleInteractiveRecovery,
-      });
-      return res.json({ ok: true, stopped: true, forced: true, phase: null });
-    }
-    if (action === 'force_without_stop') {
-      return res.status(409).json({
-        ok: false, stopped: false, reason: 'no stop pending',
-      });
-    }
-    if (action === 'wrap_up_not_stoppable') {
-      // Phase-2 is non-stoppable on purpose. The UI already swaps the
-      // stop button for a spinner during this phase, so this branch is
-      // mostly defense against an out-of-date client.
-      return res.json({ ok: true, stopped: false, reason: 'wrap-up cannot be stopped' });
-    }
-
-    handle.stopped = true;
-    handle.stoppedBy = req.user.username;
-    // #937: stamped once, on the FIRST stop for this turn, so the client's
-    // escalation ladder survives a reload (GET /status serves it) and a
-    // repeat POST — the 15s retry — doesn't reset the user's clock.
-    if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
-    log.info('sessions', 'Stop requested', {
-      sessionId,
-      phase: handle.phase,
-      by: req.user.username,
-      ccRunning: handle.phase === 'cc',
-      hasWorker: !!handle.workerName,
-      forced: forceRequested,
-    });
-
-    // #889: announce the stop on every channel BEFORE any of the work
-    // below. The turn's own `send` fans this out to the live POST SSE, the
-    // global WS broadcast and the session bus, so every tab watching this
-    // session (not just the one that clicked) flips to the "stopping…"
-    // state immediately instead of waiting for the turn to unwind. It's a
-    // synchronous write + broadcast, so nothing here waits on it.
-    try {
-      handle.send?.('stopping', {
-        by: req.user.username,
-        phase: handle.phase,
-        // #937: lets a tab that joins (or reloads) mid-stop rebuild the
-        // escalation ladder at the right rung instead of restarting it.
-        stopRequestedAt: handle.stopRequestedAt,
-      });
-    } catch {}
-
-    // #1378: the same intent, recorded durably on the turn record.
-    //
-    // The in-memory stamp above is the fast path and is what ends the turn
-    // in every ordinary case. It cannot survive this process, though, and a
-    // blue-green cutover landing in the same second as the click would take
-    // it: the version that adopts the turn would resume it, narrate an
-    // interruption the user had already asked for, and — on an api-error
-    // tail — retry it. buildRecoveryStopHandle in server.js reads this stamp
-    // at adopt time and seeds the recovered turn's handle from it, which is
-    // what closes that window.
-    //
-    // It also leaves the only durable trace a pending stop has ever had:
-    // this incident was diagnosed with no record in the log OR the database
-    // that a stop had been asked for at all.
-    //
-    // Best-effort. The stamp is a compare-and-set against the turn identity
-    // and is a quiet no-op for a legacy row with neither a turnId nor a
-    // journal; none of that is a reason to refuse a stop the handle can
-    // already honour, so a failure here only warns.
-    try {
-      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
-      if (durableTurn && (durableTurn.turnId || durableTurn.journal)) {
-        await turnLifecycle.markStopRequested(pool, {
-          sessionId,
-          turnId: durableTurn.turnId || null,
-          journal: durableTurn.journal || null,
-          by: req.user.username,
-        });
-      }
-    } catch (err) {
-      log.warn('sessions', 'Durable stop stamp failed', {
-        sessionId, err: err.message,
-      });
-    }
-
-    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
-    // aborting so the turn's resulting send('done') doesn't create a
-    // spurious "your session finished" notification. This stays awaited and
-    // stays ahead of the abort: the abort can unwind the Mayor stream into
-    // send('done') within milliseconds, and notifySessionDone re-reads this
-    // column. It is a single indexed UPDATE (~1ms) and was never where the
-    // stop latency lived — see the journal-marker fix in worker.stopTurn.
-    await pool.query(
-      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-      [sessionId]
-    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
-
-    // #907: if this turn was handed to a machine of the user's, the thing to
-    // stop is not in a container here — it is a `claude` process on their
-    // laptop. Mark the turn stopped: awaitTurnResult unblocks immediately
-    // (so the tail below unwinds at the same speed as a container kill), and
-    // the CLI learns about it on its next progress POST, which now 409s.
-    // The confirm loop below is skipped for these: it probes a worker
-    // container this turn never had, so every probe would report "idle" and
-    // the log line would claim a kill it never sent.
-    if (handle.localTurnId) {
-      await localAgent.requestStop(pool, { sessionId, userId: null })
-        .catch((err) => log.warn('sessions', 'Local agent stop failed', {
-          sessionId, err: err.message,
-        }));
-    }
-
-    if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
-      // Detached-turn path: the CC turn runs as a detached exec with no
-      // host-side child to signal, so kill run-cc.sh + claude inside
-      // the container directly. The warm wrapper (sleep infinity)
-      // survives, keeping the next dispatch fast. stopTurn also appends
-      // the journal's exit marker (#889), so the consumer resolves right
-      // away and runClaudeCodeTool's early-return branch fires in ~1s
-      // rather than on the liveness watchdog's 10s cadence.
-      //
-      // #937: this CONFIRMS rather than assumes. One fire-and-forget kill
-      // was the original defect — during spin-up there was nothing to
-      // kill, yet the log still said "Stop signal sent". See
-      // confirmStopLanded; see killsWorkerInPhase for why 'mayor1' counts.
-      //
-      // At most ONE loop per turn. Repeat stops for the same turn are
-      // expected — the client re-POSTs once at its 15s rung, and a force
-      // arrives as a second request — and each starting its own loop would
-      // multiply the bounded kill-attempt budget by the number of clicks.
-      // The force path does its own, more aggressive teardown regardless.
-      if (!handle.confirming && action !== 'force') {
-        handle.confirming = true;
-        confirmStopLanded(sessionId, handle)
-          .catch((err) => log.warn('sessions', 'stop confirm loop failed', { sessionId, err: err.message }))
-          // Cleared on settle, so a stop re-requested AFTER a loop gave up
-          // gets a fresh attempt budget rather than being silently ignored.
-          .finally(() => { handle.confirming = false; });
-      }
-    } else if (handle.workerName) {
-      // Legacy single-shot fallback: stop the whole worker through its
-      // runtime. Kubernetes removes the Deployment and retains the workspace;
-      // Docker keeps the existing stop-only behavior.
-      worker.stopWorker(handle.workerName)
-        .catch((err) => log.warn('sessions', 'Worker stop failed', { err: err.message }));
-    }
-
-    try { handle.abort.abort(); } catch {}
-
-    if (action === 'force') {
-      // Force: the ordinary stop has already failed to land for this turn.
-      // Tear the container down so the journal tail dies with it and the
-      // owning request unwinds, then announce the stop ourselves — that
-      // request may itself be wedged and can't be relied on to do it.
-      await forceStopSession(pool, sessionId, req.user.username, handle);
-      await scheduleRetainedInteractiveTurn({
-        pool, sessionId, scheduleInteractiveRecovery,
-      });
-      return res.json({ ok: true, stopped: true, forced: true, phase: handle.phase });
-    }
-
-    res.json({ ok: true, stopped: true, phase: handle.phase });
   });
 
   // Resumable SSE subscription for a single session's event stream.
@@ -6308,7 +6040,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // Deploy staging for a session
-  router.post('/api/sessions/:id/deploy-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — their staging is built by the
       // headless runner itself; humans deploy staging from a CLONED session.
@@ -6498,7 +6230,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //
   // The sessionCollabGuard above already gates this to app members; the
   // ownership check below scopes WHO may trigger a rebuild.
-  router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const session = await loadPreviewSession(sessionId);
@@ -6537,10 +6269,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       res.json({ status: 'rebuilding' });
 
       // Fire-and-forget. On success rebuildSessionStaging broadcasts
-      // `staging_ready` with the (new, commit-hash-bearing) URL, which the
-      // front end opens. On a no-op ('skipped' — branch not ahead of main)
-      // or a build failure (missing secrets, docker error) we broadcast
-      // `staging_failed` so the loader surfaces a concrete reason.
+      // `staging_ready` with the preview URL, which the front end opens. The
+      // URL is stable per session (services/caddy.js stagingHostname), so the
+      // rebuilt preview is the SAME origin the reviewer opened before, with
+      // that visit's service worker still installed. On a no-op ('skipped' —
+      // branch not ahead of main) or a build failure (missing secrets, docker
+      // error) we broadcast `staging_failed` so the loader surfaces a concrete
+      // reason.
       const { broadcastGlobal } = require('../services/ws');
       stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click' })
         .then((result) => {
@@ -6582,7 +6317,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // gone, else re-run against the live container. Progress flows through the
   // existing checks_ready / staging_ready broadcasts so the badge updates in
   // place. Owner + admins only.
-  router.post('/api/sessions/:id/recheck', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/recheck', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -6734,18 +6469,6 @@ function buildHeadlessFollowUpQuickReplies(src) {
   return sanitizeQuickReplies({ replies });
 }
 
-// The fork follow-up's TEXT lives in services/transcript-share.js
-// (buildForkFollowUpMessage) so the staging fixture in db/migrate.js can seed
-// the identical copy instead of a hand-written duplicate that drifts. Only the
-// pill sanitising stays here, since sanitizeQuickReplies is route-local.
-//
-// Built on CALL, not at module load: sanitizeQuickReplies reads
-// QR_MAX_REPLIES, a `const` declared further down this file, so evaluating
-// this at load time hits its temporal dead zone and throws on require.
-function buildForkFollowUpQuickReplies() {
-  return sanitizeQuickReplies({ replies: [...transcriptShare.FORK_FOLLOWUP_REPLIES] });
-}
-
 // The unattended-mode addendum appended to the Mayor system prompt for
 // both headless phases. Factored out so the boot-time resume path
 // (resumeHeadlessRuns) can rebuild the exact same prompt.
@@ -6775,7 +6498,10 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // effort, so the note says what to do when they are absent.
 const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal and get_change. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results. They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
 
-const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
+// #3426: Codex views a local image with view_image, Claude Code with Read;
+// both work only for a model that takes images. A text-only model that is
+// told so stops there, instead of spending its turn decoding the PNG by hand.
+const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and view /tmp/issue-screenshot.png with its image tool (view_image, or the Read tool) before working. If the tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art or with OCR): work from the text, and say what the screenshot would have needed to show.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
 // call offered after a successful scout, where the run may proceed straight
@@ -7220,7 +6946,7 @@ async function runHeadlessSession({
   const noteModelFallback = async (result) => {
     if (!result || !result.fallbackServed) return;
     const requested = selectedModel;
-    const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+    const served = result.servedModel;
     const category = (result.stopDetails && result.stopDetails.category) || null;
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
@@ -8538,6 +8264,19 @@ function scheduleRetainedHeadlessRecovery({
       );
       return false;
     },
+    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES): the same terminal
+    // outcome as a failure that cannot be retried.
+    onExhausted: async (err, { failures }) => {
+      log.error('sessions', 'Retained headless recovery gave up; marking run failed', {
+        sessionId, failures, err: err.message,
+      });
+      await failHeadlessRun(
+        pool,
+        latestSession,
+        `Auto session could not be completed after ${failures} recovery attempts: `
+          + `${String(err.message || err).substring(0, 200)}`,
+      );
+    },
     onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
     onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
       sessionId, err: err.message,
@@ -8934,7 +8673,11 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
-      testing.cleanedText = proposalDescription.extract(testing.cleanedText).cleanedText;
+      // A recovered turn's escalation block is not re-filed (the turn's own
+      // tail did not run), but its markers must not reach the timeline.
+      testing.cleanedText = platformIssueBlock.extract(
+        proposalDescription.extract(testing.cleanedText).cleanedText,
+      ).cleanedText;
       const hasChanges = result.ahead > 0 && !!result.sha;
       // #170: a headless session only ever has spec_md if its own scout
       // wrote it this run — so spec_md present means this build was the
@@ -9110,7 +8853,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       await modelFallback.record(pool, {
         kind: events.EVENT_TYPES.MODEL_FALLBACK,
         userId: user.id, appId: session.app_id, sessionId: session.id,
-        requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+        requested: selectedModel, served: mayor2.servedModel,
         category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
         source: 'headless-resume',
       });
@@ -9232,6 +8975,21 @@ function describeTurnError(err) {
     if (message.startsWith('checkout failed')) {
       return 'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
         + `${git} Retrying will not help until the branch problem is resolved.`;
+    }
+    // The machine the agent runs on never started. The typed reason is set
+    // by the Kubernetes bootstrap wait; the raw kubelet reason, node and log
+    // stay in the platform log, never in this copy.
+    const couldNotStart = {
+      image_unavailable: 'its software image could not be downloaded',
+      config_error: 'of a problem in its platform configuration',
+      unschedulable: 'the platform had no free capacity to run it',
+    }[err.bootstrapReason];
+    if (couldNotStart) {
+      return `The coding agent's machine could not start because ${couldNotStart}, so the agent never started and no code was changed. `
+        + 'This is a platform problem, not your change.'
+        + (err.bootstrapReason === 'unschedulable'
+          ? ' Try again in a few minutes.'
+          : ' Retrying will not help until the platform is fixed.');
     }
     if (message.startsWith('warm-ready timeout')) {
       return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';
@@ -10532,6 +10290,282 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // The loop exits early when the turn unwinds on its own — the chat handler
 // deletes its stop handle from the registry, so a handle mismatch means
 // there is nothing left to kill.
+// Shared entry point for classic sessions and agent conversations. The caller
+// receives an HTTP-shaped result with common ownership, durable intent and
+// confirmation. Agent conversations request immediate hard cancellation;
+// classic sessions retain their existing stop/force escalation policy.
+async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
+    // #1378: owner OR an admin who is allowed to WRITE. GET
+    // /api/sessions/:id is admin-readable and GET .../status has no
+    // ownership guard at all, so an admin could already watch someone
+    // else's runaway turn — but this route was owner-only, so their stop
+    // came back 404 and the client rendered "Couldn't stop the agent". An
+    // admin who can see a turn burning platform capacity must be able to
+    // end it.
+    //
+    // Deliberately `canAdminWrite` and not `isAdmin`: the latter includes
+    // view-only admins, and killing someone's in-flight turn is a
+    // privileged mutation (same gate middleware/admin.js uses). POST /chat
+    // stays owner-only — reading and stopping are not writing on someone
+    // else's behalf.
+    const stopAsAdmin = user?.canAdminWrite === true;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, user_id FROM chat_sessions WHERE id = $1 AND (user_id = $2 OR $3::boolean)`,
+        [sessionId, user.id, stopAsAdmin]
+      );
+      if (!rows.length) return { status: 404, body: { error: 'Session not found' } };
+      if (rows[0].user_id !== user.id) {
+        log.info('sessions', 'Admin stopping another user\'s turn', {
+          sessionId, by: user.username, ownerId: rows[0].user_id,
+        });
+      }
+    } catch (err) {
+      log.error('sessions', 'Stop session lookup failed', { message: err.message });
+      return { status: 500, body: { error: 'Internal server error' } };
+    }
+
+    // #937: In classic sessions, `{ force: true }` is offered after a
+    // normal stop has visibly failed to land (its 40s rung). Strictly
+    // second-order: it is only honoured once a stop is already pending for
+    // this turn. The internal `immediate` option is for agent conversations;
+    // the classic HTTP route does not accept it from a request body.
+    const forceRequested = force === true;
+
+    const handle = stopRegistry.get(sessionId);
+    if (expectedTurnId) {
+      const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
+        return { status: 409, body: { error: 'The running job changed. Refresh its status before stopping it.', code: 'turn_changed' } };
+      }
+    }
+    // Keep the classic escalation policy while giving agent conversations
+    // first-click hard cancellation. Neither can interrupt final wrap-up.
+    const action = immediate
+      ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
+      : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
+
+    if (immediate && action !== 'wrap_up_not_stoppable') {
+      const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
+        return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+      }
+      if (durable) {
+        const marked = await turnLifecycle.markStopRequested(pool, {
+          sessionId, turnId: durable.turnId, journal: durable.journal, by: user.username,
+        });
+        if (turnLifecycle.turnIdentity(marked.activeTurn) !== turnLifecycle.turnIdentity(durable)) {
+          return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1', [sessionId]);
+    }
+
+    if (action === 'no_active_turn') {
+      const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (durable && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durable))) {
+        const marked = await turnLifecycle.markStopRequested(pool, {
+          sessionId, turnId: durable.turnId, journal: durable.journal, by: user.username,
+        });
+        if (turnLifecycle.turnIdentity(marked.activeTurn) !== turnLifecycle.turnIdentity(durable)) {
+          return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+        }
+        await pool.query('UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1', [sessionId]);
+        // A different process may own the journal consumer. The durable
+        // request survives its restart; signalling the worker ends the job,
+        // and only its normal cleanup/recovery releases the busy record.
+        await worker.stopTurn(sessionId);
+        await scheduleRetainedInteractiveTurn({ pool, sessionId, scheduleInteractiveRecovery });
+        return { status: 202, body: { stopped: true, stopping: true } };
+      }
+      // #1378: this used to return silently, which is why the production
+      // report had nothing to go on — the click landed, the server said
+      // "nothing to stop", and the only trace was the user watching a turn
+      // keep running. Log the disagreement between what the client can see
+      // (`busy`) and what this process holds (`handle`), because that gap
+      // IS the bug class: a turn adopted by another process, or one whose
+      // handle was cleared while the tail is still unwinding.
+      let hasDurableTurn = false;
+      try {
+        hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
+      } catch {}
+      log.warn('sessions', 'Stop request had no active turn', {
+        sessionId,
+        busy: isSessionBusy(sessionId),
+        hasDurableTurn,
+        by: user.username,
+      });
+      return { status: 200, body: {
+        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
+      } };
+    }
+    if (action === 'force_orphan') {
+      // The turn already ended, but its bookkeeping may not have — this is
+      // how a client whose turn died without unwinding gets it cleaned up.
+      // #907: that bookkeeping now includes a local turn row, which is what
+      // a machine that went to sleep mid-turn leaves behind.
+      await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
+      await forceStopSession(pool, sessionId, user.username, null, { immediate, expectedTurnId });
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
+      return { status: 200, body: { ok: true, stopped: true, forced: true, phase: null } };
+    }
+    if (action === 'force_without_stop') {
+      return { status: 409, body: {
+        ok: false, stopped: false, reason: 'no stop pending',
+      } };
+    }
+    if (action === 'wrap_up_not_stoppable') {
+      // Phase-2 is non-stoppable on purpose. The UI already swaps the
+      // stop button for a spinner during this phase, so this branch is
+      // mostly defense against an out-of-date client.
+      return { status: 200, body: { ok: true, stopped: false, reason: 'wrap-up cannot be stopped' } };
+    }
+
+    handle.stopped = true;
+    handle.stoppedBy = user.username;
+    // #937: stamped once, on the FIRST stop for this turn, so the client's
+    // escalation ladder survives a reload (GET /status serves it) and a
+    // repeat POST — the 15s retry — doesn't reset the user's clock.
+    if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
+    log.info('sessions', 'Stop requested', {
+      sessionId,
+      phase: handle.phase,
+      by: user.username,
+      ccRunning: handle.phase === 'cc',
+      hasWorker: !!handle.workerName,
+      forced: forceRequested,
+    });
+
+    // #889: announce the stop on every channel BEFORE any of the work
+    // below. The turn's own `send` fans this out to the live POST SSE, the
+    // global WS broadcast and the session bus, so every tab watching this
+    // session (not just the one that clicked) flips to the "stopping…"
+    // state immediately instead of waiting for the turn to unwind. It's a
+    // synchronous write + broadcast, so nothing here waits on it.
+    try {
+      handle.send?.('stopping', {
+        by: user.username,
+        phase: handle.phase,
+        // #937: lets a tab that joins (or reloads) mid-stop rebuild the
+        // escalation ladder at the right rung instead of restarting it.
+        stopRequestedAt: handle.stopRequestedAt,
+      });
+    } catch {}
+
+    // #1378: the same intent, recorded durably on the turn record.
+    //
+    // The in-memory stamp above is the fast path and is what ends the turn
+    // in every ordinary case. It cannot survive this process, though, and a
+    // blue-green cutover landing in the same second as the click would take
+    // it: the version that adopts the turn would resume it, narrate an
+    // interruption the user had already asked for, and — on an api-error
+    // tail — retry it. buildRecoveryStopHandle in server.js reads this stamp
+    // at adopt time and seeds the recovered turn's handle from it, which is
+    // what closes that window.
+    //
+    // It also leaves the only durable trace a pending stop has ever had:
+    // this incident was diagnosed with no record in the log OR the database
+    // that a stop had been asked for at all.
+    //
+    // Best-effort. The stamp is a compare-and-set against the turn identity
+    // and is a quiet no-op for a legacy row with neither a turnId nor a
+    // journal; none of that is a reason to refuse a stop the handle can
+    // already honour, so a failure here only warns.
+    try {
+      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (durableTurn && (durableTurn.turnId || durableTurn.journal)) {
+        await turnLifecycle.markStopRequested(pool, {
+          sessionId,
+          turnId: durableTurn.turnId || null,
+          journal: durableTurn.journal || null,
+          by: user.username,
+        });
+      }
+    } catch (err) {
+      log.warn('sessions', 'Durable stop stamp failed', {
+        sessionId, err: err.message,
+      });
+    }
+
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification. This stays awaited and
+    // stays ahead of the abort: the abort can unwind the Mayor stream into
+    // send('done') within milliseconds, and notifySessionDone re-reads this
+    // column. It is a single indexed UPDATE (~1ms) and was never where the
+    // stop latency lived — see the journal-marker fix in worker.stopTurn.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
+
+    // #907: if this turn was handed to a machine of the user's, the thing to
+    // stop is not in a container here — it is a `claude` process on their
+    // laptop. Mark the turn stopped: awaitTurnResult unblocks immediately
+    // (so the tail below unwinds at the same speed as a container kill), and
+    // the CLI learns about it on its next progress POST, which now 409s.
+    // The confirm loop below is skipped for these: it probes a worker
+    // container this turn never had, so every probe would report "idle" and
+    // the log line would claim a kill it never sent.
+    if (handle.localTurnId) {
+      await localAgent.requestStop(pool, { sessionId, userId: null })
+        .catch((err) => log.warn('sessions', 'Local agent stop failed', {
+          sessionId, err: err.message,
+        }));
+    }
+
+    if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
+      // Detached-turn path: the CC turn runs as a detached exec with no
+      // host-side child to signal, so kill run-cc.sh + claude inside
+      // the container directly. The warm wrapper (sleep infinity)
+      // survives, keeping the next dispatch fast. stopTurn also appends
+      // the journal's exit marker (#889), so the consumer resolves right
+      // away and runClaudeCodeTool's early-return branch fires in ~1s
+      // rather than on the liveness watchdog's 10s cadence.
+      //
+      // #937: this CONFIRMS rather than assumes. One fire-and-forget kill
+      // was the original defect — during spin-up there was nothing to
+      // kill, yet the log still said "Stop signal sent". See
+      // confirmStopLanded; see killsWorkerInPhase for why 'mayor1' counts.
+      //
+      // At most ONE loop per turn. Repeat stops for the same turn are
+      // expected — the client re-POSTs once at its 15s rung, and a force
+      // arrives as a second request — and each starting its own loop would
+      // multiply the bounded kill-attempt budget by the number of clicks.
+      // The force path does its own, more aggressive teardown regardless.
+      if (!handle.confirming && action !== 'force') {
+        handle.confirming = true;
+        confirmStopLanded(sessionId, handle)
+          .catch((err) => log.warn('sessions', 'stop confirm loop failed', { sessionId, err: err.message }))
+          // Cleared on settle, so a stop re-requested AFTER a loop gave up
+          // gets a fresh attempt budget rather than being silently ignored.
+          .finally(() => { handle.confirming = false; });
+      }
+    } else if (handle.workerName) {
+      // Legacy single-shot fallback: stop the whole worker through its
+      // runtime. Kubernetes removes the Deployment and retains the workspace;
+      // Docker keeps the existing stop-only behavior.
+      worker.stopWorker(handle.workerName)
+        .catch((err) => log.warn('sessions', 'Worker stop failed', { err: err.message }));
+    }
+
+    try { handle.abort.abort(); } catch {}
+
+    if (action === 'force') {
+      // Immediately terminate the process tree when requested; evict only
+      // if the kill cannot be confirmed. Settle even if the owner is wedged.
+      await forceStopSession(pool, sessionId, user.username, handle, { immediate, expectedTurnId });
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
+      return { status: 200, body: { ok: true, stopped: true, forced: true, phase: handle.phase } };
+    }
+
+    return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
+}
+
 async function confirmStopLanded(sessionId, handle) {
   const startedMs = Date.now();
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
@@ -10581,21 +10615,16 @@ async function confirmStopLanded(sessionId, handle) {
   }
 }
 
-// #937: the force-stop escape hatch, reachable from the client's 40s
-// escalation rung once a normal stop has visibly failed to land.
-//
-// Destroys the worker container outright — which is what makes it work
-// where the ordinary kill didn't: the journal tail is a `docker exec` into
-// that container, so it dies with it and the owning chat request unwinds
-// on its own. The CC volume is preserved (evictWorker's contract), so the
-// agent's `--resume` session memory survives; the cost is a cold start on
-// the next dispatch.
+// Hard cancellation for agent conversations, and the existing classic
+// force-stop escape hatch. Kill the turn in place first, preserving the warm
+// worker. If that fails, evict it while retaining the workspace; only that
+// fallback incurs a cold start on the next dispatch.
 //
 // We announce the stop ourselves rather than waiting for the owning
 // request to do it: that request may be the wedged thing we're rescuing
 // the user from. The duplicate `stopped`/`done` it emits afterwards is
 // harmless — the client's stopping-state helpers are idempotent.
-async function forceStopSession(pool, sessionId, username, handle) {
+async function forceStopSession(pool, sessionId, username, handle, { immediate = false, expectedTurnId = null } = {}) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
   // #1378: the force-orphan path arrives here with `handle === null` (a turn
@@ -10619,13 +10648,26 @@ async function forceStopSession(pool, sessionId, username, handle) {
 
   // The ordinary stop may be a beat from landing; don't destroy a
   // container that is already going quietly.
-  let executing = await worker.isWorkerExecuting(containerName);
-  if (executing !== false) {
-    await worker.stopTurn(sessionId).catch(() => {});
-    await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
+  let executing;
+  if (immediate) {
+    // No initial probe, TERM grace period, retry timer or second button.
+    // The worker confirms its process tree is gone in the same command.
+    const killed = await worker.stopTurn(sessionId, { force: true }).catch(() => false);
+    // A root-only idle probe cannot rule out a surviving tool child after
+    // an incomplete tree kill. Without confirmation, evict the whole worker.
+    executing = killed ? false : null;
+  } else {
     executing = await worker.isWorkerExecuting(containerName);
+    if (executing !== false) {
+      await worker.stopTurn(sessionId).catch(() => {});
+      await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
+      executing = await worker.isWorkerExecuting(containerName);
+    }
   }
   if (executing !== false) {
+    if (expectedTurnId && turnLifecycle.turnIdentity(await turnLifecycle.loadActiveTurn(pool, sessionId)) !== expectedTurnId) {
+      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
+    }
     await worker.evictWorker(sessionId).catch(
       (err) => log.warn('sessions', 'force stop evict failed', { sessionId, err: err.message })
     );
@@ -10633,9 +10675,18 @@ async function forceStopSession(pool, sessionId, username, handle) {
     // any usage it already observed. The fallback below is for the wedged
     // owner this force path exists to rescue.
     await sleepMs(250);
+    executing = await worker.isWorkerExecuting(containerName);
+    if (executing !== false) {
+      const error = new Error('Could not confirm that the coding job stopped. Retry Stop.');
+      error.code = 'stop_unconfirmed';
+      throw error;
+    }
   }
   try {
     const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (activeTurn && expectedTurnId && turnLifecycle.turnIdentity(activeTurn) !== expectedTurnId) {
+      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
+    }
     if (activeTurn) {
       let ledgerReady = true;
       if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
@@ -10694,6 +10745,7 @@ async function forceStopSession(pool, sessionId, username, handle) {
       }
     }
   } catch (err) {
+    if (err.code === 'turn_changed') throw err;
     log.warn('sessions', 'Force stop could not clear the owned durable turn', {
       sessionId, err: err.message,
     });
@@ -10962,6 +11014,46 @@ change on this branch does for someone using the app.
   - Put it after the rest of your message and BEFORE the testing block,
     which stays last. Skip it when you changed no files.`;
 
+// A build the Mayor dispatches. It replaced the platform's first prompt
+// (2026-04-25: "Spend minimal time reading files … stage everything with
+// "git add -A" … Do NOT ask questions or request clarification. Just build
+// it."), whose first two lines are how Sheep countrr's #38 shipped a server
+// change nobody had read the Dockerfile for; the rest of what that prompt
+// was for now lives in the shared build contract.
+const DISPATCHED_TURN_INSTRUCTIONS = `- IMPLEMENT the requested change fully: write the code and finish the feature. Do not stop at
+  exploring, and do not stop partway.
+- The request was already worked out with the user, so do not ask questions. Where it is still
+  ambiguous, choose the reading that changes the least existing behaviour, and say which you chose.`;
+
+// The dev chat's closing summary. The build contract's own closing line
+// (services/build-contract.js SUMMARY_LINE) says "End with …", but a dev chat
+// turn's final message ends with its description and testing blocks, so the
+// same request is made here, placed ahead of them.
+const DEV_CHAT_SUMMARY_RULE = `- In your final message, before any block it ends with, say in plain language what you changed,
+  list each file you changed with one line on why, and name anything you noticed but left alone.`;
+
+// An OpenRouter turn — Codex, or Claude Code driving the user's OpenRouter
+// model (#3296) — holds only a push-scoped token, which the platform-issue
+// route refuses, so it cannot run `usernode-report-platform-issue`. Before
+// this block it was told only that, while the conventions told it to
+// escalate instead of working around a platform problem; the workarounds
+// Sheep countrr shipped (usernode-bot/sheep-countrr-a08857#48) all came from
+// such turns. The platform reads the block after the turn and files the same
+// draft card the helper would (services/platform-issue-block.js).
+const OPENROUTER_PLATFORM_ISSUE_GUIDANCE = `When the cause of a problem is outside this app's repository (the shared bridge, the preview,
+build or checks pipeline, or a capability the platform does not provide: see "Platform-level
+problems & missing capabilities" in the supplied platform conventions), do not work around it in
+the app. The \`usernode-report-platform-issue\` helper is not available on this backend. Put the
+report in your FINAL message instead, before its description and testing blocks:
+
+==== PLATFORM ISSUE ====
+One-line title
+What is broken or missing, how you hit it, and what the app needs.
+==== END PLATFORM ISSUE ====
+
+Homeroom turns it into a draft report the user can send to the platform. Write at most one per
+turn, and never for something you can fix in this app.`;
+
 function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   if (runLocally) return '';
   return `HOSTED WORKER LIFECYCLE (this invocation):
@@ -10970,13 +11062,13 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   including .agents/skills/usernode-proposal, do not apply here. Do not run
   that skill, the social-vibecoding CLI, device login, or external proposal
   submission tools from this worker.
-- For a committed change, call the provided record_visual_evidence_intent MCP
+- For a committed change, call the provided declare_visible_changes MCP
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
-  creation, staging, checks, and scheduling the paired evidence run after
+  creation, staging, checks, and scheduling the paired shots run after
   your commit. Do not perform those lifecycle steps yourself.
 - The in-loop browser is optional. If the supplied local runtime or app auth
   cannot be brought up promptly, say the visual check was skipped and commit
@@ -11014,6 +11106,10 @@ function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = 
 function buildCodingAgentConventionsContext({
   runLocally = false,
   isCodexSession = false,
+  // #3296: the CLI an OpenRouter turn runs in. Claude Code takes the handbook
+  // as system context whoever serves the model; only Codex (and a local run)
+  // still needs it inline. Absent means Codex, as every OpenRouter turn was.
+  harness = null,
   conventions = getAppConventions(),
   designGuidance = '',
 } = {}) {
@@ -11024,7 +11120,7 @@ ${conventions}
 
 ==== END PLATFORM CONVENTIONS ====${designBlock}`;
 
-  if (runLocally || isCodexSession) {
+  if (runLocally || (isCodexSession && harness !== 'claude')) {
     return { promptBlock: fullBlock, systemPrompt: null };
   }
 
@@ -11371,7 +11467,7 @@ conflict with the platform conventions supplied to this run (which always win)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
   const platformIssueHelperNote = isCodexSession
-    ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
+    ? OPENROUTER_PLATFORM_ISSUE_GUIDANCE
     : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the supplied platform conventions. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const taskBlock = directSessionTurn
     ? `DIRECT USER TURN:\n${userMessage}${attachmentsBlock}${discussionBlock}`
@@ -11386,27 +11482,38 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
 - If the user asks for a change, implement it fully and commit it. Do not stop after merely describing what should change.
 - If essential clarification is required, ask one concise question and make no speculative edits.
 - Never claim that files changed unless you actually changed and committed them.`)
-    : `- IMPLEMENT the requested changes fully. Do not just explore — write code.
-- Spend minimal time reading files. Focus on writing and editing.
-- Create or modify all necessary files to complete the request.
-- If building something new, implement the full feature — don't stop partway.
-- After all changes are made, stage everything with "git add -A" and commit
-  with a clear message describing what was built.
-- Do NOT ask questions or request clarification. Just build it.`;
-  const conventionsContext = buildCodingAgentConventionsContext({
-    runLocally,
-    isCodexSession,
-    // #2817: the same design guidance for every backend. Only its self-check
-    // differs: OpenRouter models read text, Claude reads screenshots.
-    designGuidance: getDesignGuidance({ readsImages: !isCodexSession }),
-  });
-  const buildGuidance = buildCodingAgentBuildGuidance({
-    authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
-  });
+    : DISPATCHED_TURN_INSTRUCTIONS;
+  // The rules every on-platform build works under, shared with the Homeroom
+  // bot (services/build-contract.js). The dev chat's final message ends with
+  // its own blocks (description, testing), so the summary is asked for here,
+  // ahead of them, rather than as the contract's closing line.
+  const buildContractBlock = `${buildContract.buildContractBlock({ commits: 'agent', summary: false })}
+${DEV_CHAT_SUMMARY_RULE}`;
+  // #2817: the same design guidance for every backend. Only its self-check
+  // differs: OpenRouter models read text, Claude reads screenshots.
+  const designGuidance = getDesignGuidance({ readsImages: !isCodexSession });
+  // The CLI that runs the turn decides how the handbook travels: Claude Code
+  // (on Anthropic's models or, since #3296, an OpenRouter model) takes it as
+  // system context; Codex and a local run keep it inline. It used to follow
+  // the backend, so GLM in Claude Code still carried the 165 KB handbook in
+  // every user message.
+  const buildTransport = (harness) => {
+    const conventions = buildCodingAgentConventionsContext({
+      runLocally, isCodexSession, harness, designGuidance,
+    });
+    return {
+      conventions,
+      guidance: buildCodingAgentBuildGuidance({
+        authoritativeSystemContext: Boolean(conventions.systemPrompt),
+      }),
+    };
+  };
+  const transport = buildTransport(agentIdentity.harness);
+  const conventionsContext = transport.conventions;
   const workflowGuidance = buildHostedCodingWorkflowGuidance({ runLocally });
-  const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
+  const renderClaudePrompt = (renderedSpecBlock, { conventions, guidance } = transport) => `${taskBlock}
 
-${conventionsContext.promptBlock}
+${conventions.promptBlock}
 ${renderedSpecBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
@@ -11431,8 +11538,9 @@ ${debugAccess.promptBlock()}
 INSTRUCTIONS:
 ${workflowGuidance}
 ${turnInstructions}
-${buildGuidance.browserGuidance}
-${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildGuidance.testingGuidance}`;
+${buildContractBlock}
+${guidance.browserGuidance}
+${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -11441,6 +11549,19 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
   // run-cc.sh reads this only after --resume fails. A fresh session therefore
   // gets the exact complete task it received before this optimization.
   const claudeResumeFallbackPrompt = reuseHostedScoutSpec ? fullClaudePrompt : null;
+  // An OpenRouter turn's CLI is settled only at dispatch, where
+  // resolveCodexRuntimeContext resolves harness 'auto' from the per-model map.
+  // Render both prompts so the attempt always gets the one for the CLI that
+  // actually runs, even if the map moves between here and there.
+  const openRouterBuildPrompts = isCodexSession && !runLocally
+    ? Object.fromEntries(['codex', 'claude'].map((harness) => {
+      const t = buildTransport(harness);
+      return [harness, {
+        prompt: renderClaudePrompt(specContext.fullBlock, t),
+        systemPrompt: t.conventions.systemPrompt,
+      }];
+    }))
+    : null;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
@@ -12010,19 +12131,27 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       const doBuild = (ctx) => {
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
+        // An OpenRouter attempt: the prompt and system context rendered for the
+        // CLI its runtime resolved (see openRouterBuildPrompts above).
+        const openRouterBuild = !isClaudeDispatch && openRouterBuildPrompts
+          ? openRouterBuildPrompts[ctx.agentHarness === 'claude' ? 'claude' : 'codex']
+          : null;
         return worker.execInWorker(session.id, {
           mode: 'build',
-          prompt: claudePrompt,
+          prompt: openRouterBuild ? openRouterBuild.prompt : claudePrompt,
           // Present only for the first hosted-Claude build after an exact
           // matching scout. If --resume is unavailable, the runner retries
           // fresh with this complete spec-bearing user prompt.
           resumeFallbackPrompt: isClaudeDispatch ? claudeResumeFallbackPrompt : null,
-          // Hosted Claude gets the same authoritative handbook on every
-          // invocation as stable system context. New, resumed, compacted and
-          // resume-fallback-fresh runs therefore all use the current version
-          // without adding another copy to conversation history. Codex and
-          // local Claude retain the inline block above.
-          systemPrompt: isClaudeDispatch ? conventionsContext.systemPrompt : null,
+          // Claude Code gets the same authoritative handbook on every
+          // invocation as stable system context — hosted Claude, and an
+          // OpenRouter model running in Claude Code (#3296). New, resumed,
+          // compacted and resume-fallback-fresh runs therefore all use the
+          // current version without adding another copy to conversation
+          // history. Codex and local Claude retain the inline block above.
+          systemPrompt: isClaudeDispatch
+            ? conventionsContext.systemPrompt
+            : (openRouterBuild ? openRouterBuild.systemPrompt : null),
           model: turnModel,
           commitMsg,
           resumeSessionId: resumeThreadId,
@@ -12245,7 +12374,30 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
     // A message that was nothing but the block still gets a chat card.
     const described = proposalDescription.extract(testing.cleanedText);
     const turnDescription = described.description;
-    const ccText = described.cleanedText || turnDescription || '';
+    // An OpenRouter turn cannot run usernode-report-platform-issue, so it puts
+    // an escalation in a "==== PLATFORM ISSUE ====" block instead
+    // (OPENROUTER_PLATFORM_ISSUE_GUIDANCE). Peel it off the message and file
+    // the same draft card the helper would: a person still taps it before
+    // anything is filed, and the turn itself never held a token that could.
+    const escalation = isCodexSession
+      ? platformIssueBlock.extract(described.cleanedText)
+      : { cleanedText: described.cleanedText, issue: null };
+    if (escalation.issue) {
+      issueDraft.createDraft(pool, config, {
+        sessionId: session.id,
+        title: escalation.issue.title,
+        body: escalation.issue.body,
+        target: 'platform',
+        source: 'agent',
+      }).then((drafted) => {
+        if (!drafted.ok) {
+          log.info('sessions', 'Platform-issue block not drafted', { sessionId: session.id, code: drafted.code });
+        }
+      }).catch((err) => {
+        log.warn('sessions', 'Platform-issue block draft failed', { sessionId: session.id, err: err.message });
+      });
+    }
+    const ccText = escalation.cleanedText || turnDescription || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -12327,6 +12479,12 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       let msg;
       if (directReply) {
         msg = null;
+      } else if (result.branchMismatch) {
+        // worker/session-branch.sh: the agent ended on a line that does not
+        // build on this session's branch (another member's, say), so the
+        // runner committed and pushed nothing rather than publish it.
+        msg = `${executionAgentName} ended up working on a different branch that doesn't build on this change, `
+          + 'so nothing from this turn was saved. Send your request again to redo it here.';
       } else if (result.exitCode === 0) {
         msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
@@ -13209,4 +13367,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

@@ -81,11 +81,16 @@ const DDL = `
     testing_paths        JSONB,
     linked_issues        INTEGER[] NOT NULL DEFAULT '{}',
     pr_body              TEXT,
-    pr_summary_md        TEXT
+    pr_summary_md        TEXT,
+    pr_summary_source TEXT,
+    pr_summary_source_head_sha VARCHAR(40),
+    pr_summary_source_body_hash VARCHAR(64),
+    pr_summary_applied_version BIGINT,
+    active_users_at_promote INTEGER
   )`;
 
-// The same 17-element parameter shape the handler binds ($9 is the immutable
-// GitHub base SHA recorded for exact-revision visual evidence; $11 is the head
+// The same 19-element parameter shape the handler binds ($9 is the immutable
+// GitHub base SHA recorded for exact-revision before & after shots; $11 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $15 is the request
 // the work order was prepared from, #1217; $16 is the pull request's body,
@@ -113,6 +118,10 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     // The user-facing half of the About sheet, in the register that half is
     // for: no identifiers, no paths, nothing a non-developer has to decode.
     'Signing in now brings you back to what you were doing.',
+    'c'.repeat(64),
+    // #3234: the electorate a straight-to-vote import opened with (display
+    // only); null for an import that joins the In-progress board.
+    status === 'promoted' ? 5 : null,
   ];
 }
 
@@ -176,7 +185,7 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
       assert.equal(promotedRows[0].status, 'promoted');
 
       const { rows: [promoted] } = await client.query(
-        'SELECT status, source, shared_at, promoted_at, linked_issues FROM chat_sessions WHERE id = $1',
+        'SELECT status, source, shared_at, promoted_at, linked_issues, active_users_at_promote FROM chat_sessions WHERE id = $1',
         [promotedRows[0].id]
       );
       assert.equal(promoted.source, 'imported');
@@ -184,6 +193,7 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
       assert.equal(promoted.shared_at, null, 'a promoted import skips the In-progress board');
       assert.deepEqual(promoted.linked_issues, [1217],
         'the request the work order was prepared from (#1217)');
+      assert.equal(promoted.active_users_at_promote, 5, 'the electorate the vote opened with (#3234)');
 
       // #1217: the column is INTEGER[] NOT NULL, so the no-request case —
       // every browser import — has to bind the empty array. Binding null

@@ -497,13 +497,17 @@ const Notifications = {
     // the bell's number now, and an exclusion here would leave a count nothing
     // in the drawer can dismiss — which is the bug this change exists to fix.
     if (Notifications.unread === 0) return;
+    // Nothing is cleared until the server answers, so a failed request leaves
+    // every unread mark where it was. It still has to say so: a tap that
+    // silently did nothing reads as a broken button.
+    const failed = () => window.PlatformUI?.toast?.('Couldn’t mark notifications as read. Try again.');
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
       });
-      if (!res.ok) return;
+      if (!res.ok) { failed(); return; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
       const now = new Date().toISOString();
@@ -520,6 +524,7 @@ const Notifications = {
       window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
+      failed();
     }
   },
 
@@ -532,6 +537,9 @@ const Notifications = {
     if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
+  // Resolves whether the server took it (#3538). The row click ignores the
+  // answer, as it always has, because it is already on its way somewhere
+  // else; clearNotification below reads it to put a refused clear back.
   async _markOneRead(id) {
     // Optimistically mark read in-memory and re-render the open drawer
     // right away: the unread dot disappears and unread-first sorting
@@ -551,14 +559,92 @@ const Notifications = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const data = await res.json();
       // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
       Notifications._renderBadge();
+      return true;
     } catch (err) {
       console.warn('[notifications] markOneRead failed', err);
+      return false;
     }
+  },
+
+  // #3538: CLEAR A ROW WITHOUT OPENING IT — a swipe on a phone, the × on a
+  // hovered row at a desk (./notifications-sheet.tsx). "Clear" is the meaning
+  // `readAt` already has here: the notification is marked read, exactly as
+  // tapping it would, so it leaves Unread and stays in All without its dot.
+  // Nothing new is stored and nothing is deleted, the same promise the
+  // "New vs older" note further down makes, which is why All can always
+  // bring a cleared row back into view.
+  //
+  // ONE ROW CAN BE SEVERAL NOTIFICATIONS. A collapsed conversation run is one
+  // row standing for `count` of them, unread together
+  // (collapseConversationRuns). Clearing only the newest would split the run
+  // and put an unread row for the rest straight back where the cleared one
+  // was, so the whole run the row draws is cleared, each through the one-id
+  // path the row click uses.
+  //
+  // OPTIMISTIC, AND PUT BACK ON FAILURE. A swipe has taken the row off the
+  // screen before anything is asked (the kit collapses it, then calls in), so
+  // waiting for the server the way markAllRead does is not on offer. What
+  // markAllRead's rule protects still holds: a clear the server refused must
+  // not leave the screen claiming it worked. Every member is flipped here
+  // first, in one render, so the row leaves in one step; _markOneRead then
+  // finds each one already read and does only its request and its reconcile
+  // of the server's count. Anything refused is unread again, the count goes
+  // back up, and a toast says so.
+  //
+  // Resolves true when the row's notifications are read, false when the
+  // server refused some of them.
+  async clearNotification(id) {
+    const members = Notifications._rowMembers(id).filter((n) => !n.readAt);
+    if (!members.length) {
+      // Nothing left to clear: another tab, or a refresh, got there first.
+      // Re-render anyway. A full swipe has already taken the row out of the
+      // document, and only a list drawn from the truth puts it back right.
+      Notifications._renderList();
+      return true;
+    }
+    const stamp = new Date().toISOString();
+    for (const n of members) n.readAt = stamp;
+    Notifications.unread = Math.max(0, Notifications.unread - members.length);
+    Notifications._reconcileCompletionTitle();
+    Notifications._renderBadge();
+    Notifications._renderList();
+    // #449's reason, for one row: an open chat may be drawing a dot for a
+    // mention that was just cleared.
+    window.GroupChat?.reconcileDotsFromNotifications?.();
+    const answers = await Promise.all(members.map((n) => Notifications._markOneRead(n.id)));
+    if (answers.every(Boolean)) return true;
+    // A refresh that landed meanwhile replaced `items` with the server's own
+    // rows, which already say what is true. Only a notification still in
+    // hand, still carrying this clear's stamp, is this clear's to put back.
+    const refused = members.filter((n, index) => !answers[index]
+      && n.readAt === stamp && Notifications.items.includes(n));
+    for (const n of refused) n.readAt = null;
+    // The count goes back up by what was put back, unless a request that did
+    // go through has already replaced it with the server's own figure, which
+    // counts the refused ones as the unread they still are.
+    if (answers.every((ok) => !ok)) Notifications.unread += refused.length;
+    Notifications._renderBadge();
+    Notifications._renderList();
+    window.GroupChat?.reconcileDotsFromNotifications?.();
+    window.PlatformUI?.toast?.('Couldn’t clear this notification. Try again.');
+    return false;
+  },
+
+  // The notifications one sheet row stands for: its own, plus the rest of
+  // its conversation run when the row is a collapse (screenViews draws a run
+  // as its newest member's row, with that member's id). Walks the same rule
+  // the sheet drew with, so the two cannot disagree about what a row is.
+  _rowMembers(id) {
+    const items = Notifications.items;
+    const at = items.findIndex((n) => n && n.id === id);
+    if (at < 0) return [];
+    const [run] = collapseConversationRuns(items.slice(at));
+    return items.slice(at, at + run.count);
   },
 
   // Reading a conversation clears its notifications. Reflect that in THIS
@@ -724,6 +810,9 @@ const Notifications = {
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return false;
+    // Every notification tap, in-app or a native push (openById), comes
+    // through here: the screen it opens was reached by a nudge (#3369).
+    try { window.UITelemetry?.markNextVia?.('nudged'); } catch (_) { /* best effort */ }
     // Desktop: deliberately do NOT hide the anchored panel here — it stays
     // open over the navigated-to view so the user can keep clicking through
     // other notifications, and only dismisses via outside-click or the
@@ -1829,6 +1918,20 @@ function headline(label, subject) {
   };
 }
 
+// #3233: `detail` is "<old>:<new>" (services/app-allowance.js). Say it in
+// words, and which way it moved; a token this build cannot read still says
+// what happened.
+function appQuotaChangeText(detail) {
+  const m = /^(\d{1,6}):(\d{1,6})$/.exec(String(detail || '').trim());
+  if (!m) return 'Your app allowance changed.';
+  const before = Number(m[1]);
+  const after = Number(m[2]);
+  const slots = (count) => `${count} app ${count === 1 ? 'slot' : 'slots'}`;
+  if (after > before) return `Your app allowance went up from ${before} to ${slots(after)}.`;
+  if (after < before) return `Your app allowance went down from ${before} to ${slots(after)}.`;
+  return `Your app allowance is ${slots(after)}.`;
+}
+
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
@@ -1982,12 +2085,15 @@ function rowView(n) {
     };
   }
 
+  if (n.kind === 'moderation_report' || n.kind === 'moderation_action') {
+    return { ...base, appLine: 'Account', wrap: true, icon: '⚑',
+      ...headline(n.kind === 'moderation_report' ? 'Report update' : 'Moderation action', n.detail || '') };
+  }
+
   if (n.kind === 'app_quota_changed') {
-    const [before, after] = String(n.detail || '').split(':');
-    const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
-      ? `${before} → ${after} app slots` : 'View your current app allowance';
     return { ...base, appLine: 'Account', wrap: true, icon: '＋',
-      label: 'App allowance changed', segments: [{ t: 'text', v: detail }] };
+      label: 'App allowance changed',
+      segments: [{ t: 'text', v: appQuotaChangeText(n.detail) }] };
   }
   if (n.kind === 'app_quota_requested') {
     return { ...base, appLine: 'Admin', wrap: true, icon: '＋',

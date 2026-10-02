@@ -66,6 +66,7 @@ const DIALOG_IDS = [
   // admins and the creator while these switches belong to everybody who
   // uses the app.
   'app-notifications-modal',
+  'report-modal', // #2721 shared reporting dialog
 ];
 
 /**
@@ -111,7 +112,7 @@ const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
  * see the comment above AutoSessionModal. They already build on DialogCard,
  * which is the whole of the chassis available to them.
  */
-const MESSAGES_DIALOGS = ['agent-dialog.tsx', 'create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
+const MESSAGES_DIALOGS = ['create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
 const chassisSrc = new Map([
   ...componentSrc,
   ...MESSAGES_DIALOGS.map((f) => [`messages/${f}`, fs.readFileSync(path.join(MESSAGES, f), 'utf8')]),
@@ -144,10 +145,10 @@ function rootTag(src, id) {
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
-  // 12 → 13 with #1374's per-app notification dialog. The count guards the
+  // 13 → 14 with #2721's shared report dialog. The count guards the
   // list above against being trimmed to make this test pass; the per-id
   // assertions below are what actually check the 1:1 mapping.
-  assert.equal(DIALOG_IDS.length, 13);
+  assert.equal(DIALOG_IDS.length, 14);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);

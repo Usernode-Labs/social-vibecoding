@@ -270,6 +270,24 @@ const MANIFEST_FILENAME = 'dapp.json';
 // the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
 // The step buys 29 slots over the 811 declared here.
 //
+// 840 → 850 (welcome messages): main stood at 820 exactly, the 20-slot
+// floor; the new Admin → Welcome messages section declares one check on its
+// own route (#admin/welcome-dm), which no existing check shares, so there
+// was nothing to fold it into. Same arithmetic: 850 checks at ~3.9s over the
+// pool of 16 is ~207s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~236s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 821
+// declared here.
+//
+// 850 → 860 (#3233, #3489): two proposals in flight together each assumed
+// they were the only one moving the count off 829 — the notification
+// sheet's plain-words app allowance row, and the hub's idle Your work state
+// — and merged together they crossed the 20-slot floor at 831 against 850.
+// Same arithmetic: 860 checks at ~3.9s over the pool of 16 is ~210s of ideal
+// work, and the unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin
+// by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
+// 29 slots over the 831 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -281,7 +299,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 840;
+const MAX_DECLARED_TESTS = 860;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -671,6 +689,12 @@ function readName(parsed) {
 // read() used to leave it out, and every deploy snapshots read()'s output
 // over `apps.manifest_snapshot`, so a description written into dapp.json
 // never reached any of those surfaces: the first deploy dropped it.
+//
+// #3572: the create screen takes at most 90 characters (two lines of the hub
+// hero on a phone; services/create-options.js DESCRIPTION_MAX). This reader
+// does NOT hold a repository to that: an imported repo's line, or one a
+// proposal lengthened, is kept up to 280 rather than failing the deploy, and
+// each surface clamps what it draws to its lines.
 const MAX_DESCRIPTION_LENGTH = 280;
 function readDescription(parsed) {
   if (typeof parsed?.description !== 'string') return null;
@@ -1009,9 +1033,22 @@ function normalizeIconImagePath(raw) {
   return p;
 }
 
+// A project's colour, as dapp.json may set it beside its icon: a hex
+// colour, #rgb or #rrggbb, stored lower-case and expanded to six digits. The
+// page it tints darkens it until white text on it is readable, so any hex is
+// accepted here; anything else is ignored with a warn.
+function normalizeIconColor(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().toLowerCase().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+  if (!m) return null;
+  const hex = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  return `#${hex}`;
+}
+
 // Normalize the optional top-level `icon` block:
 //   "icon": { "emoji": "🎮" }  or  "icon": { "image": "public/icon.png" }
-// Returns `{ emoji, image }` (each string-or-null) or null when the
+//   plus, optionally, "color": "#2e6660" (the project's colour)
+// Returns `{ emoji, image, color }` (each string-or-null) or null when the
 // block is absent / carries nothing usable. Both keys are retained when
 // both are valid — the image takes precedence at reconcile time, with
 // the emoji as the fallback should the committed file fail validation.
@@ -1037,11 +1074,16 @@ function readIcon(parsed) {
     image = normalizeIconImagePath(raw.image);
     if (!image) log.warn('app-manifest', 'Ignoring invalid icon.image path', { value: raw.image });
   }
+  let color = null;
+  if (raw.color != null) {
+    color = normalizeIconColor(raw.color);
+    if (!color) log.warn('app-manifest', 'Ignoring invalid icon.color', { value: raw.color });
+  }
   if (emoji != null && image != null) {
     log.warn('app-manifest', 'icon declares both emoji and image; image takes precedence');
   }
-  if (emoji == null && image == null) return null;
-  return { emoji, image };
+  if (emoji == null && image == null && color == null) return null;
+  return { emoji, image, color };
 }
 
 function read(cloneDir) {
@@ -1743,7 +1785,7 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
   const emoji = !image && icon?.emoji ? icon.emoji : null;
 
   const { rows } = await pool.query(
-    'SELECT icon_emoji, icon_image_id FROM apps WHERE id = $1', [app.id]
+    'SELECT icon_emoji, icon_image_id, icon_color FROM apps WHERE id = $1', [app.id]
   );
   if (!rows.length) return false;
   const cur = rows[0];
@@ -1770,16 +1812,22 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
     await pool.query('DELETE FROM app_icons WHERE app_id = $1', [app.id]);
   }
 
-  if ((cur.icon_emoji || null) === emoji && (cur.icon_image_id || null) === imageId) {
+  // The project's colour rides the same block and the same rule: what
+  // dapp.json says, and nothing when it says nothing (the page then derives
+  // one from the icon, in the browser).
+  const color = icon?.color || null;
+
+  if ((cur.icon_emoji || null) === emoji && (cur.icon_image_id || null) === imageId
+    && (cur.icon_color || null) === color) {
     return false;
   }
 
   await pool.query(
-    'UPDATE apps SET icon_emoji = $1, icon_image_id = $2 WHERE id = $3',
-    [emoji, imageId, app.id]
+    'UPDATE apps SET icon_emoji = $1, icon_image_id = $2, icon_color = $3 WHERE id = $4',
+    [emoji, imageId, color, app.id]
   );
   log.info('app-manifest', 'Reconciled app icon from dapp.json', {
-    appId: app.id, slug: app.slug, emoji, imageId,
+    appId: app.id, slug: app.slug, emoji, imageId, color,
   });
 
   try {
@@ -1790,6 +1838,7 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
       slug: app.slug,
       iconEmoji: emoji,
       iconUrl: imageId ? `/app-icons/${imageId}` : null,
+      iconColor: color,
     });
   } catch (err) {
     log.warn('app-manifest', 'Icon broadcast failed', { appId: app.id, err: err.message });
@@ -1877,6 +1926,7 @@ module.exports = {
   readTestsWithMeta,
   checkKey,
   readIcon,
+  normalizeIconColor,
   readAdmins,
   readPlatformEnv,
   reconcilePlatformEnv,

@@ -276,7 +276,8 @@ test('actual shared component renders the entire card and escapes the issue titl
   // The Needs-you page: the summary, the issues line, the steps sheet (with
   // the failing check's reason behind its door), and the Discussion. The
   // Build is a pill that LEAVES this page (#2605), not a sheet on it.
-  for (const label of ['Addresses', 'Where it stands', 'Discussion', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
+  for (const label of ['Addresses', 'Waiting on you', 'Submitted for review', 'Discussion', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
+  assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
   assert.match(html, />Edit issues</, 'the owner can manage associations after creation');
@@ -309,7 +310,8 @@ test('issue and governance topic bodies are not rebuilt as proposals without a s
   const av = context();
   const v = av._topicViewFor('session', failing);
   const previousWindow = global.window;
-  global.window = { AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
+  global.window = { addEventListener() {},
+    AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
   try {
     const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
     const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: { ...v.body, comments: true }, item: null }));
@@ -339,7 +341,11 @@ test('detail refresh uses the lifecycle endpoint and preserves demo context', as
         return { ok: true, json: async () => review ? { proposal: session } : { session } };
       };
       assert.deepEqual(await readChangeDetail(session, true, signal), session);
-      assert.equal(requests.at(-1), review ? '/api/apps/example/proposals/123?demo=1' : '/api/sessions/123/details?demo=1');
+      // `results=failing`: the page counts its passing checks and their fold
+      // reads the names when opened (tests/item-page-reads.test.js).
+      assert.equal(requests.at(-1), review
+        ? '/api/apps/example/proposals/123?results=failing&demo=1'
+        : '/api/sessions/123/details?results=failing&demo=1');
     }
     assert.equal(requests.length, 5, 'one authoritative detail request per refresh');
     assert.equal(roster, 3);

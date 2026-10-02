@@ -360,7 +360,7 @@ test('an explicit Codex choice rejects a model outside the user catalog', async 
     }),
     (err) => err instanceof AgentSelectionError
       && err.statusCode === 400
-      && /not available under your OpenRouter key/.test(err.message),
+      && /not in the OpenRouter catalog/.test(err.message),
   );
 });
 

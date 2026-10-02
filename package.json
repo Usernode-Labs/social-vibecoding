@@ -16,11 +16,9 @@
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
     "pretest:changed": "node scripts/ensure-shell-artifacts.js --html-only",
     "test:changed": "node scripts/test-changed.js",
-    "test:visual-evidence:local": "node scripts/local-visual-evidence/run.js",
-    "visual-evidence:local-setup": "node scripts/local-visual-evidence/prepare-env.js",
-    "test:visual-evidence:platform-local": "node scripts/local-visual-evidence/run-platform.js",
-    "test:visual-evidence:historical": "node scripts/local-visual-evidence/run-historical.js",
-    "verify:visual-evidence:local": "node scripts/local-visual-evidence/verify-local-plan.js",
+    "shots:dry-run": "node scripts/shots-dry-run.js",
+    "shots:pair": "node scripts/shots-dry-run-pair.js",
+    "test:shell-upgrade:browser": "node scripts/verify-shell-upgrade.js",
     "global-chat:inventory": "node scripts/generate-global-chat-inventory.js",
     "global-chat:inventory:check": "node scripts/generate-global-chat-inventory.js --check",
     "ensure:shell": "node scripts/ensure-shell-artifacts.js --runtime",
@@ -35,7 +33,6 @@
   "devDependencies": {
     "dompurify": "3.4.4",
     "marked": "15.0.12",
-    "pngjs": "7.0.0",
     "postgres": "3.4.9",
     "qrcodejs": "1.0.0",
     "tailwindcss": "3.4.17",
@@ -49,6 +46,7 @@
     "@octokit/rest": "^22.0.1",
     "bcrypt": "^5.1.1",
     "bech32": "^2.0.0",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.3.1",
     "express": "^4.21.0",
@@ -58,6 +56,7 @@
     "jsonwebtoken": "^9.0.2",
     "minio": "^8.0.7",
     "pg": "^8.13.0",
+    "pngjs": "7.0.0",
     "ws": "^8.18.0",
     "zod": "3.25.76"
   }

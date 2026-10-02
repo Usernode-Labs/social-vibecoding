@@ -75,8 +75,15 @@ import {
 } from '@/components/ui/icons';
 
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
+import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import {
+  communityScopeStore, goToCommunity, hydrateCommunityScope, shortName, toggleSwitcher, warmCommunities,
+  type CommunityInfo,
+} from '../workshop/community-scope';
+import { CommunitySwitcher } from '../workshop/community-switcher';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 import { RecentsList } from './recents-list';
@@ -196,6 +203,57 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 }
 
 /**
+ * THE COMMUNITIES TAB'S FACE: the community it is on, or All communities.
+ *
+ * On the phone's bar, a square ring, the shape of an app's own tile, around
+ * either that community's tile, in its colour (features/workshop/
+ * community-scope.ts says which; lib/community-color.ts what colour), or, on
+ * All communities, the tab's own people glyph. The ring is what says the tab
+ * can be switched: press it while it is lit and "Your communities" opens.
+ * The desktop rail draws no ring (app.css): there the row goes back to All
+ * communities, and the header's name is the switcher.
+ *
+ * All communities is THE PRERENDER: the scope arrives from localStorage and
+ * app.js after the first paint, so the shipped markup and the first client
+ * render are both this branch.
+ */
+function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
+  const color = useCommunityColor(info
+    ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug }
+    : null);
+  if (!info) {
+    return (
+      <span className="platform-tab-ring platform-tab-ring-all" aria-hidden="true">
+        <UserGroupIcon className="platform-tab-glyph" aria-hidden="true" />
+      </span>
+    );
+  }
+  const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
+  return (
+    <span className="platform-tab-ring" style={{ ['--ring' as string]: color }} aria-hidden="true">
+      <span className="app-icon-tile platform-tab-tile" data-icon={appIconKind(app as never)}>
+        <AppIconContent app={app as never} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The votes the tab's community is waiting on you for (All communities: all
+ * of them), in the accent, because it asks for you. Only above zero, and
+ * never in the prerender (the store starts empty). While it shows, app.css
+ * hides the quiet unread-channels count beside it: one number per glyph.
+ */
+function VotesBadge({ count }: { count: number }) {
+  if (!(count > 0)) return null;
+  return (
+    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+      {count > 99 ? '99+' : String(count)}
+    </span>
+  );
+}
+
+/**
  * The Messages tab's count — ALWAYS IN THE MARKUP, hidden until it has one.
  *
  * It renders unconditionally for the reason #notifications-badge in the
@@ -230,31 +288,30 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
 }
 
 /**
- * The rail, peeked back over an open app (#2718, desktop only).
+ * The rail, peeked back over a folded rail (#2718, #2764, desktop only).
  *
- * ── The problem, on a laptop ──────────────────────────────────────────
+ * ── Where it comes from now ───────────────────────────────────────────
  *
- * An app covers the rail — "the app is the whole window" is what makes a
- * mini-app feel like a program rather than a page — and the way out is the ✕
- * in the header. That is right on a phone, where the ✕ is under your thumb.
- * On a laptop the pointer is already at the left edge half the time, and the
- * five places you might want are behind a control at the top-left corner and
- * a screen swap.
+ * It began as the rail peeked back over an OPEN APP: on a laptop the pointer
+ * is at the left edge half the time, so the rail came back on hover there.
+ * That is exactly why it was taken away over a running app (#3138) — an app's
+ * own menus, lists and scrollbars put the pointer at the left edge all the
+ * time, and the rail kept landing on top of what the reader was using. Inside
+ * an app the way out is the header's ✕, as on a phone.
  *
- * So the rail comes BACK on hover, over the app, and going anywhere from it
- * leaves the app the way tapping a tab always does. WeChat's floating
- * capsule, a desktop OS's auto-hiding dock and Slack's own collapsed rail are
- * all the same move: the navigation is still there, it is just not spending
- * width while you are working.
+ * What remains is the FOLDED rail on a platform screen: hovering the window's
+ * edge (the hot zone below) or #sidebar-toggle fades it in over the page, and
+ * going anywhere from it is an ordinary tab press. Slack's collapsed rail and
+ * a desktop OS's auto-hiding dock are the same move.
  *
  * ── Why the peek is its own fact ──────────────────────────────────────
  *
- * It is NOT the bar's visibility. The router's answer is still "hidden" —
- * `App._syncPlatformTabs` said so, the screens reserve no band, and the app
- * is full width. The peek is a temporary overlay ON TOP of that answer, which
- * is why it is a separate field and why the CSS that reserves the band
- * excludes a peeking bar explicitly: a rail that reserved 224px on the way in
- * would reflow the app under the pointer.
+ * It is NOT the bar's visibility. A folded rail is still the route's rail,
+ * and the peek is a temporary overlay ON TOP of that — the screens reserve no
+ * band while it is up, and the page stays full width. That is why it is a
+ * separate field and why the CSS that reserves the band excludes a peeking
+ * bar explicitly: a rail that reserved 224px on the way in would reflow the
+ * page under the pointer.
  *
  * ── The grace period, and what it is for ──────────────────────────────
  *
@@ -671,6 +728,15 @@ export function PlatformTabs() {
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
+  // from storage after the first paint, and every community's votes owed a
+  // moment after sign-in, so the badge can say so before anybody opens the
+  // switcher.
+  const scope = useStoreState(communityScopeStore);
+  useEffect(() => { hydrateCommunityScope(); }, []);
+  useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
+  const scoped = scope.slug ? scope.info[scope.slug] || null : null;
+  const votes = scope.slug ? Number(scoped?.needs) || 0 : Number(scope.totalNeeds) || 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -713,6 +779,25 @@ export function PlatformTabs() {
       event.preventDefault();
       return;
     }
+    // THE LIT COMMUNITIES TAB. On a phone it opens "Your communities"
+    // (../workshop/community-switcher.tsx) rather than popping to the list:
+    // the tab is a community now, and pressing it again is how you change
+    // which. On the desktop rail it goes back to All communities, the list,
+    // as a sidebar row does; the header's name is the switcher there.
+    if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
+      let wide = false;
+      try { wide = window.matchMedia('(min-width: 768px)').matches; } catch { wide = false; }
+      if (!wide) {
+        event.preventDefault();
+        toggleSwitcher('tab', event.currentTarget);
+        return;
+      }
+      if (scope.slug) {
+        event.preventDefault();
+        goToCommunity(null);
+        return;
+      }
+    }
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
       return;
@@ -725,28 +810,36 @@ export function PlatformTabs() {
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
-          hides it below the desktop breakpoint, because a phone has no
-          pointer to hover with and a hidden touch target at the screen edge
-          would eat swipes.
+          that can start a peek. It renders ONLY where the viewer folded a
+          rail the route has — `visible && !railOpen` — and app.css hides it
+          below the desktop breakpoint, because a phone has no pointer to
+          hover with and a hidden touch target at the screen edge would eat
+          swipes.
 
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
+          NOT OVER A RUNNING APP (#3138). It used to render there too
+          (#2718), so the rail came back over the app whenever the pointer
+          drifted to the window's left edge — which is where an app's own
+          menus, lists and scrollbars put the pointer all the time, and the
+          rail landed on top of whatever the reader was reaching for. Inside
+          an app the way out is the header's ✕, as it is on a phone; the
+          rail is the route's to hide there (`!visible`), so nothing at the
+          edge brings it back. That holds even with the rail folded by hand:
+          `railOpen` outlives the screen, and a fold made on Home must not
+          bring the hot zone back into the next app opened.
 
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
+          Nor on the chromeless and signed-out shells, the other routes with
+          no rail: a strip that peeked one in there would be conjuring
+          navigation out of nothing. `visible` answers all three at once.
+
+          A folded rail on a platform screen keeps it: that is the fold's
+          way back by hover, beside #sidebar-toggle, which docks it again
+          (the toggle hovered peeks it too). On an app's Workshop the rail is
+          UP, so this is that same case — and while the rail is open the strip
+          is absent, because at `z-index: 39` against the rail's 30 it would
+          lay an invisible 18px column down the left edge of the tabs and
+          swallow the press meant for the one under the pointer.
       */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
+      {visible && !railOpen ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"
@@ -801,11 +894,13 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={tabLabel(key, label, viewer).ariaLabel}
+          aria-label={key === 'workshop' && scoped ? `${scoped.name}, your communities` : tabLabel(key, label, viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">
-            <Icon className="platform-tab-glyph" aria-hidden="true" />
+            {key === 'workshop'
+              ? <CommunityTabFace info={scoped} />
+              : <Icon className="platform-tab-glyph" aria-hidden="true" />}
             {/*
                 THE SECOND BADGE IN THE SHELL, and the first one that is not
                 the bell's. #1443 argued the platform should carry exactly
@@ -842,8 +937,11 @@ export function PlatformTabs() {
             {key === 'workshop' ? (
               <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
             ) : null}
+            {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
+          <span className="platform-tab-label">
+            {key === 'workshop' && scoped ? shortName(scoped.name) : tabLabel(key, label, viewer).text}
+          </span>
         </a>,
       ])}
       {/*
@@ -874,6 +972,7 @@ export function PlatformTabs() {
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />
       </a>
       </nav>
+      <CommunitySwitcher />
     </>
   );
 }

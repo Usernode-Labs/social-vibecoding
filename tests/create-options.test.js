@@ -18,7 +18,7 @@ test('an audience resolves to the two visibility columns it implies', () => {
   assert.deepEqual(
     [parse('solo'), parse('invited'), parse('open')].map((o) => [o.collabVisibility, o.viewVisibility]),
     [['private', 'private'], ['private', 'private'], ['public', 'public']],
-    'Just me and A group are private; A community is open to see and to build',
+    'Just me and A private community are private; A public community is open to see and to build',
   );
   assert.equal(parse('solo').audience, 'solo');
   assert.match(options.parseCreateOptions({ audience: 'public' }).error, /audience must be/);
@@ -38,11 +38,11 @@ test('a body with no audience keeps today\'s two fields, defaults and rule', () 
   assert.match(route, /const validateVisibilityCombo = createOptions\.visibilityComboError;/);
 });
 
-test('invitees are usernames, for a group only, deduplicated and bounded', () => {
+test('invitees are usernames, for a private community only, deduplicated and bounded', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: [' @Ada ', 'ada', 'grace', '', '@'] });
   assert.deepEqual(group.invitees, ['Ada', 'grace'], '@ and case do not make a second invite');
-  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a group/);
-  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a private community/);
+  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a private community/);
   assert.deepEqual(options.parseCreateOptions({ audience: 'open', invitees: [] }).invitees, [],
     'an empty list is no invites, not an error');
   assert.match(options.parseCreateOptions({ audience: 'invited', invitees: 'ada' }).error, /list of usernames/);
@@ -69,12 +69,12 @@ test('who approves is dapp.json\'s own block, read strictly', () => {
     { approverPolicy: 'invited', approvalsRequired: null });
 });
 
-test('invite emails are addresses, for a group only, lowercased, deduplicated, and share the twenty', () => {
+test('invite emails are addresses, for a private community only, lowercased, deduplicated, and share the twenty', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: ['ada'], inviteEmails: [' Sam@Example.com ', 'sam@example.com', ''] });
   assert.deepEqual(group.inviteEmails, ['sam@example.com']);
   assert.deepEqual(group.invitees, ['ada']);
   assert.deepEqual(options.parseCreateOptions({ audience: 'invited' }).inviteEmails, []);
-  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a private community/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: ['nope'] }).error, /not an email address/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: 'a@b.co' }).error, /list of email addresses/);
   const people = Array.from({ length: 15 }, (_, i) => `u${i}`);
@@ -97,8 +97,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -106,8 +106,11 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
   assert.equal(desc(undefined).description, null);
   assert.equal(desc('   ').description, null, 'blank is no line');
   assert.equal(desc('  A shared\n\tlist  for our house ').description, 'A shared list for our house');
-  assert.equal(desc('x'.repeat(options.DESCRIPTION_MAX)).description.length, 100);
-  assert.match(desc('x'.repeat(101)).error, /100 characters or fewer/);
+  // #3572: 90, two lines of the hub hero on a phone (it was 100).
+  assert.equal(options.DESCRIPTION_MAX, 90);
+  assert.equal(desc('x'.repeat(options.DESCRIPTION_MAX)).description.length, 90);
+  assert.match(desc('x'.repeat(91)).error, /^Say what it is in 90 characters or fewer\.$/);
+  assert.equal(desc(`  ${'x'.repeat(90)}  `).description.length, 90, 'counted after tidying, so edge spaces cost nothing');
   assert.match(desc(42).error, /line of text/);
   // An import sends it only when its repo's dapp.json has no description.
   assert.equal(desc('A fork of ours', { imported: true }).description, 'A fork of ours');

@@ -28,6 +28,7 @@ import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { navStore } from '../nav/nav-store.js';
+import { appActivity } from './app-activity.js';
 import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
@@ -78,6 +79,7 @@ export { appFrameBridge };
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
+  bridge.appActivity = appActivity;
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
 

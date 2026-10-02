@@ -33,6 +33,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { draftWriteLimiter } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Kept in step with DevChat.MAX_SAVED_DRAFTS in public/js/dev-chat.js;
 // tests/chat-session-drafts-route.test.js pins both.
@@ -208,7 +209,7 @@ function chatDraftsRoutes() {
   // Idempotent by design — an already-gone row is still a 200 with the
   // current list. That is what lets a client replay the tombstones it
   // accumulated while offline without special-casing "already deleted".
-  router.delete('/api/sessions/:id/drafts/:draftId', draftWriteLimiter, async (req, res) => {
+  router.delete('/api/sessions/:id/drafts/:draftId', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isInteger(sessionId)) return res.status(400).json({ error: 'Bad session id' });

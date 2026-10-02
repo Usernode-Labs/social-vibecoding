@@ -542,6 +542,11 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
+      case 'moderation_changed': {
+        void GroupChat.loadHistory();
+        GroupChat.loadThreadHistoryForOpen();
+        break;
+      }
       case 'chat_edit': {
         // Author edited a message — patch content + the "edited" marker in
         // place (preserves scroll, reactions, and the row's quote block).
@@ -551,6 +556,13 @@ const GroupChat = {
       case 'chat_delete': {
         // #2387: its author deleted it — the placeholder, wherever it is drawn.
         GroupChat._applyDelete(msg);
+        GroupChat._settleDelete(msg.id, null);
+        break;
+      }
+      case 'delete_error': {
+        // The server refused THIS socket's own delete (services/ws.js): put
+        // the message back and let deleteMessage's caller say so.
+        GroupChat._settleDelete(msg.id, new Error(`Delete failed (${msg.code || 'refused'})`));
         break;
       }
       case 'thread_summary': {
@@ -1752,25 +1764,63 @@ const GroupChat = {
   // Delete one of your own messages. Over the socket when it is open (the
   // same path an edit takes), else the REST route; the row turns into its
   // placeholder at once, and the server's `chat_delete` confirms it.
+  //
+  // A delete that does not go through puts the message back before
+  // rejecting, so the caller's "Couldn't delete" toast is not shown beside a
+  // placeholder: a REST delete refused, or whose fetch throws (offline), and
+  // a socket delete the server answers with `delete_error`. A socket delete
+  // resolves on its `chat_delete`, or quietly after DELETE_SETTLE_MS when no
+  // answer comes (an already-deleted message is confirmed by silence).
+  DELETE_SETTLE_MS: 30000,
+  _pendingDeletes: new Map(),
+
   async deleteMessage(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
     const before = [];
     GroupChat._eachCopy(id, (m) => { before.push([m, { ...m }]); });
     GroupChat._applyDelete({ id });
-    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
-      GroupChat.ws.send(JSON.stringify({ type: 'delete', id: Number(id) }));
-      return;
-    }
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
-      method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
+    const restore = () => {
       for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
       GroupChat.render();
       if (GroupChat.activeThread) GroupChat.renderThread();
+    };
+    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      const key = Number(id);
+      GroupChat._settleDelete(key, null);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => GroupChat._settleDelete(key, null), GroupChat.DELETE_SETTLE_MS);
+        GroupChat._pendingDeletes.set(key, { resolve, reject, restore, timer });
+        GroupChat.ws.send(JSON.stringify({ type: 'delete', id: key }));
+      });
+    }
+    let res;
+    try {
+      res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
+        method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
+      });
+    } catch (err) {
+      restore();
+      throw err;
+    }
+    if (!res.ok) {
+      restore();
       throw new Error(`Delete failed (${res.status})`);
     }
+  },
+
+  // Settle a socket delete this client is waiting on: `err` null confirms
+  // it, an Error puts the message back and rejects. An id nobody is waiting
+  // on is ignored.
+  _settleDelete(id, err) {
+    const key = Number(id);
+    const pending = GroupChat._pendingDeletes.get(key);
+    if (!pending) return;
+    GroupChat._pendingDeletes.delete(key);
+    clearTimeout(pending.timer);
+    if (!err) { pending.resolve(); return; }
+    pending.restore();
+    pending.reject(err);
   },
 
   _applyDelete(data) {
@@ -2126,6 +2176,12 @@ const GroupChat = {
         if (id) GroupChat._startEdit(id);
         return;
       }
+      if (e.target.closest('.gc-react-bar-report')) {
+        const id = parseInt(bar.dataset.msgId || '', 10);
+        GroupChat._closeReactionBar();
+        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: 'Selected message' });
+        return;
+      }
       if (e.target.closest('.gc-react-bar-more')) {
         GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
         GroupChat._publishReactBar();
@@ -2148,11 +2204,13 @@ const GroupChat = {
     window.UsernodeReact?.groupChat?.publishReactionBar?.({
       gridOpen: !!GroupChat._reactBarGridOpen,
       editable: !!GroupChat._reactBarEditable,
+      reportable: !!GroupChat._reactBarReportable,
+      readOnly: GroupChat._readOnly(),
     });
   },
 
   _openReactionBar(row) {
-    if (GroupChat._readOnly()) return; // #621: long-press bar is write-only
+    if (!App.user) return;
     const id = row && parseInt(row.dataset.msgId || '', 10);
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();
@@ -2162,7 +2220,8 @@ const GroupChat = {
     // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
     // before the measurement below decides where the bar fits.
     GroupChat._reactBarGridOpen = false;
-    GroupChat._reactBarEditable = row.classList.contains('gc-msg')
+    GroupChat._reactBarReportable = row.classList.contains('gc-msg') && !row.classList.contains('gc-msg-self');
+    GroupChat._reactBarEditable = !GroupChat._readOnly() && row.classList.contains('gc-msg')
       && row.classList.contains('gc-msg-self');
     GroupChat._publishReactBar();
     bar.classList.remove('hidden');
@@ -2944,7 +3003,12 @@ const GroupChat = {
       // routes/votes.js: "<who> voted yes on PR #N: <title>" or, with a
       // reason, "<who> voted no: “<reason>”".
       let m = /^(\S+) voted (yes|no)(?::\s*[“"]([\s\S]*?)[”"]|\s+on\b[\s\S]*)?$/.exec(text);
-      if (m) return { ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '' };
+      if (m) {
+        return {
+          ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '',
+          earlier: GroupChat._votedOnEarlierVersion(sessionId, m[1]),
+        };
+      }
       m = /^(\S+) (?:promoted|imported) PR #\d+/.exec(text);
       return { ...base, type: 'submitted', actor: m ? m[1] : '' };
     }
@@ -2952,6 +3016,23 @@ const GroupChat = {
     const known = GroupChat._proposalEvent(msg, kind);
     if (known) return { ...known, here: known.type !== 'weekly' };
     return { ...base, type: 'notice', actor: '', text: GroupChat._noticeText(text, sessionId, prNumber) };
+  },
+
+  // #3411: whether this voter's vote no longer counts because the proposal
+  // changed after they cast it. The line posted at vote time is permanent,
+  // but the tally counts only votes on the current version, so a "Voted yes"
+  // row beside "Yes 0" needs to say why. Read off the roster the page has
+  // already loaded (AppView._loadVoteRoster), never a fetch per row. A voter
+  // has one vote per proposal, so one listed there has none on the current
+  // version and every line of theirs is from an earlier one; a voter who
+  // re-cast on the current version is not listed, and no line of theirs is
+  // marked.
+  _votedOnEarlierVersion(sessionId, username) {
+    const a = GroupChat.activeThread;
+    const sid = sessionId || (a && a.type === 'session' ? String(a.ref) : '');
+    if (!sid || !username || typeof AppView === 'undefined' || !AppView._voteRoster) return false;
+    const roster = AppView._voteRoster[sid];
+    return !!(roster && Array.isArray(roster.earlierVoters) && roster.earlierVoters.includes(username));
   },
 
   // A notice's wording on its own page: "PR #12: <title> reached the vote
@@ -3191,8 +3272,17 @@ const GroupChat = {
     //              to that flex row).
     // Esc closes; the panel persists across re-renders of the chat
     // tab because the slot lives in the layout, not in body.
+    //
+    // The general chat is not the only layout with the slot: a request's or
+    // a proposal's Discussion is a thread in the Dev topic frame
+    // (features/dev-board/topic-frame.tsx), which carries the same row, and
+    // a spec card there opens the panel beside the topic. Before it did, the
+    // lookup below found nothing and "View full spec" did nothing (#3495).
     const panel = document.getElementById('gc-spec-side-panel');
     if (!panel) return;
+    // The divider is bound on mount by the general chat; the topic frame has
+    // no mount of this module's, so bind it here too. Idempotent per handle.
+    GroupChat._initSpecPanelResizer();
 
     GroupChat._specPanelRaw = content == null ? '' : String(content);
 
@@ -3936,8 +4026,17 @@ const MentionAutocomplete = {
   // Cache freshness: a stale list only means a just-joined user isn't
   // suggested yet, which is fine. Re-fetch when older than this.
   CACHE_TTL_MS: 2 * 60 * 1000,
+  // The server caps the whole list at this many (src/routes/chat.js). A list
+  // that long may have left somebody out, so a prefix it cannot fill is also
+  // asked of the server by what was typed (?q=), as the hub's channel box
+  // does (#3361).
+  FULL_LIST: 500,
+  PREFIX_DEBOUNCE_MS: 150,
 
   _cacheBySlug: new Map(), // slug -> { users: [username...], fetchedAt }
+  _prefixBySlug: new Map(), // slug -> Map(lowercased prefix -> [username...])
+  _prefixTimer: null,
+  _prefixAsked: null, // `${slug}\n${prefix}` of the lookup in flight or due
   _input: null,
   _slug: null,
   _menu: null,
@@ -3957,15 +4056,21 @@ const MentionAutocomplete = {
   },
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount.
+  // Idempotent per element; called on every group-chat tab mount. The
+  // candidates are warmed when the box is focused, before the first
+  // keystroke, rather than on every mount (see RefAutocomplete.attach).
   attach(input, slug) {
     if (!input) return;
     MentionAutocomplete._input = input;
     MentionAutocomplete._slug = slug;
-    MentionAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) MentionAutocomplete._loadCandidates(slug);
 
     if (input._gcMentionBound) return;
     input._gcMentionBound = true;
+
+    input.addEventListener('focus', () => {
+      if (MentionAutocomplete._input === input) MentionAutocomplete._loadCandidates(MentionAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4002,6 +4107,8 @@ const MentionAutocomplete = {
         ? users.map((u) => (u && u.username) || '').filter(Boolean)
         : [];
       MentionAutocomplete._cacheBySlug.set(slug, { users: names, fetchedAt: Date.now() });
+      // What prefix lookups found is as old as the list it widened.
+      MentionAutocomplete._prefixBySlug.delete(slug);
       // If the user already has an open `@token` while we were fetching,
       // refresh the menu now that we have data.
       if (MentionAutocomplete._input === document.activeElement) MentionAutocomplete._sync();
@@ -4010,7 +4117,55 @@ const MentionAutocomplete = {
 
   _candidates() {
     const c = MentionAutocomplete._cacheBySlug.get(MentionAutocomplete._slug);
-    return (c && c.users) || [];
+    const whole = (c && c.users) || [];
+    const asked = MentionAutocomplete._prefixBySlug.get(MentionAutocomplete._slug);
+    if (!asked || !asked.size) return whole;
+    // The whole list first (its order is the server's: friends, then the
+    // people who have spoken), then anybody a prefix lookup found beyond it.
+    const seen = new Set(whole);
+    const out = whole.slice();
+    for (const names of asked.values()) {
+      for (const name of names) if (!seen.has(name)) { seen.add(name); out.push(name); }
+    }
+    return out;
+  },
+
+  // The whole list is capped and this prefix did not fill the menu from it:
+  // ask the server for the people matching what has been typed. Debounced;
+  // an answer is used only if the token under the caret is still the one
+  // asked about, and a refusal or failure (a 429 included) is not
+  // remembered, so a later keystroke asks again.
+  _maybeLookup(query, shown) {
+    const slug = MentionAutocomplete._slug;
+    const c = MentionAutocomplete._cacheBySlug.get(slug);
+    if (!slug || !query || !c || c.users.length < MentionAutocomplete.FULL_LIST) return;
+    if (shown >= MentionAutocomplete.MAX_RESULTS) return;
+    const key = query.toLowerCase();
+    const asked = MentionAutocomplete._prefixBySlug.get(slug);
+    if (asked && asked.has(key)) return;
+    const id = `${slug}\n${key}`;
+    if (MentionAutocomplete._prefixAsked === id) return;
+    clearTimeout(MentionAutocomplete._prefixTimer);
+    MentionAutocomplete._prefixAsked = id;
+    MentionAutocomplete._prefixTimer = setTimeout(async () => {
+      MentionAutocomplete._prefixTimer = null;
+      let names = null;
+      try {
+        const res = await fetch(`/api/apps/${slug}/mention-suggestions?q=${encodeURIComponent(query)}`);
+        if (res.ok) {
+          const { users } = await res.json();
+          names = Array.isArray(users) ? users.map((u) => (u && u.username) || '').filter(Boolean) : [];
+        }
+      } catch { /* offline / transient — the next keystroke asks again */ }
+      if (MentionAutocomplete._prefixAsked === id) MentionAutocomplete._prefixAsked = null;
+      if (!names) return;
+      // Stale: the person has typed on, or moved to another room, since.
+      const token = MentionAutocomplete._detectToken();
+      if (MentionAutocomplete._slug !== slug || !token || token.query.toLowerCase() !== key) return;
+      if (!MentionAutocomplete._prefixBySlug.has(slug)) MentionAutocomplete._prefixBySlug.set(slug, new Map());
+      MentionAutocomplete._prefixBySlug.get(slug).set(key, names);
+      MentionAutocomplete._sync();
+    }, MentionAutocomplete.PREFIX_DEBOUNCE_MS);
   },
 
   // Detect an active mention token immediately before the caret.
@@ -4046,6 +4201,7 @@ const MentionAutocomplete = {
     const token = MentionAutocomplete._detectToken();
     if (!token) { MentionAutocomplete.close(); return; }
     const items = MentionAutocomplete._filter(token.query);
+    MentionAutocomplete._maybeLookup(token.query, items.length);
     if (!items.length) { MentionAutocomplete.close(); return; }
     MentionAutocomplete._tokenStart = token.start;
     MentionAutocomplete._items = items;
@@ -4267,16 +4423,23 @@ const RefAutocomplete = {
   _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7}|[A-Za-z][A-Za-z0-9-]{0,39})$/i,
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount. Kicks
-  // off the candidate load so the list is warm by the first keystroke.
+  // Idempotent per element; called on every group-chat tab mount. Warms the
+  // candidates when the box is focused — before the first keystroke, as it
+  // always was — rather than on every mount: the list is the app's open
+  // proposals and GitHub issues, a read no screen that merely SHOWS a chat
+  // needed (on the platform app, two of the board's largest).
   attach(input, slug) {
     if (!input) return;
     RefAutocomplete._input = input;
     RefAutocomplete._slug = slug;
-    RefAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) RefAutocomplete._loadCandidates(slug);
 
     if (input._gcRefBound) return;
     input._gcRefBound = true;
+
+    input.addEventListener('focus', () => {
+      if (RefAutocomplete._input === input) RefAutocomplete._loadCandidates(RefAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4305,7 +4468,9 @@ const RefAutocomplete = {
     if (cached && (Date.now() - cached.fetchedAt) < RefAutocomplete.CACHE_TTL_MS) return;
     try {
       const [prRes, issueRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
+        // `results=failing`: numbers and titles are all this reads; the list
+        // form is the Workshop's own spelling (AppView._listQS), so one copy.
+        fetch(`/api/apps/${slug}/promoted?results=failing`),
         fetch(`/api/apps/${slug}/github-issues`),
       ]);
       const prData = prRes.ok ? await prRes.json() : {};

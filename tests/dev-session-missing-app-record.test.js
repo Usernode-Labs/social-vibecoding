@@ -8,9 +8,13 @@
 // GET /api/apps/<slug> leaves appData empty), so a record that did not come
 // back was a blank page with no way forward.
 //
+// #2779: that address now opens an unsent agent session on the app (the
+// classic unsent change is retired), and the record is still what names the
+// app, so the same rules hold with the hand-off in place of the screen.
+//
 // Loads the real public/js/app-view.js into a vm context and pins:
 //   - a missing record is asked for once more, and a record that then
-//     arrives renders the unsent change as usual;
+//     arrives hands the change to an agent session on that app;
 //   - a record that still will not come renders a stated error with a
 //     Try again control — never an empty host;
 //   - Try again re-renders the screen once the record is back;
@@ -58,6 +62,7 @@ function makeHarness(recordAnswers) {
   const renderChatViewCalls = [];
   const pendingStarts = [];
   const appRequests = [];
+  const redirects = [];
   const answers = [...recordAnswers];
 
   const DevChat = {
@@ -85,6 +90,7 @@ function makeHarness(recordAnswers) {
       currentSubTab: 'sessions',
       switchTab: () => {},
       updateHash: () => {},
+      openNewChangeAsAgentSession: (slug) => { redirects.push(slug); },
     },
     DevChat,
     document: {
@@ -97,7 +103,7 @@ function makeHarness(recordAnswers) {
     },
     fetch: async (url) => {
       const u = String(url);
-      if (u === '/api/apps/homeroom-self') {
+      if (u.split('?')[0] === '/api/apps/homeroom-self') {
         appRequests.push(u);
         const ok = answers.length ? answers.shift() : false;
         return ok
@@ -125,7 +131,7 @@ function makeHarness(recordAnswers) {
   AppView.startTokenRefresh = () => {};
   AppView._loadDevData = async () => {};
   AppView.appData = null;
-  return { AppView, sandbox, container, renderChatViewCalls, pendingStarts, appRequests };
+  return { AppView, sandbox, container, renderChatViewCalls, pendingStarts, appRequests, redirects };
 }
 
 test('#2879: the unsent change with no app record asks once more, and renders when it arrives', async () => {
@@ -134,8 +140,9 @@ test('#2879: the unsent change with no app record asks once more, and renders wh
   await h.AppView.renderDevChatTab('new');
 
   assert.equal(h.appRequests.length, 1, 'the record is asked for again');
-  assert.deepEqual(h.pendingStarts, ['homeroom-self'], 'the placeholder starts against the record');
-  assert.equal(h.renderChatViewCalls.length, 1, 'the unsent change is drawn');
+  assert.deepEqual(h.redirects, ['homeroom-self'], 'the agent session is focused on the record\'s app');
+  assert.deepEqual(h.pendingStarts, [], 'no classic placeholder is started');
+  assert.equal(h.renderChatViewCalls.length, 0, 'and no classic screen is drawn');
 });
 
 test('#2879: a record that will not come is said, with Try again — never an empty page', async () => {
@@ -144,6 +151,7 @@ test('#2879: a record that will not come is said, with Try again — never an em
   await h.AppView.renderDevChatTab('new');
 
   assert.equal(h.renderChatViewCalls.length, 0);
+  assert.deepEqual(h.redirects, [], 'nothing to focus an agent session on yet');
   assert.match(h.container.innerHTML, /id="dc-app-unavailable"/, 'the error state is rendered');
   assert.match(h.container.innerHTML, /could not be loaded/);
   assert.match(h.container.innerHTML, /id="dc-app-unavailable-retry"/, 'with a way to try again');
@@ -157,12 +165,12 @@ test('#2879: Try again re-renders the screen once the record is back', async () 
   assert.equal(typeof h.container._listeners.click, 'function', 'Try again is wired');
   h.container._listeners.click();
   // The retry is an async render; let it settle.
-  for (let i = 0; i < 20 && !h.renderChatViewCalls.length; i += 1) {
+  for (let i = 0; i < 20 && !h.redirects.length; i += 1) {
     await new Promise((r) => setTimeout(r, 0));
   }
 
-  assert.equal(h.renderChatViewCalls.length, 1, 'the unsent change is drawn after the retry');
-  assert.deepEqual(h.pendingStarts, ['homeroom-self']);
+  assert.deepEqual(h.redirects, ['homeroom-self'], 'the change is handed off after the retry');
+  assert.deepEqual(h.pendingStarts, []);
 });
 
 test('#2879: a record for ANOTHER app counts as missing', async () => {
@@ -172,7 +180,7 @@ test('#2879: a record for ANOTHER app counts as missing', async () => {
   await h.AppView.renderDevChatTab('new');
 
   assert.equal(h.appRequests.length, 1, 'the open app\'s record is asked for');
-  assert.deepEqual(h.pendingStarts, ['homeroom-self'], 'and the change is started for the open app');
+  assert.deepEqual(h.redirects, ['homeroom-self'], 'and the change is started for the open app');
 });
 
 test('#2879: the Messages pane keeps its own contract (no refetch, no error card)', async () => {

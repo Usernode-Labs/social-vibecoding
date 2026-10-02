@@ -17,7 +17,7 @@ export interface AgentChange {
   checkSkipReason?: string | null;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
-  /** Its visual change preview, while one is being captured. */
+  /** Its before/after shots, while they are being taken. */
   previewCapture?: { state: string; startedAt: string | null } | null;
 }
 
@@ -68,6 +68,9 @@ export interface AgentTurnState {
   id?: string | null;
   phase: 'mayor' | 'cc' | 'mayor2';
   stopping?: boolean;
+  stopRequestedAt?: number | null;
+  stopToken?: string | null;
+  canForceStop?: boolean;
   changeId?: number | null;
   /** Epoch ms the running work started: the build once dispatched, else the turn. */
   startedAt?: number | null;
@@ -161,6 +164,18 @@ export interface AgentHint {
    * request itself, so this never leaves the browser (serverHint).
    */
   issueTitle?: string;
+  /**
+   * The first message the unsent conversation offers, unsent and editable,
+   * when the entry point has one to hand over: Global Chat's development
+   * task, or Explore's message about a proposal. For the screen only, like
+   * the title (./request-seed.ts draftSeed).
+   */
+  message?: string;
+  /**
+   * Open the composer's "Build with" sheet on this agent's tab: the
+   * out-of-credits card's "Use Claude Code" / "Use Codex". Screen only.
+   */
+  handoff?: 'claude-code' | 'codex';
 }
 
 /** The hint as the server takes it: the fields it resolves, nothing the screen added. */
@@ -549,23 +564,17 @@ export async function switchChange(id: number, changeId: number): Promise<AgentS
   return body.session;
 }
 
-export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?: string; changeId?: number | null }> {
-  const body = await json<{ stopped: boolean; reason?: string; changeId?: number | null }>(
-    await request(`/api/agent-sessions/${id}/stop`, { method: 'POST' }),
-    'Could not stop the Mayor.',
+export async function stopTurn(id: number, options: { token?: string | null; force?: boolean } = {}): Promise<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }> {
+  return json<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }>(
+    await request(`/api/agent-sessions/${id}/stop`, { method: 'POST', body: JSON.stringify(options) }),
+    'Could not stop the agent. Try again.',
   );
-  // A running build belongs to its change: that change's own stop route
-  // confirms the kill (and escalates), as it does from a classic session.
-  if (!body.stopped && body.reason === 'dispatch_running' && body.changeId) {
-    await request(`/api/sessions/${body.changeId}/stop`, { method: 'POST', body: '{}' }).catch(() => null);
-  }
-  return body;
 }
 
-/** Stop the change's running visual change preview (the proposal's Rerun starts it again). */
+/** Stop the change's running before/after shots (the proposal's Take again starts them again). */
 export async function stopPreviewCapture(appSlug: string, changeId: number): Promise<{ stopped: boolean; reason?: string }> {
   return json<{ stopped: boolean; reason?: string }>(
-    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/evidence/stop`, { method: 'POST', body: '{}' }),
+    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/shots/stop`, { method: 'POST', body: '{}' }),
     'Could not stop capturing previews.',
   );
 }
@@ -594,6 +603,17 @@ export async function getSpec(changeId: number): Promise<{ spec: string; version
  */
 export async function promoteChange(changeId: number): Promise<void> {
   await json(await request(`/api/sessions/${changeId}/promote`, { method: 'POST' }), 'Could not put this change up for the vote.');
+}
+
+/**
+ * Name a change as its owner chose (#3251): the owner's title route, which
+ * sets the title the proposal goes to the vote with.
+ */
+export async function renameChange(changeId: number, title: string): Promise<void> {
+  await json(
+    await request(`/api/sessions/${changeId}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    'Could not change the title.',
+  );
 }
 
 /**

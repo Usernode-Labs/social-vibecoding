@@ -198,7 +198,7 @@ jobs:
         run: |
           cat > "$OUT_FILE" <<'ENVEOF'
           USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
-          CLI_CANONICAL_ORIGIN=https://my.onhomeroom.com
+          CLI_CANONICAL_ORIGIN=https://${{ vars.USERNODE_DOMAIN }}
           ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
           ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
           ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
@@ -264,9 +264,10 @@ jobs:
           OPENROUTER_RECOMMENDED_MODELS=${{ vars.OPENROUTER_RECOMMENDED_MODELS || 'deepseek/deepseek-v4.1-flash,z-ai/glm-5.3-flash,openai/gpt-6-astra,moonshotai/kimi-k3,anthropic/claude-opus-5' }}
           USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
           USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
-          # Default-on evidence v2 has one emergency kill switch. A repo
-          # variable set to the string "false" stops it on the next deploy.
-          VISUAL_EVIDENCE_V2_ENABLED=${{ vars.VISUAL_EVIDENCE_V2_ENABLED || 'true' }}
+          # Default-on shots have one emergency kill switch. A repo
+          # variable set to the string "false" stops them on the next deploy
+          # (VISUAL_EVIDENCE_V2_ENABLED is the variable's old name, still read).
+          SHOTS_ENABLED=${{ vars.SHOTS_ENABLED || vars.VISUAL_EVIDENCE_V2_ENABLED || 'true' }}
           LOG_LEVEL=INFO
           GIT_SHA=${{ github.sha }}
           # Scaling tunables (see README scaling notes). Committed defaults

@@ -42,6 +42,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
+import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { SidebarToggle } from '../nav/sidebar-toggle';
@@ -214,6 +215,8 @@ export function PlatformHeader() {
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+  // Inside a project, the bar wears its community's colour (./community-tint.ts).
+  useCommunityHeaderTint();
 
   // The back slot's state (see ./back-button-store.js): App.setBackIcon
   // publishes here rather than writing `hidden` into React-owned DOM.

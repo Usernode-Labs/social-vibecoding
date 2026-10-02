@@ -1,0 +1,199 @@
+{
+  "summary": {
+    "coverage": {
+      "activePeople": "number",
+      "byDay": [],
+      "week": "string",
+      "withNavigation": "number"
+    },
+    "groups": {
+      "count": "number",
+      "finished": "boolean",
+      "groups": [],
+      "homeroom": "object",
+      "oneShort": [],
+      "week": "string",
+      "wentQuiet": []
+    },
+    "openTurns": [],
+    "stuck": [
+      {
+        "cohort": "string",
+        "days": "number",
+        "failedAttempts": "number",
+        "name": "string",
+        "reason": "string",
+        "stuckAt": "string",
+        "userId": "number"
+      }
+    ],
+    "thisWeekSoFar": {
+      "count": "number",
+      "week": "string"
+    },
+    "trust": {
+      "lockstep": {
+        "cutoffs": "object",
+        "possible": "object"
+      },
+      "teamShare": {
+        "of": "number",
+        "team": "number"
+      },
+      "week": "string",
+      "withoutGroupVote": {
+        "atLeastForced": "number",
+        "changes": "object",
+        "count": "number",
+        "of": "number"
+      }
+    },
+    "week": "string"
+  },
+  "cohorts": {
+    "cohorts": [
+      {
+        "admitted": "number",
+        "day": "string",
+        "withAccount": "number"
+      }
+    ],
+    "otherWay": {
+      "people": "number"
+    }
+  },
+  "firstMile": {
+    "cohort": "string",
+    "notRecorded": {
+      "followedLink": {
+        "reason": "string",
+        "recorded": "boolean"
+      }
+    },
+    "people": [
+      {
+        "daysSince": "number",
+        "door": "string",
+        "failedAttempts": "number",
+        "furthest": "string",
+        "hasAccount": "boolean",
+        "name": "string",
+        "repeatedTaps": "number",
+        "signupId": "number",
+        "steps": "object",
+        "stuckAt": "string",
+        "stuckReason": "string",
+        "tour": "object",
+        "userId": "number",
+        "welcome": "object"
+      }
+    ],
+    "steps": [
+      {
+        "key": "string",
+        "passed": "number",
+        "stuck": "object"
+      }
+    ]
+  },
+  "stages": {
+    "counts": {
+      "activate": "number",
+      "arrive": "number",
+      "belong": "number",
+      "explore": "number",
+      "invite": "number",
+      "stay": {
+        "reason": "string",
+        "recorded": "boolean"
+      },
+      "use": "number"
+    },
+    "finished": "boolean",
+    "people": [],
+    "stoppedAt": {
+      "activate": [],
+      "arrive": [],
+      "belong": [],
+      "explore": [],
+      "invite": [],
+      "stay": [],
+      "use": []
+    },
+    "week": "string"
+  },
+  "loops": {
+    "change": {
+      "atStep": {
+        "decide": "number",
+        "go_live": "number",
+        "hear_back": "object",
+        "make_sense": "number",
+        "notice": "number",
+        "sketch": "number"
+      },
+      "live": [],
+      "open": [],
+      "perProject": [],
+      "steps": [],
+      "turnsClosed": {
+        "status": "string"
+      },
+      "week": "string"
+    },
+    "invite": {
+      "counts": {
+        "arrived": "number",
+        "did_something": "number",
+        "invited": "number",
+        "invited_someone": "number"
+      },
+      "pairs": [],
+      "steps": []
+    }
+  },
+  "nextSteps": {
+    "leftOut": {
+      "droppedEvents": [],
+      "noNavigation": []
+    },
+    "people": "number",
+    "rows": [],
+    "starts": []
+  },
+  "person": {
+    "cameBackTo": [],
+    "challenges": {
+      "credits": [],
+      "openedAt": "object"
+    },
+    "cohort": "string",
+    "failedAttempts": "number",
+    "firstMile": {
+      "daysSince": "number",
+      "failedAttempts": "number",
+      "furthest": "string",
+      "repeatedTaps": "number",
+      "steps": [],
+      "stuckAt": "string",
+      "stuckReason": "string",
+      "tour": "object",
+      "welcome": "object"
+    },
+    "found": [],
+    "name": "string",
+    "navigation": {
+      "reason": "string",
+      "recorded": "boolean"
+    },
+    "possiblyLost": [],
+    "repeatedTaps": "number",
+    "usedOftenNotOnHome": [],
+    "userId": "number",
+    "visits": "number",
+    "waysIn": {}
+  },
+  "leftOut": {
+    "people": []
+  }
+}

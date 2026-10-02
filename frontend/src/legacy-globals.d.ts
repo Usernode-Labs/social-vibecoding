@@ -16,6 +16,22 @@
 export {};
 
 declare global {
+  /**
+   * An agent session's hint as a legacy caller hands it over
+   * (features/agent-session/api.ts AgentHint). `message` and `handoff` are
+   * the screen's alone: the unsent conversation's first message, and the
+   * "Build with" tab it opens on.
+   */
+  interface LegacyAgentHint {
+    slug?: string;
+    issueNumber?: number;
+    proposalId?: number;
+    entry?: string;
+    issueTitle?: string;
+    message?: string;
+    handoff?: 'claude-code' | 'codex';
+  }
+
   /** What a kit presentation returns; `el` is the shell it built. */
   interface KitHandle {
     el?: HTMLElement | null;
@@ -48,6 +64,8 @@ declare global {
       markConversationRead(conversationId: number): void;
       /** The same, for one reply thread's alerts (#2387). */
       markConversationThreadRead(conversationId: number, rootId: number): void;
+      /** One row's descriptor: its kind line and subject segments (#3233). */
+      _rowView?(row: Record<string, unknown>): unknown;
       open: boolean;
       [key: string]: unknown;
     };
@@ -90,6 +108,7 @@ declare global {
       restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
+      setRailPinned?(on: boolean): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
         options?: unknown): string;
       _rootUrl?(hash?: string): string;
@@ -140,6 +159,17 @@ declare global {
         items: Array<{ label: string; title?: string; destructive?: boolean; handler: () => void }>;
       }): Promise<unknown>;
       copyText?(text: string): Promise<boolean>;
+      /**
+       * The kit's swipe-to-act row (unNative.attachSwipeActions): it wraps
+       * `row` in a container of its own beside the action tray, so the
+       * element handed in must not be one React places among siblings. The
+       * last action, when destructive, is also the full swipe, and it takes
+       * the row out of the document BEFORE its handler runs. An inert
+       * handle without the kit.
+       */
+      swipeActions?(row: HTMLElement, opts: {
+        actions: Array<{ label: string; color?: string; destructive?: boolean; handler: () => void }>;
+      }): { close(): void; detach(): void };
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -281,12 +311,8 @@ declare global {
       agentSession?: {
         open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
         route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
-        start(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
-        prepareDraft(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
+        start(hint?: LegacyAgentHint | null): void;
+        prepareDraft(hint?: LegacyAgentHint | null): void;
         deactivate(): void;
         isOpen(): boolean;
         currentId(): number | 'new' | null;

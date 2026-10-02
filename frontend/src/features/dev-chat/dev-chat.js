@@ -79,6 +79,10 @@ function loadStoredModel() {
 
 const DevChat = {
   sessions: [],
+  // How many finished sessions the list left out (loadSessions), and the app
+  // whose whole history the reader asked for with "Show older".
+  sessionsOlder: 0,
+  _sessionsAllFor: null,
   currentSession: null,
   messages: [],
   isStreaming: false,
@@ -202,8 +206,8 @@ const DevChat = {
   // two must be edited together. tests/model-selector-ui.test.js has a
   // copy-drift guard that fails if they diverge.
   MODELS: {
-    'claude-sonnet-5': {
-      label: 'Sonnet 5',
+    'claude-sonnet-5-5': {
+      label: 'Sonnet 5.5',
       changeSize: {
         short: 'simple, small changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
@@ -1489,6 +1493,15 @@ const DevChat = {
       return data;
     }
 
+    // The key and the catalog are asked together: the catalog is the
+    // platform's own, answered at once, so the dialog waits on neither twice.
+    const refresh = forceRefresh ? '&refresh=1' : '';
+    const catalogRead = data.codexAvailable
+      ? fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }).then(async (res) => ({ res, body: await res.json().catch(() => ({})) }), (err) => ({ err }))
+      : null;
     try {
       const credentialRes = await fetch('/api/me/credentials/openrouter', {
         credentials: 'same-origin',
@@ -1504,19 +1517,15 @@ const DevChat = {
     if (!data.codexAvailable || !data.credentialConfigured) return data;
 
     try {
-      const refresh = forceRefresh ? '&refresh=1' : '';
-      const modelsRes = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const catalog = await modelsRes.json().catch(() => ({}));
+      const { res: modelsRes, body: catalog, err } = await catalogRead;
+      if (err) throw err;
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
       data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
       data.refreshedAt = catalog.refreshedAt || null;
       data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
-      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available right now. Try Refresh.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
     }
@@ -1648,7 +1657,7 @@ const DevChat = {
       const age = this._openRouterCatalogAgeText(data.refreshedAt);
       catalogMeta.textContent = visibleModels.length
         ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
-        : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+        : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
       if (!visibleModels.length) {
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1695,13 +1704,13 @@ const DevChat = {
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
+        status.textContent = data.catalogError || 'No OpenRouter models are available right now. Try Refresh.';
         applyButton.disabled = true;
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
       if (!model) {
-        status.textContent = "No key-visible models match. Refresh, then check this key's OpenRouter account policies.";
+        status.textContent = 'No models match. Clear the search or show all models.';
         applyButton.disabled = true;
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -2160,7 +2169,7 @@ const DevChat = {
   // map as src/services/models.js RETIRED_MODELS), and the successor is
   // written back so the saved preference stops naming a model that no
   // longer exists.
-  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5' },
+  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5', 'claude-sonnet-5': 'claude-sonnet-5-5' },
 
   _sanitizeStoredModel() {
     if (DevChat.MODELS[DevChat.selectedModel]) return;
@@ -2222,6 +2231,8 @@ const DevChat = {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
     }
     DevChat.sessions = [];
+    DevChat.sessionsOlder = 0;
+    DevChat._sessionsAllFor = null;
     DevChat.currentSession = null;
     DevChat._publishPreview();
     DevChat.messages = [];
@@ -2445,11 +2456,25 @@ const DevChat = {
 
   // The one sentence that answers "when do I get them back?", shared with
   // every other credits surface. '' when the state is unknown.
-  _creditResetSentence() {
+  //
+  // #3230: the sentence names the viewer's own clock. `withUtc` adds the
+  // exact UTC instant in brackets, for a surface that is itself a tooltip
+  // and has no `title` of its own to carry it.
+  _creditResetSentence({ withUtc = false } = {}) {
     const CO = typeof window !== 'undefined' && window.CreditOptions;
     const state = DevChat._creditState();
     if (!CO || !state) return '';
-    return CO.resetSentence(state);
+    const sentence = CO.resetSentence(state);
+    const utc = withUtc && CO.resetTitle ? CO.resetTitle(state) : null;
+    return utc ? sentence.replace(/\.$/, ` (${utc}).`) : sentence;
+  },
+
+  // #3230: the reset boundary in the viewer's clock ("Sunday at 8:00 PM",
+  // "at 8:00 PM"), or the server's UTC spelling where ResetTime is absent.
+  _resetWhen(weekly) {
+    const RT = typeof window !== 'undefined' && window.ResetTime;
+    if (RT) return RT.resetWhen(weekly ? 'weekly' : 'daily');
+    return weekly ? 'Monday 00:00 UTC' : 'at midnight UTC';
   },
 
   // #1788 gave the allowance two windows and reported whichever was
@@ -2473,9 +2498,7 @@ const DevChat = {
       // "your free daily AI credits"
       creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
       // Fallback for the reset sentence when CreditOptions is absent.
-      resetFallback: weekly
-        ? 'Resets Monday 00:00 UTC.'
-        : 'Resets at midnight UTC.',
+      resetFallback: `Resets ${DevChat._resetWhen(weekly)}.`,
     };
   },
 
@@ -2586,7 +2609,7 @@ const DevChat = {
     // header drawer's credits row still spells the remainder out (it has
     // the room, and it is read away from a session), and the low-balance
     // and exhausted banners still say it in words when it starts to matter.
-    const resetTip = DevChat._creditResetSentence();
+    const resetTip = DevChat._creditResetSentence({ withUtc: true });
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -2845,7 +2868,9 @@ const DevChat = {
           ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
         : 'The platform\u2019s shared daily AI budget is used up.',
       reset: DevChat._creditResetSentence()
-        || `Free credits reset ${DevChat._creditWindow().weekly ? 'Monday 00:00 UTC' : 'at midnight UTC'}.`,
+        || `Free credits reset ${DevChat._resetWhen(DevChat._creditWindow().weekly)}.`,
+      resetTitle: state && window.CreditOptions && CreditOptions.resetTitle
+        ? CreditOptions.resetTitle(state) : null,
       tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
         ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
         : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
@@ -2907,6 +2932,7 @@ const DevChat = {
       lead: CO.lowLead(state),
       leadTagged: true,
       reset: CO.resetSentence(state),
+      resetTitle: CO.resetTitle ? CO.resetTitle(state) : null,
       tail: ' Set up another way to keep building before it runs out mid-change.',
       actionsHtml: CO.bannerActionsHtml({
         hasApiKey: false,
@@ -4149,13 +4175,32 @@ const DevChat = {
     });
   },
 
+  // Every session still under way, and the SESSIONS_RECENT newest finished
+  // ones: a prolific author's history is over a thousand merged and archived
+  // rows (693 KB on production), and this list is re-read on every open of a
+  // change and every session event while one is on screen. "Show older"
+  // (showOlderSessions) reads the whole history for this app from then on.
+  SESSIONS_RECENT: 20,
   async loadSessions(appSlug) {
+    const all = DevChat._sessionsAllFor === appSlug;
     try {
-      const res = await fetch(`/api/apps/${appSlug}/sessions`);
+      const res = await fetch(all
+        ? `/api/apps/${appSlug}/sessions`
+        : `/api/apps/${appSlug}/sessions?recent=${DevChat.SESSIONS_RECENT}`);
       if (!res.ok) return;
-      const { sessions } = await res.json();
+      const { sessions, older_finished: older } = await res.json();
       DevChat.sessions = sessions;
+      DevChat.sessionsOlder = all ? 0 : Math.max(0, Number(older) || 0);
     } catch {}
+  },
+
+  async showOlderSessions() {
+    const slug = typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug;
+    if (!slug) return null;
+    DevChat._sessionsAllFor = slug;
+    await DevChat.loadSessions(slug);
+    DevChat.renderSessionList();
+    return null;
   },
 
   // ── Cross-app active sessions ─────────────────────────────
@@ -4548,6 +4593,10 @@ const DevChat = {
       const s = DevChat.currentSession;
       if (!s || !s.id) return;
       fetch(`/api/sessions/${s.id}/activity`, { method: 'POST' }).catch(() => {});
+      // #3232: the header pill says how long a checks run has been going
+      // ("Checks running · 12 min"). Nothing else repaints it between the
+      // run starting and its verdict, so this minute tick does.
+      if (s.check_state === 'pending') DevChat._renderSessionHeader();
     };
     if (!DevChat._heartbeatVisHandler) {
       // Bump immediately on regaining visibility so a just-refocused
@@ -7377,6 +7426,39 @@ const DevChat = {
   },
 
   // Both surfaces submit through the card's controller and per-session lock.
+  // #3605: the requests a change closes, as in-app refs. The session's own
+  // linked_issues are the source of truth (what the PR body's "Closes #N"
+  // lines are written from); a "Closes #N" in its title is read too, so a
+  // ref typed there still opens. Sorted, deduped, positive integers only.
+  _closesRefs(session) {
+    if (!session) return [];
+    const nums = new Set();
+    for (const v of Array.isArray(session.linked_issues) ? session.linked_issues : []) {
+      const n = Number(v);
+      if (Number.isInteger(n) && n > 0) nums.add(n);
+    }
+    const text = [session.session_title, session.pr_title].filter(Boolean).join('\n');
+    const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)/gi;
+    let m;
+    while ((m = re.exec(text))) {
+      const n = Number(m[1]);
+      if (Number.isInteger(n) && n > 0) nums.add(n);
+    }
+    const verb = session.status === 'merged' ? 'Closed' : 'Closes';
+    return [...nums].sort((a, b) => a - b).map((n) => ({ n, verb }));
+  },
+
+  // #3605: the card's refs navigate inside Homeroom: a request opens its
+  // discussion on the app's board, the vote status opens the proposal.
+  openIssueRef(n) {
+    const id = parseInt(n, 10);
+    if (id > 0 && window.AppView && AppView.openTopic) AppView.openTopic('issue', id);
+  },
+  openProposalVote(id) {
+    const sid = parseInt(id, 10);
+    if (sid > 0 && window.AppView && AppView.openTopic) AppView.openTopic('proposal', sid);
+  },
+
   async promotePR() {
     const session = DevChat.currentSession;
     if (!session || AppView.changeSubmissionState(session).kind !== 'ready') return;
@@ -7929,7 +8011,7 @@ const DevChat = {
           // #195: before/after tiles. Visuals are latest-set-per-session, so
           // only the NEWEST staging card carries them.
           let visualsHtml = '';
-          if (window.AppView && (session?.visualEvidence || session?.visuals)) {
+          if (window.AppView && (session?.shots || session?.visuals)) {
             let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
               if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
@@ -7937,8 +8019,8 @@ const DevChat = {
               }
             }
             if (latest === msg && msg.stagingUrl) {
-              visualsHtml = session.visualEvidence
-                ? AppView.visualEvidenceHtml(session.visualEvidence, { sessionId: session.id })
+              visualsHtml = session.shots
+                ? AppView.shotsHtml(session.shots, { sessionId: session.id })
                 : AppView.visualsTilesHtml(session.visuals);
             }
           }
@@ -7965,7 +8047,12 @@ const DevChat = {
             prUrl: session?.pr_url || msg.prUrl || null,
             prNumber: session?.pr_number || msg.prNumber || null,
             title: session?.session_title || session?.pr_title || '',
-            closesHtml: window.AppView ? AppView.closesPillHtml(session) : '',
+            closes: DevChat._closesRefs(session),
+            // #3605: once the change is up for a vote its status opens the
+            // proposal's vote page. Null before then: an underway session has
+            // no vote to open.
+            proposalId: session && ['promoted', 'merging', 'merged'].includes(session.status)
+              ? Number(session.id) || null : null,
             stamp,
             visualsHtml,
             preview: { enabled: canPreview, url: liveUrl, title: '' },
@@ -9534,6 +9621,7 @@ const DevChat = {
     if (!react) return;
     react.publishSessionList({
       rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
+      older: DevChat.sessionsOlder || 0,
     });
   },
 
@@ -9623,7 +9711,19 @@ const DevChat = {
       danger: true,
     });
     if (!ok) return null;
-    await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+    // Same shape as Pause and Unarchive: a refusal says why, and a request
+    // that never answers (offline) says so too rather than doing nothing.
+    try {
+      const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(data.error || 'Failed to archive session');
+        return null;
+      }
+    } catch {
+      PlatformUI.toast('Failed to archive session');
+      return null;
+    }
     await DevChat._reloadSessionList();
     return null;
   },
@@ -9902,14 +10002,19 @@ const DevChat = {
     // `window.Improve` rather than an import: a dozen test files run this
     // source as a SCRIPT in a `vm` context, where a top-level import is a
     // syntax error — see the note at the top of this file.
+    //
+    // #3620: and when the entry below IS that origin, going there is a step
+    // Back (App._stepBackTo): pushing it put the inbox on top of the session,
+    // so the device's Back reopened the session the arrow had just left.
     const origin = window.Improve?.sessionOrigin?.();
+    const stepBack = (href) => typeof App !== 'undefined' && !!App._stepBackTo && App._stepBackTo(href);
     if (origin && typeof location !== 'undefined') {
-      location.hash = origin;
+      if (!stepBack(origin)) location.hash = origin;
     } else if (typeof location !== 'undefined') {
       // No origin: a cold deep link straight into the session. A change is an
       // agent conversation and Messages is its inbox (#2770), so that is the
       // level up — the same fallback the header's arrow shows.
-      location.hash = '#messages';
+      if (!stepBack('#messages')) location.hash = '#messages';
     } else {
       DevChat.renderChatView();
     }
@@ -10011,7 +10116,6 @@ const DevChat = {
       stateLabel: proposed
         ? `proposed to the group (PR #${session.pr_number})`
         : `merged (PR #${session.pr_number})`,
-      pending: !!DevChat._newChangePending,
       cardHref: slug && session.id != null
         ? `#app/${slug}/dev/proposals/${session.id}`
         : null,
@@ -10033,39 +10137,17 @@ const DevChat = {
   // Claude's memory or the spec — a new change starts clean on its own
   // branch.
   //
-  // #2241: it no longer creates the session here either. This banner and
-  // Improve's "New change" row are two doors onto the same act, so they
-  // lead to the same place — /dev/sessions/new, the unsent-change screen —
-  // and the row is created by the first send (see `startPendingSession`).
-  // The per-user cap and its refusal message move with it: they are the
-  // server's answer to the POST, and the POST is the first send now.
-  // The button's own busy state. It was `btn.disabled` + `btn.textContent`
-  // written onto the element by id — a second author on a node the banners
-  // component renders now, so it is a published flag instead. It now covers
-  // the navigation rather than a creation round trip — `switchTab` awaits
-  // the destination's own loads, so the button still has something to say.
-  _newChangePending: false,
-
-  async startNewChange() {
+  // #2779: a new change starts in an agent session, a conversation with the
+  // Mayor focused on this session's app — the same door Improve's "New
+  // change" opens. It used to lead to /dev/sessions/new, the unsent classic
+  // session; classic sessions are no longer created. Nothing is created
+  // here either: the conversation becomes a session on its first message.
+  startNewChange() {
     const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
-    // #2779: with agent sessions on, a new change starts in a conversation
-    // with the Mayor, focused on this session's app.
     const agent = window.UsernodeReact?.agentSession;
-    if (window.App?.user?.agentSessionsEnabled === true && agent) {
-      void agent.start({ slug, entry: 'banner' });
-      return;
-    }
-    DevChat._newChangePending = true;
-    DevChat._publishBanners();
-    try {
-      if (typeof App !== 'undefined' && App.switchTab) {
-        await App.switchTab('dev', DevChat.NEW_SESSION_REF, 'sessions');
-      }
-    } finally {
-      DevChat._newChangePending = false;
-      DevChat._publishBanners();
-    }
+    if (agent) void agent.start({ slug, entry: 'banner' });
+    else window.location.hash = '#agent/new';
   },
 
   // Every path that changes banner-relevant state — a behind_main update, a

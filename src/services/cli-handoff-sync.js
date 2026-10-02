@@ -6,6 +6,7 @@
 // that exact SHA into the managed proposal and start its replacement preview.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
@@ -42,6 +43,7 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
   const { rows } = await pool.query(
     `UPDATE chat_sessions
         SET handoff_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,
@@ -68,9 +70,9 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
   }
 
   const fresh = rows[0];
-  if (session.visual_evidence_state || session.visual_evidence_detail) {
-    await require('./visual-evidence-state').markStaleForHead(pool, session.id, headSha)
-      .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head visual evidence', {
+  if (session.shots_state || session.shots_detail) {
+    await require('./shots-state').markStaleForHead(pool, session.id, headSha)
+      .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head before & after shots', {
         sessionId: session.id, headSha, err: err.message,
       }));
   }
@@ -127,6 +129,7 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
   const { rows } = await pool.query(
     `UPDATE chat_sessions
         SET handoff_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,

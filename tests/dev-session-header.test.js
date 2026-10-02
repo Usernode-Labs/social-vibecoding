@@ -751,7 +751,8 @@ test('an action’s outcome is folded back into the strip', async () => {
   const fetched = [];
   sandbox.fetch = async (url, init) => {
     fetched.push(`${(init && init.method) || 'GET'} ${url}`);
-    if (url === '/api/apps/recipe-box/sessions') {
+    // The list's own read: under-way sessions and the recent finished ones.
+    if (url === '/api/apps/recipe-box/sessions?recent=20') {
       return { ok: true, json: async () => ({ sessions: [{ ...OWNED, status: 'archived', warm: false }] }) };
     }
     return { ok: true, json: async () => ({}) };
@@ -774,6 +775,36 @@ test('an action’s outcome is folded back into the strip', async () => {
   const at = DEV_CHAT_SRC.indexOf('async _reloadSessionList() {');
   assert.ok(at !== -1);
   assert.match(DEV_CHAT_SRC.slice(at, at + 500), /_syncCurrentSessionFromList\(\)/);
+});
+
+test('a failed Archive says so, like Pause and Unarchive, and never throws', async () => {
+  // It fetched with no try and no status check: a refusal looked like
+  // success, and an offline click threw out of the menu and the list button.
+  const { DevChat, sandbox } = makeDevChat();
+  sandbox.AppView = { appData: { slug: 'recipe-box' } };
+  sandbox.ConfirmModal = { show: async () => true };
+  const toasts = [];
+  sandbox.PlatformUI = { toast: (msg) => toasts.push(msg) };
+  let reloads = 0;
+  DevChat._reloadSessionList = async () => { reloads += 1; };
+
+  sandbox.fetch = async () => ({ ok: false, json: async () => ({ error: 'Session is not active' }) });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.deepEqual(toasts, ['Session is not active'], "the server's own reason");
+
+  sandbox.fetch = async () => ({ ok: false, json: async () => { throw new Error('not json'); } });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts[1], 'Failed to archive session', 'a refusal with no body still says so');
+
+  sandbox.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts[2], 'Failed to archive session', 'offline says so too');
+  assert.equal(reloads, 0, 'a failed archive does not repaint as though it landed');
+
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({}) });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts.length, 3, 'success is quiet');
+  assert.equal(reloads, 1);
 });
 
 // ── 5. #1941: one compact row ──────────────────────────────────────────

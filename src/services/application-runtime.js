@@ -19,7 +19,7 @@ function productionRef(config, app) {
 // builder's step counter on docker. See each module for the shape.
 async function build(config, { app, revision, environment, sessionId, sourceDir, dockerImage, onProgress = null }) {
   if (mode(config) === 'docker') {
-    await docker.buildImage(sourceDir, dockerImage, {}, { onProgress });
+    await docker.buildImage(sourceDir, dockerImage, { GIT_SHA: revision }, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
   return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
@@ -61,7 +61,7 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
-  command = [],
+  command = [], runAsUser = null,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -96,9 +96,11 @@ async function deploy(config, {
     // persist the deterministic name rather than the opaque run result.
     return { runtimeKind: 'docker', runtimeName: name, imageRef, hostname, url };
   }
+  // runAsUser is Kubernetes-only: Docker runs the image as its own user and
+  // has no runAsNonRoot to refuse a root image.
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
-    command,
+    command, ...(runAsUser != null ? { runAsUser } : {}),
   });
 }
 

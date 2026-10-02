@@ -161,11 +161,11 @@ test('drain budget stays inside the compose stop_grace_period', () => {
   const poolMatch = serverJs.match(/const POOL_CLOSE_TIMEOUT_MS = (\d+);/);
   assert.ok(poolMatch, 'POOL_CLOSE_TIMEOUT_MS constant not found in server.js');
   const poolMs = Number(poolMatch[1]);
-  const evidenceMatch = serverJs.match(/const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = (\d+);/);
-  assert.ok(evidenceMatch, 'EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS constant not found in server.js');
-  const evidenceMs = Number(evidenceMatch[1]);
-  assert.ok(drainMs + evidenceMs + poolMs < graceMs,
-    `Drain, evidence marking and pool close (${drainMs + evidenceMs + poolMs}ms) must stay below ` +
+  const evidenceMatch = serverJs.match(/const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = (\d+);/);
+  assert.ok(evidenceMatch, 'SHOTS_SHUTDOWN_MARK_TIMEOUT_MS constant not found in server.js');
+  const shotsMs = Number(evidenceMatch[1]);
+  assert.ok(drainMs + shotsMs + poolMs < graceMs,
+    `Drain, evidence marking and pool close (${drainMs + shotsMs + poolMs}ms) must stay below ` +
     `stop_grace_period (${graceMs}ms)`);
 });
 

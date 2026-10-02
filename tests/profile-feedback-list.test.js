@@ -72,6 +72,8 @@ test('a failed read is not "nothing sent", and a capped list says so', () => {
   const empty = feedbackListView({ sent: 0, counted: 0, reports: [] }, NOW);
   assert.equal(empty.loaded, true);
   assert.equal(empty.summary, 'Nothing sent yet');
+  assert.equal(feedbackListView({ sent: 4, counted: 0, reports: [] }, NOW).summary, '4 sent',
+    'a zero says nothing: no "· 0 counted"');
   assert.equal(feedbackListView({ ...FEEDBACK, sent: 120, truncated: true }, NOW).truncated, true);
 });
 
@@ -113,24 +115,26 @@ test('Me draws the list only once it is asked for', () => {
   };
   const closed = render({ ...base, feedbackOpen: false });
   assert.doesNotMatch(closed, /profile-feedback-sheet/);
-  assert.match(closed, /id="profile-row-feedback"[^>]*href="#profile\?feedback"/);
-  assert.match(closed, /3 sent · 1 counted/, 'the row carries the tally');
+  // Me's row is Your requests now (UI overhaul), a view of the Your work
+  // screen; this card is the feedback challenge's, at its address.
+  assert.match(closed, /id="profile-row-feedback"[^>]*href="#profile\/your-requests"/);
+  assert.doesNotMatch(closed, /3 sent · 1 counted/, 'the challenge\'s tally is the card\'s, not a row\'s');
   assert.match(render({ ...base, feedbackOpen: true }), /id="profile-feedback-sheet"/);
   // The shipped state is `open: false`, which renders nothing at all.
   assert.equal(real.profileStore.get().feedbackOpen, false);
   assert.equal(real.buildProfileView(real.profileStore.get()).kind, 'empty');
 });
 
-test('the More row falls back to what is behind it without a tally', () => {
+test('the Your requests row falls back to what is behind it, and is a plain link', () => {
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
-  const html = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null, feedback: null } }));
-  assert.match(html, /Your feedback/);
-  assert.match(html, /What you sent, and whether it counted/);
-  // A plain click opens the card in place; a modified one is the browser's.
+  const html = renderToHtml(createElement(mod.WorkPanel, { rows: {} }));
+  assert.match(html, /Your requests/);
+  assert.match(html, /What you asked for, and where it stands/);
+  // The Your work screen has an address of its own, so the row needs no
+  // handler: every click is the browser's.
   const src = fs.readFileSync(path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
-  const row = src.slice(src.indexOf('id="profile-row-feedback"'), src.indexOf('id="profile-row-settings"'));
-  assert.match(row, /event\.metaKey \|\| event\.ctrlKey \|\| event\.shiftKey \|\| event\.altKey\) return;/);
-  assert.match(row, /event\.preventDefault\(\);\s*Profile\.showFeedback\(\);/);
+  const row = src.slice(src.indexOf('id="profile-row-feedback"'), src.indexOf('id="profile-row-votes"'));
+  assert.doesNotMatch(row, /onClick|showFeedback/);
 });
 
 // ── The address ─────────────────────────────────────────────────────────

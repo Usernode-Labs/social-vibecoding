@@ -54,7 +54,7 @@ import { createPortal } from 'react-dom';
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
-import { placeUnderAnchor } from '../../../lib/anchor-popover';
+import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
 import { aiEnabledStore, cardNowStore } from './cards-store';
@@ -488,6 +488,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // The touch picker: the kit sheet's content element while it is up, and
   // the handle that takes it down. `sheetEl` is what the panel portals into.
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
+  // The panel's real height, measured the frame it mounts (#3595): the
+  // placement arithmetic needs a size before the panel exists, and the
+  // 190px guess below renders short of the real thing — the popover then
+  // ran past the bottom of the screen placed below a button near the fold,
+  // and landed ON the Vote button when it flipped above one. The guess is
+  // only the first paint; the layout effect re-places it from this number.
+  const [measuredH, setMeasuredH] = useState<number | null>(null);
   const sheetRef = useRef<{ dismiss: () => void } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -605,6 +612,18 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   useIsoLayoutEffect(() => {
     if (open || (sheetEl && side === 'no')) boxRef.current?.focus();
   }, [open, sheetEl, side]);
+  // Measure the mounted panel and place it again with its real height
+  // before the first paint (#3595). The switch's side changes the label's
+  // wrap, so a No can sit a few pixels taller than the Yes it replaced.
+  // scrollHeight, not offsetHeight: when the clamp below caps the panel,
+  // offsetHeight reads the CAPPED height, which would clear the clamp,
+  // uncap it, re-measure taller and loop (React #185). scrollHeight reads
+  // the content either way, so the measurement is stable under its own cap.
+  useIsoLayoutEffect(() => {
+    if (!open) return;
+    const h = popRef.current?.scrollHeight;
+    if (h && h !== measuredH) setMeasuredH(h);
+  }, [open, side, measuredH]);
   const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
@@ -617,12 +636,19 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // The popover's frame: the switch, the box and the buttons (no box on a
   // governance vote). Placed from the button's rect each render by
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
-  // `_toggleCardMenu` places the ⋯ menu.
+  // `_toggleCardMenu` places the ⋯ menu. The height is the measured one once
+  // the panel is up (#3595); the estimate only carries the first paint, and
+  // a panel taller than the estimate re-places itself in the same frame.
+  // Where the viewport cannot hold the panel either way it scrolls inside.
   const w = 312;
-  const h = isVote ? 190 : 100;
+  const h = measuredH ?? (isVote ? 190 : 100);
+  const viewport = typeof window !== 'undefined'
+    ? { width: window.innerWidth, height: window.innerHeight }
+    : { width: 1280, height: 800 };
   const pos = rect
-    ? placeUnderAnchor(rect, { width: w, height: h }, { width: window.innerWidth, height: window.innerHeight })
+    ? placeUnderAnchor(rect, { width: w, height: h }, viewport)
     : null;
+  const popMaxH = clampPopoverHeight({ height: h }, viewport);
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
   // A No needs its line; a Yes may go without one.
@@ -664,7 +690,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       role="dialog"
       aria-label="Your vote"
       data-side={side}
-      style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+      style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxHeight: popMaxH ? `${popMaxH}px` : undefined, overflowY: popMaxH ? 'auto' : undefined }}
       onClick={(ev) => ev.stopPropagation()}
     >
       {picker}
@@ -929,6 +955,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           id={`dev-${kind}-title-input`}
+          aria-label={session ? 'Proposal title' : 'Issue title'}
           type="text"
           maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
@@ -1004,9 +1031,8 @@ const REQ_TONE: Record<string, string> = {
   blocked: 'text-red-600 dark:text-red-400',
   pending: 'text-zinc-400 dark:text-zinc-500',
 };
-const REQ_ACTOR: Record<string, string> = {
-  auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group',
-};
+// No "who acts" column: the headline already says whose turn it is, and the
+// change page's steps carry none either, so the two read alike.
 
 function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
   const [open, setOpen] = useState(x.open);
@@ -1036,7 +1062,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
         {x.gates.map((g) => (
           <li
             key={g.key}
-            className="px-2.5 py-1 grid grid-cols-[1rem_1fr_auto] gap-x-1.5 items-baseline text-[0.72rem]"
+            className="px-2.5 py-1 grid grid-cols-[1rem_1fr] gap-x-1.5 items-baseline text-[0.72rem]"
             data-req-gate={g.key}
             data-req-state={g.state}
           >
@@ -1049,9 +1075,6 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
               ? 'text-zinc-500 dark:text-zinc-400'
               : 'text-zinc-900 dark:text-zinc-100 font-semibold'}>
               {g.label}
-            </span>
-            <span className="text-[0.65rem] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
-              {REQ_ACTOR[g.actor] || g.actor}
             </span>
             {g.note
               ? <span className="col-start-2 text-[0.68rem] leading-snug text-zinc-400 dark:text-zinc-500">{g.note}</span>

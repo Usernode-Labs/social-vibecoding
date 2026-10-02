@@ -624,7 +624,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // three, so it adds to whatever the manifest holds, which is 655.
   // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
   // featured-illustration change a governance proposal and adds two checks
-  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // on its card via the ?demo=1 mock row 9100077 — the proposed-beside-
   // current preview on the open board card, and the same preview on the
   // proposal's own discussion page — plus a second #2236 via-agent-chip
   // check, on the topic's own discussion rather than the demo issue's, for
@@ -1337,9 +1337,93 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in the same section via :has(), and the card's description as
   // expectText; its name and path are unchanged.
   //
+  // 820 → 821: +1 (welcome messages): Admin → Welcome messages, a new
+  // route (#admin/welcome-dm) with nothing already declared on it to fold
+  // into. It pins the section's intro with its form and its "Recently
+  // welcomed" card loaded beside it. At the floor, so MAX_DECLARED_TESTS
+  // went 840 → 850 in the same change (services/app-manifest.js), leaving
+  // 29 slots.
+  //
+  // 821 → 824: +3 (the hub with doors): the hub's since-your-last-visit
+  // summary card, its door to the Workshop page, and the Workshop page's
+  // Approval rules (with its back bar folded into the same check). The rest
+  // of the change was REWRITTEN in place: every "+"/tab-strip check now pins
+  // the hero's ⋯ or the page it moved to, and the since list's week headings
+  // are folded into its existing Clear / Show older check.
+  //
+  // 824 → 826: +2 (the UI overhaul's other pages): the Your work screen's
+  // Your changes and Your requests views, new routes with nothing declared
+  // on them to fold into. The rest was REWRITTEN in place: the menu's
+  // "Give feedback" / "New change" checks pin Ask for a change and Start a
+  // new change; the dialog's pin its new words; Communities' tab checks pin
+  // the Needs you page; Me's "More" check pins Your work beside it, the
+  // Your contributions check pins the Your work rows, and the Friends check
+  // opens its card.
+  //
+  // 826 → 829: +3 (#852, the Communities tab as a community): the project
+  // page's four tabs in its colour, and the Communities tab's two faces (the
+  // community it is on, and All communities), which are new surfaces. The
+  // rest FOLDED or was REWRITTEN in place: the hub's chat preview rides the
+  // check that replaced the Workshop door's (it pinned "ends with Start a new
+  // change" until the review moved that into the ⋯, and pins the ⋯ now);
+  // the since card's Week by week rides the summary card's check; the
+  // Workshop tab's lit state rides its #2915 numbers check; the approval
+  // rules' check moved to the head of All items; #general's composer check
+  // moved to the Discussion tab; the filter dot, the ⋯ and Needs you checks
+  // pin the band and the hero's actions row; the grouping-ear checks pin the
+  // strip in the pane head; the All chip's pins the header's switcher.
+  //
+  // 829 → 830: +1 (#3233): the notification sheet's app allowance row reads
+  // in words ("went up from 0 to 2 app slots") instead of "0:2". A kind with
+  // no declared check to fold into; its mock row (990212) is new.
+  //
+  // 830 → 831: +1 (#3489): the hub's Your work with nothing in progress, a
+  // state of the hub no check could reach before (it left the hub). The rest
+  // was REWRITTEN in place: the approval rules' check pins the foot of the
+  // Workshop tab (#3487), the Communities Needs you check pins the project's
+  // own feed there (#3488), and the comment-stamp check reads its stamps off
+  // the request whose thread carries Homeroom bot's spec card (#3490).
+  //
+  // 831 → 831: #3525 folded rather than added. "Position your photo", the
+  // step a chosen profile photo now opens over the editor, is reached only
+  // by picking a file, so ?shot=profile-photo opens it with a drawn sample.
+  // The #1285 editor check was REWRITTEN in place onto that link: the
+  // editor's inset-grouped rows and its disabled username row are still
+  // there under the step (inert while it is up), so it pins both, and reads
+  // the step's title. The plain ?shot=profile-edit link keeps the #982 check.
+  //
+  // 831 → 831: MAX_DECLARED_TESTS 850 → 860: #3233 and #3489 each assumed
+  // they were the only one moving the count off 829, and merged together
+  // they crossed the 20-slot floor at 831 against 850 — see the arithmetic
+  // in services/app-manifest.js. 831 leaves 29 slots against the new
+  // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
+  //
+  // 831 → 831: #3579 folded rather than added. The dev chat picker offering
+  // Sonnet 5.5 in place of Sonnet 5 is pinned on the #2117 flat-list check,
+  // which already reads the same <select> on the same session.
+  //
+  // 831 → 832: +1 (#3620): Back from a project's Workshop tab returns to its
+  // Hub. It has a route of its own (?shot=tab-back presses the tab and goes
+  // Back in the page), so it could not share another check's route.
+  //
+  // 832 → 833: +1 (#3567): the welcome tour's first card, what a community
+  // is. No check could see the tour open before (every ?shot= route kept it
+  // shut), so ?shot=welcome-tour opens it at step 1; the #2255 check that
+  // it ships hidden on a plain load still says something this one cannot.
+  //
+  // 833 → 834: +1 (#3624): the Homeroom bot's DM with a question open on
+  // the staging fixture (#messages/910005): its Bot badge, its suggested
+  // answers with the default marked, and the line saying an answer is
+  // posted publicly on the request, folded into one check with :has().
+  //
+  // 834 → 835: +1 (#3521): the create dialog's "Start from a template" now
+  // opens four starters under its row, a state no check could reach before
+  // (the row was a dimmed Soon). Reached by ?shot=create-template. 835
+  // leaves 25 slots against MAX_DECLARED_TESTS (860).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 820);
+  checkCap.assertPinned(DAPP.tests.length, 835);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1614,10 +1698,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
   // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (title, then the
-  // sentence, then the caption) with the same `+`/`~` direction.
+  // control; a second check pins the item's own order (who and when, then
+  // the title, then the sentence, then the caption) with the same `+`/`~`
+  // direction.
   assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with its title, then the sentence a voter reads/).expectSelector, /\.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption > \.dev-ws-item-by/);
+  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption"?$/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

@@ -924,16 +924,10 @@ test('an integration supersedes a check run rather than queueing behind it', () 
   // its verdict is keyed to the commit it started on, so letting it finish
   // writes a verdict nowhere.
   //
-  // sync-main used to work around that by deciding whether to carry the
-  // checks pin (`runInFlight` / `carryChecks`). The queue cancels the run
-  // instead, which is the thing that was actually wanted — the supersede
-  // primitive already existed in services/preview-lifecycle.js and simply was
-  // not called from here.
+  // The repair path must wait for actual termination before moving the branch.
   const queue = read('src/services/merge-queue.js');
-  assert.match(queue, /preview-lifecycle/,
-    'the queue must reach for the supersede primitive');
-  assert.match(queue, /cancelled\(session\.id/,
-    'and actually cancel the in-flight run before moving the branch under it');
+  assert.match(queue, /await require\('\.\/preview-lifecycle'\)\.supersede\(config, session\.id, measured\.headSha\)/,
+    'the queue must await the supersede operation');
   assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
     'the carry-or-not workaround belongs to the deleted vote-carry path');
 });
@@ -1006,7 +1000,9 @@ test('get_proposal exposes progress, asOf and pendingWrite', () => {
 
 test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   const pu = read('src/services/proposal-update.js');
-  assert.match(pu, /votesClearing: applied \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
+  // The imported tail: 'on_sync' until something re-pinned the head, then
+  // 'now', or 'none' when the re-pin kept the votes (a mechanical move).
+  assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(applied\) votesClearing = cleared \? 'now' : 'none';/);
   assert.match(pu, /votesClearing: settled \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
   const eat = read('src/services/external-agent-tasks.js');
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);

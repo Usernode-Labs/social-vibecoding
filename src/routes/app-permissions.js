@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const appPermissions = require('../services/app-permissions');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Grant management for the gated browser capabilities an app frame can be
 // delegated (#2219) — geolocation, microphone, camera, display-capture,
@@ -268,7 +269,7 @@ function appPermissionsRoutes(config) {
 
   // Revoke one capability. Keeps the row so re-granting is an upsert and
   // the history survives, exactly as llm-grants does.
-  router.delete('/api/me/permission-grants/:appId/:capability', async (req, res) => {
+  router.delete('/api/me/permission-grants/:appId/:capability', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isInteger(appId)) return res.status(400).json({ error: 'Bad app id' });

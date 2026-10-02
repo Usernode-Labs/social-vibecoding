@@ -47,9 +47,10 @@
 // group has read.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
-const visualEvidencePlan = require('./visual-evidence-plan');
-const visualEvidenceState = require('./visual-evidence-state');
+const visibleChangesContract = require('./visible-changes');
+const shotsState = require('./shots-state');
 const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -338,12 +339,12 @@ async function updateProposalFromForkBranch(deps, params) {
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
   }
-  let visualEvidence;
-  if (params.visualEvidence !== undefined) {
+  let visibleChanges;
+  if (params.visibleChanges !== undefined) {
     try {
-      visualEvidence = visualEvidencePlan.parseIntent(params.visualEvidence);
+      visibleChanges = visibleChangesContract.parseIntent(params.visibleChanges);
     } catch (err) {
-      return fail('invalid_visual_evidence', err.message);
+      return fail('invalid_visible_changes', err.message);
     }
   }
 
@@ -413,9 +414,10 @@ async function updateProposalFromForkBranch(deps, params) {
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
-        visualEvidence,
+        visibleChanges,
         title: normalizeProposedTitle(params.title),
         description: normalizeProposedDescription(params.description),
+        summary: normalizeProposedSummary(params.summary),
         // #1323. A re-run of the checks against the commit already there.
         recheck: params.recheck === true,
         linkedIssues: normalizeLinkedIssues(params.linkedIssues),
@@ -431,9 +433,14 @@ async function updateProposalFromForkBranch(deps, params) {
         lifecycle: deps.lifecycle,
         pushSessionUpdate: deps.pushSessionUpdate,
       };
-      return branchHomeOf(session) === 'user_fork'
+      const result = branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
         : await advanceAppRepoBranch(ctx);
+      // #3344. LAST, after every synchronous tail: a head move marks the
+      // summary stale (reconcileNativeReviewedHead, applyHeadChange), and the
+      // author's words sent WITH this revision describe it, so they must land
+      // after that invalidation rather than be staled by it.
+      return await withProposedSummary(ctx, result);
     } finally {
       releaseOperation();
     }
@@ -524,108 +531,108 @@ function normalizeTesting(testing) {
   return { ...parsed, dropped };
 }
 
-function storedVisualEvidenceIntent(session) {
-  const candidate = session?.visual_evidence_detail?.intent;
+function storedVisibleChanges(session) {
+  const candidate = session?.shots_detail?.intent;
   if (!candidate) return null;
   try {
-    return visualEvidencePlan.parseIntent(candidate);
+    return visibleChangesContract.parseIntent(candidate);
   } catch {
     return null;
   }
 }
 
-function visualEvidenceNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
-  if (rejected) return 'retry_visual_evidence_intent';
-  if (state === 'verified') return 'review_verified_evidence';
-  if (state === 'failed') return 'rerun_or_correct_visual_evidence';
+function shotsNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
+  if (rejected) return 'retry_visible_changes';
+  if (state === 'verified') return 'review_verified_shots';
+  if (state === 'failed') return 'rerun_or_correct_shots';
   if (state === 'overridden') return 'human_override_recorded';
-  if (state === 'not_required') return 'no_visual_evidence_run_required';
+  if (state === 'not_required') return 'no_shots_run_required';
   if (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)) {
-    return 'await_visual_evidence';
+    return 'await_shots';
   }
-  if (required) return 'provide_visual_evidence_intent';
-  if (accepted) return 'visual_evidence_intent_recorded';
+  if (required) return 'provide_visible_changes';
+  if (accepted) return 'visible_changes_recorded';
   return 'none';
 }
 
-function visualEvidenceSubmissionFields(result = {}) {
+function visibleChangesSubmissionFields(result = {}) {
   const accepted = result.accepted === true;
   const rejected = result.rejected === true;
   const required = result.required === true;
   const state = result.state || null;
   return {
-    visualEvidenceState: state,
-    visualEvidenceAccepted: accepted,
-    visualEvidenceRejected: rejected,
-    visualEvidenceRequired: required,
-    visualEvidenceNextStep: result.nextStep
-      || visualEvidenceNextStep(state, { required, accepted, rejected }),
+    shotsState: state,
+    visibleChangesAccepted: accepted,
+    visibleChangesRejected: rejected,
+    shotsRequired: required,
+    shotsNextStep: result.nextStep
+      || shotsNextStep(state, { required, accepted, rejected }),
   };
 }
 
-// Revision-scoped visual evidence metadata follows the commit through every
+// Revision-scoped before & after shots metadata follows the commit through every
 // update surface. Omission preserves the prior declaration. A head move first
 // hides old media, then re-plans the preserved (or newly supplied) intent for
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
-async function applyVisualEvidenceRevision({
-  pool, config, session, headSha, visualEvidence, headChanged = false,
+async function applyShotsRevision({
+  pool, config, session, headSha, visibleChanges, headChanged = false,
 }) {
-  const submitted = visualEvidence !== undefined;
-  if (!config?.visualEvidence?.collect) {
+  const submitted = visibleChanges !== undefined;
+  if (!config?.shots?.collect) {
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'visual_evidence_collection_disabled' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'shots_collection_disabled' : 'none',
     };
   }
-  const intent = submitted ? visualEvidence : storedVisualEvidenceIntent(session);
+  const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
-    if (headChanged && visualEvidenceState.validSha(headSha)) {
-      await visualEvidenceState.markStaleForHead(pool, Number(session.id), headSha);
+    if (headChanged && shotsState.validSha(headSha)) {
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
     }
     if (!intent) {
-      const required = session.visual_evidence_detail?.required === true;
+      const required = session.shots_detail?.required === true;
       return {
         accepted: false, rejected: false, required, changed: false,
-        state: session.visual_evidence_state || null,
-        nextStep: required ? 'provide_visual_evidence_intent' : 'none',
+        state: session.shots_state || null,
+        nextStep: required ? 'provide_visible_changes' : 'none',
       };
     }
-    const result = await visualEvidenceState.recordIntent(
+    const result = await shotsState.recordIntent(
       pool,
       Number(session.id),
       intent,
-      visualEvidenceState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha } : {}
     );
-    session.visual_evidence_state = result.state;
-    session.visual_evidence_detail = result.detail;
-    session.visual_evidence_run_id = result.runId;
+    session.shots_state = result.state;
+    session.shots_detail = result.detail;
+    session.shots_run_id = result.runId;
     return {
       accepted: submitted,
       rejected: false,
       required: result.required === true,
       changed: result.unchanged !== true,
       state: result.state,
-      nextStep: visualEvidenceNextStep(result.state, {
+      nextStep: shotsNextStep(result.state, {
         required: result.required === true,
         accepted: submitted,
       }),
     };
   } catch (err) {
-    log.error('proposal-update', 'could not store visual evidence intent', {
+    log.error('proposal-update', 'could not store before & after shots intent', {
       sessionId: Number(session.id), headSha, err: err.message,
     });
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'retry_visual_evidence_intent' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'retry_visible_changes' : 'none',
     };
   }
 }
@@ -672,6 +679,153 @@ function normalizeProposedDescription(description) {
   if (typeof description !== 'string') return null;
   const t = description.trim().slice(0, 4000);
   return t || null;
+}
+
+// #3344. The plain-English summary a voter reads first, normalized by the
+// pr-import route's own parser so an update is held to the import's cap.
+function normalizeProposedSummary(summary) {
+  if (typeof summary !== 'string') return null;
+  return require('../routes/votes').parseImportSummary({ summary });
+}
+
+// Apply the submitted summary (#3344). Until this existed the summary was
+// written once, at import, and nothing could change it afterwards: neither the
+// agent nor the proposer. It is stored as the AUTHOR's summary, fresh for the
+// head this update landed on, replacing whatever was there (author or
+// generated). The input version is bumped in the same statement, so a
+// generation that read the older inputs is discarded when it tries to
+// publish; pr-metadata.js then keeps a fresh author summary on every later
+// regeneration (the full precedence rule is at its authorSummaryHolds).
+//
+// Who may: the update path's ownershipGate has already established the caller
+// owns the row, and callerOwnsPr is the same second test the title and
+// description apply, so a pull request another GitHub account opened is
+// refused here exactly as its title and body are.
+//
+// The in-app view renders pr_summary_md through the same sanitizing markdown
+// path it always has. The PR body is rewritten too where the platform wrote
+// the summary INTO it (see syncSummaryIntoBody): otherwise GitHub, and the
+// pr_body mirror get_proposal reports, would keep the old words, and a later
+// metadata pass compares against the already-updated column and never
+// notices.
+async function applyProposedSummary({ pool, gh, owner, repo, session, summary, viewerLogin, headSha }) {
+  const nothing = { changed: false, rejected: null };
+  if (!summary) return nothing;
+  if (!callerOwnsPr(session, viewerLogin)) return { changed: false, rejected: 'imported_pr' };
+  const head = SHA_RE.test(String(headSha || '')) ? String(headSha).toLowerCase() : null;
+  const previousSummary = typeof session.pr_summary_md === 'string' ? session.pr_summary_md : null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_sessions
+          SET pr_summary_previous_md = CASE WHEN pr_summary_md IS DISTINCT FROM $1::text
+                THEN COALESCE(pr_summary_md, pr_summary_previous_md) ELSE pr_summary_previous_md END,
+              pr_summary_md = $1::text,
+              pr_summary_source = 'author',
+              pr_summary_source_head_sha = $2::varchar,
+              pr_summary_source_body_hash = $3,
+              pr_summary_input_version = pr_summary_input_version + 1,
+              pr_summary_applied_version = pr_summary_input_version + 1,
+              pr_summary_stale = FALSE
+        WHERE id = $4
+          AND NOT (pr_summary_md IS NOT DISTINCT FROM $1::text
+                   AND pr_summary_source IS NOT DISTINCT FROM 'author'
+                   AND pr_summary_stale = FALSE
+                   AND pr_summary_source_head_sha IS NOT DISTINCT FROM $2::varchar)
+        RETURNING id`,
+      [summary, head, summaryFreshness.bodyHash(session.pr_body || null), Number(session.id)]
+    );
+    if (!rows.length) {
+      // Already stored and fresh. A resend is still how a body rewrite that
+      // failed last time is retried; the words it replaced are the previous
+      // summary.
+      const bodyRejected = await syncSummaryIntoBody({
+        pool, gh, owner, repo, session, summary,
+        previousSummary: session.pr_summary_previous_md || null,
+      });
+      return { ...nothing, ...(bodyRejected ? { bodyRejected } : {}) };
+    }
+  } catch (err) {
+    log.error('proposal-update', 'could not store the submitted summary', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'write_failed' };
+  }
+  session.pr_summary_md = summary;
+  session.pr_summary_source = 'author';
+  session.pr_summary_source_head_sha = head;
+  session.pr_summary_stale = false;
+  log.info('proposal-update', 'stored the submitted summary', { sessionId: Number(session.id) });
+  const bodyRejected = await syncSummaryIntoBody({
+    pool, gh, owner, repo, session, summary, previousSummary,
+  });
+  return { changed: true, rejected: null, ...(bodyRejected ? { bodyRejected } : {}) };
+}
+
+// Only a pull request whose body the PLATFORM composes carries the summary:
+// pr-metadata leads a native proposal's body with it. An imported pull
+// request's body is its author's description (the connector files the summary
+// beside it, never in it), so there is nothing there to replace. Where the
+// body leads with the previous summary, that paragraph is swapped; where it
+// leads with none, the summary is prepended, which is the shape pr-metadata
+// gives a retained summary. Returns null on success or nothing to do, else a
+// reason. Best-effort: the summary itself is already stored.
+async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, previousSummary }) {
+  if (String(session.source) === 'imported' || !session.pr_number || !gh || !owner || !repo) return null;
+  let existing;
+  try {
+    const pr = await gh.getPR(owner, repo, session.pr_number);
+    existing = String((pr && pr.body) || '');
+  } catch (err) {
+    log.warn('proposal-update', 'could not read the pull request body to lead it with the summary', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return 'github_unreadable';
+  }
+  const alreadySynced = existing === summary || existing.startsWith(`${summary}\n\n`);
+  const prev = previousSummary ? previousSummary.trim() : '';
+  let rest = existing;
+  if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
+  else if (prev && existing === prev) rest = '';
+  const body = alreadySynced ? existing : (rest ? `${summary}\n\n${rest}` : summary);
+  if (body !== existing) {
+    try {
+      await gh.updatePR(owner, repo, session.pr_number, { body });
+    } catch (err) {
+      log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
+        sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+      });
+      return 'github_write_failed';
+    }
+  }
+  if (alreadySynced && session.pr_body === body) return null;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
+      [body, summaryFreshness.bodyHash(body), Number(session.id)]
+    );
+    session.pr_body = body;
+  } catch (err) {
+    log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return 'github_mirror_failed';
+  }
+  return null;
+}
+
+async function withProposedSummary(ctx, result) {
+  if (!ctx.summary || !result || result.ok !== true) return result;
+  const applied = await applyProposedSummary({
+    pool: ctx.pool, gh: ctx.gh, owner: ctx.owner, repo: ctx.repo,
+    session: ctx.session, summary: ctx.summary,
+    viewerLogin: ctx.expectedLogin, headSha: result.headSha,
+  });
+  return {
+    ...result,
+    summaryUpdated: applied.changed,
+    ...(applied.rejected ? { summaryRejected: applied.rejected } : {}),
+    ...(applied.bodyRejected ? { summaryBodyRejected: applied.bodyRejected } : {}),
+  };
 }
 
 // Apply the submitted title. Two cases, both author-initiated (the update
@@ -802,6 +956,18 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   let body = closing ? `${description}\n\n${closing}` : description;
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
   if (body === existing) return nothing;
+
+  // GitHub is the body source of truth. Invalidate before touching it: a DB
+  // failure must not leave an older summary displayed beside newer prose.
+  try {
+    await summaryFreshness.invalidate(pool, Number(session.id));
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  } catch (err) {
+    log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'summary_invalidation_failed' };
+  }
 
   try {
     await gh.updatePR(owner, repo, session.pr_number, { body });
@@ -1092,8 +1258,8 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
-    pool, config, session, headSha, visualEvidence: ctx.visualEvidence,
+  const shotsApplied = await applyShotsRevision({
+    pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
@@ -1118,7 +1284,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1130,7 +1296,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // a side effect of changing a capture route, so correcting a stale verdict
   // meant editing a route that was already right. An explicit ask reaches it
   // now, and nothing else about the path changes.
-  if (!applied.changed && !evidenceApplied.changed && !ctx.recheck) return reported;
+  if (!applied.changed && !shotsApplied.changed && !ctx.recheck) return reported;
 
   // A paused session has no container and no preview to shoot against, and
   // starting a build for one is the thing settlePausedSession exists to avoid.
@@ -1154,7 +1320,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   try {
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: evidenceApplied.changed ? 'visual-evidence-update' : 'testing-update',
+      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
@@ -1376,12 +1542,19 @@ async function advanceAppRepoBranch(ctx) {
     });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
+  if (session.source !== 'imported') {
+    // The push has moved this proposal's code. Keep the previous summary out
+    // of every reader even if the later PR metadata or preview work fails.
+    await summaryFreshness.invalidate(pool, sessionId);
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  }
+
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
-    visualEvidence: ctx.visualEvidence, headChanged: liveHead !== verified.headSha,
+    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1409,6 +1582,7 @@ async function advanceAppRepoBranch(ctx) {
         pool, session, repoOwner: owner, repoName: repo,
         userMessage: '', ccSummary: '', username,
         userId: session.user_id, allowModelGeneration: false,
+        sourceHeadSha: verified.headSha,
         preferredTitle: session.proposed_pr_title || session.session_title || null,
       });
     } catch (err) {
@@ -1443,7 +1617,7 @@ async function advanceAppRepoBranch(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1464,9 +1638,21 @@ async function advanceAppRepoBranch(ctx) {
   // the pull request, sees the head this push just moved, and runs the
   // existing imported-head machinery — advance the tracked SHA, clear the
   // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
-  // about it is reimplemented here. 'unchanged' means GitHub had not caught
-  // up with the push yet, which is honest to report as "not rebuilt": the
-  // sweeper takes it from there.
+  // about it is reimplemented here.
+  //
+  // 'unchanged' means GitHub's pull request still reads the commit before
+  // this push — it updates a PR's head a few seconds after the branch moves.
+  // Left there, the proposal showed the previous commit's verdict as current
+  // until the sweep came round, minutes later (PR #3615 sat on a stale red
+  // check for about five minutes). But the branch is in the app's own repository and
+  // the platform has just written it, so the mirror can read the new head
+  // straight off it: `reconcileImportedHead` is the re-pin the merge queue
+  // uses after ITS pushes, through the same applyHeadChange. `fresh`, because
+  // a coalesced fetch that started before the push would answer with the
+  // old tip (#2619). The rebuild runs in the background, as it does for the
+  // queue's re-pin: a submit should not hold the proposal lock across a
+  // minutes-long build. If the mirror cannot answer either, the sweeper
+  // still takes it from there, and that is reported as "not rebuilt".
   if (String(session.source) === 'imported') {
     let synced = 'skipped';
     try {
@@ -1476,23 +1662,44 @@ async function advanceAppRepoBranch(ctx) {
         sessionId, err: err.message,
       });
     }
-    const applied = synced === 'updated';
+    let repinned = null;
+    if (synced === 'unchanged') {
+      repinned = await prImportSync.reconcileImportedHead({
+        config, pool, session, checks: 'background', notify: true, fresh: true,
+      }).catch((err) => {
+        log.error('proposal-update', 'imported head re-pin failed after a successful push', {
+          sessionId, err: err.message,
+        });
+        return null;
+      });
+    }
+    const viaMirror = !!(repinned && repinned.reconciled && repinned.changed);
+    const applied = synced === 'updated' || viaMirror;
+    // A move the classifier calls mechanical keeps the approvals and can carry
+    // a green verdict. Only the re-pin reports which it was, so only it can
+    // say so; the sync's answer is the one this tail has always reported.
+    const cleared = applied && !(viaMirror && repinned.votesKept);
+    const rebuilding = applied && !(viaMirror && repinned.checksCarry);
+    let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+    if (applied) votesClearing = cleared ? 'now' : 'none';
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+      headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0, synced,
+      repinned: repinned ? (viaMirror ? 'mirror' : (repinned.reason || 'unchanged')) : 'not_needed',
+      votesClearing, votesAtRisk: votesCleared,
     });
     return {
       ...landed,
-      votesCleared: applied ? votesCleared : 0,
-      // `votesCleared` is what THIS call cleared. On the mirror path the head
-      // is advanced by the next pr-import sweep, which is when the tally
-      // resets — so a 0 here with votesClearing 'on_sync' means "not yet",
-      // not "never". votesAtRisk is the count that will go.
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+      votesCleared: cleared ? votesCleared : 0,
+      // `votesCleared` is what THIS call cleared. When neither GitHub nor the
+      // mirror could see the push yet, the head is advanced by the next
+      // pr-import sweep, which is when the tally resets — so a 0 here with
+      // votesClearing 'on_sync' means "not yet", not "never". votesAtRisk is
+      // the count that will go.
+      votesClearing,
       votesAtRisk: votesCleared,
-      checksRerun: applied,
-      previewRebuilding: applied,
+      checksRerun: rebuilding,
+      previewRebuilding: rebuilding,
     };
   }
 
@@ -1865,9 +2072,9 @@ async function advanceForkHead(ctx) {
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visualEvidence: ctx.visualEvidence, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
@@ -1934,7 +2141,7 @@ async function advanceForkHead(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     linkedIssuesUpdated: linkedApplied,
   };
 }
@@ -2024,12 +2231,15 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
-  applyVisualEvidenceRevision,
-  visualEvidenceSubmissionFields,
-  visualEvidenceNextStep,
+  applyShotsRevision,
+  visibleChangesSubmissionFields,
+  shotsNextStep,
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
+  // #3344's author summary, likewise.
+  applyProposedSummary,
+  syncSummaryIntoBody,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,
 };

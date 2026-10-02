@@ -1,7 +1,9 @@
-// The Me page as the navigation prototype draws it (`scrMe`): the profile
-// card, three stat cards, a "More" list whose rows say what is behind them,
-// and "Your contributions" — shaped in frontend/src/features/profile/
-// profile-store.js and drawn by profile-view.tsx.
+// The Me page as the navigation prototype draws it (`scrMe`), as the UI
+// overhaul left it: the profile card, three stat cards, then "Your work" and
+// "More", lists whose rows say what is behind them — shaped in
+// frontend/src/features/profile/profile-store.js and drawn by
+// profile-view.tsx. "Your contributions", which closed the page, is gone:
+// Your changes lists every merged change.
 //
 // Pinned here: what each part SAYS for real data and for missing data, that
 // every part of the older, longer Profile still has a home, and that the
@@ -40,17 +42,43 @@ test('the three stat cards: merged, kudos, challenges — and a dash, not a zero
     'a read that failed is not a claim of zero');
 });
 
-test('the More rows say what is behind them, from the data only', () => {
+test('the rows say what is behind them, from the data only', () => {
   const { moreRowsView } = loadTsx(STORE);
-  assert.deepEqual(moreRowsView({
-    ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY,
+  const rows = moreRowsView({
+    ranking: { season_name: 'Season 3', rank: 3 },
+    summary: { ...SUMMARY, inProgress: 2 },
     feedback: { sent: 4, counted: 1, reports: [] },
-  }), { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received', feedback: '4 sent · 1 counted' });
-  // No rank yet (signed-in newcomer): the season and the tally, no invented rank.
-  assert.deepEqual(moreRowsView({ ranking: {}, summary: SUMMARY, feedback: { sent: 0, counted: 0, reports: [] } }),
-    { challenges: 'Season 3 · 2 of 7 done', kudos: '3 received', feedback: 'Nothing sent yet' });
-  // #3186: a feedback read that failed is not a claim that none was sent.
-  assert.deepEqual(moreRowsView({ ranking: null, summary: null }), { challenges: null, kudos: null, feedback: null });
+    requests: { requests: [{ number: 1 }], open: 2, done: 1 },
+    votes: { items: [{ type: 'pr_vote', vote: 'yes', status: 'promoted', pr: { title: 'Weekly distance leaderboard' } }] },
+    friends: { incoming: [{ id: 1 }], friends: [{ id: 2 }, { id: 3 }] },
+  });
+  assert.deepEqual(rows, {
+    challenges: 'Season 3 · rank #3 · 2 of 7 done',
+    kudos: '3 received',
+    changes: '9 merged · 2 in progress',
+    requests: '2 open · 1 done',
+    votes: 'Latest: Weekly distance leaderboard',
+    friends: '1 request waiting',
+    feedback: '4 sent · 1 counted',
+  });
+  // A zero says nothing: the half that is zero goes, and all-zero falls back.
+  const quiet = moreRowsView({
+    ranking: {}, summary: { ...SUMMARY, merged: 0, inProgress: 3 },
+    requests: { requests: [], open: 0, done: 0 }, votes: { items: [] },
+    friends: { incoming: [], friends: [{ id: 2 }] },
+  });
+  assert.equal(quiet.challenges, 'Season 3 · 2 of 7 done', 'no rank yet: no invented rank');
+  assert.equal(quiet.changes, '3 in progress');
+  assert.equal(quiet.requests, null);
+  assert.equal(quiet.votes, null);
+  assert.equal(quiet.friends, null, 'friends are never counted (#2386), only requests to answer');
+  assert.equal(moreRowsView({ ranking: {}, summary: SUMMARY, feedback: { sent: 4, counted: 0, reports: [] } }).feedback,
+    '4 sent', 'none counted yet: no "· 0 counted"');
+  assert.equal(moreRowsView({ ranking: {}, summary: { ...SUMMARY, merged: 0 } }).changes, null);
+  // A read that failed is not a claim that there is nothing.
+  assert.deepEqual(moreRowsView({ ranking: null, summary: null }), {
+    challenges: null, kudos: null, changes: null, requests: null, votes: null, friends: null, feedback: null,
+  });
 });
 
 test('the card\'s one line of facts: @handle, building since, apps', () => {
@@ -66,26 +94,7 @@ test('the card\'s one line of facts: @handle, building since, apps', () => {
   assert.equal(identityView({ user: { username: 'evan' }, data: null }).sub, null);
 });
 
-test('contributions: each a link to its proposal, with its app tile and a readable date', () => {
-  const { contributionsView } = loadTsx(STORE);
-  const view = contributionsView(SUMMARY, 'evan', NOW);
-  assert.equal(view.seeAllHref, '#leaderboard/users/evan');
-  assert.deepEqual(view.rows.map((r) => r.href), [
-    '#app/usernode-2d5619/dev/proposals/213',
-    '#app/recipe%20box/dev/proposals/188',
-    '#app/whiteboard/dev/proposals/140',
-  ]);
-  assert.deepEqual(view.rows.map((r) => r.tile.kind), ['platform', 'emoji', 'image']);
-  assert.equal(view.rows[0].meta, 'Homeroom · merged 3 days ago · 4 kudos');
-  assert.match(view.rows[1].meta, /^Recipe Box · merged (\S+ 1|1 \S+)$/, 'past a fortnight: month and day, no year this year');
-  assert.match(view.rows[2].meta, /^Whiteboard · merged .*2025 · 1 kudos$/, 'and the year once it is not this one');
-  assert.doesNotMatch(view.rows[1].meta, /\d+\/\d+\/\d+/, 'never a numeric date that reads differently by region');
-  assert.equal(contributionsView(null, 'evan').loaded, false, 'a failed read is told apart from "nothing merged"');
-  const unsafe = contributionsView({ contributions: [{ sessionId: 1, appSlug: 'x', appIconUrl: 'javascript:1' }] }, 'evan', NOW);
-  assert.equal(unsafe.rows[0].tile.kind, 'letter', 'only the platform\'s own /app-icons/ path is an image');
-});
-
-test('the page renders the four parts in the prototype\'s order', () => {
+test('the page renders its four parts in order', () => {
   const state = {
     open: true,
     data: { ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY, ownerPublicProfile: null },
@@ -97,12 +106,13 @@ test('the page renders the four parts in the prototype\'s order', () => {
     stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
-  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-more"', 'id="profile-contributions"']
+  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-work"', 'id="profile-more"']
     .map((needle) => html.indexOf(needle));
   assert.ok(order.every((i) => i >= 0), 'all four parts render');
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'card, stats, More, contributions');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'card, stats, Your work, More');
   assert.match(html, /id="profile-edit-btn"/);
-  assert.match(html, /data-contribution="213"/);
+  assert.ok(!/profile-contributions|data-contribution=/.test(html), 'Your contributions is gone');
+  assert.ok(!/id="profile-friends"/.test(html), 'Friends is a row, not a section, until it is opened');
   assert.ok(!/Log out|profile-row-admin|data-completed-challenge|Points breakdown/.test(html),
     'nothing that moved elsewhere is drawn twice');
 });
@@ -130,7 +140,7 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
   // Workshop's column: the same width, and the same 8px notch + 12px of air.
   const workshop = read('frontend/src/features/workshop/index.tsx');
   assert.match(workshop, /className="max-w-2xl mx-auto pb-8"/, 'Workshop\'s column is still the reference');
-  assert.match(workshop, /className="px-4 pt-5 pb-2 /, 'and its first element still steps down pt-5');
+  assert.match(workshop, /<div className="pt-5" aria-hidden="true" \/>/, 'and it still steps down pt-5 before its first element');
   for (const cls of ['max-w-2xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
     assert.ok(classes.includes(cls), `#profile-root carries ${cls}`);
   }
@@ -141,15 +151,12 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
   // content edge, as Settings and Discover set theirs — not the px-1 that
   // sat them 12px left of the cards' rows.
   const html = renderToHtml(createElement(view.ProfileRoot, {}));
-  const headings = [...html.matchAll(/<h2 class="([^"]*)">(More|Your contributions)<\/h2>/g)];
-  assert.deepEqual(headings.map((m) => m[2]), ['More', 'Your contributions']);
+  const headings = [...html.matchAll(/<h2 class="([^"]*)">(Your work|More)<\/h2>/g)];
+  assert.deepEqual(headings.map((m) => m[2]), ['Your work', 'More']);
   for (const [, cls, label] of headings) {
     const list = cls.split(/\s+/);
     assert.ok(list.includes('px-4') && !list.includes('px-1'), `"${label}" sits on the rows' edge: ${cls}`);
   }
-  const seeAll = (html.match(/id="profile-contributions-all"[^>]*class="([^"]*)"/) || [])[1]
-    || (html.match(/class="([^"]*)"[^>]*id="profile-contributions-all"/) || [])[1];
-  assert.ok(seeAll && seeAll.split(/\s+/).includes('px-4'), '"See all" takes the same inset from the right');
 });
 
 test('every part of the older Profile has a home', () => {

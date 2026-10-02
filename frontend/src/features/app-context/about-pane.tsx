@@ -71,7 +71,7 @@ import {
 
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
 import { isNativeApp, isStandalone } from '../mobile-install/environment';
@@ -351,19 +351,28 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             className="platform-mark-tile w-16 h-16 rounded-2xl shrink-0"
           />
         ) : (
-          <div
+          <AppIconLink
+            // The Open button's destination and exit: the sheet closes first.
+            slug={isApp && open.canOpen && !running ? slug : null}
+            name={label}
+            onOpen={(s) => afterDismiss(() => window.App?.openAppTab?.(s, 'app'))}
             className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
             data-icon={appIconKind(record)}
           >
             <AppIconContent app={record} />
-          </div>
+          </AppIconLink>
         )}
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[1.0625rem] leading-snug font-semibold text-zinc-900 dark:text-zinc-100 break-words">
             {label}
           </div>
+          {/* #3572: three lines at most. A description made on the create
+              screen fits two lines of the hub hero (services/create-options.js
+              DESCRIPTION_MAX); this column, beside the icon and a size
+              smaller, needs a third for the same line. A longer one from a
+              repository's own dapp.json stops there with an ellipsis. */}
           {tagline ? (
-            <p id="app-about-tagline" className="mt-0.5 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
+            <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
           ) : (!platform && slug ? (
@@ -430,7 +439,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             data-added={String(yours)}
             disabled={yours}
             // The design's proportions: "✓ Added" is a compact state; "Add to
-            // your apps" is sized to its words beside Open — a phone's sheet
+            // Shortcuts" is sized to its words beside Open — a phone's sheet
             // has not room for both at half width without truncating it —
             // and takes the whole row when Open is gone.
             className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
@@ -455,7 +464,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span className="truncate">Added</span>
               </>
-            ) : <span className="truncate">Add to your apps</span>}
+            ) : <span className="truncate">Add to Shortcuts</span>}
           </button>
         </div>
       ) : null}

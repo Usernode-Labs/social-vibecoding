@@ -561,7 +561,7 @@ async function runQueue(config, appId, { excludeSessionId = 0 } = {}) {
   });
 }
 
-const TRY_NEXT_AFTER = new Set(['sync_threw', 'turn_in_flight', 'not_promoted', 'github_disabled_or_no_pr']);
+const TRY_NEXT_AFTER = new Set(['cancel_failed', 'sync_threw', 'turn_in_flight', 'not_promoted', 'github_disabled_or_no_pr']);
 
 // ── Direct lane: one attempt ─────────────────────────────────────────────
 
@@ -633,16 +633,17 @@ async function resolveOneInner(config, pool, sessionId, admission = { reason: 'a
   await integration.setBlockReasons(pool, session.id, ['integrating']);
   broadcast(session, { integrating: true });
 
-  // #1728: supersede any capture in flight before moving the branch under
-  // it. Whatever it was building or shooting is about the PRE-resolution
-  // commit; the new head gets its own.
+  // Supersede and await the pre-resolution preview before the sync moves
+  // its branch. An error here must not admit a worker against a live run.
   try {
-    const previewLifecycle = require('./preview-lifecycle');
-    if (typeof previewLifecycle.cancelled === 'function') {
-      previewLifecycle.cancelled(session.id, 'superseded by integration');
-    }
+    await require('./preview-lifecycle').supersede(config, session.id, measured.headSha);
   } catch (err) {
-    log.debug('merge-queue', 'no in-flight check run to supersede', { sessionId, err: err.message });
+    log.warn('merge-queue', 'Could not stop the old preview before conflict repair', {
+      sessionId, err: err.message,
+    });
+    await integration.setBlockReasons(pool, session.id, []);
+    broadcast(session, { integrating: false });
+    return { ok: false, reason: 'cancel_failed' };
   }
 
   let sync;

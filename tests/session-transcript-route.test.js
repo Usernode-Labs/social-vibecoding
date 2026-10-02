@@ -167,7 +167,7 @@ test('serves a sanitised transcript to a non-owner when both stamps are set', as
     assert.strictEqual(body.session.username, 'them');
     assert.strictEqual(body.session.message_count, 3);
     assert.strictEqual(body.session.is_owner, false);
-    assert.strictEqual(body.session.can_fork, true);
+    assert.strictEqual(body.session.can_fork, false, 'forking is retired with classic sessions (#2779)');
     assert.strictEqual(body.truncated, false);
 
     // Oldest-first for rendering.

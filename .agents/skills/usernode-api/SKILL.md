@@ -23,6 +23,16 @@ Native app discussion threads use:
 
 The POST writes the Homeroom issue thread, not a GitHub issue comment.
 
+To edit the description readers see on an existing open change, read
+`GET /api/sessions/:id/description`, then send
+`PATCH /api/sessions/:id/description` with `{ "description": "<Markdown>", "expectedVersion": <returned version> }`.
+The author may save up to 16,000 characters without a code push, fork or
+build. A 409 requires rereading and reconciling the newer text; never retry
+with a newer version blindly. The connector offers the same operation as
+`update_proposal_description`; `get_proposal.summary` and
+`descriptionVersion` provide its starting text and version. Check
+`prBodyStatus` for a saved description whose GitHub mirror still needs a retry.
+
 ## Set up and authenticate
 
 If the MCP tools are unavailable, configure the active client:

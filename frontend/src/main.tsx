@@ -128,6 +128,9 @@ import './lib/surface-tone';
 // …and the same wallpaper is copied under a screen's view transition, so the
 // pinned, translucent header and rail keep their ground mid-fade (#2758).
 import './lib/transition-ground';
+// Publishes window.ResetTime: allowance resets worded in the viewer's own
+// clock, for the classic scripts that cannot import it (#3230).
+import './lib/reset-time';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

@@ -45,6 +45,7 @@ const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
+  gateSummary,
 } = require('../../services/topochain/challenge-onboarding');
 
 const { Router } = require('express');
@@ -53,6 +54,7 @@ const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
+const { sameOriginBrowserOnly } = require('../../middleware/same-site-browser');
 const {
   mobileWalletClaimLimiter, topochainMobileReadLimiter,
 } = require('../../middleware/rate-limits');
@@ -1380,7 +1382,11 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      return ok(res, { data: items, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
+      // The gate summary only for a viewer it applies to: a new account on
+      // its Getting started list (2026-10-01). Anyone else gets the whole
+      // season and no summary, as for a season with no First challenges.
+      const gate = gateSummary(onboarding);
+      return ok(res, { data: items, ...(gate ? { onboarding: gate } : {}) });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1461,7 +1467,7 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
-          ...(onboarding ? { onboarding: onboarding.summary } : {}),
+          ...(gateSummary(onboarding) ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
@@ -1515,7 +1521,7 @@ function topochainMobileRoutes(config) {
   // shows "Ask to produce blocks" and its pending/released state with
   // the platform session.
   router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
-  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, bpRequestHandler);
+  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly, bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.

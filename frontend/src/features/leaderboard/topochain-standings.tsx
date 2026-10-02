@@ -34,6 +34,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { topochainStandingsStore } from './topochain-standings-store.js';
+import { STANDINGS_UPDATE_NOTE } from './my-standing.js';
 
 type ColumnKey = 'rank' | 'user' | 'points' | 'blocks' | 'success';
 
@@ -191,12 +192,23 @@ function StandingsTable(
           </tr>
         </thead>
         <tbody>
+          {/* A row stays a table row (no role override, so the cells keep
+              their column headers) but takes focus and opens on Enter or
+              Space, as the Kudos rows do. The label says what it opens. */}
           {view.rows.map((row) => (
             <tr
               key={row.index}
-              className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer"
+              className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60"
               data-row-index={row.index}
+              tabIndex={0}
+              aria-label={`Open ${row.user}'s details`}
               onClick={() => controller()?._openRowAt(row.index)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  controller()?._openRowAt(row.index);
+                }
+              }}
             >
               {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
             </tr>
@@ -312,7 +324,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
             dapp.json standings checks: a fresh season has an empty
             leaderboard, and the checks accept "table or this hint" while
             still rejecting the red error state. */}
-        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet.</p>
+        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet. {STANDINGS_UPDATE_NOTE}</p>
       </>
     );
   }

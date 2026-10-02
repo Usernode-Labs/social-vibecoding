@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
+import { platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
@@ -434,16 +435,30 @@ export async function loadThread(conversationId: number, force = false): Promise
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
     const active = await api.getConversation(conversationId);
+    if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    // Old Preview links resolve to the viewer's persisted sample thread.
+    // Use its canonical address for messages, writes, drafts and WS events.
+    if (active.id !== conversationId) {
+      const suffix = state.route.threadRootId ? `/thread/${state.route.threadRootId}`
+        : state.route.focusMessageId ? `/m/${state.route.focusMessageId}` : '';
+      openAddress(`#messages/${active.id}${suffix}`);
+      return;
+    }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
-    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null } = !member
+    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
       ? { messages: [], nextBefore: null, nextAfter: null }
       : anchor
         ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
-          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter, threadRootId: around.focus.threadRootId,
+          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
+          threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
         })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
         : { ...(await api.listMessages(conversationId)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    if (focus && page.focusMessageId && page.focusMessageId !== focus) {
+      openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
+      return;
+    }
     const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
     if (focus) focusLoaded = focus;
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
@@ -715,15 +730,27 @@ function validSlug(slug?: string | null): string | null {
 export async function loadDiscussion(slug: string): Promise<void> {
   const want = validSlug(slug);
   if (!want) return;
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('app_discussion', { appSlug: want });
+  const attemptId = telemetry?.attempt?.('app_discussion_load', {
+    screen: 'app_discussion', appSlug: want, timeoutMs: 10_000, abandonOnHide: true,
+  });
+  let errorCode = 'network';
   try {
-    const response = await fetch(`/api/apps/${encodeURIComponent(want)}`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // `manifest=summary`: the same address AppView and the Improve target read,
+    // so the service worker's cached copy is shared rather than kept twice;
+    // nothing here reads the manifest's declared tests or platform env.
+    const response = await fetch(`/api/apps/${encodeURIComponent(want)}?manifest=summary`);
+    if (!response.ok) {
+      errorCode = telemetry?.errorCodeFor?.(response.status) || 'unavailable';
+      throw new Error(`HTTP ${response.status}`);
+    }
     const data = await response.json().catch(() => null);
     const app = (data && (data.app || data)) || null;
-    if (!app || !app.slug) throw new Error('No such app');
+    if (!app || !app.slug) { errorCode = 'invalid_response'; throw new Error('No such app'); }
     // A slower request for a thread the reader has already left must not
     // paint over the one they are looking at.
-    if (state.route.appSlug !== want) return;
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     publish({
       discussionContext: {
         slug: app.slug,
@@ -741,8 +768,10 @@ export async function loadDiscussion(slug: string): Promise<void> {
       },
       discussionError: null,
     });
+    telemetry?.outcome?.(attemptId, 'success');
   } catch {
-    if (state.route.appSlug !== want) return;
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
+    telemetry?.outcome?.(attemptId, 'failure', { errorCode });
     publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
   }
 }
@@ -760,6 +789,38 @@ export function close(): void {
     active: null, messages: [], loadingThread: false, threadError: null,
     discussionContext: null, discussionError: null, thread: null, nextAfter: null,
   });
+}
+
+/**
+ * #3494: a conversation open IN ITS COMMUNITY'S PAGE rather than on this
+ * screen. #general is the Homeroom community's channel, and Homeroom's
+ * Discussion tab mounts it in place (ConversationThread, `embedded`) the way
+ * any other project's tab mounts its own chat, so the page keeps its header
+ * and its tabs. It is the same thread, drafts and realtime included — the
+ * store has one route, so the page takes it and the Messages screen shows
+ * none while it does (MessagesScreen).
+ *
+ * `open` stays false: this screen's chrome, Back and the router all ask
+ * whether Messages is ON SCREEN, and it is not. Any route here takes the
+ * store back (route() never short-circuits an embedded route), and the page
+ * gives it back when it leaves the screen (release).
+ */
+export function embed(conversationId: number): void {
+  if (!validId(conversationId) || state.route.open) return;
+  if (state.route.embedded && state.route.conversationId === conversationId) return;
+  focusLoaded = null;
+  unreadHold = null;
+  publish({
+    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null,
+  });
+  void loadConversations();
+  void loadThread(conversationId);
+}
+
+/** The page is leaving: close the room it embedded, unless Messages has since taken the store. */
+export function release(conversationId: number): void {
+  if (state.route.embedded && state.route.conversationId === conversationId) close();
 }
 
 export function isOpen(): boolean {
@@ -816,10 +877,21 @@ export function channelHub(): string | null {
     ? state.active
     : state.conversations.find((item) => item.id === id) || null;
   if (!row || row.kind !== 'channel') return null;
-  const platform = (typeof window !== 'undefined'
-    ? (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.()
-    : null) || null;
+  // The same read the pane's own disc draws from (channel-hub.ts), so the
+  // header's arrow and the disc name one hub.
+  const platform = typeof window !== 'undefined' ? platformSlug() : null;
   return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+}
+
+/**
+ * #general's hub is found late on a cold load (#3407): the platform's slug
+ * lands after the header was set, and the disc in the pane hears it through
+ * PlatformTarget.onSlug. This keeps the header's arrow hearing the same
+ * thing, so the two never point at different places. Returns the
+ * unsubscribe; the screen holds it for as long as it is mounted.
+ */
+export function followPlatformSlug(): () => void {
+  return subscribePlatformSlug(() => { if (state.route.open) syncChrome(); });
 }
 
 export function syncChrome(): void {
@@ -1119,6 +1191,25 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
   publish({});
 }
 
+/**
+ * #3624: answer the Homeroom bot's question with one of its suggested
+ * answers. Sent as an ordinary message quoting the question, which is how
+ * the server knows which request it answers; whatever the person had
+ * typed, and any other reply they had staged, is left as it was.
+ */
+export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId || conversationId !== question.conversationId) return;
+  const scope = scopeKey(conversationId, null);
+  const draft = draftFor(scope);
+  const staged = replyFor(scope);
+  replyTargets.set(scope, question);
+  const sending = send({ content: answer });
+  if (draft) setDraft(scope, draft);
+  if (staged && staged.id !== question.id) setReply(scope, staged);
+  await sending;
+}
+
 function idempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -1369,7 +1460,8 @@ export async function markUnread(messageId: number): Promise<void> {
   unreadHold = conversationId;
   publish({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item) });
   void loadConversations(true);
-  if (isMobile()) open(null);
+  // Not from a community's page (#3494): there is no list there to return to.
+  if (isMobile() && !state.route.embedded) open(null);
 }
 
 /** The address a message link opens (#2387): the conversation, scrolled to it. */
@@ -1386,6 +1478,12 @@ export function threadAddress(conversationId: number, rootId: number): string {
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  // #3494: in its community's page the thread opens beside the room there,
+  // with no address of its own: the page's address is the page's.
+  if (state.route.embedded) {
+    if (state.route.threadRootId !== rootId) publish({ thread: null, route: { ...state.route, threadRootId: rootId } });
+    return;
+  }
   const target = threadAddress(conversationId, rootId);
   if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
   else window.location.hash = target;
@@ -1396,7 +1494,7 @@ export function closeThread(): void {
   const conversationId = state.route.conversationId;
   replyThreadRequest += 1;
   publish({ thread: null, route: { ...state.route, threadRootId: null } });
-  if (typeof window === 'undefined' || !conversationId) return;
+  if (typeof window === 'undefined' || !conversationId || state.route.embedded) return;
   const target = `#messages/${conversationId}`;
   if (window.location.hash !== target) {
     try { history.replaceState(null, '', target); } catch { window.location.hash = target; }
@@ -1421,6 +1519,10 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   try {
     const page = await api.listThread(conversationId, rootId);
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
+    if (page.root?.id && page.root.id !== rootId) {
+      openAddress(threadAddress(conversationId, page.root.id));
+      return;
+    }
     const local = (state.thread?.messages || []).filter((item) => item.id < 0 && item.threadRootId === rootId
       && !page.messages.some((row) => row.sender.id === item.sender.id && row.content === item.content));
     const known = page.messages.map((item) => {
@@ -1544,6 +1646,11 @@ function eventConversationId(event: ConversationEvent): number | null {
   return api.strictId(event.conversationId ?? event.conversation_id);
 }
 
+/** Is this conversation's thread drawn — on this screen, or in its community's page (#3494)? */
+function onScreen(conversationId: number): boolean {
+  return (state.route.open || !!state.route.embedded) && state.route.conversationId === conversationId;
+}
+
 export function handleEvent(raw: ConversationEvent): void {
   const event = raw || { type: '' };
   const conversationId = eventConversationId(event);
@@ -1557,7 +1664,7 @@ export function handleEvent(raw: ConversationEvent): void {
       // one open, and the conversation either way — the reply count on the
       // message the thread hangs off is the conversation's to draw.
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
-      if (state.route.open && state.route.conversationId === conversationId) {
+      if (onScreen(conversationId)) {
         void loadThread(conversationId, true);
         if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
@@ -1569,7 +1676,7 @@ export function handleEvent(raw: ConversationEvent): void {
       if (!messageId) break;
       // Like message create/edit, reaction realtime is intentionally id-only.
       // Rehydrate under this viewer's current membership/block permissions.
-      if (state.route.open && state.route.conversationId === conversationId) {
+      if (onScreen(conversationId)) {
         void loadThread(conversationId, true);
         // A reply in the open thread pane (#2387), or its first message.
         const thread = state.thread;

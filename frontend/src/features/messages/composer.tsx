@@ -3,14 +3,19 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
-import type { MessageAttachment, SharedObjectReference } from './types';
+import { requestPlace } from './bot-question';
+import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
+import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
 
 const MAX_ATTACHMENTS = 4;
+// People asked for per `@` prefix in a channel (#3361).
+const CHANNEL_MENTION_LIMIT = 8;
 
 function attachmentLimit(file: File): number {
   const name = file.name.toLowerCase();
@@ -110,13 +115,54 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     notifyTyping(false);
   }, [conversationId]);
 
-  const mention = useMemo(() => {
+  // The `@word` being typed at the caret, or undefined when there is none.
+  const mentionPrefix = useMemo(() => {
     const cursor = inputRef.current?.selectionStart ?? value.length;
-    const prefix = value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
-    if (prefix === undefined) return null;
+    return value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
+  }, [value]);
+
+  // #3361: a channel's roster is counted, not loaded (the server's
+  // serializeConversation), so `active.members` is empty there and `@`
+  // offered nobody. A channel asks the server for the people matching what
+  // has been typed instead, a beat after the last keystroke. One lookup per
+  // conversation (lib/prefix-lookup.ts) remembers each answer, shares a
+  // request in flight and drops an answer for a prefix no longer being
+  // typed, so a slow `@a` cannot replace the list for `@alex`. Groups and
+  // DMs keep reading their loaded roster below, exactly as before.
+  const isChannel = active?.kind === 'channel';
+  const channelLookup = useMemo<PrefixLookup<ConversationUser> | null>(() => (isChannel && conversationId
+    ? prefixLookup((query) => api.getMentionCandidates(conversationId, query, CHANNEL_MENTION_LIMIT))
+    : null), [isChannel, conversationId]);
+  const [channelPeople, setChannelPeople] = useState<{ lookup: PrefixLookup<ConversationUser> | null; key: string; users: ConversationUser[] }>({ lookup: null, key: '', users: [] });
+  useEffect(() => {
+    if (!channelLookup || mentionPrefix === undefined) return undefined;
+    const key = mentionPrefix.toLowerCase();
+    let live = true;
+    const ask = () => {
+      void channelLookup.ask(mentionPrefix).then((users) => {
+        if (live && users) setChannelPeople({ lookup: channelLookup, key, users });
+      });
+    };
+    if (channelLookup.cached(mentionPrefix)) { ask(); return () => { live = false; }; }
+    const timer = window.setTimeout(ask, 120);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [channelLookup, mentionPrefix]);
+
+  const mention = useMemo(() => {
+    if (mentionPrefix === undefined) return null;
+    const prefix = mentionPrefix.toLowerCase();
+    if (isChannel) {
+      // The answer for this prefix, or — while it loads — for a shorter one
+      // whose answer was complete (under the limit), which narrows exactly.
+      const held = channelPeople.lookup === channelLookup
+        && (channelPeople.key === prefix
+          || (prefix.startsWith(channelPeople.key) && channelPeople.users.length < CHANNEL_MENTION_LIMIT));
+      const people = held ? channelPeople.users : [];
+      return orderFriendsFirst(people.filter((member) => member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
+    }
     return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
-      && member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
-  }, [active?.members, value, friendIds]);
+      && member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
+  }, [active?.members, isChannel, channelPeople, channelLookup, mentionPrefix, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a
@@ -383,7 +429,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{plainText(reply.content) || 'Attachment'}</p>{reply.sender.bot && reply.metadata?.homeroomBot?.mirrors ? <p className="messages-bot-note">{`Your reply is posted on ${requestPlace(reply.metadata.homeroomBot)}’s public discussion.`}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}

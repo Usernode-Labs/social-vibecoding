@@ -138,7 +138,7 @@ test('the candidates are the two endpoints the drawer already reads, fetched onc
     return { ok, json: async () => byPath[url] || {} };
   };
   const bodies = {
-    '/api/apps/usernode-2d5619/promoted': {
+    '/api/apps/usernode-2d5619/promoted?results=failing': {
       promoted: [
         { pr_number: 2151, pr_title: 'Refs in the reply box' },
         { pr_number: 2152, username: 'evan' },
@@ -152,7 +152,7 @@ test('the candidates are the two endpoints the drawer already reads, fetched onc
   try {
     api.resetRefCache();
     globalThis.fetch = respond(bodies);
-    assert.equal(api.promotedPath('usernode-2d5619'), '/api/apps/usernode-2d5619/promoted');
+    assert.equal(api.promotedPath('usernode-2d5619'), '/api/apps/usernode-2d5619/promoted?results=failing');
     assert.equal(api.githubIssuesPath('a b'), '/api/apps/a%20b/github-issues');
 
     // Two composers ask at once: one pair of requests, both get the answer.
@@ -168,7 +168,7 @@ test('the candidates are the two endpoints the drawer already reads, fetched onc
     assert.equal(b, a);
     assert.deepEqual(calls.sort(), [
       '/api/apps/usernode-2d5619/github-issues',
-      '/api/apps/usernode-2d5619/promoted',
+      '/api/apps/usernode-2d5619/promoted?results=failing',
     ]);
 
     // …and a third, later, reads the cache.

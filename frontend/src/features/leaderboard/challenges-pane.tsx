@@ -46,13 +46,14 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressCadence, ProgressRail } from './challenge-card';
+import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -71,6 +72,9 @@ const controller = () => (window as {
     _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
+    requestBlockProduction(): void;
+    retryBpState(): void;
+    openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
     handleBack(): boolean;
@@ -107,8 +111,8 @@ type CardView = {
   // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
   // under a group header that carries the clock.
   deadline: string | null;
-  // "Updates every 15 min · last 10:42" (TopochainChallenges._cadenceOf) on a
-  // challenge the background scorer counts; null draws no line.
+  // "next count 10:42" (TopochainChallenges._cadenceOf), the meta line's last
+  // part, on a challenge the background scorer counts; null says nothing.
   cadence: string | null;
 };
 
@@ -133,9 +137,11 @@ type GridView =
     progress: SeasonProgressView;
     notice?: string;
     onboardingEventId?: number | null;
-    // While setup gates the event: how many challenges it hides (0 = none
-    // to show, and on an older server without the count).
+    // While Getting started gates the event: how many challenges it hides
+    // (0 = none to show, and on an older server without the count), and the
+    // first few of their names.
     lockedCount?: number;
+    lockedNames?: string[];
     groups: GroupView[];
   };
 
@@ -153,6 +159,24 @@ type CtaView =
   | { kind: 'link'; href: string; label: string }
   | { kind: 'route'; href: string; label: string }
   | { kind: 'text'; label: string };
+
+// The block-production challenge's step for THIS viewer (#2493), shaped by
+// TopochainChallenges.blockProductionStep. Null on every other challenge,
+// which keep the organiser's CTA.
+type BlockProductionView =
+  | { step: 'checking' }
+  | { step: 'locked' | 'pending'; title: string; text: string }
+  | { step: 'request'; title: string; text: string; action: { label: string; pending: boolean } }
+  | { step: 'error'; title: string; text: string; action: { label: string } }
+  | {
+    step: 'account';
+    title: string;
+    delegation: { title: string; text: string };
+    onDevice: { title: string; text: string; warning: string } | null;
+    onDeviceNote: string | null;
+    action: { label: string } | null;
+    appNote: string | null;
+  };
 
 type DetailView = {
   key: string;
@@ -173,6 +197,7 @@ type DetailView = {
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
+  blockProduction?: BlockProductionView | null;
   description: string | null;
   requirements: string | null;
   scoring: string | null;
@@ -354,7 +379,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
         >
-          Go to onboarding challenges
+          Go to First challenges
         </button>
       ) : null}
       {/*
@@ -394,9 +419,9 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         </Fragment>
       )))}
       {/*
-          After the challenges, what setup still hides and what opens it: the
-          locked placeholder, whose second line IS the unlock note, so the
-          note paragraph draws only when there is no placeholder (a locked
+          After the challenges, what Getting started still hides and what
+          opens it: the locked placeholder, whose first line IS the unlock
+          note, so the note paragraph draws only when there is no placeholder (a locked
           event on a server without the count; unlocked, there is no note). Both
           sit under the last card at the grid's own 12px gap. The placeholder's
           wrapper is a GRID too, so on a wide pane it takes one column like a
@@ -404,7 +429,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       */}
       {locked ? (
         <div className={`mt-3 ${GRID}`}>
-          <LockedChallengesCard count={view.lockedCount!} />
+          <LockedChallengesCard count={view.lockedCount!} names={view.lockedNames} />
         </div>
       ) : null}
       {view.notice && !locked ? (
@@ -442,6 +467,70 @@ function Cta({ view }: { view: CtaView }): ReactNode {
     >
       {view.label}
     </a>
+  );
+}
+
+// The block-production step's boxes: the plain card the wallet sheet's
+// block-production section draws, and its title/body type.
+const BP_CARD = 'rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm';
+const BP_TITLE = 'text-base font-semibold text-zinc-900 dark:text-zinc-100';
+const BP_TEXT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+const BP_BUTTON = `${CTA_LINK} disabled:cursor-wait`;
+
+function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode {
+  if (view.step === 'checking') {
+    return (
+      <p data-bp-step="checking" className={PROSE}>Checking your block-production status…</p>
+    );
+  }
+  if (view.step === 'account') {
+    return (
+      <section data-bp-step="account" className="flex flex-col gap-3">
+        <SectionHeading className="mb-0" title={view.title} />
+        <div data-bp-option="delegate" className={BP_CARD}>
+          <div className={BP_TITLE}>{view.delegation.title}</div>
+          <div className={BP_TEXT}>{view.delegation.text}</div>
+        </div>
+        {view.onDevice ? (
+          <div data-bp-option="on-device" className={BP_CARD}>
+            <div className={BP_TITLE}>{view.onDevice.title}</div>
+            <div className={BP_TEXT}>{view.onDevice.text}</div>
+            <Alert variant="notice" density="compact" className="mt-2" data-bp-warning="on-device">
+              {view.onDevice.warning}
+            </Alert>
+          </div>
+        ) : null}
+        {view.onDeviceNote ? <p className={PROSE}>{view.onDeviceNote}</p> : null}
+        {view.action ? (
+          <button
+            type="button" id="tc-bp-manage" className={BP_BUTTON}
+            onClick={() => controller()?.openWallet()}
+          >{view.action.label}</button>
+        ) : null}
+        {view.appNote ? <p className={PROSE}>{view.appNote}</p> : null}
+      </section>
+    );
+  }
+  return (
+    <section data-bp-step={view.step} className="flex flex-col gap-3">
+      <div className={BP_CARD}>
+        <div className={BP_TITLE}>{view.title}</div>
+        <div className={BP_TEXT}>{view.text}</div>
+      </div>
+      {view.step === 'request' ? (
+        <button
+          type="button" id="tc-bp-request" className={BP_BUTTON}
+          disabled={view.action.pending}
+          onClick={() => controller()?.requestBlockProduction()}
+        >{view.action.label}</button>
+      ) : null}
+      {view.step === 'error' ? (
+        <button
+          type="button" id="tc-bp-retry" className={BP_BUTTON}
+          onClick={() => controller()?.retryBpState()}
+        >{view.action.label}</button>
+      ) : null}
+    </section>
   );
 }
 
@@ -545,9 +634,8 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 
 // The board's order, below the platform header that carries the way back and
 // the name: the category, the title with the card's meta line ("3d left · 720
-// pts so far") and the task, the artwork well, the clean rail (with the
-// card's cadence line under it on a challenge the background scorer counts),
-// the action, then the reading — description,
+// pts so far", plus "next count 9:37" on a challenge the background scorer
+// counts) and the task, the artwork well, the clean rail, the action, then the reading — description,
 // Requirements, Scoring — and Participants under a rule. The board's
 // "Next: …" hint under the action is deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
@@ -561,6 +649,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           deadline={view.deadline}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
+          cadence={view.cadence}
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
       </div>
@@ -573,7 +662,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
-      <ProgressCadence size="lg" text={view.cadence} />
+      {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the

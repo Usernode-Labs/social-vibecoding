@@ -236,13 +236,12 @@ test('the identity card renders picture, name and the way in to editing', () => 
   assert.match(fn, /Profile\.showEditSheet\(\)/);
   assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
   // The builder-profile chip left the card: the viewer's proposed PRs are
-  // "See all" over Your contributions now, the same #leaderboard/users/<you>.
+  // Your changes now (UI overhaul; they were "See all" over Your
+  // contributions, which went with it).
   const identity = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'),
     profileStoreJs.indexOf('export function statsView'));
   assert.doesNotMatch(identity, /Your builder profile/);
-  const contributions = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
-  assert.match(contributions, /seeAllHref: username \? `#leaderboard\/users\/\$\{encodeURIComponent\(username\)\}`/,
-    'the builder page is where "See all" goes');
+  assert.doesNotMatch(profileStoreJs, /export function contributionsView/);
 });
 
 test('the bio is a text node, never innerHTML', () => {
@@ -458,9 +457,16 @@ test('the photo is downscaled client-side before upload', () => {
   assert.match(fn, /AVATAR_MAX_BYTES/);
   assert.match(fn, /while \(blob && blob\.size > Profile\.AVATAR_MAX_BYTES/,
     'one re-encode is not enough — shrink until it fits');
-  // Centre crop, so a portrait photo is not squashed into the circle.
+  // A square, so a portrait photo is not squashed into the circle. Since
+  // #3525 it is the square the viewer positioned, re-fitted to the bitmap
+  // decoded here (`sourceRect`) rather than trusted; without one it is still
+  // the centred square every photo used to get, which is also where the
+  // positioning step opens. tests/avatar-crop.test.js executes both.
+  assert.match(fn, /async _prepareAvatar\(file, crop = null\)/);
+  assert.match(fn, /sourceRect\(crop, bitmap\.width, bitmap\.height\)/);
   assert.match(fn, /bitmap\.width - side/);
   assert.match(fn, /bitmap\.height - side/);
+  assert.match(fn, /ctx\.drawImage\(bitmap, rect\.x, rect\.y, rect\.size, rect\.size, 0, 0, target, target\)/);
 });
 
 test('object URLs for a staged photo are revoked', () => {
@@ -495,7 +501,7 @@ test('field-level server errors keep the sheet open', () => {
   assert.match(profileSheetTsx, /if \(result\.ok\) return;/);
 });
 
-test('Me counts the viewer’s OWN completions, and its contributions link out', () => {
+test('Me counts the viewer’s OWN completions, and its changes link out', () => {
   assert.doesNotMatch(profileJs, /challenges\.filter\(\(c\) => c\.completed\)/,
     'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
     + '34 live challenges to every signed-in person as their own completions');
@@ -506,16 +512,13 @@ test('Me counts the viewer’s OWN completions, and its contributions link out',
   const stats = profileStoreJs.slice(profileStoreJs.indexOf('export function statsView'),
     profileStoreJs.indexOf('export function moreRowsView'));
   assert.match(stats, /summary\.challenges && summary\.challenges\.done/);
-  // Every contribution is a real anchor to its proposal's page.
-  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
-  assert.match(shaping, /href: `#app\/\$\{encodeURIComponent\(c\.appSlug\)\}\/dev\/proposals\/\$\{Number\(c\.sessionId\)\}`/);
-  const fn = profileViewTsx.slice(
-    profileViewTsx.indexOf('function Contributions('),
-    profileViewTsx.indexOf('function ProfileSkeleton(')
-  );
-  assert.match(fn, /as="a"/);
-  assert.match(fn, /href=\{row\.href\}/);
-  assert.match(fn, /Nothing merged yet/, 'an empty list says so, and why');
+  // Every change is a real anchor to its proposal's page, on Your changes
+  // (UI overhaul; the merged ones were "Your contributions" on Me).
+  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function proposalsView'));
+  assert.match(shaping, /`#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
+  const screen = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/my-proposals.tsx'), 'utf8');
+  assert.match(screen, /as=\{row\.href \? 'a' : 'div'\}\s*href=\{row\.href \|\| undefined\}/);
+  assert.match(screen, /You have not started a change yet\./, 'an empty list says so');
 });
 
 test('the stale "organiser flag" comments are gone', () => {

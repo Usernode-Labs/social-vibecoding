@@ -64,7 +64,7 @@ test('the prompt lists the replies, and offers revise only while revisions remai
 
 test('the action is the last fenced block; anything else is not guessed', () => {
   const text = 'notes\n```json\n{"action":"answer","reply":"x"}\n```\nmore\n```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```';
-  assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.' });
+  assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.', stopMentioning: [], resumeMentioning: [] });
   assert.equal(followup.parseFollowUp('```json\n{"action":"merge","reply":"x"}\n```'), null);
   assert.equal(followup.parseFollowUp('```json\n{"action":"answer","reply":""}\n```'), null, 'a reply with nothing to say is not one');
   assert.equal(followup.parseFollowUp('no json at all'), null);
@@ -192,7 +192,8 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.match(h.calls.posts[0].text, /Because the platform uses it/);
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'answer');
-  assert.equal(insert.params.at(-1), 5001, 'tied to the proposal');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
+  assert.equal(insert.params[21], null, 'not a checks follow-up');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });

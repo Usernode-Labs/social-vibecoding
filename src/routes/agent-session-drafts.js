@@ -25,6 +25,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { draftWriteLimiter } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   MAX_DRAFTS,
   MAX_DRAFT_CHARS,
@@ -150,7 +151,7 @@ function agentSessionDraftsRoutes() {
     }
   });
 
-  router.delete('/api/agent-sessions/:id/drafts/:draftId', draftWriteLimiter, async (req, res) => {
+  router.delete('/api/agent-sessions/:id/drafts/:draftId', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad session id' });

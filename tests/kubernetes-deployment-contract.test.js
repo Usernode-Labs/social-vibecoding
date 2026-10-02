@@ -17,7 +17,7 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
 
 test('Kubernetes hosted-app evidence image declares a numeric non-root user', () => {
   const dockerfile = read('capture/Dockerfile');
-  // The evidence fixture deliberately runs this image through
+  // The shots fixture deliberately runs this image through
   // deployApplication(), whose pod security context sets runAsNonRoot without
   // runAsUser. Kubernetes cannot resolve a symbolic image user such as
   // `node` before startup, even when that account is non-root in /etc/passwd.
@@ -130,13 +130,13 @@ test('Kubernetes gives the platform a heap ceiling that fits its memory limit', 
   assert.ok(heapMb <= limitMb * 0.8, 'leaves room outside the heap for buffers, code and stacks');
 });
 
-test('Kubernetes enables visual evidence by default with one explicit kill switch', () => {
+test('Kubernetes enables before & after shots by default with one explicit kill switch', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /visualEvidenceV2Enabled: true/);
+  assert.match(values, /shotsEnabled: true/);
   assert.match(platform,
-    /name: VISUAL_EVIDENCE_V2_ENABLED, value: \{\{ \.Values\.platform\.visualEvidenceV2Enabled \| quote \}\}/);
-  assert.doesNotMatch(platform, /visualEvidenceV2Enabled \| default true/,
+    /name: SHOTS_ENABLED, value: \{\{ \.Values\.platform\.shotsEnabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /shotsEnabled \| default true/,
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
@@ -172,9 +172,30 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /REUSE_CURRENT_PLATFORM: 'true'/);
   assert.match(workflow, /name: image-digest-scheduled-bases/);
   assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
-  assert.match(workflow, /build-args: \$\{\{ steps\.claude\.outputs\.build_arg \}\}/);
+  assert.match(workflow, /build-args: \|\n\s+GIT_SHA=\$\{\{ github\.sha \}\}\n\s+\$\{\{ steps\.claude\.outputs\.build_arg \}\}/,
+    'the shell build needs the same exact revision as the runtime, while retaining the worker version');
   assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
+});
+
+test('every Kubernetes chart release validates its immutable platform image with the runtime revision', () => {
+  const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
+  const start = release.indexOf('- name: Validate platform shell release');
+  const end = release.indexOf('- name: Prepare and validate release chart');
+  assert.ok(start > release.indexOf('- name: Download image digests'));
+  assert.ok(start > release.indexOf('- uses: docker/login-action@v4'));
+  assert.ok(end > start, 'validation gates chart publication');
+  const validation = release.slice(start, end);
+  assert.doesNotMatch(validation, /\bif:|continue-on-error:/,
+    'scheduled image reuse must pass the same blocking check as a source release');
+  assert.match(validation, /image-digests\/platform\.txt/);
+  assert.match(validation, /social-vibecoding-platform@\$digest/);
+  assert.match(validation, /--env NODE_ENV=production --env GIT_SHA="\$GITHUB_SHA"/);
+  assert.match(validation, /--entrypoint node "\$image"/);
+  assert.match(validation, /--network none --read-only/);
+  assert.match(validation, /require\('\.\/src\/services\/shell-release'\)/);
+  assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
 test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {

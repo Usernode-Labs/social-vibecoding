@@ -566,8 +566,8 @@ test('a long conversation is compacted after the turn, and replays only what fol
 
 function dispatchDeps({
   change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
-  // What holds a busy change: a turn, or only a visual-evidence run.
-  evidenceRun = null, evidenceWaitMs = undefined,
+  // What holds a busy change: a turn, or only a shots run.
+  shotsRun = null, shotsWaitMs = undefined,
 } = {}) {
   const isBusy = typeof busy === 'function' ? busy : () => busy;
   const log = [];
@@ -589,12 +589,12 @@ function dispatchDeps({
     },
     activeWorkers: {
       isSessionBusy: () => isBusy(),
-      hasSessionOperation: () => isBusy() && !evidenceRun,
+      hasSessionOperation: () => isBusy() && !shotsRun,
       activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },
     },
-    evidenceRunFor: () => evidenceRun,
-    evidenceWaitMs,
+    shotsRunFor: () => shotsRun,
+    shotsWaitMs,
     stopRegistry: {
       createHandle: ({ sessionId, phase, send }) => ({ sessionId, phase, send, stopped: false, stoppedBy: null, abort: new AbortController() }),
       set: (id, handle) => registry.set(id, handle),
@@ -623,7 +623,7 @@ async function dispatchWith(opts = {}, kind = 'build') {
   const outcome = await dispatch.runDispatch({
     pool, config: CONFIG, user: USER, agentSessionId: 5, kind, prompt: 'Build the toggle', userMessage: 'Add dark mode',
     apiKey: 'sk-byok', sendAgent: (type, data) => agentEvents.push({ type, ...data }),
-    res: { write() {} }, onStopHandle: (h) => handles.push(h), scheduleInteractiveRecovery: 'sched', deps,
+    res: { write() {} }, onStopHandle: (h) => handles.push(h), shouldStop: opts.shouldStop, scheduleInteractiveRecovery: 'sched', deps,
   });
   return { outcome, log, registry, agentEvents, handles, pool };
 }
@@ -718,7 +718,8 @@ test('the conversation\'s model applies from the next build: a Claude pick picks
     choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: null },
     switched: { ok: false, status: 409, error: 'Session is busy' },
   });
-  assert.equal(refused.outcome.toolResultText, 'built', 'a switch that cannot happen does not stop the build');
+  assert.match(refused.outcome.toolResultText, /model_switch_failed/);
+  assert.ok(!refused.log.some((event) => event[0] === 'build'), 'a failed model switch must not run the previous model');
 
   assert.equal(dispatch.needsAgentSwitch(CHANGE_ROW, null), false, 'no choice follows what the change has');
   assert.equal(dispatch.needsAgentSwitch({ ...CHANGE_ROW, agent_backend: null }, { backend: 'claude_code', model: 'x' }), false);
@@ -727,7 +728,7 @@ test('the conversation\'s model applies from the next build: a Claude pick picks
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }), true);
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'moonshot/kimi', reasoningEffort: 'low' }), true);
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'claude_code', model: null }), true);
-  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: 'high' }),
+  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: 'high' }),
     { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null },
     'a Claude change stores no model: each run picks it');
 });
@@ -742,23 +743,23 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   assert.equal(dispatch.canDispatch(null), false);
 });
 
-test('a change held only by a visual-evidence run waits it out, then builds', async () => {
+test('a change held only by a shots run waits it out, then builds', async () => {
   let running = true;
   let finish;
-  const evidenceRun = new Promise((resolve) => { finish = resolve; });
-  const { deps } = dispatchDeps({ busy: () => running, evidenceRun });
+  const shotsRun = new Promise((resolve) => { finish = resolve; });
+  const { deps } = dispatchDeps({ busy: () => running, shotsRun });
   assert.equal(dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
   setTimeout(() => { running = false; finish(); }, 5);
-  const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, evidenceRun });
+  const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, shotsRun });
   assert.equal(outcome.toolResultText, 'built');
-  assert.match(agentEvents[0].text, /^Visual evidence is being recorded/);
+  assert.match(agentEvents[0].text, /^Before & after shots is being recorded/);
   assert.equal(agentEvents[0].changeId, 50);
   assert.deepEqual(log[0], ['begin', 50], 'claimed only after the run ended');
 });
 
-test('an evidence run that outlasts the wait is refused as what it is, not as the coding agent', async () => {
-  const { outcome, log } = await dispatchWith({ busy: true, evidenceRun: new Promise(() => {}), evidenceWaitMs: 5 });
-  assert.match(outcome.toolResultText, /^busy_visual_evidence: /);
+test('a shots run that outlasts the wait is refused as what it is, not as the coding agent', async () => {
+  const { outcome, log } = await dispatchWith({ busy: true, shotsRun: new Promise(() => {}), shotsWaitMs: 5 });
+  assert.match(outcome.toolResultText, /^busy_shots: /);
   assert.match(outcome.toolResultText, /not the coding agent/);
   assert.match(outcome.toolResultText, /nothing will retry it automatically/);
   assert.ok(!log.some((e) => e[0] === 'begin'));
@@ -796,4 +797,35 @@ test('the dispatch tools say they work on the active change', () => {
       'issue links go through update_proposal_issues, which the user confirms');
   }
   assert.equal(tools.SUGGEST_REPLIES_TOOL.name, 'suggest_replies');
+});
+
+
+test('a stop during dispatch preparation never starts a coding tool', async () => {
+  for (const stopAt of [1, 2, 3]) {
+    let reads = 0;
+    const result = await dispatchWith({ shouldStop: async () => ++reads >= stopAt });
+    assert.equal(result.outcome.stopped, true);
+    assert.equal(result.log.some(([kind]) => kind === 'build' || kind === 'scout'), false);
+    if (result.outcome.finish) await result.outcome.finish({});
+    assert.equal(result.registry.size, 0);
+  }
+});
+
+
+test('a durable cross-process stop notification interrupts the owning turn immediately and ignores stale notifications', async () => {
+  let reads = 0;
+  const { res } = await runTurn({
+    steps: [async () => {
+      const id = agentTurn.turnState(5).id;
+      const deps = { agentSessions: { readTurnStopRequest: async () => { reads += 1; return { stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ada' }; } } };
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: 'old-turn' }, deps), false);
+      assert.equal(reads, 0, 'another turn is not even read');
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, { agentSessions: { readTurnStopRequest: async () => null } }), false);
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, deps), true);
+      assert.equal(agentTurn.turnState(5).stopping, true);
+      return { text: '', toolUses: [], rawContent: [], usage: {} };
+    }],
+  });
+  assert.equal(reads, 1);
+  assert.ok(res.events().some((event) => event.type === 'stopping'));
 });

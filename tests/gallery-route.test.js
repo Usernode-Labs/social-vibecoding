@@ -111,13 +111,13 @@ test('every problem filter is a self-contained boolean SQL fragment', () => {
   }
 });
 
-test('evidence-v2 operational failures and overrides are independently filterable', () => {
+test('shots-v2 operational failures and overrides are independently filterable', () => {
   for (const key of ['relevance_failure', 'replay_failure', 'unsupported_agent', 'override']) {
     const filter = gallery.PROBLEM_FILTERS[key];
     assert.ok(filter, `${key} is registered`);
     assert.equal(filter.relaxVisuals, true, `${key} does not require a legacy session_visuals row`);
     const { whereSql } = gallery.buildWhere({ problem: key });
-    assert.match(whereSql, /visual_evidence_(?:state|detail)/, key);
+    assert.match(whereSql, /shots_(?:state|detail)/, key);
     assert.doesNotMatch(whereSql, /AND EXISTS \(SELECT 1 FROM session_visuals v WHERE v\.session_id = cs\.id\)/, key);
   }
 });

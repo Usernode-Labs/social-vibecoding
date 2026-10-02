@@ -47,11 +47,11 @@ function context(user = { id: 42, username: 'Builder' }) {
 // Somebody else's proposal, up for a vote, with the gate's whole ordered list
 // recorded — the shape the /promoted route serves (services/merge-requirements.js).
 const gates = (over = {}) => [
-  { key: 'approvals', label: 'Enough approvals', actor: 'group', state: 'waiting', detail: { note: '1 of 2' } },
-  { key: 'integration', label: 'Merges cleanly with main', actor: 'auto', state: 'done', detail: { note: 'level with main, merges cleanly' } },
-  { key: 'checks', label: 'Checks pass', actor: 'author', state: 'done', detail: null },
+  { key: 'approvals', label: 'Votes', actor: 'group', state: 'waiting', detail: { note: '1 of 2' } },
+  { key: 'integration', label: 'No conflicts with main', actor: 'auto', state: 'done', detail: { note: 'level with main, merges cleanly' } },
+  { key: 'checks', label: 'Checks', actor: 'author', state: 'done', detail: null },
   { key: 'main_healthy', label: 'Main is healthy', actor: 'admin', state: 'done', detail: null },
-  { key: 'github', label: 'GitHub accepts the merge', actor: 'auto', state: 'pending', detail: null },
+  { key: 'github', label: 'Merge', actor: 'auto', state: 'pending', detail: null },
 ].map((g) => ({ ...g, ...(over[g.key] || {}) }));
 
 const PR = {
@@ -108,12 +108,34 @@ test('the hero: the eyebrow with the pull request and its state, the age, the ti
   assert.match(html, /<div class="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary">[\s\S]{0,120}Previews wait for sign-in\./);
 });
 
-test('the band is the card’s, Vote first, with Preview and the ⋯ at its right end', () => {
+test('the proposal hero keeps the last summary visible with a quiet freshness note', () => {
+  const av = context();
+  const { html } = render(av, { ...PR, pr_summary_stale: true });
+  const hero = html.slice(html.indexOf('data-topic-sheet="hero"'), html.indexOf('data-topic-sheet="steps"'));
+  assert.match(hero, /Previews wait for sign-in\./);
+  assert.match(hero, /This summary may describe an earlier revision\./);
+  assert.doesNotMatch(hero, /No change summary has been added yet\./);
+});
+
+test('a stale flag without any saved summary points to the current description', () => {
+  const av = context();
+  const { html } = render(av, { ...PR, pr_summary_md: null, pr_summary_stale: true });
+  const hero = html.slice(html.indexOf('data-topic-sheet="hero"'), html.indexOf('data-topic-sheet="steps"'));
+  assert.match(hero, /The current description is under Technical details\./);
+  assert.doesNotMatch(hero, /This summary may describe an earlier revision\./);
+});
+
+test('the hero draws the card’s two rows: the status pill with Vote at its end, then the band with Preview and the ⋯ at its right end', () => {
   const av = context();
   const { html } = render(av, PR);
   const band = html.slice(html.indexOf('<div class="dev-card-topic dev-topic-hero-actions">'), html.indexOf('<div class="dev-topic-hero-summary'));
-  assert.match(band, /<div class="gc-card-actions"><button type="button" class="dev-vote-btn"/, 'Vote opens the band');
-  const order = ['dev-vote-btn', 'gc-explore-chat-btn', '>Share<', 'gc-vote-btn-preview', 'data-card-menu="detail:proposal:4090"'].map((s) => band.indexOf(s));
+  // The status row, as a board card draws it: the pill spanning, Vote at its
+  // right end. The pill carries the vote's count, which is why the Votes
+  // step below only names who voted.
+  assert.match(band, /^<div class="dev-card-topic dev-topic-hero-actions"><div class="dev-card-badges dev-card-status dev-topic-hero-status"><span class="gc-vote-count gc-vote-count-progress dev-status-pill dev-status-pill-block dev-status-pill-vote"[^>]*>[\s\S]*?Vote · 1\/2<\/span><\/span><button type="button" class="dev-vote-btn"/,
+    'the pill, then Vote, on the status row');
+  assert.match(band, /<\/button><\/div><div class="gc-card-actions"><button type="button" class="gc-vote-btn gc-explore-chat-btn"/, 'then the band, which Vote no longer leads');
+  const order = ['dev-status-pill', 'dev-vote-btn', 'gc-explore-chat-btn', '>Share<', 'gc-vote-btn-preview', 'data-card-menu="detail:proposal:4090"'].map((s) => band.indexOf(s));
   assert.ok(order.every((i) => i >= 0), `every control is on the band: ${order}`);
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'in that order');
   assert.match(band, /data-card-menu="detail:proposal:4090"[^>]*>[\s\S]*<\/button><\/div><\/div>$/, 'the ⋯ closes the band');
@@ -140,36 +162,85 @@ test('the ⋯ menu carries Technical details as a row of its own, which opens th
   assert.ok(!av._cardMenuItems(bare.card.rail.menuKey).some((a) => a.label === 'Technical details'));
 });
 
-test('the steps sheet is the strip expanded: its headline and count, one row per gate in the gate’s order, each saying what its ledger row said', () => {
+test('the steps sheet is the strip expanded: its headline and count, one short step per gate in the gate’s order', () => {
   const av = context();
   const { v, html } = render(av, PR);
   const s = plain(v.body.steps);
   assert.equal(s.headline, 'Waiting on your vote');
+  assert.equal(s.detail, null, 'no detail on the page: the current step says it');
+  assert.equal(s.simple, true);
   assert.deepEqual([s.done, s.total], [3, 5]);
-  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label, r.actor]), [
-    ['approvals', 'votes', 'waiting', 'Vote', 'the group'],
-    ['integration', 'integration', 'done', 'Merges cleanly with main', 'automatic'],
-    ['checks', 'checks', 'done', 'Checks pass', 'the author'],
-    ['main_healthy', 'main_healthy', 'done', 'Main is healthy', 'an admin'],
-    ['github', 'github', 'pending', 'GitHub accepts the merge', 'automatic'],
+  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label, r.line]), [
+    ['approvals', 'votes', 'waiting', 'Votes', null],
+    ['integration', 'mergeability', 'done', 'No conflicts with main', null],
+    ['checks', 'checks', 'done', 'Checks', 'All 1 passed'],
+    ['main_healthy', 'main_healthy', 'done', 'Main is healthy', null],
+    ['github', 'github', 'pending', 'Merge', null],
   ]);
-  // The vote step: the same counts the pill reads, the roster line, the help.
-  assert.deepEqual(s.rows[0].vote && [s.rows[0].vote.yes, s.rows[0].vote.no, s.rows[0].vote.majority], [1, 0, 2]);
-  assert.ok(s.rows[0].vote.pill && s.rows[0].vote.pill.label, 'the card’s pill state rides along');
-  assert.equal(s.rows[0].row.key, 'votes');
-  // A quiet ledger row yields to the gate's own words; the checks keep theirs.
-  assert.equal(s.rows[1].row, null);
-  assert.equal(s.rows[1].note, 'level with main, merges cleanly');
-  assert.equal(s.rows[2].row.key, 'checks');
-  assert.match(html, /<div class="dev-steps-head"><span class="dev-steps-headline">Waiting on your vote<\/span><span class="dev-steps-detail">· 1 of 2<\/span><span class="dev-steps-count">3\/5<\/span><\/div>/);
-  assert.match(html, /<li class="dev-step dev-step-waiting" data-note="votes" data-req-gate="approvals" data-req-state="waiting"><span class="dev-step-mark dev-step-mark-waiting" aria-hidden="true">!<\/span><span class="dev-step-label">Vote<\/span><span class="dev-step-actor">the group<\/span><div class="dev-step-body"><div class="dev-step-vote"><span class="dev-step-vote-bar" aria-hidden="true"><i style="width:50%"><\/i><\/span><span class="gc-vote-count /);
-  assert.match(html, /<span class="dev-step-vote-tally">Yes 1 · No 0<\/span>/);
-  assert.match(html, /data-note="votes"[\s\S]*?<span class="dev-ledger-review-line"><span class="dev-ledger-roster">Loading votes…<\/span><span class="dev-ledger-help voting-help-hint">/);
-  assert.match(html, /<li class="dev-step dev-step-done" data-note="checks" data-req-gate="checks" data-req-state="done"><span class="dev-step-mark dev-step-mark-done" aria-hidden="true">✓<\/span>[\s\S]*?<span class="dev-ledger-lead dev-ledger-lead-ok">Passing\.<\/span> The one check passed on this build\.<span class="dev-step-when"> Last run [^<]+<\/span>/);
-  assert.match(html, /<li class="dev-step dev-step-pending" data-note="github" data-req-gate="github" data-req-state="pending"><span class="dev-step-mark dev-step-mark-pending" aria-hidden="true">·<\/span><span class="dev-step-label">GitHub accepts the merge<\/span><span class="dev-step-actor">automatic<\/span><\/li>/);
+  // No actor column, no ledger sentence, no bar or pill inside the vote step.
+  for (const r of s.rows) {
+    assert.equal(r.actor, undefined, `${r.gate} names nobody`);
+    assert.equal(r.row, undefined, `${r.gate} carries no ledger row`);
+    assert.equal(r.vote, undefined, `${r.gate} carries no tally`);
+  }
+  assert.equal(s.rows[0].votes, 'Loading votes…', 'the Votes step names who voted, once the roster answers');
+  assert.equal(s.rows[0].help, true);
+  assert.match(html, /<div class="dev-steps-head"><span class="dev-steps-headline">Waiting on your vote<\/span><span class="dev-steps-count">3\/5<\/span><\/div>/);
+  assert.match(html, /<li class="dev-step dev-step-waiting" data-note="votes" data-req-gate="approvals" data-req-state="waiting"><span class="dev-step-mark dev-step-mark-waiting" aria-hidden="true">!<\/span><span class="dev-step-main"><span class="dev-step-label">Votes<\/span><span class="dev-ledger-review-line"><span class="dev-ledger-roster dev-step-line">Loading votes…<\/span><span class="dev-ledger-help voting-help-hint"><button type="button" class="voting-help-btn un-touch-target" data-voting-help=""/);
+  assert.doesNotMatch(html, /dev-step-actor|dev-step-vote-bar|dev-step-vote-tally|dev-ledger-text/, 'none of the old step furniture');
+  // Checks opens onto its run; a finished run starts closed.
+  assert.match(html, /<li class="dev-step dev-step-done" data-note="checks" data-req-gate="checks" data-req-state="done"><span class="dev-step-mark dev-step-mark-done" aria-hidden="true">✓<\/span><button type="button" class="dev-step-main dev-step-toggle" aria-expanded="false" aria-controls="dev-step-run-checks"><span class="dev-step-label">Checks<\/span><span class="dev-step-line">All 1 passed<\/span>/);
+  assert.match(html, /<li class="dev-step dev-step-pending" data-note="github" data-req-gate="github" data-req-state="pending"><span class="dev-step-mark dev-step-mark-pending" aria-hidden="true">·<\/span><span class="dev-step-main"><span class="dev-step-label">Merge<\/span><\/span><\/li>/);
 });
 
-test('a failing check sits under the blocked Checks step with its door, and the sync row keeps its sentence under the merge step', () => {
+test('the card’s strip and the page say one fact in the same words', () => {
+  const av = context();
+  const item = { ...PR, integration: { blockReasons: ['integrating'] }, integration_conflict_paths: ['a.js'],
+    mergeRequirements: { gates: gates({ approvals: { state: 'done' }, integration: { state: 'active', detail: { note: 'conflicts with main in 1 file; the platform will resolve it' } }, checks: { state: 'pending' } }), evaluated: true, provisional: false } };
+  const spec = av.requirementsSpec(item);
+  const integration = spec.gates.find((g) => g.key === 'integration');
+  // The live lane wins over the recording's older wording, and the collapsed
+  // line's detail IS the current step's line.
+  assert.equal(integration.note, 'Resolving a conflict in 1 file');
+  assert.equal(spec.detail, 'Resolving a conflict in 1 file');
+  const { v } = render(av, item);
+  assert.equal(plain(v.body.steps).rows.find((r) => r.gate === 'integration').line, 'Resolving a conflict in 1 file');
+  // Checks behind an unfinished sync wait, rather than describing a run the
+  // sync is about to throw away.
+  assert.equal(spec.gates.find((g) => g.key === 'checks').note, 'Runs after the sync');
+});
+
+test('a step the recording did not reach takes what the columns already know', () => {
+  const av = context();
+  // The recording stopped at the vote; the head has since measured clean and
+  // its checks are running.
+  const item = { ...PR, check_state: 'pending', check_phase: 'testing', integration_merges_clean: true, integration_behind_by: 0,
+    integration: { mergesClean: true, behindBy: 0, measuredAt: '2026-09-18T12:00:00Z' },
+    mergeRequirements: { gates: gates({ integration: { state: 'pending', detail: null }, checks: { state: 'pending' } }), evaluated: true, provisional: false } };
+  const spec = av.requirementsSpec(item);
+  const state = (k) => spec.gates.find((g) => g.key === k).state;
+  assert.equal(state('integration'), 'done');
+  assert.equal(state('checks'), 'active', 'a live run is not "not reached"');
+  assert.equal(spec.headline, 'Waiting on your vote', 'the current step is still the vote');
+});
+
+// #3234: the threshold counts active members live, so it can move while the
+// vote is open. The vote step says so beside the counts when it has; a row
+// whose number has not moved, or that predates the stamp, says nothing.
+test('the vote step notes the threshold it opened with only when that has moved', () => {
+  const av = context();
+  const note = (item) => plain(render(av, item).v.body.steps).rows[0].was;
+  assert.equal(note({ ...PR, votes_required_at_promote: 2 }), null, 'same number: nothing');
+  assert.equal(note({ ...PR, votes_required_at_promote: null }), null, 'older proposal: nothing');
+  assert.equal(note({ ...PR, votes_required_at_promote: 1 }), 'Needs 2, was 1 when voting opened');
+  assert.equal(note({ ...PR, votes_required_at_promote: 1, approvals_required: 2 }), null,
+    '"at least N" is a fixed count');
+  const { html } = render(av, { ...PR, votes_required_at_promote: 1 });
+  assert.match(html, /<span class="dev-step-line dev-step-vote-was">Needs 2, was 1 when voting opened<\/span>/);
+  assert.doesNotMatch(render(av, PR).html, /dev-step-vote-was/);
+});
+
+test('a failing check opens its step onto the run, with each failure’s door; the merge step says the conflict in one line', () => {
   const av = context();
   const item = {
     ...PR, check_state: 'failing',
@@ -183,12 +254,45 @@ test('a failing check sits under the blocked Checks step with its door, and the 
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
+  assert.equal(sync.line, 'Conflict in 2 files · queued to fix');
   assert.match(html, /data-note="mergeability" data-req-gate="integration" data-req-state="active"><span class="dev-step-mark dev-step-mark-active" aria-hidden="true"><span class="dc-status-icon dc-status-spinner-arc"/);
-  assert.match(html, /Main has moved 8 commits ahead, and 2 files changed on both sides/);
+  assert.doesNotMatch(html, /Main has moved 8 commits ahead/, 'no sentence restating the sync');
   const checks = s.rows.find((r) => r.gate === 'checks');
   assert.equal(checks.state, 'blocked');
-  assert.match(html, /data-note="checks" data-req-gate="checks" data-req-state="blocked">[\s\S]*?<ul class="dev-ledger-fails"><li class="dev-ledger-check dev-ledger-check-why"><details class="dev-ledger-why"><summary class="dev-ledger-check-line">/);
+  assert.equal(checks.line, '1 of 1 failed');
+  assert.equal(checks.run.open, true, 'a failed run opens by itself');
+  assert.match(html, /data-note="checks" data-req-gate="checks" data-req-state="blocked">[\s\S]*?aria-expanded="true"[\s\S]*?<div class="dev-step-run" id="dev-step-run-checks">[\s\S]*?<span class="dev-step-run-v is-bad">0 passed · 1 failed<\/span>[\s\S]*?<ul class="dev-ledger-fails"><li class="dev-ledger-check dev-ledger-check-why"><details class="dev-ledger-why"><summary class="dev-ledger-check-line">/);
   assert.match(html, /Expected app, received login/);
+});
+
+test('a run in progress opens its step by itself: the build as its steps, then the checks and the unit suite as bars', () => {
+  const av = context();
+  const item = {
+    ...PR, check_state: 'pending', check_phase: 'testing', check_trigger: 'commit-push', test_results: [],
+    checks_progress: {
+      ran: 212, passed: 210, failed: 2, expected: 412,
+      unit: { phase: 'running', ran: 840, passed: 840, failed: 0, expected: 1284 },
+      build: { step: 'done', totalMs: 160000, steps: [
+        { key: 'source_fetch', ms: 4000 }, { key: 'image_build', ms: 112000 }, { key: 'clone', ms: 31000 },
+        { key: 'health', ms: 13000 }, { key: 'prepare_checks', ms: 2000 }] },
+    },
+    mergeRequirements: { gates: gates({ checks: { state: 'active', detail: { note: 'still running' } } }), evaluated: true, provisional: false },
+  };
+  const { v, html } = render(av, item);
+  const checks = plain(v.body.steps).rows.find((r) => r.gate === 'checks');
+  assert.equal(checks.line, 'Running · 212 of 412');
+  assert.equal(checks.run.live, true);
+  assert.equal(checks.run.open, true);
+  assert.match(html, /aria-expanded="true" aria-controls="dev-step-run-checks"/);
+  assert.match(html, /<div class="dev-step-run-row dev-ledger-progress-build" data-build-step="done"><span class="dev-step-run-k">Build<\/span><span class="dev-ledger-build-bar" aria-hidden="true" data-build-progress="5\/5">(<span class="dev-ledger-build-seg is-done" data-step="[a-z_]+"><\/span>){5}<\/span><span class="dev-step-run-v">Built in 2m 40s<\/span><\/div>/);
+  assert.match(html, /<span class="dev-step-run-k">App checks<\/span><span class="dev-step-run-track" aria-hidden="true"><i class="is-pass" style="width:50\.9[0-9]*%"><\/i><i class="is-fail" style="left:50\.9[0-9]*%;width:0\.4[0-9]*%"><\/i><\/span><span class="dev-step-run-v is-bad">212 \/ 412 · 2 failed<\/span>/);
+  assert.match(html, /<span class="dev-step-run-k">Unit tests<\/span><span class="dev-step-run-track" aria-hidden="true">[\s\S]*?<span class="dev-step-run-v">840 \/ ~1,284<\/span>/);
+  assert.match(html, /<p class="dev-step-run-note">Running the automated tests… Triggered by a new commit on this proposal\.<\/p>/);
+  // A finished run starts closed, and a run behind an unfinished sync has
+  // nothing to open.
+  assert.equal(plain(render(av, PR).v.body.steps).rows.find((r) => r.gate === 'checks').run.open, false);
+  const moot = { ...PR, mergeRequirements: { gates: gates({ integration: { state: 'active' }, checks: { state: 'pending' } }), evaluated: true, provisional: false } };
+  assert.equal(plain(render(av, moot).v.body.steps).rows.find((r) => r.gate === 'checks').run, null);
 });
 
 // #2588 retired the tail this test used to end on. The sheet's rows are the
@@ -197,22 +301,34 @@ test('a failing check sits under the blocked Checks step with its door, and the 
 // them said where the change came from, which the hero line above the card
 // says, and inside an x/y progress indicator that read as a step nobody
 // could ever clear. The hero's own words are asserted here unchanged.
-test('rows no gate claims draw after the gates in the same shape: a failed preview beside the checks, and no provenance note after them', () => {
+test('nothing draws after the gates: a failed preview is the Checks step’s, with its retry, and no provenance note', () => {
   const av = context();
-  const item = { ...PR, source: 'imported', imported_pr_author: 'octo', staging_url: null, staging_error: 'container never came up', check_state: 'error' };
+  const item = { ...PR, source: 'imported', imported_pr_author: 'octo', staging_url: null, staging_error: 'container never came up', check_state: 'error',
+    mergeRequirements: { gates: gates({ checks: { state: 'blocked', detail: { note: 'the staging preview could not start' } } }), evaluated: true, provisional: false } };
   const { v } = render(av, item);
   const s = plain(v.body.steps);
-  const keys = s.rows.map((r) => `${r.key}:${r.state}`);
-  const i = (k) => keys.findIndex((x) => x.startsWith(`${k}:`));
-  assert.ok(i('preview') > i('checks') && i('preview') < i('main_healthy'), `the failed preview sits beside the checks: ${keys}`);
-  assert.equal(i('imported'), -1, `no imported row on the sheet: ${keys}`);
-  assert.equal(i('agent'), -1, `no built-with row either: ${keys}`);
-  assert.equal(keys[keys.length - 1], 'github:pending', `the last row is a gate, as every row now is: ${keys}`);
+  assert.deepEqual(s.rows.map((r) => r.gate), ['approvals', 'integration', 'checks', 'main_healthy', 'github'], 'one step per gate, nothing else');
+  const checks = s.rows.find((r) => r.gate === 'checks');
+  assert.equal(checks.line, 'Couldn’t run');
+  assert.equal(checks.run.note, 'The preview did not start: container never came up');
+  assert.ok(checks.actions.some((a) => a.label === 'Retry preview'), 'the retry rides on the step');
   assert.equal(v.body.hero.verb, 'imported');
   assert.equal(v.body.hero.provenance, 'imported from GitHub (octo)');
 });
 
-test('before review the page is the same shape: the change’s own status in the eyebrow, and the ledger as the steps with no gates yet', () => {
+test('buttons only for whoever can clear the step: Sync with main is the author’s, and only when the sync is theirs', () => {
+  const mine = { ...PR, user_id: 42 };
+  const stuck = (integration) => ({ ...mine, mergeRequirements: { gates: gates({ approvals: { state: 'done' }, integration }), evaluated: true, provisional: false } });
+  const syncOf = (av, item) => plain(render(av, item).v.body.steps).rows.find((r) => r.gate === 'integration').actions.map((a) => a.label);
+  const av = context();
+  assert.deepEqual(syncOf(av, stuck({ state: 'blocked', actor: 'author', detail: { note: 'conflicts with main and the platform could not resolve it' } })), ['Sync with main']);
+  assert.deepEqual(syncOf(av, stuck({ state: 'active', actor: 'auto', detail: { note: 'resolving a conflict with main' } })), [],
+    'not while the platform is resolving it');
+  assert.deepEqual(syncOf(av, stuck({ state: 'done' })), [], 'not on a finished step');
+  assert.deepEqual(syncOf(context({ id: 9, username: 'jo' }), stuck({ state: 'blocked', actor: 'author' })), [], 'not for somebody else');
+});
+
+test('before review the page is the same shape: the change’s own status in the eyebrow, and the steps it will take', () => {
   const av = context();
   const mine = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: null, spec_md: '# Spec' };
   const { v, html } = render(av, mine, 'session');
@@ -221,28 +337,87 @@ test('before review the page is the same shape: the change’s own status in the
   assert.equal(v.body.hero.status, 'Private change');
   assert.equal(v.body.hero.verb, 'started');
   assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Private change<\/span>/);
+  // The draft's own step, then the gates it will meet once it is up for a
+  // vote, drawn the way a proposal's are: one short line each, and no
+  // ledger sentences under "Where it stands".
   const s = plain(v.body.steps);
-  assert.equal(s.headline, 'Where it stands');
-  assert.equal(s.total, null);
-  assert.ok(s.rows.every((r) => !r.gate), 'no gates before review: every row is the ledger’s');
-  assert.ok(s.rows.some((r) => r.key === 'review'), 'the submission state is one of them');
-  assert.match(html, />Submit for review</);
+  assert.equal(s.simple, true);
+  assert.equal(s.headline, 'Waiting on you');
+  assert.deepEqual([s.done, s.total], [2, 5]);
+  assert.deepEqual(s.rows.map((r) => [r.key, r.state, r.label, r.line]), [
+    ['review', 'waiting', 'Submitted for review', 'Ready'],
+    ['votes', 'pending', 'Votes', null],
+    ['mergeability', 'done', 'No conflicts with main', null],
+    ['checks', 'done', 'Checks', 'All 1 passed'],
+    ['github', 'pending', 'Merge', null],
+  ]);
+  assert.doesNotMatch(html, /Where it stands|dev-ledger-text/);
+  // The one Submit for review is the hero's button; the step does not repeat it.
+  assert.equal((html.match(/>Submit for review</g) || []).length, 1);
   assert.match(html, />Continue building</);
   // The spec stands in for the technical half, behind the ⋯ row.
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Technical details'));
 });
 
-test('the picture: verified evidence keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {
+test('a draft’s steps: who is waiting, what the checks are doing, and Sync with main only for the owner of a conflicting draft', () => {
+  const draft = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: '2026-09-12T12:00:00Z' };
+  const steps = (av, item) => plain(render(av, item, 'session').v.body.steps);
+  const row = (s, gate) => s.rows.find((r) => r.gate === gate);
+  const owner = context();
+  const other = context({ id: 9, username: 'jo' });
+  // Somebody else reads whose turn it is, not the author's readiness note.
+  const theirs = steps(other, draft);
+  assert.equal(theirs.headline, 'Waiting on the author');
+  assert.equal(row(theirs, 'review').line, 'Not submitted yet');
+  // A run in progress opens Checks by itself; nothing else spins.
+  const running = steps(owner, { ...draft, check_state: 'pending', check_phase: 'testing', test_results: [] });
+  assert.equal(row(running, 'checks').state, 'active');
+  assert.equal(row(running, 'checks').run.open, true);
+  assert.equal(row(running, 'review').line, 'Ready · checks are still running');
+  // A conflict: the checks wait for the sync, and the owner may sync now.
+  const conflicted = { ...draft, check_state: 'pending', check_phase: 'deferred', test_results: [],
+    freshness: { mergeability: 'conflict', behindBy: 5, mergeabilityFiles: ['a.js', 'b.js'], checkedAt: '2026-09-18T12:00:00Z' } };
+  const c = steps(owner, conflicted);
+  assert.deepEqual([row(c, 'integration').state, row(c, 'integration').line], ['pending', 'Conflict in 2 files']);
+  assert.deepEqual(row(c, 'integration').actions.map((a) => a.label), ['Sync with main']);
+  assert.deepEqual([row(c, 'checks').state, row(c, 'checks').line], ['pending', 'Runs after the sync']);
+  assert.deepEqual(row(steps(other, conflicted), 'integration').actions, [], 'nobody else gets the button');
+  assert.deepEqual(row(steps(owner, draft), 'integration').actions, [], 'a clean draft needs none');
+  // Nothing pushed yet says so, and the checks have not run.
+  const empty = steps(owner, { ...draft, staging_url: null, check_state: null, test_results: [], freshness: null });
+  assert.equal(row(empty, 'review').line, 'Nothing committed yet');
+  assert.equal(row(empty, 'checks').line, 'Not run yet');
+  // A failed run is the Checks step's, with its door and its re-run; no
+  // separate row trails after the steps.
+  const failing = steps(owner, { ...draft, check_state: 'failing',
+    test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected app, received login' }] });
+  assert.equal(row(failing, 'checks').state, 'blocked');
+  assert.equal(row(failing, 'checks').run.open, true);
+  assert.ok(row(failing, 'checks').actions.some((a) => /re-run/i.test(a.label)));
+  assert.equal(row(failing, 'review').line, 'Ready · checks must pass before it merges');
+  assert.deepEqual(failing.rows.map((r) => r.gate), ['review', 'approvals', 'integration', 'checks', 'github']);
+});
+
+test('the picture: verified shots keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {
   const av = context();
   const claim = { claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
-  const building = render(av, { ...PR, visualEvidence: { state: 'exploring', claims: [claim], artifacts: [] } }).html;
-  assert.match(building, /<p class="dev-topic-hero-evidence" data-evidence-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Building before\/after photos<\/span><\/p>/);
-  assert.ok(!building.includes('data-visual-evidence="1"'), 'no panel for a run still going');
-  const failed = render(av, { ...PR, visualEvidence: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
-  assert.match(failed, /<div class="dev-topic-evidence" data-evidence-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Visual change preview failed<\/span>/);
-  const verified = render(av, { ...PR, visualEvidence: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
+  const building = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).html;
+  assert.match(building, /<p class="dev-topic-hero-shots" data-shots-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before &amp; after shots<\/span><\/p>/);
+  assert.ok(!building.includes('data-shots="1"'), 'no panel for a run still going');
+  const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
+  assert.match(failed, /<div class="dev-topic-shots" data-shots-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Couldn\u2019t take the shots<\/span>/);
+  assert.match(failed, /<span class="dev-topic-shots-text">Couldn\u2019t take the shots\. The dialog never opened\.<\/span>/);
+  // Interrupted by a restart, with an automatic retry coming: one line with
+  // the spinner, like a run under way, and no red strip asking for anything.
+  const retrying = render(av, { ...PR, shots: {
+    state: 'failed', failureCode: 'shots_run_interrupted', automaticRetryPending: true,
+    failureReason: 'Homeroom restarted.', claims: [claim], artifacts: [],
+  } }).html;
+  assert.match(retrying, /<p class="dev-topic-hero-shots" data-shots-state="failed"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Trying the shots again<\/span><\/p>/);
+  assert.ok(!retrying.includes('dev-topic-shots-text'), 'no failure strip');
+  const verified = render(av, { ...PR, shots: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);
-  assert.ok(!verified.includes('dev-topic-hero-evidence'));
+  assert.ok(!verified.includes('dev-topic-hero-shots'));
 });
 
 test('an issue page keeps the card and the sections under it', () => {
@@ -262,7 +437,8 @@ test('the band is one component for the card and the hero, and the card’s pinn
   assert.match(card, /if \(!hasActions && !lead\) return dense \? <div className="gc-card-actions"><\/div> : null;/, 'a lead (the hero’s Vote) is a band on its own');
   assert.match(card, /<div className="gc-card-actions" ref=\{folded\.ref\} data-band-measured=\{folded\.measured \? '1' : undefined\}>\n\s+\{lead\}\n/, 'the lead is a fixed child before the pills');
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /<div className="dev-card-topic dev-topic-hero-actions">\n\s+<ActionBand actions=\{pills\} menuKey=\{card\.rail\.menuKey \|\| ''\} preview=\{card\.actionPreview \|\| card\.rail\.preview \|\| null\} lead=\{vote\} dense=\{false\} \/>/);
+  assert.match(tsx, /<div className="dev-card-badges dev-card-status dev-topic-hero-status">\n\s+\{pill \? <StatusPill s=\{pill\} \/> : null\}\n\s+\{vote\}\n\s+<\/div>/, 'the hero’s status row is the card’s');
+  assert.match(tsx, /<ActionBand actions=\{pills\} menuKey=\{card\.rail\.menuKey \|\| ''\} preview=\{card\.actionPreview \|\| card\.rail\.preview \|\| null\} dense=\{false\} \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-topic-hero > div\.dev-topic-hero-actions\.dev-card-topic \{[^}]*box-shadow: none;[^}]*--dev-edge-w: 0px;/, 'the card’s box comes off the hero’s band');
   assert.match(css, /\.dev-topic-hero > \.dev-topic-hero-chips \{[^}]*justify-content: flex-start;/, 'the chips sit under the by-line, not at the item’s right');
@@ -310,14 +486,25 @@ const CLAIM = { claim: 'The preview waits for sign-in', viewports: ['desktop'], 
 test('a fresh planned run is in progress, and says so in the words the state uses', () => {
   const av = context();
   const evidence = { state: 'planned', updatedAt: ago(30 * 1000), claims: [CLAIM], artifacts: [] };
-  assert.equal(av._evidenceNotStarted(evidence), false);
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Visual preview in progress');
+  assert.equal(av._shotsNotStarted(evidence), false);
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after queued');
   assert.equal(v.notStarted, false);
+  assert.match(v.sentence, /^Before & after: getting ready to take the shots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
   // It is still a run under way, so the page keeps the quiet spinner line
   // rather than a panel that reads as a verdict.
-  const { html } = render(av, { ...PR, visualEvidence: evidence });
-  assert.match(html, /<p class="dev-topic-hero-evidence" data-evidence-state="planned"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Building before\/after photos<\/span><\/p>/);
+  const { html } = render(av, { ...PR, shots: evidence });
+  assert.match(html, /<p class="dev-topic-hero-shots" data-shots-state="planned"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before &amp; after shots<\/span><\/p>/);
+});
+
+test('a failed run quotes its reason as written and promises no shots', () => {
+  const av = context();
+  const v = av._shotsView({
+    state: 'failed', failureCode: 'shots_capture_incomplete',
+    failureReason: 'API returned 500 on the members list.', claims: [CLAIM], artifacts: [],
+  });
+  assert.equal(v.sentence, 'Couldn\u2019t take the shots. API returned 500 on the members list.');
+  assert.ok(!/Homeroom shows each declared change/.test(v.sentence));
 });
 
 test('a planned run untouched past five minutes has not started: no spinner, the reason, and the retry', () => {
@@ -325,87 +512,113 @@ test('a planned run untouched past five minutes has not started: no spinner, the
   const evidence = {
     state: 'planned',
     updatedAt: ago(IDLE + 60 * 1000),
-    notStartedReason: 'Visual change previews are not being run on this deployment.',
+    notStartedReason: 'Before & after shots are not being taken on this deployment.',
     claims: [CLAIM],
     artifacts: [],
   };
-  assert.equal(av._evidenceNotStarted(evidence), true);
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Visual preview not started');
+  assert.equal(av._shotsNotStarted(evidence), true);
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after not started');
   assert.equal(v.notStarted, true);
-  assert.match(v.sentence, /not being run on this deployment/);
-  assert.ok(!/Homeroom records before-and-after captures/.test(v.sentence),
-    'a run that never started is not promising captures are being taken');
+  assert.match(v.sentence, /not being taken on this deployment\. None have been taken for this commit yet\.$/);
+  assert.ok(!/Homeroom shows each declared change/.test(v.sentence),
+    'a run that never started is not promising shots are being taken');
 
-  const { html } = render(av, { ...PR, visualEvidence: evidence });
+  const { html } = render(av, { ...PR, shots: evidence });
   assert.ok(!html.includes('dc-status-spinner-arc'), 'nothing spins on a run that is not moving');
-  assert.ok(!html.includes('Building before/after photos'));
+  assert.ok(!html.includes('Taking before & after shots'));
   // The panel, not the one-line strip: this is the pending state with
   // something for the reader to do.
-  assert.match(html, /data-visual-evidence="1" data-evidence-state="planned"/);
-  assert.match(html, /Visual preview not started/);
-  assert.match(html, /Visual change previews are not being run on this deployment\./);
-  assert.match(html, /onclick="AppView\.rerunVisualEvidence\(4090, this\)">Retry visual change preview<\/button>/);
+  assert.match(html, /data-shots="1" data-shots-state="planned"/);
+  assert.match(html, /Before &amp; after not started/);
+  assert.match(html, /Before &amp; after shots are not being taken on this deployment\./);
+  assert.match(html, /onclick="AppView\.rerunShots\(4090, this\)">Take the shots again<\/button>/);
+  assert.doesNotMatch(html, /Visual change preview|Retry visual/);
 });
 
 test('with no reason recorded the not-started state still stands on its own', () => {
   const av = context();
   const evidence = { state: 'planned', updatedAt: ago(IDLE + 1000), claims: [CLAIM], artifacts: [] };
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Visual preview not started');
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after not started');
   assert.match(v.sentence, /nothing has picked this preview up yet/i);
 });
 
 test('an unknown or missing timestamp reads as still starting, never as stuck', () => {
   const av = context();
   for (const updatedAt of [undefined, null, '', 'not a date']) {
-    assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt }), false,
+    assert.equal(av._shotsNotStarted({ state: 'planned', updatedAt }), false,
       `a ${JSON.stringify(updatedAt)} timestamp must not be read as an idle run`);
   }
   // And the threshold itself is the five minutes that was asked for.
-  assert.equal(av.EVIDENCE_IDLE_MS, 5 * 60 * 1000);
-  assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt: ago(IDLE - 30 * 1000) }), false);
+  assert.equal(av.SHOTS_IDLE_MS, 5 * 60 * 1000);
+  assert.equal(av._shotsNotStarted({ state: 'planned', updatedAt: ago(IDLE - 30 * 1000) }), false);
   // Only 'planned' is ever read this way: the other pending states are
   // written by a run that is demonstrably executing.
   for (const state of ['provisioning', 'exploring', 'replaying', 'reviewing', 'failed', 'verified']) {
-    assert.equal(av._evidenceNotStarted({ state, updatedAt: ago(IDLE * 10) }), false, state);
+    assert.equal(av._shotsNotStarted({ state, updatedAt: ago(IDLE * 10) }), false, state);
   }
 });
 
 test('the card tag follows the same split, and only the moving one spins', () => {
   const av = context();
-  const reasons = (evidence) => av.blockReasons({ ...PR, visualEvidence: evidence })
-    .find((r) => r.key === 'visual_evidence');
+  const reasons = (evidence) => av.blockReasons({ ...PR, shots: evidence })
+    .find((r) => r.key === 'shots');
 
   const moving = reasons({ state: 'planned', updatedAt: ago(10 * 1000), required: true });
-  assert.equal(moving.label, 'Visual preview in progress');
+  assert.equal(moving.label, 'Taking before & after shots');
   assert.equal(moving.running, true);
 
   const stuck = reasons({
     state: 'planned', updatedAt: ago(IDLE + 1000), required: true,
     notStartedReason: 'No staging preview was built for this commit.',
   });
-  assert.equal(stuck.label, 'Visual preview not started');
+  assert.equal(stuck.label, 'Before & after not started');
   assert.equal(stuck.running, false, 'the neutral in-flight tone is what read as "any moment now"');
   assert.equal(stuck.detail, 'No staging preview was built for this commit.');
 
-  // #2604's noun stands everywhere else: only the two in-flight states
-  // were renamed.
   const failed = reasons({ state: 'failed', updatedAt: ago(IDLE * 2), required: true, failureReason: 'The dialog never opened.' });
-  assert.equal(failed.label, 'Visual change preview failed');
+  assert.equal(failed.label, 'Couldn\u2019t take the shots');
   assert.equal(failed.running, false);
+  assert.equal(failed.detail, 'The dialog never opened.');
+  // Interrupted by a restart, with an automatic retry coming: under way.
+  const retrying = reasons({
+    state: 'failed', updatedAt: ago(10 * 1000), required: true, failureCode: 'shots_run_interrupted',
+    automaticRetryPending: true, failureReason: 'Homeroom restarted. You can take them again.',
+  });
+  assert.equal(retrying.label, 'Trying the shots again');
+  assert.equal(retrying.running, true);
+  assert.match(retrying.detail, /starts them again on its own in a moment/);
   const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
-  assert.equal(exploring.label, 'Visual preview in progress');
+  assert.equal(exploring.label, 'Taking before & after shots');
   assert.equal(exploring.running, true);
+  // A set that is neither moving nor failed (a newer commit made it stale)
+  // still owes the proposal its shots.
+  const stale = reasons({ state: 'stale', updatedAt: ago(IDLE * 2), required: true });
+  assert.equal(stale.label, 'Before & after needed');
+  assert.equal(stale.running, false);
+  assert.equal(stale.detail, 'This proposal has no before & after shots for its current commit yet.');
+  // Shots that are ready, waived or not needed owe nothing.
+  for (const state of ['verified', 'overridden', 'not_required']) {
+    assert.equal(reasons({ state, required: true }), undefined, state);
+  }
 });
 
-test('the settled states keep #2604’s wording word for word', () => {
+test('every state reads in the before & after words', () => {
   const av = context();
-  const copy = (evidence) => av._evidenceStateCopy(evidence);
+  const copy = (evidence) => av._shotsStateCopy(evidence);
   const at = copy({ state: 'planned', updatedAt: ago(10 * 1000) });
-  assert.equal(at.failed[0], 'Visual change preview failed');
-  assert.equal(at.stale[0], 'Visual change preview is stale');
-  assert.equal(at.cancelled[0], 'Visual change preview cancelled');
-  assert.equal(at.not_required[0], 'No visual change preview required');
-  assert.equal(at.overridden[0], 'Preview requirement overridden');
+  assert.equal(at.planned[0], 'Before & after queued');
+  assert.equal(at.provisioning[0], 'Building before and after');
+  assert.equal(at.exploring[0], 'Taking the shots');
+  assert.equal(at.reviewing[0], 'Saving the shots');
+  assert.equal(at.failed[0], 'Couldn\u2019t take the shots');
+  assert.equal(at.stale[0], 'Shots are out of date');
+  assert.equal(at.cancelled[0], 'Shots cancelled');
+  assert.equal(at.not_required[0], 'No before & after needed');
+  assert.equal(at.overridden[0], 'Shots waived');
+  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Shots stopped');
+  // A verified run's strip label is the card's badge.
+  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
+  assert.doesNotMatch(JSON.stringify(at), /visual change preview|visual preview/i);
 });

@@ -139,10 +139,9 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
         id="dc-new-change-btn" type="button"
         variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
         className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
-        disabled={b.pending}
         onClick={() => controller()?.startNewChange?.()}
       >
-        {b.pending ? 'Starting…' : 'Start a new change'}
+        Start a new change
       </Button>
     </div>
   );
@@ -208,7 +207,7 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
         <span id={moreId} className="dc-credits-banner-more">
           {b.reset === null ? b.tail : (
             <>
-              <span data-credits-reset="1">{` ${b.reset}`}</span>
+              <span data-credits-reset="1" title={b.resetTitle || undefined}>{` ${b.reset}`}</span>
               {b.tail}
             </>
           )}

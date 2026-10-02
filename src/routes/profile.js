@@ -5,7 +5,6 @@
 //
 //   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
-//   GET    /api/me/username/suggestion  prefill for the first-run step
 //   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
@@ -62,8 +61,13 @@ const {
   MY_COUNT_SQL,
   MY_BLOCKS_SQL,
   ALL_CHALLENGE_WHERE,
+  onboardingDoneExpr,
+  onboardingDoneParams,
 } = require('./home-panels');
+const { loadOnboarding } = require('../services/topochain/challenge-onboarding');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // ─── Field limits ──────────────────────────────────────────────────────
 //
@@ -119,6 +123,15 @@ const SUMMARY_CONTRIBUTIONS_LIMIT = 5;
 const SUMMARY_COUNTS_SQL = `
   SELECT COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged,
          COUNT(DISTINCT cs.app_id) FILTER (WHERE cs.status = 'merged')::int AS apps,
+         COUNT(*) FILTER (WHERE cs.status IN (
+           'active', 'paused', 'promoted', 'merging', 'merged', 'archived'
+         ))::int AS proposals_total,
+         -- Your changes' "2 in progress" on Me (UI overhaul): the same two
+         -- buckets GET /api/me/proposal-history files as in progress and
+         -- open for a vote.
+         COUNT(*) FILTER (WHERE cs.status IN (
+           'active', 'paused', 'promoted', 'merging'
+         ))::int AS in_progress,
          (SELECT COUNT(*)::int
             FROM pr_kudos pk
             JOIN chat_sessions ks ON ks.id = pk.session_id
@@ -206,6 +219,8 @@ function shapeSummary({ counts, contributions, challenges }) {
   return {
     merged: Number(c.merged) || 0,
     apps: Number(c.apps) || 0,
+    proposalsTotal: Number(c.proposals_total) || 0,
+    inProgress: Number(c.in_progress) || 0,
     kudos: (Number(c.direct_kudos) || 0) + (Number(c.bounty_kudos) || 0),
     memberSince: c.member_since ? new Date(c.member_since).toISOString() : null,
     challenges: {
@@ -241,10 +256,258 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     ...summary,
     merged: contributions.length,
     apps: Math.max(summary.apps, 1),
+    proposalsTotal: Math.max(summary.proposalsTotal, contributions.length),
     kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
     contributions,
     demo: true,
   };
+}
+
+// ── GET /api/me/proposal-history ────────────────────────────────────────
+//
+// "Your proposals" on Me: every proposal the viewer has ever started,
+// across every project, grouped by where it stands. Scoped to cs.user_id,
+// so a private/self-hosted app's own draft work is visible here regardless
+// of the app's visibility — the one surface where that's deliberate.
+const PROPOSALS_PER_BUCKET = 50;
+
+// MY_SESSIONS_WHERE and MY_PROPOSALS_WHERE come from workshop-overview.js.
+// MY_PROPOSALS_WHERE has no is_headless guard of its own (Workshop never
+// needed one there), so the open-for-vote branch below adds it inline.
+const MY_PROPOSALS_SQL = `
+  WITH items AS (
+    SELECT 'inProgress' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, cs.last_activity_at AS at
+      FROM chat_sessions cs
+     WHERE ${MY_SESSIONS_WHERE}
+     UNION ALL
+    SELECT 'openForVote' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
+     UNION ALL
+    SELECT 'merged' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.merged_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
+     UNION ALL
+    SELECT 'closed' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
+  ),
+  ranked AS (
+    SELECT it.*, ROW_NUMBER() OVER (
+             PARTITION BY it.section ORDER BY it.at DESC NULLS LAST, it.session_id DESC
+           ) AS rn
+      FROM items it
+  )
+  SELECT r.section, r.session_id, r.title, r.status, r.at,
+         a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id
+    FROM ranked r
+    JOIN apps a ON a.id = r.app_id
+   WHERE r.rn <= $2
+   ORDER BY r.section, r.at DESC NULLS LAST, r.session_id DESC
+`;
+
+// Pure (exported for tests): raw rows → the response body's four buckets.
+function shapeProposalRow(r) {
+  return {
+    sessionId: Number(r.session_id),
+    title: r.title,
+    appSlug: r.app_slug,
+    appName: r.app_name,
+    appIconEmoji: r.icon_emoji || null,
+    appIconUrl: appIconUrl(r.icon_image_id),
+    status: r.status,
+    at: r.at ? new Date(r.at).toISOString() : null,
+  };
+}
+
+function shapeProposals(rows) {
+  const buckets = { openForVote: [], inProgress: [], merged: [], closed: [] };
+  for (const row of rows || []) {
+    const bucket = buckets[row.section];
+    if (bucket) bucket.push(shapeProposalRow(row));
+  }
+  return { proposals: buckets };
+}
+
+// Staging-only ?demo=1 rows, one per bucket. Ids follow src/routes/profile.js
+// and src/routes/votes.js's occupied 91000xx ranges (see their own comments);
+// 9100035-9100040 were unused before this. The merged bucket reuses
+// DEMO_CONTRIBUTIONS' own ids/titles so the same mock row opens the same
+// proposal page from either screen.
+const DEMO_PROPOSALS = {
+  inProgress: [
+    { sessionId: 9100035, title: '[Mock] Rework the onboarding checklist', status: 'active' },
+  ],
+  openForVote: [
+    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted' },
+  ],
+  merged: [
+    { sessionId: 9100030, title: '[Mock] Completed: rework the onboarding checklist',
+      status: 'merged' },
+    { sessionId: 9100031, title: '[Mock] Completed: ship the notification digest',
+      status: 'merged' },
+  ],
+  closed: [
+    { sessionId: 9100063, title: '[Mock] Split settings into sections', status: 'archived' },
+  ],
+};
+
+// Pure (exported for tests): the ?demo=1 overlay. REAL DATA WINS, per
+// bucket — a bucket the real query already returned rows for is left alone;
+// only a bucket that came back empty gets the mock rows for it.
+function withDemoProposals(proposals, selfApp, now = Date.now()) {
+  if (!selfApp) return proposals;
+  const result = {};
+  for (const key of Object.keys(proposals)) {
+    if (proposals[key].length > 0) {
+      result[key] = proposals[key];
+      continue;
+    }
+    result[key] = (DEMO_PROPOSALS[key] || []).map((d) => ({
+      sessionId: d.sessionId,
+      title: d.title,
+      appSlug: selfApp.slug,
+      appName: selfApp.name || selfApp.slug,
+      appIconEmoji: selfApp.icon_emoji || null,
+      appIconUrl: appIconUrl(selfApp.icon_image_id),
+      status: d.status,
+      at: new Date(now).toISOString(),
+    }));
+  }
+  return result;
+}
+
+// ── GET /api/me/requests ────────────────────────────────────────────────
+//
+// "Your requests" on Me (UI overhaul; it was "Your feedback", #3186): every
+// request the viewer asked for, whichever way they asked. Two ways in, one
+// list:
+//
+//   - the Ask for a change dialog, recorded in feedback_reports once the
+//     request exists (a platform request has no app_id there: it is the
+//     self-hosted app's, the repository it was filed into, matched by name);
+//   - a project's board, which records it in `issues` (kind 'general').
+//
+// One request can be in both, so the list is DISTINCT per app and number.
+//
+// WHERE EACH ONE STANDS, from what this platform itself records, because a
+// request's open/closed state lives on GitHub and in a short-lived cache
+// that cannot be trusted to say "closed" (see MY_FEEDBACK_SQL in
+// routes/feedback.js). What IS recorded here:
+//
+//   shipped   a merged change that named it (chat_sessions.linked_issues);
+//   closed    a close-request proposal the members voted through
+//             (issues kind 'close_issue', applied);
+//   underway  a change in progress or up for a vote that names it;
+//   waiting   none of those.
+//
+// So "Done" is shipped or closed, and a request somebody closed on GitHub
+// by hand stays under Open until one of those is true. Bounded by
+// MY_REQUESTS_LIMIT, newest first; the two counts are over the whole set.
+const MY_REQUESTS_LIMIT = 50;
+
+const MY_REQUESTS_SQL = `
+  WITH self_app AS (
+    SELECT id, repo_url FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1
+  ),
+  filed AS (
+    SELECT fr.created_at, fr.title, fr.issue_number AS number,
+           COALESCE(fr.app_id, (
+             SELECT s.id FROM self_app s
+              WHERE fr.target = 'platform'
+                AND lower(regexp_replace(regexp_replace(COALESCE(s.repo_url, ''), '^.*github\\.com/', ''), '(\\.git)?/*$', ''))
+                  = lower(COALESCE(fr.issue_owner, '') || '/' || regexp_replace(COALESCE(fr.issue_repo, ''), '\\.git$', ''))
+           )) AS app_id
+      FROM feedback_reports fr
+     WHERE fr.user_id = $1 AND fr.issue_number IS NOT NULL
+    UNION ALL
+    SELECT i.created_at, i.title, i.github_issue_number, i.app_id
+      FROM issues i
+     WHERE i.created_by = $1 AND i.kind = 'general' AND i.github_issue_number IS NOT NULL
+  ),
+  mine AS (
+    SELECT DISTINCT ON (f.app_id, f.number) f.app_id, f.number, f.title, f.created_at
+      FROM filed f
+     WHERE f.app_id IS NOT NULL
+     ORDER BY f.app_id, f.number, f.created_at ASC
+  ),
+  standing AS (
+    SELECT m.number, m.title, m.created_at,
+           a.slug AS app_slug, a.name AS app_name, a.self_hosted,
+           EXISTS (SELECT 1 FROM chat_sessions cs
+                    WHERE cs.app_id = m.app_id AND cs.status = 'merged'
+                      AND m.number = ANY(cs.linked_issues)) AS shipped,
+           EXISTS (SELECT 1 FROM issues c
+                    WHERE c.app_id = m.app_id AND c.kind = 'close_issue' AND c.status = 'closed'
+                      AND c.payload ? 'appliedAt'
+                      AND c.payload->>'issueNumber' = m.number::text) AS closed,
+           EXISTS (SELECT 1 FROM chat_sessions cs
+                    WHERE cs.app_id = m.app_id
+                      AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+                      AND m.number = ANY(cs.linked_issues)) AS underway
+      FROM mine m
+      JOIN apps a ON a.id = m.app_id
+  )
+  SELECT s.*,
+         COUNT(*) OVER () AS total,
+         COUNT(*) FILTER (WHERE s.shipped OR s.closed) OVER () AS done
+    FROM standing s
+   ORDER BY s.created_at DESC NULLS LAST, s.number DESC
+   LIMIT $2
+`;
+
+// Pure (exported for tests): the rows → the response body.
+function shapeRequests(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const first = list[0] || {};
+  const requests = list.map((r) => {
+    const n = Number(r.number);
+    return {
+      number: Number.isSafeInteger(n) && n > 0 ? n : null,
+      title: r.title ? String(r.title) : null,
+      appSlug: r.app_slug || null,
+      // The platform's own requests are Homeroom's, whatever the row is named.
+      appName: r.self_hosted ? 'Homeroom' : (r.app_name || r.app_slug || null),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+      state: r.shipped ? 'shipped' : r.closed ? 'closed' : r.underway ? 'underway' : 'waiting',
+    };
+  });
+  const total = Number(first.total) || 0;
+  const done = Number(first.done) || 0;
+  return {
+    requests,
+    open: Math.max(0, total - done),
+    done,
+    ...(total > requests.length ? { truncated: true } : {}),
+  };
+}
+
+// Staging-only ?demo=1 rows, the same mock requests GET /api/feedback/mine
+// shows (routes/feedback.js DEMO_FEEDBACK), one in each standing so every
+// kind of line is on screen. REAL DATA WINS: rows of the viewer's own are
+// left alone.
+const DEMO_REQUESTS = [
+  { number: 900006, days: 0, state: 'waiting', title: '[Mock] Voting buttons need a clearer disabled state' },
+  { number: 900003, days: 2, state: 'underway', title: '[Mock] Topic cards overflow on narrow phones' },
+  { number: 900002, days: 9, state: 'shipped', title: '[Mock] Add a keyboard shortcut for voting' },
+];
+
+function withDemoRequests(body, selfApp, now = Date.now()) {
+  if (!selfApp || body.requests.length) return body;
+  const requests = DEMO_REQUESTS.map((d) => ({
+    number: d.number,
+    title: d.title,
+    appSlug: selfApp.slug,
+    appName: 'Homeroom',
+    createdAt: new Date(now - d.days * 86400000).toISOString(),
+    state: d.state,
+  }));
+  const done = requests.filter((r) => r.state === 'shipped' || r.state === 'closed').length;
+  return { requests, open: requests.length - done, done };
 }
 
 // Pure (exported for tests): validate an uploaded avatar body.
@@ -405,19 +668,39 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
   return fallback[0] || null;
 }
 
+// The viewer's done rule for one season, as Home's Challenges block counts
+// it: DONE_EXPR, with the First challenges' own answer over it where the
+// season has them (home-panels.js onboardingDoneExpr). A First challenge is
+// done from every credit on its TEMPLATE, an earlier season's included, which
+// is also how the Getting started card and the gate read it (2026-10-01), so
+// Me's "N of M done" and Home's "N/M done in Season 2" cannot disagree about
+// one of them. `sql(n)` places the rule's two parameters at $n and $n+1 of
+// the statement it is spliced into; with no First challenges it is DONE_EXPR
+// and takes none.
+async function viewerDoneRule(pool, userId, seasonId) {
+  const onboarding = await loadOnboarding(pool, userId, { seasonId });
+  if (!onboarding) return { sql: () => DONE_EXPR, params: [] };
+  return {
+    sql: (n) => onboardingDoneExpr(`$${n}`, `$${n + 1}`),
+    params: onboardingDoneParams(onboarding),
+  };
+}
+
 // The season's in-scope challenge count and how many of them the viewer has
-// done, by DONE_EXPR. Shared by the completed list's "N of M done" header
-// and Me's challenges stat card, so the two can never disagree. Totals over
-// the WHOLE in-scope set, so a capped row list never makes them lie.
-async function readChallengeTotals(pool, userId, seasonId) {
+// done, by the viewer's done rule (above). Shared by the completed list's "N
+// of M done" header and Me's challenges stat card, so the two can never
+// disagree. Totals over the WHOLE in-scope set, so a capped row list never
+// makes them lie. `rule` is passed by a caller that already read it.
+async function readChallengeTotals(pool, userId, seasonId, rule = null) {
+  const done = rule || await viewerDoneRule(pool, userId, seasonId);
   const { rows: totalRows } = await pool.query(
         `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done
+                COUNT(*) FILTER (WHERE ${done.sql(3)})::int AS done
            FROM challenges c
            JOIN season_events se ON se.id = c.season_event_id
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
           WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
-        [userId, seasonId]
+        [userId, seasonId, ...done.params]
   );
   const row = totalRows[0];
   return row ? { total: Number(row.total) || 0, done: Number(row.done) || 0 } : null;
@@ -630,51 +913,11 @@ function profileRoutes(config) {
     }
   );
 
-  // ── GET /api/me/username/suggestion ──────────────────────────────────
-  //
-  // What the first-run "Choose your username" step prefills (#2563).
-  //
-  // It is a route rather than a field on /api/auth/me because answering it
-  // costs an availability walk over `users` and `username_history`, and
-  // /api/auth/me is fetched on the boot of every tab by every signed-in
-  // member. The BOOLEAN that decides whether to ask rides that payload;
-  // the suggestion is fetched once, by the one screen that needs it.
-  //
-  // Never the email address, on any branch — that is the whole issue.
-  router.get('/api/me/username/suggestion', requireUser, async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        'SELECT username, email FROM users WHERE id = $1',
-        [req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'User not found' });
-      const { username: current, email } = rows[0];
-      const isEmailHandle = !!email
-        && String(current).toLowerCase() === String(email).toLowerCase();
-
-      // An account created since #2563 already HOLDS a derived suggestion
-      // (email-signup.js wrote one) — offering it back is both the best
-      // answer and a stable one across reloads of the gate. Accounts the
-      // migration flagged still wear their address, so theirs is derived
-      // here instead.
-      if (!isEmailHandle) {
-        const check = usernames.validateUsername(current);
-        if (check.ok) return res.json({ suggestion: check.value });
-      }
-
-      const suggestion = await usernames.suggestAvailableUsernameFromEmail(
-        pool, email, req.user.id
-      );
-      // null is a real answer: the field simply starts empty and the person
-      // types their own. Better than prefilling something they must delete.
-      return res.json({ suggestion: suggestion || null });
-    } catch (err) {
-      log.error('profile', 'Username suggestion failed', {
-        userId: req.user.id, err: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // GET /api/me/username/suggestion lived here: the handle, derived from
+  // the email's local part, that the first-run step arrived holding
+  // (#2563). #3575 retired it with the prefill it served — "do not just
+  // generate a username from their email" — and the step now starts empty.
+  // See the block above placeholderUsername in src/services/usernames.js.
 
   // ── POST /api/me/username/choose ─────────────────────────────────────
   //
@@ -690,8 +933,8 @@ function profileRoutes(config) {
   //   • The 30-day cooldown. It prices handle CHURN; a first choice is not
   //     churn, and charging for it would leave a typo in place for a month.
   //   • A `username_history` row. See chooseFirstUsername — what is being
-  //     left behind is an email address, and the ledger is read by every
-  //     handle resolver on the platform.
+  //     left behind is an email address or an opaque placeholder, and the
+  //     ledger is read by every handle resolver on the platform.
   //
   // What replaces the password as the authorization is the flag itself:
   // the UPDATE only fires while `needs_username_choice` is TRUE, so this
@@ -813,6 +1056,7 @@ function profileRoutes(config) {
     '/api/me/avatar',
     requireUser,
     profileWriteLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       try {
         await pool.query('DELETE FROM user_avatars WHERE user_id = $1', [req.user.id]);
@@ -850,6 +1094,10 @@ function profileRoutes(config) {
         return res.json({ season: null, total: 0, done: 0, completed: [] });
       }
 
+      // The viewer's done rule (viewerDoneRule): DONE_EXPR, with the First
+      // challenges' lifetime answer over it, read once for the list and the
+      // totals both.
+      const rule = await viewerDoneRule(pool, req.user.id, season.id);
       const { rows } = await pool.query(
         `SELECT c.id, c.season_event_id, c.goal, c.task, c.reward,
                 c.schedule_start, c.schedule_end,
@@ -864,19 +1112,19 @@ function profileRoutes(config) {
                 (SELECT MAX(ua.activity_at) FROM user_activities ua
                   WHERE ua.user_id = $1 AND ua.challenge_id = c.id) AS my_last_activity_at,
                 ${MY_BLOCKS_SQL} AS my_blocks,
-                ${DONE_EXPR} AS my_done
+                ${rule.sql(4)} AS my_done
            FROM challenges c
            JOIN season_events se ON se.id = c.season_event_id
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE} AND (${DONE_EXPR})
+          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE} AND (${rule.sql(4)})
           ORDER BY my_last_activity_at DESC NULLS LAST, c.id DESC
           LIMIT $3`,
-        [req.user.id, season.id, COMPLETED_LIMIT + 1]
+        [req.user.id, season.id, COMPLETED_LIMIT + 1, ...rule.params]
       );
 
       // Totals over the WHOLE in-scope set so the header's "N of M done"
       // is honest even when the row list is capped.
-      const totals = await readChallengeTotals(pool, req.user.id, season.id);
+      const totals = await readChallengeTotals(pool, req.user.id, season.id, rule);
 
       const truncated = rows.length > COMPLETED_LIMIT;
       if (truncated) {
@@ -950,6 +1198,50 @@ function profileRoutes(config) {
     }
   });
 
+  // ── GET /api/me/requests ─────────────────────────────────────────────
+  //
+  // "Your requests" on Me. See MY_REQUESTS_SQL above for the two ways a
+  // request is recorded and where each one stands.
+  router.get('/api/me/requests', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(MY_REQUESTS_SQL, [req.user.id, MY_REQUESTS_LIMIT]);
+      let body = shapeRequests(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+        body = withDemoRequests(body, selfRows[0] || null);
+      }
+      res.set('Cache-Control', 'no-store');
+      return res.json(body);
+    } catch (err) {
+      log.error('profile', 'Me requests read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── GET /api/me/proposal-history ─────────────────────────────────────
+  //
+  // "Your proposals" screen: every proposal the viewer has started, in up
+  // to four buckets (openForVote, inProgress, merged, closed). See
+  // MY_PROPOSALS_SQL above for how each bucket is read and capped.
+  router.get('/api/me/proposal-history', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(MY_PROPOSALS_SQL, [req.user.id, PROPOSALS_PER_BUCKET]);
+      let { proposals } = shapeProposals(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+        proposals = withDemoProposals(proposals, selfRows[0] || null);
+      }
+      return res.json({ proposals });
+    } catch (err) {
+      log.error('profile', 'Me proposals read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
@@ -966,6 +1258,16 @@ module.exports = {
   withDemoSummary,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
+  shapeProposals,
+  withDemoProposals,
+  DEMO_PROPOSALS,
+  MY_REQUESTS_SQL,
+  MY_REQUESTS_LIMIT,
+  shapeRequests,
+  withDemoRequests,
+  DEMO_REQUESTS,
+  MY_PROPOSALS_SQL,
+  PROPOSALS_PER_BUCKET,
   MAX_DISPLAY_NAME,
   MAX_BIO,
   MAX_AVATAR_BYTES,

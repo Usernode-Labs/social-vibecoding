@@ -118,11 +118,11 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FlagIcon,
   InfoCircleIcon,
-  LinkIcon,
+  PlusIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -134,15 +134,18 @@ import { AboutPane } from './about-pane';
 import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
+import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
-import { continueRows } from './continue-model';
+import { continueRows, type ContinueRow } from './continue-model';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
+import { archiveListedSession, loadAgentSessions, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
+import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -166,6 +169,15 @@ const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
 
 /**
+ * "Show more" under the agent sessions (#3405): a link in the action accent,
+ * not a row. The left padding is ROW's px-5 plus RowBody's 20px glyph and
+ * gap-3, so the words start where the session titles above them start.
+ */
+const CONTINUE_ALL = 'inline-flex items-center gap-1 min-h-[44px] pl-[52px] pr-5 '
+  + 'text-[13px] font-semibold text-violet-700 dark:text-violet-300 '
+  + 'hover:underline underline-offset-2';
+
+/**
  * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
  * cmd/ctrl click, middle-click and "open in new tab" all have to work, the same
  * reason #back-btn is an <a>. `dismissForNav` closes the sheet on a plain
@@ -181,9 +193,12 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by three copies staying in step.
  */
-function RowBody({ icon, label, lead, trailing }: {
+function RowBody({ icon, label, sub, lead, trailing }: {
   icon: ReactNode;
   label: string;
+  // A second line under the label: an agent session's app and where its
+  // change stands ("Run Club · in progress").
+  sub?: string;
   // A mark drawn just before the label: an agent session's state (#3013).
   lead?: ReactNode;
   trailing?: ReactNode;
@@ -194,7 +209,12 @@ function RowBody({ icon, label, lead, trailing }: {
         {icon}
       </span>
       {lead}
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0 py-1.5">
+          <span className="block truncate font-medium">{label}</span>
+          <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{sub}</span>
+        </span>
+      ) : <span className="flex-1 min-w-0 truncate font-medium">{label}</span>}
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
     </>
@@ -238,9 +258,10 @@ function followThenDismiss(e: React.MouseEvent, href: string): void {
 }
 
 function MenuRow({
-  id, href, icon, label, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, sub, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
+  sub?: string;
   // Names the destination for selectors that key on it rather than on the id.
   dataContextRow?: string;
   href: string;
@@ -267,8 +288,96 @@ function MenuRow({
         followThenDismiss(e, href);
       }}
     >
-      <RowBody icon={icon} label={label} lead={lead} trailing={trailing} />
+      <RowBody icon={icon} label={label} sub={sub} lead={lead} trailing={trailing} />
     </a>
+  );
+}
+
+/**
+ * One of your agent sessions under Agent sessions: a MenuRow that, on a
+ * phone, a left swipe archives (#3515).
+ *
+ * ARCHIVE, NOT DELETE. The request asked to delete, and nothing deletes an
+ * agent session: what puts one away is Archive, on the ⋯ of the session's own
+ * screen, which takes it out of your lists, pauses its change and can be
+ * undone. So the swipe offers that, in its word and with its confirm
+ * (../agent-session/store.ts `archiveListedSession`), rather than a second
+ * way to put a session away that means something different.
+ *
+ * THE SWIPE IS THE KIT'S (PlatformUI.swipeActions), wired the way the
+ * notifications' Saved and Invite rows wire it: on touch only, from an
+ * effect, after mount. The row takes only sideways drags (the kit gives it
+ * `touch-action: pan-y` and puts its drag through the gesture arbiter), so
+ * an up-and-down drag on a row still scrolls the list, and the kit sheet
+ * this menu is on a phone, which lets go of any drag that reads as
+ * sideways, still pulls down from its top as it did. A tap on the row still
+ * opens the session.
+ *
+ * Nothing replaces the swipe for a mouse or a keyboard. The rows it would
+ * sit beside are links, and a second control inside each one is a nested
+ * interactive element; the session the row opens has Archive on its ⋯,
+ * where it already was.
+ *
+ * WHY THE <a> SITS IN A <div> OF ITS OWN. The kit wraps the element it is
+ * handed: it moves it into a `.un-swipe` container it inserts in its place,
+ * beside the action tray. Were the <a> a direct child of #app-menu-continue,
+ * React would go on inserting rows before it and removing it from a parent it
+ * is no longer in, which throws the first time the list changes. The slot is
+ * the node React places, moves and removes; whatever the kit does happens
+ * inside it, and the <a> in it is only ever updated in place. Same id, same
+ * `data-context-row`, same href as the row it was.
+ *
+ * WHY THE SLOT HAS A KEY. Archive is the tray's destructive action, so a full
+ * swipe commits it the way the kit commits any: the row slides out, collapses
+ * and is taken out of the document, and only THEN is the handler called
+ * (a tap on the revealed Archive goes the same way). So the confirm is
+ * asked after the row has gone, the only order the kit has: gone, "Archive
+ * this session?", back on Cancel. "Back" is a new key: React drops the
+ * emptied slot and renders the row again, and the effect wraps it again.
+ * An archive that went through needs no repair, because the session leaves
+ * the list and its slot goes with it.
+ */
+function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactNode {
+  const rowRef = useRef<HTMLAnchorElement | null>(null);
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    const el = rowRef.current;
+    const ui = window.PlatformUI;
+    if (!el || !ui?.isTouch() || !ui.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
+      actions: [{
+        label: 'Archive',
+        destructive: true,
+        handler: () => {
+          void archiveListedSession(row.sessionId).then((archived) => {
+            if (!archived) setRound((n) => n + 1);
+          });
+        },
+      }],
+    });
+    return () => swipe.detach();
+  }, [row.sessionId, round]);
+
+  return (
+    <div key={round}>
+      <MenuRow
+        id={`app-menu-continue-${index}`}
+        dataContextRow="continue-agent"
+        elRef={rowRef}
+        href={row.href}
+        // Working, the spinner takes the icon's place (#3028); finished
+        // unseen, the green dot does (#3076). The icon slot is aria-hidden,
+        // so the state rides in the lead as words.
+        icon={row.activity
+          ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
+          : <SparklesIcon />}
+        label={row.title}
+        sub={row.sub}
+        lead={row.activity
+          ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
+          : null}
+      />
+    </div>
   );
 }
 
@@ -281,7 +390,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted,
+    slug, name, showTerminal, restricted, canReport, readOnly,
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
@@ -289,9 +398,8 @@ export function AppsSwitcherSheet(): ReactNode {
   const [owed, setOwed] = useState<number | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
-  // off, not an admin): the platform's workshop and discussion answer them
-  // 404, so the two rows that go there are hidden rather than left leading
-  // nowhere — feedback on the platform and About Homeroom are theirs as much
+  // off, not an admin): the platform's workshop answers them 404, so the row
+  // that goes there is hidden rather than left leading nowhere — feedback on the platform and About Homeroom are theirs as much
   // as anyone's (./platform-target.js, Home._restrictedPlatformTarget).
   //
   // THROUGH A REF, NOT A RENDERED CLASS. Both rows are in the prerendered
@@ -302,21 +410,21 @@ export function AppsSwitcherSheet(): ReactNode {
   // than calling it because the rows unmount under About and mount again on
   // the way back: `view` has to re-run the effect, or a row that came back
   // would come back without its `hidden`.
+  // The discussion and invite rows that went with it left the menu in the UI
+  // overhaul: the project's channel is on its hub, and invite links are the
+  // hub's Invite (#3362).
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
-  const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
-  // The invite row goes with them: its links are to the same project.
-  const inviteRowRef = useRef<HTMLButtonElement | null>(null);
   useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current, discussionRowRef.current, inviteRowRef.current]) {
+    for (const el of [workshopRowRef.current]) {
       if (el && el.classList.contains('hidden') !== !!restricted) {
         el.classList.toggle('hidden', !!restricted);
       }
     }
   }, [restricted, view]);
-  // AFTER MOUNT ONLY, for the one new piece of store-derived TEXT below (the
-  // platform discussion's label): the hydrating render must print what the
-  // prerender printed whatever the store says by then, or it is React #418
-  // on every route. The class toggle above is an effect for the same reason.
+  // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
+  // sessions): the hydrating render must print what the prerender printed
+  // whatever the store says by then, or it is React #418 on every route. The
+  // class toggle above is an effect for the same reason.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -408,7 +516,13 @@ export function AppsSwitcherSheet(): ReactNode {
         const res = await fetch(`/api/workshop/counts${demo}`);
         if (!res.ok) return;
         const data = await res.json();
-        const n = data?.counts?.[slug]?.needs;
+        const c = data?.counts?.[slug];
+        // #3526: less the votes swiped past in a Needs you feed, as every
+        // other count of them is (../workshop/needs-seen.ts).
+        hydrateNeedsSeen();
+        const n = c && typeof c.needs === 'number'
+          ? unseenNeeds(slug, c.needs, Array.isArray(c.owed) ? c.owed : null)
+          : null;
         if (live && typeof n === 'number' && n > 0) setOwed(n);
       } catch {
         // Offline is a state, not a failure: no figure, the row still works.
@@ -642,18 +756,18 @@ export function AppsSwitcherSheet(): ReactNode {
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
             icon={<UserGroupIcon />}
-            label="Go to community hub"
+            label="Go to community"
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
                 title={`${owed} to vote`}
                 aria-label={`${owed} to vote`}
-                className="shrink-0 rounded-full bg-violet-600 px-1.5 text-[0.6875rem] font-semibold leading-5 text-white"
+                className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {owed}
+                {`${owed} to vote`}
               </span>
             ) : null}
-            // It says community hub, so it opens the hub, not whichever tab
+            // It says community, so it opens the hub, not whichever tab
             // the page was last left on (AppView._landOnHub).
             onClick={(e) => {
               if (slug) (window as any).AppView?._landOnHub?.(slug);
@@ -661,44 +775,14 @@ export function AppsSwitcherSheet(): ReactNode {
             }}
           />
           {/*
-              #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
-              full-screen discussion; `#messages/app/<slug>` opens the same
-              thread in the Messages screen's right pane with the
-              conversation list still on the left at desktop widths (the
-              router's `parts[1] === 'app'` branch in public/js/app.js calls
-              App.navigateToMessages(null, slug)). It is what the inbox's own
-              rows link to, so the menu and the inbox now agree.
+              GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI
+              overhaul). The project's channel is on its hub now, one row
+              above, so a second way to it was a row that said the same thing;
+              and invite links are the hub's Invite (#3362), beside the people
+              they add. #app-menu-row-discussion and #app-menu-row-invite are
+              retired with them; the invite PANE is unchanged and opens from
+              there.
           */}
-          {/* On a platform tab the discussion is the PLATFORM's, and the row
-              says so — the design's "Go to platform discussion". Decided
-              after mount (`mounted` above): the prerender and the hydrating
-              render both print the app wording, and the platform's arrives
-              one commit later. */}
-          <MenuRow
-            id="app-menu-row-discussion"
-            elRef={discussionRowRef}
-            href={slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages'}
-            icon={<ChatIcon />}
-            label={mounted && target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
-          />
-          {/*
-              INVITE TO COMMUNITY: a link to this project anyone can use to
-              join it (./invite-pane.tsx, the third pane, for About's
-              reason). On Home the project in context is Homeroom's own, so
-              the row invites people to Homeroom. A button, not an anchor:
-              what it opens is this sheet in another state, not an address.
-              Rendered unconditionally, like the rows above it; the pane
-              says so when the viewer cannot invite anyone yet.
-          */}
-          <button
-            id="app-menu-row-invite"
-            ref={inviteRowRef}
-            type="button"
-            className={`${ROW} w-full text-left`}
-            onClick={() => AppContext.showInvite()}
-          >
-            <RowBody icon={<LinkIcon />} label="Invite to community" />
-          </button>
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather
               than moving into About: it is something you do, not a fact about
@@ -743,48 +827,88 @@ export function AppsSwitcherSheet(): ReactNode {
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
           {/*
-              CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
-              workshop, the discussion and About are this app's section, and
-              your agent sessions, on every app, follow under their own
-              heading. See the comment on `continuing` above.
+              AGENT SESSIONS (it was "Continue", #2779 follow-up), BELOW the
+              app's own rows: your agent sessions, on every app, under their
+              own heading. See the comment on `continuing` above.
+
+              IT LEADS WITH "START A NEW CHANGE", which was the "New change"
+              button beside Give feedback. People read that button as a way to
+              ask for something, and it opened an agent session without
+              saying so; under this heading it says what it opens. Same id and
+              same call as the button (Improve.startSession()), and hidden,
+              as the button was, for a viewer who may not write. The section
+              and the row are in the prerender, so it is here before your
+              sessions have loaded; the sessions arrive after mount.
           */}
-          {continuing.rows.length ? (
-            <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
-              <div className={SECTION}>Continue</div>
-              {continuing.rows.map((row, index) => (
-                <MenuRow
-                  key={row.key}
-                  id={`app-menu-continue-${index}`}
-                  dataContextRow="continue-agent"
-                  href={row.href}
-                  // Working, the spinner takes the icon's place (#3028);
-                  // finished unseen, the green dot does (#3076). The icon
-                  // slot is aria-hidden, so the state rides in the lead as
-                  // words.
-                  icon={row.activity
-                    ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
-                    : <SparklesIcon />}
-                  label={row.title}
-                  lead={row.activity
-                    ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
-                    : null}
-                  trailing={(
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
-                  )}
+          <div id="app-menu-sessions">
+            <div className={SECTION}>Agent sessions</div>
+            {readOnly ? null : (
+              <button
+                id="improve-row-new-session"
+                type="button"
+                className={`${ROW} w-full text-left`}
+                onClick={() => Improve.startSession()}
+              >
+                <RowBody
+                  icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
+                  label="Start a new change"
                 />
-              ))}
-              {continuing.more ? (
-                <MenuRow
-                  id="app-menu-continue-all"
-                  href="#messages"
-                  icon={<ChatIcon />}
-                  label="Show more"
-                  onClick={(e) => {
-                    setMessagesFilter('agents');
-                    followThenDismiss(e, '#messages');
-                  }}
-                />
-              ) : null}
+              </button>
+            )}
+            {continuing.rows.length ? (
+              <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
+                {/* A left swipe archives one, on a phone (#3515): see
+                    SessionRow. */}
+                {continuing.rows.map((row, index) => (
+                  <SessionRow key={row.key} row={row} index={index} />
+                ))}
+                {/*
+                    SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).
+                    Drawn as one more row (icon, label, chevron at the edge) it
+                    read as a sixth session. It is small accent text instead,
+                    set in line with the session titles above so it reads as
+                    the list's own tail, with a small chevron because it leaves
+                    the menu for Messages' Agents list. Still an anchor, so
+                    it is in the Tab order and "open in new tab" works; the
+                    tap target stays 44px tall though the text is small.
+                */}
+                {continuing.more ? (
+                  <a
+                    id="app-menu-continue-all"
+                    href="#messages"
+                    className={CONTINUE_ALL}
+                    onClick={(e) => {
+                      setMessagesFilter('agents');
+                      followThenDismiss(e, '#messages');
+                    }}
+                  >
+                    Show more
+                    <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {/*
+              REPORT APP IS SMALL TEXT AT THE FOOT (UI overhaul), not a row in
+              the list: it is the one thing here that is about the app rather
+              than for it, and a row of the same weight as Go to community
+              read as one more place to go. Same id, same gate, same dialog.
+          */}
+          {slug && canReport ? (
+            <div className="px-5 pt-3 pb-1">
+              <button
+                id="improve-row-report"
+                type="button"
+                className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                onClick={async () => {
+                  await AppContext.close();
+                  openReport({ targetType: 'app', target: slug, label: appLabel });
+                }}
+              >
+                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                Report app
+              </button>
             </div>
           ) : null}
           </>

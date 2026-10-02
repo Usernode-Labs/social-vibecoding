@@ -134,11 +134,12 @@ import {
 } from './spec-layout';
 import { openFocusedApp } from './open-app';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
-import { draftRequest, requestSeed, type DraftRequest } from './request-seed';
+import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
+import { UserMessage } from './user-message';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -182,8 +183,10 @@ function appInitial(name: string | null | undefined) {
   return (name || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
-function AppMark({ name, iconUrl, iconEmoji }: {
+function AppMark({ name, slug, iconUrl, iconEmoji }: {
   name: string | null | undefined;
+  /** When set, the mark opens that app (#3365). */
+  slug?: string | null;
   iconUrl?: string | null;
   iconEmoji?: string | null;
 }) {
@@ -193,19 +196,24 @@ function AppMark({ name, iconUrl, iconEmoji }: {
   if (iconUrl || iconEmoji) {
     const record = { name: name || '?', icon_url: iconUrl, icon_emoji: iconEmoji };
     return (
-      <span
-        aria-hidden="true"
+      <AppIconLink
+        slug={slug}
+        name={name}
         data-icon={appIconKind(record as never)}
         className="app-icon-tile h-5 w-5 shrink-0 overflow-hidden rounded-md text-[11px]"
       >
         <AppIconContent app={record as never} />
-      </span>
+      </AppIconLink>
     );
   }
   return (
-    <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white">
+    <AppIconLink
+      slug={slug}
+      name={name}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white"
+    >
       {appInitial(name)}
-    </span>
+    </AppIconLink>
   );
 }
 
@@ -242,12 +250,17 @@ export function OpenAppButton({ target }: { target: { slug: string; name: string
       type="button"
       data-agent-session-open-app
       data-open-app={target.slug}
-      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 [@container(max-width:32rem)]:px-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
       title={`Open ${target.name || target.slug} with this chat docked beside it`}
+      aria-label="Open app"
       onClick={open}
     >
       <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="truncate">Open app</span>
+      {/* #3577: in a pill row narrower than 32rem (the Messages pane on a
+          1024px screen) the words go and the window mark stays, so the row
+          still fits on one line without squeezing the pills that name things
+          down to nothing. The row is the container (SessionBar). */}
+      <span className="truncate [@container(max-width:32rem)]:hidden">Open app</span>
     </button>
   );
 }
@@ -284,58 +297,97 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
-  // It wraps on both surfaces (#3016). On a phone its five controls are wider
-  // than the screen, and a bar that cannot wrap made the whole conversation
-  // that wide: the right edge of every message and the Send button were off
-  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
-  // from `sm` up everything fits on one, as before. (The Build picker that
-  // started the second row is the composer's "Build with" now, #3078.)
+  // #3577: THE PILLS ARE ONE ROW, at every width and on both surfaces.
+  //
+  // #3016 let the bar wrap, because a bar that could not wrap made the whole
+  // conversation as wide as its controls and pushed every message's right
+  // edge and the Send button off a phone. Wrapping fixed that, but at 390px
+  // it did so by dropping the ⋯ onto a second line of its own (the focus
+  // pill, the change pill and Changes came to 376px of a 358px row), and in
+  // the Messages pane it split the pills in two around the conversation's
+  // title.
+  //
+  // So the pills sit in a row of their own that never wraps, and the
+  // controls — Changes, Open app, the pane's toggle, the ⋯ — keep their
+  // width, so each stays on screen and tappable. What gives way is the two
+  // pills that NAME things, in an order rather than together:
+  //
+  //  - The focus pill first. Its basis is zero and it GROWS into what the
+  //    row has left, up to its own content (`max-w-fit`, with the name capped
+  //    at 7rem, the pill's old 10rem less its mark and padding), so its name
+  //    truncates before anything else does, down to a floor of its mark.
+  //  - The change pill only after that, also to a floor. Its status word is
+  //    the fact the row is read for, so in a row under 24rem (every phone)
+  //    it drops the " · PR #12" after it; the full text is its tooltip, and
+  //    the PR is a tap away in Changes. A shared shrink would have clipped
+  //    "In progress" to "In progr…" to save the app name a few pixels.
+  //  - Open app keeps its window mark and drops its words in a row under
+  //    32rem (the Messages pane on a 1024px screen).
+  //
+  // Truncating, not scrolling sideways: a row that scrolls hides the ⋯ past
+  // its right edge, which is the failure being fixed.
+  //
+  // The row is `min-w-0`, so whatever it holds it cannot widen the panel
+  // (#3016). The Messages pane's title is a line of its own above it rather
+  // than a sibling the pills wrap around.
+  const focusTitle = 'The app this conversation is about when a request does not name one. The Mayor moves it when you ask.';
+  const changeText = active
+    ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}`
+    : 'No change yet';
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
+    <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
-        <div className="mr-auto min-w-0 basis-full sm:basis-auto">
+        <div className="mb-2 min-w-0">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
             Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
           </p>
         </div>
       ) : null}
-      <span
-        data-agent-session-focus
-        className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
-        title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
-      >
-        {about?.focusApp ? (
-          <AppMark
-            name={about.focusApp.name}
-            iconUrl={about.focusApp.iconUrl}
-            iconEmoji={about.focusApp.iconEmoji}
-          />
-        ) : null}
-        <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
-      </span>
-      <span
-        data-agent-session-change-pill
-        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
-      >
-        {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
-      </span>
-      {/* Siblings of the pills, not a group of their own: a declared check
-          reads the bar as focus ~ change pill ~ Changes. Where the work is
-          built is the composer's "Build with" now (#3078), not a pill here. */}
-      <button
-        type="button"
-        data-agent-session-changes-button
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        onClick={() => setDrawerOpen(true)}
-        disabled={!session}
-        aria-haspopup="dialog"
-      >
-        Changes · {count}
-      </button>
-      <OpenAppButton target={target} />
-      {action}
-      <SessionMenu session={session} />
+      {/* Siblings of one another in this row, not split into groups: a
+          declared check reads it as focus ~ change pill ~ Changes, another
+          as Changes ~ ⋯. Where the work is built is the composer's
+          "Build with" now (#3078), not a pill here. */}
+      <div className="flex min-w-0 flex-nowrap items-center gap-2 [container-type:inline-size]" data-agent-session-pills>
+        <span
+          data-agent-session-focus
+          className="inline-flex min-w-[2.75rem] max-w-fit grow basis-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
+          title={about?.focusApp?.name ? `${about.focusApp.name}. ${focusTitle}` : focusTitle}
+        >
+          {about?.focusApp ? (
+            <AppMark
+              name={about.focusApp.name}
+              slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
+              iconUrl={about.focusApp.iconUrl}
+              iconEmoji={about.focusApp.iconEmoji}
+            />
+          ) : null}
+          <span className="min-w-0 max-w-[7rem] truncate">{about?.focusApp?.name || 'Any app'}</span>
+        </span>
+        <span
+          data-agent-session-change-pill
+          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+          title={changeText}
+        >
+          <span className="min-w-0 truncate">
+            {active ? changeStatusLabel(active.status, building) : 'No change yet'}
+            {active?.prNumber ? <span className="[@container(max-width:24rem)]:hidden">{` · PR #${active.prNumber}`}</span> : null}
+          </span>
+        </span>
+        <button
+          type="button"
+          data-agent-session-changes-button
+          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          onClick={() => setDrawerOpen(true)}
+          disabled={!session}
+          aria-haspopup="dialog"
+        >
+          Changes · {count}
+        </button>
+        <OpenAppButton target={target} />
+        {action}
+        <SessionMenu session={session} />
+      </div>
     </div>
   );
 }
@@ -518,9 +570,8 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
       return (
         <div className="flex flex-col items-end gap-1.5" data-agent-session-user>
           <SentAttachments sessionId={sessionId} attachments={item.attachments} />
-          {item.text ? (
-            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
-          ) : null}
+          {/* A long one folds behind "Show more" (#3558, ./user-message.tsx). */}
+          {item.text ? <UserMessage text={item.text} /> : null}
         </div>
       );
     case 'mayor':
@@ -1141,7 +1192,9 @@ function OutboxRows() {
     <>
       {outbox.map((item) => (
         <div key={item.clientId} className="flex flex-col items-end gap-1" data-agent-session-outbox={item.status}>
-          <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 ${item.status === 'sending' ? 'opacity-80' : ''}`}>{item.shown}</p>
+          {/* Folded as the message it will be (#3558), so the server's row
+              replaces it without the bubble changing height. */}
+          <UserMessage text={item.shown} className={item.status === 'sending' ? 'opacity-80' : ''} />
           {item.status === 'failed' ? (
             <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px]" role="alert">
               <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error>{item.error || 'This was not sent.'}</span>
@@ -1248,7 +1301,7 @@ const CAPTURE_STEPS: Record<string, string> = {
 };
 
 /**
- * The active change's visual change preview while it is captured: after the
+ * The active change's before/after shots while they are taken: after the
  * coding agent finished, Homeroom records before-and-after captures of the
  * proposal, and that is not the coding agent working. Stop ends it; the
  * proposal's Rerun starts it again.
@@ -1334,7 +1387,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
       <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">New agent session</h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
         {app ? <>Started from <strong>{app}</strong>. </> : null}
-        Ask for a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
+        Start a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
       </p>
     </section>
   );
@@ -1534,6 +1587,29 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * `.agent-session-composer:focus-within` rings the whole card, and the field
  * inside draws no edge of its own in any engine (public/css/app.css).
  */
+export function StopStatus({ turn, onStop }: {
+  turn: { running: boolean; stopping: boolean; stopRequestedAt: number | null; stopPending: boolean; stopError: string | null };
+  onStop: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!turn.running || !turn.stopping) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [turn.running, turn.stopping]);
+  if (!turn.running || (!turn.stopping && !turn.stopError)) return null;
+  const slow = !!turn.stopRequestedAt && now - turn.stopRequestedAt >= 3000;
+  return (
+    <div data-agent-session-stop-status className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px] text-zinc-600 dark:text-zinc-300" role="status">
+      <span className="min-w-0 flex-1">{turn.stopError || (slow ? 'Stopping is taking longer than expected.' : 'Stopping the agent…')}</span>
+      {turn.stopError || slow ? (
+        <Button type="button" variant="pillNeutral" ink="neutral" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop()}>Retry stop</Button>
+      ) : null}
+    </div>
+  );
+}
+
 function Composer({ id }: { id: string }) {
   // The fields the box draws from, and not the streamed text: a reply
   // arriving does not re-render the box being typed in.
@@ -1549,6 +1625,9 @@ function Composer({ id }: { id: string }) {
     attachments: s.attachments,
     running: s.turn.running,
     stopping: s.turn.stopping,
+    stopRequestedAt: s.turn.stopRequestedAt,
+    stopPending: s.turn.stopPending,
+    stopError: s.turn.stopError,
     turnPhase: s.turn.phase,
   }));
   const [value, setValue] = useState('');
@@ -1601,11 +1680,12 @@ function Composer({ id }: { id: string }) {
   };
 
   // The conversation's unsent text, back after a reload or a switch. An
-  // unsent conversation started from a request (Start work) offers that
-  // request's first message when nothing was typed (./request-seed.ts),
-  // from the hint, so it is kept only once edited and never turns up in a
-  // later New change. A new hint is a new start, even on the same address.
-  const seed = target === 'new' ? requestSeed(snapshot.draft?.hint) : '';
+  // unsent conversation started from a request (Start work), or handed a
+  // message (Global Chat, Explore), offers that first message when nothing
+  // was typed (./request-seed.ts), from the hint, so it is kept only once
+  // edited and never turns up in a later New change. A new hint is a new
+  // start, even on the same address.
+  const seed = target === 'new' ? draftSeed(snapshot.draft?.hint) : '';
   const hint = snapshot.draft?.hint;
   useEffect(() => {
     if (target == null) return;
@@ -1726,6 +1806,7 @@ function Composer({ id }: { id: string }) {
       </p>
     ) : null}
     <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
+    <StopStatus turn={snapshot} onStop={() => { void stopAgentTurn(); }} />
     <form
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
@@ -1781,7 +1862,10 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      <div className="flex items-center gap-2">
+      {/* #3574: the row is a size container so the model pill can tighten
+          its padding on the narrowest phones (composer-parts.tsx ModelPill).
+          Its width is the composer's, never its contents'. */}
+      <div className="flex items-center gap-2 [container-type:inline-size]">
         {/* One picker, no menu of our own: a phone's own file picker already
             offers the photo library, the camera and files. */}
         <button
@@ -1819,9 +1903,22 @@ function Composer({ id }: { id: string }) {
           />
         ) : null}
         {/* The credits pill doubles as the row's spacer: it takes the free
-            space and decides from it how much to say. */}
-        {credit ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+            space and decides from it how much to say.
+
+            #3574: not while a draft is being saved. Stop and "Save draft"
+            take Send's place then, about 130px more, and on a phone the
+            row has no room left for the model's name AND the credits: the
+            credits pill used to be drawn over the name, and now that it keeps
+            its own width the name would be squeezed to an empty pill. It is
+            back the moment the draft is saved or the field is cleared, and
+            the model sheet says the same figures meanwhile. */}
+        {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
         {kind === 'save' ? (
+          <>
+          <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
+            disabled={snapshot.turnPhase === 'mayor2'} onClick={() => { void stopAgentTurn(); }}>
+            <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
+          </Button>
           <Button
             key="save"
             type="submit"
@@ -1837,6 +1934,7 @@ function Composer({ id }: { id: string }) {
             <SaveDraftIcon width={18} height={18} aria-hidden="true" />
             <span>Save draft</span>
           </Button>
+          </>
         ) : (
           <Button
             key="send"
@@ -1910,7 +2008,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
         {active ? (
           <div className="rounded-2xl bg-zinc-50 p-3 dark:bg-zinc-800/60" data-agent-session-active-change>
             <div className="flex items-start gap-2">
-              <AppMark name={active.appName} />
+              <AppMark name={active.appName} slug={active.appSlug} />
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">{active.title || changeRef(active)}</p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">{active.appName || active.appSlug} · {changeRef(active)}{active.prNumber ? ` (change ${active.id})` : ''}</p>
@@ -1959,7 +2057,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {others.map((change) => (
                 <li key={change.id} className="flex items-center gap-2 py-2" data-agent-session-earlier-change={change.id}>
-                  <AppMark name={change.appName} />
+                  <AppMark name={change.appName} slug={change.appSlug} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{change.title || changeRef(change)}</p>
                     <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.appName || change.appSlug} · {changeRef(change)}</p>
@@ -2075,6 +2173,28 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const about: About = snapshot.session || snapshot.draft;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
+  // ── Nothing in the transcript is wider than the transcript (#3559) ──
+  //
+  // The transcript scrolls down, and a box that scrolls on one axis scrolls
+  // on the other as well: `overflow-y: auto` makes `overflow-x` auto too. So
+  // one unbroken run of text (a link pasted into a message, a path in a
+  // note, a card whose title is an identifier) made the whole conversation
+  // wider than a phone, and it slid sideways under a finger. Measured at
+  // 390px: a pasted staging link in the reader's own bubble took this
+  // scroller to 690px, 300px of sideways travel; a failed turn's note and a
+  // card title carrying one did the same.
+  //
+  // `overflow-wrap: anywhere`, set on the scroller and inherited by every
+  // row, breaks such a run inside its own box when nothing else lets it
+  // fit. `anywhere` and not `break-words`, because it also lowers the run's
+  // min-content width: the note beside Retry is a flex item, and a request's
+  // title on the empty state is a centred block, and either would otherwise
+  // be held at the width of its longest word. The Mayor's markdown already
+  // broke this way (`.dc-msg-content`'s `word-break: break-word`), which is
+  // why a reply never overflowed and the rows around it did. A code block
+  // and a run's log are `white-space: pre`, which never wraps, so they keep
+  // scrolling sideways inside their own boxes, as a table does inside its.
+  //
   // Whether the reader is at the bottom, which FollowOutput keeps them at.
   const stick = useRef(true);
   const onScroll = () => {
@@ -2097,7 +2217,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}

@@ -11,7 +11,7 @@
 //
 // ── 1. The legacy classic scripts ──────────────────────────────────────
 //
-// public/js/** is 26 files of global-scope script with no module system (24
+// public/js/** is 27 files of global-scope script with no module system (25
 // of them shell tags; cli-authorize.js and connect-authorize.js are page IIFEs
 // for server-rendered documents and were never in the shell):
 // each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
@@ -66,6 +66,7 @@ const ADDED_SCRIPTS = [
   '/js/session-options.js', // #1055 — the composer's session/billing menu
   '/js/build-venues.js', // the six build venues, shared by every picker
   '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
+  '/js/ui-telemetry.js', // privacy-bounded journey telemetry, before consumers
   // #1038 — the live session working-state store. It shipped with a
   // SHELL_ASSETS entry but no <script> tag, so window.SessionState was
   // undefined at runtime and every consumer silently took its guarded
@@ -350,12 +351,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // chunk I retires app-secrets.js and screenshot-select.js together (24):
   // they are the only two modules the nine dialogs owned outright. #1281's
   // launchpad.js — the panel that stands in for the composer when a session
-  // builds somewhere else — makes 25. #1891 moves it into React (24).
+  // builds somewhere else — makes 25. #1891 moves it into React (24). The UI
+  // telemetry collector adds one bounded classic module (25).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 24,
-    `expected the 24 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 25,
+    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -528,6 +530,15 @@ test('session-state.js loads ahead of the modules that consume it', () => {
     const idx = srcs.indexOf(consumer);
     assert.ok(idx === -1 || at < idx,
       `session-state.js must load before ${consumer}, which reads window.SessionState`);
+  }
+});
+
+test('ui-telemetry.js loads before every classic journey consumer', () => {
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/ui-telemetry.js');
+  assert.notEqual(at, -1, 'the shell must load /js/ui-telemetry.js');
+  for (const consumer of ['/js/app-view.js', '/js/feedback-queue.js', '/js/app.js']) {
+    assert.ok(at < srcs.indexOf(consumer), `ui-telemetry.js must load before ${consumer}`);
   }
 });
 

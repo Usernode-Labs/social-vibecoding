@@ -66,6 +66,113 @@ test('pull-to-refresh reads the active page offset after its scroller changes', 
   assert.equal(options.getScrollTop(), 0, 'refresh arms only once the page reaches the top');
 });
 
+// pull-to-refresh under the tabs (evan, 2026-10-01): a project page opts into
+// the kit's `pullProperty` and a `topEl` function so its tabs hold still while
+// the page under them moves. The seam hands both to the kit untouched, beside
+// its own offset reader, and a caller that passes neither gets neither.
+test('pull-to-refresh passes the page\'s own kit options through', () => {
+  let options;
+  const { kit } = stubKit();
+  kit.attachPullToRefresh = (el, refresh, opts) => { options = opts; return { detach() {} }; };
+  const { PlatformUI } = makeSandbox({ kit });
+  const band = {};
+  const topEl = () => band;
+  PlatformUI.pullToRefresh({ scrollTop: 0 }, async () => {}, { pullProperty: '--dev-ptr-pull', topEl });
+  assert.equal(options.pullProperty, '--dev-ptr-pull');
+  assert.equal(options.topEl, topEl, 'the function itself, for the kit to ask at every pull');
+  assert.equal(typeof options.getScrollTop, 'function');
+  PlatformUI.pullToRefresh({ scrollTop: 0 }, async () => {});
+  assert.deepEqual(Object.keys(options), ['getScrollTop'], 'Home, Discover and Standings pass nothing new');
+});
+
+// #3517: the Workshop's Needs you feed is a snap scroller inside the Dev
+// scroller, fitted to the window, so the outer offset is always 0 and a
+// swipe down to go back a card was read as a pull: the whole screen slid
+// under the refresh puck and the Workshop reloaded. For the length of a
+// touch, a scroller between the finger and the pull's own that is not at
+// its top keeps the drag, as a native nested scroll view does.
+test('pull-to-refresh leaves a downward drag to a nested scroller that is not at its top', () => {
+  let options;
+  let detached = 0;
+  const { kit } = stubKit();
+  kit.attachPullToRefresh = (el, refresh, opts) => { options = opts; return { detach() { detached++; }, refresh() {} }; };
+  const { PlatformUI } = makeSandbox({ kit });
+  const listeners = {};
+  const screen = {
+    scrollTop: 0,
+    parentElement: null,
+    contains(n) { for (let el = n; el; el = el.parentElement) if (el === screen) return true; return false; },
+    addEventListener(type, fn, opts) { assert.equal(opts.capture, true, `${type} is captured, ahead of the kit's own`); listeners[type] = fn; },
+    removeEventListener(type, fn) { if (listeners[type] === fn) delete listeners[type]; },
+  };
+  const feed = { scrollTop: 630, parentElement: screen };
+  const card = { scrollTop: 0, parentElement: feed };
+  const handle = PlatformUI.pullToRefresh(screen, async () => {});
+  assert.equal(options.getScrollTop(), 0, 'between touches the offset is the page\'s alone');
+  listeners.touchstart({ touches: [{}], target: card });
+  assert.equal(options.getScrollTop(), 630, 'a finger in a feed past its first card scrolls the feed');
+  listeners.touchend({ touches: [] });
+  assert.equal(options.getScrollTop(), 0);
+  feed.scrollTop = 0;
+  listeners.touchstart({ touches: [{}], target: card });
+  assert.equal(options.getScrollTop(), 0, 'at the feed\'s top a pull is still a pull');
+  const outside = { scrollTop: 900, parentElement: null };
+  listeners.touchstart({ touches: [{}], target: outside });
+  assert.equal(options.getScrollTop(), 0, 'only what is inside the screen counts');
+  assert.equal(typeof handle.refresh, 'function', 'the kit\'s handle is passed through');
+  handle.detach();
+  assert.equal(detached, 1);
+  assert.deepEqual(Object.keys(listeners), [], 'detach takes the touch listeners off too');
+});
+
+// #3514: the Discussion tab is the same shape. Its chat (#gc-messages on a
+// project, #general's embedded .messages-thread-scroll on Homeroom) opens
+// on its newest line, far from its top, inside the same fitted Dev
+// scroller, so dragging down to read back slid the page away from the
+// header under the refresh puck. The chat keeps that drag now, and a chat
+// laid out bottom-up (`flex-direction: column-reverse`, which counts its
+// scrollTop DOWN from 0) is read the right way round.
+test('pull-to-refresh leaves a downward drag in the Discussion chat to the chat', () => {
+  let options;
+  const { kit } = stubKit();
+  kit.attachPullToRefresh = (el, refresh, opts) => { options = opts; return { detach() {} }; };
+  const { PlatformUI, sandbox } = makeSandbox({ kit });
+  const styles = new Map();
+  sandbox.getComputedStyle = (el) => styles.get(el) || { overflowY: 'visible', flexDirection: 'row' };
+  const listeners = {};
+  const devScroll = {
+    scrollTop: 0,
+    parentElement: null,
+    contains(n) { for (let el = n; el; el = el.parentElement) if (el === devScroll) return true; return false; },
+    addEventListener(type, fn) { listeners[type] = fn; },
+    removeEventListener() {},
+  };
+  // The tab body, taller than the screen only by what it clips: no scroller.
+  const pane = { scrollTop: 0, scrollHeight: 700, clientHeight: 700, parentElement: devScroll };
+  const chat = { scrollTop: 506, scrollHeight: 1028, clientHeight: 522, parentElement: pane };
+  const message = { scrollTop: 0, scrollHeight: 60, clientHeight: 60, parentElement: chat };
+  PlatformUI.pullToRefresh(devScroll, async () => {});
+  const touch = (target) => listeners.touchstart({ touches: [{}], target });
+  touch(message);
+  assert.equal(options.getScrollTop(), 506, 'on its newest line, the chat has 506px to scroll back: not a pull');
+  chat.scrollTop = 0;
+  touch(message);
+  assert.equal(options.getScrollTop(), 0, 'read to its first message, the next drag down refreshes');
+  // The same chat laid out bottom-up: 0 is its newest line, its first
+  // message is at -506.
+  styles.set(chat, { overflowY: 'auto', flexDirection: 'column-reverse' });
+  touch(message);
+  assert.equal(options.getScrollTop(), 506, 'a reversed chat at its bottom is 506px from its top');
+  chat.scrollTop = -200;
+  assert.equal(options.getScrollTop(), 306);
+  chat.scrollTop = -506;
+  assert.equal(options.getScrollTop(), 0, 'and at its top a pull is a pull');
+  // A reversed box that does not scroll is not a scroller.
+  styles.set(chat, { overflowY: 'visible', flexDirection: 'column-reverse' });
+  chat.scrollTop = 0;
+  assert.equal(options.getScrollTop(), 0);
+});
+
 test('kit absent: toast logs to console and returns null', () => {
   const { PlatformUI, calls } = makeSandbox();
   const handle = PlatformUI.toast('Saved');
@@ -367,7 +474,7 @@ test('the right group is the bell and the mark, in that order, after the title',
   );
 });
 
-test('the Improve row is retired; the two actions it led to are in the menu', () => {
+test('the Improve row is retired; what it led to is in the menu', () => {
   // THE ROW WAS A TAP TO REACH A TAP. It shipped hidden, revealed itself when
   // a target was published, and opened a drawer whose whole remaining content
   // was two buttons — the sessions under them had already moved to the
@@ -383,8 +490,11 @@ test('the Improve row is retired; the two actions it led to are in the menu', ()
   // so a row inside it was never the place a cue could be read from.
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
-  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Give feedback leads');
-  assert.ok(band[0].includes('id="improve-row-new-session"'), 'New change follows it');
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change is the band\'s button');
+  // New change is Start a new change under Agent sessions (UI overhaul).
+  assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
+  const sessions = INDEX.match(/<div id="app-menu-sessions"[\s\S]*?id="improve-row-new-session"/);
+  assert.ok(sessions, 'Start a new change leads the Agent sessions section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -552,7 +662,8 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   assert.match(platformFallback,
     /if \(Home\._appsLoaded\) \{[\s\S]{0,400}Home\._restrictedPlatformTarget\(slug\)/,
     'not served: the restricted Homeroom target, not no target');
-  const loadStart = home.indexOf('  async load() {');
+  // load() is the single-flight gate; the load itself is _loadOnce().
+  const loadStart = home.indexOf('  async _loadOnce() {');
   const load = home.slice(loadStart, home.indexOf('\n  },', loadStart));
   assert.ok(load.includes('Home.publishImproveTarget();'),
     'load() publishes before its own fetch — render() does not run until it lands');
@@ -564,7 +675,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the two actions lead the menu, shaped like the pill that used to open them', () => {
+test('the menu\'s action leads it, shaped like the pill that used to open it', () => {
   // ../improve/actions.tsx is where these live since the panel retired
   // (#2718 review). They stayed in the Improve feature rather than moving
   // into the menu's own file, because they are the Improve feature's
@@ -599,8 +710,11 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
-  assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
+  // New change survives as Start a new change, a row under Agent sessions
+  // in the menu's list (UI overhaul), with the same handler.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="improve-row-new-session"/, 'New change survives');
+  assert.match(sheet, /Improve\.startSession\(\)/, 'with the same handler');
   // The BAND stays, and it is the same element: `#improve-quick-actions`
   // was a direct child of `#improve-body` and is a direct child of the
   // menu's sheet now. dapp.json's band-order check used to select the four
@@ -623,9 +737,9 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   // panel and behind its backdrop once it was up — and since #2718 there is
   // no second filled pill to compete with at all.
   assert.match(panel, /rounded-full text-sm font-semibold/,
-    'and the two actions are the same pill shape');
+    'and the action is that pill shape');
   assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-600 hover:bg-violet-500 text-white';/,
-    'both wearing the platform\'s ordinary primary fill');
+    'wearing the platform\'s ordinary primary fill');
   assert.ok(!/ACTION_PRIMARY/.test(panel),
     'there is no primary-and-secondary pair here any more');
   assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),

@@ -55,9 +55,6 @@ export type SyncBannerView =
 export interface NewChangeBannerView {
   /** Already composed: "proposed to the group (PR #12)" / "merged (PR #12)". */
   stateLabel: string;
-  /** The click is in flight. Was `btn.disabled` + `btn.textContent`, written
-   *  onto the element by id — a second author on a node this now renders. */
-  pending: boolean;
   /**
    * #2602: the proposal card's hash route, or null when the slug cannot be
    * resolved. The banner is the moment a person learns their change went up
@@ -85,6 +82,8 @@ export interface CreditsBannerView {
   leadTagged: boolean;
   /** The reset sentence, in its own `[data-credits-reset]` span, or null. */
   reset: string | null;
+  /** The reset's exact UTC instant, as that span's `title` (#3230). */
+  resetTitle?: string | null;
   /** Everything after the reset span. */
   tail: string;
   /** `CreditOptions.bannerActionsHtml`'s markup, carried whole. */

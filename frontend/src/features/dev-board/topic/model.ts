@@ -119,6 +119,17 @@ export interface ChecksVerdict {
   summary: string;
   failures: CheckRow[];
   passes: CheckRow[];
+  /**
+   * How many passed. More than `passes.length` while the row counts its
+   * passes rather than listing them (a Workshop list row, or the item's own
+   * row until its fold is opened).
+   */
+  passCount: number;
+  /**
+   * The session whose passing checks are counted but not yet named: opening
+   * the fold reads them (AppView._loadCheckNames). Null once they are listed.
+   */
+  passesFor?: number | null;
   /** Passes fold behind a `<details>` above this many. */
   foldPasses: boolean;
   advisoryNote: string | null;
@@ -234,6 +245,10 @@ export interface LedgerRow {
   /** The checks row's failing tests, listed; and its passing ones, folded. */
   fails?: CheckRow[] | null;
   passes?: CheckRow[] | null;
+  /** How many passed: `passes` can be shorter (ChecksVerdict.passCount). */
+  passCount?: number | null;
+  /** ChecksVerdict.passesFor: whose passing checks the fold still has to read. */
+  passesFor?: number | null;
   /** The votes row's roster. */
   roster?: RosterView | null;
   /** The checks row's live progress while the run is pending. */
@@ -392,7 +407,47 @@ export interface StepRow {
   /** The ledger row's material: the sentence, the roster, the checks, the ops. */
   row?: LedgerRow | null;
   /** The vote step's bar and tally: the same counts the card's pill reads. */
-  vote?: { yes: number; no: number; majority: number; pill: StatusPillState | null } | null;
+  vote?: {
+    yes: number; no: number; majority: number; pill: StatusPillState | null;
+    /** #3234: "Needs N, was M when voting opened", or null when it has not moved. */
+    was?: string | null;
+  } | null;
+  // ── A merge gate's step (app-view.js `_gateStepsView`) ──
+  /** The step's one short line, state first (`_stepLine`); null says nothing. */
+  line?: string | null;
+  /** The controls for the person who can clear the step, and nobody else. */
+  actions?: ActionSpec[];
+  /** The Votes step: who voted (the count is the status pill's). */
+  votes?: string | null;
+  /** #3234 on the Votes step: "Needs N, was M when voting opened". */
+  was?: string | null;
+  /** The Votes step's "?" — How voting works. */
+  help?: boolean;
+  /** The Checks step: what it shows when it opens. */
+  run?: StepRun | null;
+  /** Extra hooks on the row (the superseded-base marker on Checks). */
+  attrs?: Record<string, string>;
+}
+
+/**
+ * What the Checks step shows when it opens (app-view.js `_checksRunView`):
+ * the build as its steps, then the app's declared checks and the unit suite
+ * as bars, the failures by name, and one line of context.
+ */
+export interface StepRun {
+  /** A run is going right now. */
+  live: boolean;
+  /** The run's stage: building, testing, deferred (app-view.js CHECKS_PHASE_COPY). */
+  phase?: string | null;
+  /** Open by itself: while a run is going, and when it failed. */
+  open: boolean;
+  /** The build's steps, and what to say at the bar's end. */
+  build: { steps: LedgerBuildStep[]; value: string } | null;
+  /** The declared checks' counts; null before the first has run. */
+  checks: { ran: number; passed: number; failed: number; expected: number | null; done: boolean } | null;
+  unit: LedgerUnitProgress | null;
+  fails: CheckRow[];
+  note: string | null;
 }
 
 /** The steps sheet: the strip's own headline over its rows, expanded. */
@@ -402,6 +457,8 @@ export interface StepsView {
   done: number | null;
   total: number | null;
   rows: StepRow[];
+  /** One short step per merge gate (`_gateStepsView`), rather than ledger rows. */
+  simple?: boolean;
 }
 
 /** Everything under the card, by topic kind. */
@@ -427,12 +484,12 @@ export interface TopicBody {
    */
   build?: { kind: 'owner' | 'published'; label: string } | null;
   /**
-   * The visual evidence, as "What changes for you" reads it: the claims as
+   * The before & after shots, as "What changes for you" reads it: the claims as
    * bullets and the run's state as one strip. A verified run keeps the
    * before/after card in `actions.visuals` instead, which leads with the
    * claims itself.
    */
-  evidence?: {
+  shots?: {
     state: string;
     verified: boolean;
     /**
@@ -441,6 +498,12 @@ export interface TopicBody {
      * spin, and it keeps the panel so its reason and retry control show.
      */
     notStarted: boolean;
+    /**
+     * A restart interrupted the run and the recovery sweep starts it again
+     * by itself (`automaticRetryPending` in the shots view): shown as under
+     * way, not as a failure.
+     */
+    retrying?: boolean;
     label: string;
     sentence: string;
     claims: string[];
@@ -470,6 +533,8 @@ export interface TopicBody {
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /** The previous summary was retained for provenance but no longer describes this revision. */
+  summaryStale?: boolean;
   /**
    * #1370's "Full proposal details" disclosure — the complete GitHub PR
    * description, deliberately quieter than the generated summary above it.

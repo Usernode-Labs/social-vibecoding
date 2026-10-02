@@ -312,3 +312,81 @@ test('sync writes history.scrollRestoration only when it changes', () => {
   assert.equal(value, 'manual');
   assert.equal(writes, 1, 'one write for twenty syncs that all want the same value');
 });
+
+// ── #3565: the bottom of a paged document bounces again ─────────────────
+// "On mobile Safari, if already scrolled to the bottom of the page, cannot
+// scroll down more to make the address bar shrink." Safari tucks its toolbar
+// away when a drag moves the page, and at the end of a page only the rubber
+// band can move. app.css's `html, body { overscroll-behavior-y: none }`
+// (#737, written for the bounded shell) came along when #1518 made the
+// document the scroller, and on <html> it switched that band off at both
+// ends. The top must keep it off for the kit's pull-to-refresh, so the page
+// is marked once it is PAST_TOP_PX below its top, and only the mark lets a
+// phone's viewport bounce.
+
+const { PAST_TOP_PX } = loadTsx('frontend/src/lib/browser-scroll.ts');
+const marked = (html) => html.dataset.browserPastTop !== undefined;
+
+test('#3565: the paged document is marked from PAST_TOP_PX below its top, and only while it pages', () => {
+  assert.equal(PAST_TOP_PX, 64);
+  const { add, doc, win, html, controller, scroll } = fixture();
+  const home = add('home-screen');
+  const browse = add('browse-screen', true);
+  controller.sync();
+  assert.equal(marked(html), false, 'a page that opens at its top is not marked');
+  scroll(PAST_TOP_PX - 1);
+  assert.equal(marked(html), false, 'one pixel short of the margin is still the top');
+  scroll(PAST_TOP_PX);
+  assert.equal(marked(html), true);
+  assert.equal(html.dataset.browserPastTop, '', 'a bare attribute, which is what app.css selects on');
+  scroll(900);
+  assert.equal(marked(html), true, 'the foot of a long page is marked');
+  // A drag back up loses the mark short of the top, so a pull that starts
+  // at the top meets the rule it always did.
+  scroll(PAST_TOP_PX - 1);
+  assert.equal(marked(html), false);
+  scroll(0);
+  assert.equal(marked(html), false);
+
+  // A route that restores a remembered offset is marked without a scroll
+  // event, and one that restores the top is cleared the same way.
+  scroll(640);
+  home.hidden = true;
+  browse.hidden = false;
+  html.scrollTop = 0; // outgoing content is now display:none
+  controller.onScroll({ target: doc });
+  controller.sync();
+  assert.equal(html.scrollTop, 0);
+  assert.equal(marked(html), false, 'Discover opens at its own top');
+  browse.hidden = true;
+  home.hidden = false;
+  controller.sync();
+  assert.equal(html.scrollTop, 640);
+  assert.equal(marked(html), true, 'Home comes back at 640, marked');
+
+  // Leaving the paged layout (a desktop width, the installed app) clears it.
+  win.mobile = false;
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, undefined);
+  assert.equal(marked(html), false, 'the bounded shell is never marked');
+  win.mobile = true;
+  controller.sync();
+  assert.equal(marked(html), true, 'and paging again marks it from where it is');
+});
+
+test('#3565: only the mark gives the viewport back its bounce, on a phone, and never at the top', () => {
+  const CSS = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  // The rule it overrides is still there, unchanged: the bounded shell and
+  // the top of every paged document keep `none`.
+  assert.match(CSS, /html, body \{\s*height: 100dvh;\s*overflow: hidden;[\s\S]*?overscroll-behavior-y: none;\s*\}/);
+  assert.match(CSS, /@media \(pointer: coarse\) \{\n  html\[data-browser-scroller\]\[data-browser-past-top\],\n  html\[data-browser-scroller\]\[data-browser-past-top\] body \{\n    overscroll-behavior-y: contain;\n  \}\n\}/,
+    'a phone\'s viewport bounces only while the paged document is marked, and `contain`, not `auto`, keeps Chrome\'s refresh off');
+  // No other rule touches the overscroll of a paged document's root or body:
+  // an unmarked override would hand the top edge to the browser's bounce and
+  // refresh, under the kit's pull.
+  const rules = [...CSS.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+    .filter(([, sel, body]) => /data-browser-scroller/.test(sel) && /overscroll-behavior/.test(body));
+  assert.equal(rules.length, 1, rules.map(([, sel]) => sel.trim()).join(' | '));
+  assert.match(rules[0][1], /\[data-browser-past-top\]/);
+});

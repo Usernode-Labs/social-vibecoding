@@ -698,6 +698,24 @@ test('reconcileImportedHead: an authored move under `defer` still kicks the rebu
   });
 });
 
+test('reconcileImportedHead: `fresh` reaches the mirror fetch, and only when asked (#2619)', async () => {
+  // submit_work reads back its OWN push through this. A coalesced fetch that
+  // started before the push resolves to the old tip, and the re-pin would
+  // decide nothing moved. The merge queue and the sweeps keep coalescing.
+  mirrorBranchHead = SESSION_HEAD;
+  const seen = [];
+  await withStubs([
+    [fakeMirror, 'ensureMirror', async (_owner, _repo, opts) => { seen.push(opts); return '/nonexistent/mirror'; }],
+  ], async () => {
+    await prImportSync.reconcileImportedHead({ config: {}, pool: recordingPool(), session: { ...IN_APP_REPO }, fresh: true });
+    await prImportSync.reconcileImportedHead({ config: {}, pool: recordingPool(), session: { ...IN_APP_REPO } });
+  });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].fresh, true);
+  assert.deepEqual(seen[0].refs, [SESSION_HEAD]);
+  assert.equal(seen[1].fresh, false);
+});
+
 test('reconcileImportedHead: an unreadable mirror leaves the pin alone rather than guessing', async () => {
   await withStubs([
     [fakeMirror, 'ensureMirror', async () => { throw new Error('clone failed'); }],
@@ -795,13 +813,17 @@ test('syncImportedProposal: a changed body is mirrored even when the head has no
     })],
   ], async () => {
     const pool = recordingPool();
-    const session = { ...SESSION, pr_body: null };
+    const session = { ...SESSION, pr_body: null, pr_summary_md: 'Author-written summary.' };
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
     // Still 'unchanged' — mirroring a description is not a revision.
     assert.equal(res, 'unchanged');
     const write = pool.calls.find((c) => /SET pr_body/.test(c.sql));
     assert.ok(write, 'the row learned the description');
     assert.deepEqual(write.params, ['The description as it now reads on GitHub.', 321]);
+    assert.match(write.sql, /pr_summary_previous_md = COALESCE\(pr_summary_md, pr_summary_previous_md\)/);
+    assert.equal(session.pr_summary_md, 'Author-written summary.',
+      'author prose remains readable while the changed description is flagged');
+    assert.equal(session.pr_summary_stale, true);
     assert.equal(session.pr_body, 'The description as it now reads on GitHub.',
       'and the in-memory row matches, like every other mirror here');
   });
@@ -836,5 +858,49 @@ test('syncImportedProposal: a failed mirror write never fails the sweep', async 
       config: {}, pool, session: { ...SESSION, pr_body: null },
     });
     assert.equal(res, 'unchanged', 'a display field must never wedge the poller');
+  });
+});
+
+// #3344. submit_work stores an author's summary fresh for the head it pushed,
+// but the sync it runs may not see that head yet ('unchanged'). The sweep that
+// sees it later must not stale the summary describing that very head.
+test('applyHeadChange: a late sweep keeps an author summary recorded for the head it installs', async () => {
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  let github = SESSION_HEAD;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: github, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+    [fakeStaging, 'buildAndDeployStaging', async () => ({ containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' })],
+    [fakeVisuals, 'captureForSession', async () => {}],
+  ], async () => {
+    const session = {
+      ...SESSION,
+      pr_summary_md: 'The author’s words for the new head.',
+      pr_summary_source: 'author', pr_summary_source_head_sha: NEW, pr_summary_stale: false,
+    };
+    // 1. The update's own sync: GitHub has not caught up with the push.
+    const first = recordingPool();
+    assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool: first, session }), 'unchanged');
+
+    // 2. The sweep, once it has. Postgres answers the claim with the kept flag.
+    github = NEW;
+    const pool = recordingPool();
+    const realQuery = pool.query;
+    pool.query = async (sql, params) => {
+      const res = await realQuery(sql, params);
+      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql) && res.rows.length) {
+        res.rows[0].pr_summary_stale = false;
+      }
+      return res;
+    };
+    assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool, session }), 'updated');
+    const claim = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.match(claim.sql, /pr_summary_source = 'author'/);
+    assert.match(claim.sql, /pr_summary_source_head_sha = \$1::varchar/,
+      'the exception is scoped to the head this statement installs');
+    assert.match(claim.sql, /RETURNING approval_epoch, pr_summary_stale/);
+    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what Postgres kept');
   });
 });

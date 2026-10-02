@@ -71,12 +71,12 @@ async function execWorkerCommand(runtimeName, command, stdinText = null, { timeo
 // hostname / port.
 const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
 
-// Evidence controls are intentionally process-local: the run's paired
+// Shots controls are intentionally process-local: the run's paired
 // environments and callbacks live in the Pod that scheduled it. During a
-// rolling update the shared Service also points at the other color, so an
-// evidence worker must call this Pod directly or half its tools see an empty
+// rolling update the shared Service also points at the other color, so a
+// shots worker must call this Pod directly or half its tools see an empty
 // control registry. Ordinary worker traffic remains on the shared Service.
-function evidenceControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
+function shotsControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
   fallback = PLATFORM_INTERNAL_URL } = {}) {
   const family = net.isIP(String(podIp || ''));
   const selectedPort = Number(port || 3000);
@@ -162,8 +162,8 @@ function mintProdDebugJwt(sessionId) {
   return platformJwt.signProdDebugToken({ sessionId });
 }
 
-function mintEvidenceJwt(sessionId, runId) {
-  return platformJwt.signEvidenceToken({ sessionId, runId });
+function mintShotsJwt(sessionId, runId) {
+  return platformJwt.signShotsToken({ sessionId, runId });
 }
 
 // One backend decision, used everywhere in a turn's dispatch so the
@@ -212,7 +212,7 @@ function requireNonEmptySecret(value, name) {
 function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
-  evidenceJwt, evidenceMemberToken, evidenceAdminToken, evidenceFullAdminToken,
+  shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
   homeroomMcpToken = null,
 }) {
   const {
@@ -221,13 +221,15 @@ function buildTurnSecretEnv({
   if (!isClaude && !isCodex && !isClaudeOpenRouter) {
     throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
   }
-  if (!['scout', 'build', 'sync', 'evidence'].includes(mode)) {
+  if (!['scout', 'build', 'sync', 'shots'].includes(mode)) {
     throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
   }
-  if (isCodex && mode === 'sync') {
-    throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  // Every shots turn runs on Claude Code; the Codex runner has
+  // no shots mode.
+  if (isCodex && (mode === 'sync' || mode === 'shots')) {
+    throw new Error(`buildTurnSecretEnv: Codex ${mode} mode is not supported`);
   }
-  if (isClaudeOpenRouter && (mode === 'sync' || mode === 'evidence')) {
+  if (isClaudeOpenRouter && (mode === 'sync' || mode === 'shots')) {
     throw new Error(`buildTurnSecretEnv: Claude over OpenRouter ${mode} mode is not supported`);
   }
 
@@ -252,15 +254,9 @@ function buildTurnSecretEnv({
     // (review Commit 1 / plan 3.3). It must never receive a general
     // worker:session token, an Anthropic key/base, or a relay token.
     const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
-    if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+    env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
     if (mode === 'build') {
       env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
-    }
-    if (mode === 'evidence') {
-      env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
-      env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
-      env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
-      env.EVIDENCE_FULL_ADMIN_TOKEN = requireNonEmptySecret(evidenceFullAdminToken, 'evidenceFullAdminToken');
     }
     if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
@@ -276,18 +272,18 @@ function buildTurnSecretEnv({
       ? requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt')
       : requireNonEmptySecret(anthropicApiKey, 'anthropicApiKey'),
   };
-  if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
-  if (mode !== 'scout' && mode !== 'evidence') {
+  if (mode !== 'shots') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+  if (mode !== 'scout' && mode !== 'shots') {
     env.WORKER_JWT = requireNonEmptySecret(workerSessionJwt, 'workerSessionJwt');
   }
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
   }
-  if (mode === 'evidence') {
-    env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
-    env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
-    env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
-    env.EVIDENCE_FULL_ADMIN_TOKEN = requireNonEmptySecret(evidenceFullAdminToken, 'evidenceFullAdminToken');
+  if (mode === 'shots') {
+    env.SHOTS_JWT = requireNonEmptySecret(shotsJwt, 'shotsJwt');
+    env.SHOTS_MEMBER_TOKEN = requireNonEmptySecret(shotsMemberToken, 'shotsMemberToken');
+    env.SHOTS_ADMIN_TOKEN = requireNonEmptySecret(shotsAdminToken, 'shotsAdminToken');
+    env.SHOTS_FULL_ADMIN_TOKEN = requireNonEmptySecret(shotsFullAdminToken, 'shotsFullAdminToken');
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
@@ -499,12 +495,21 @@ function safeResultSubtype(value) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
 }
 
-// Evidence diagnostics deliberately record only a fixed vocabulary. Page
+// A shots turn runs on its own pinned model
+// (shots-agent), which the author-facing allowlist does not list:
+// resolve() would turn it back into the author default. Any Claude id is
+// accepted there by shape; every other turn stays on the allowlist.
+const SHOTS_AGENT_MODEL_RE = /^claude-[a-z0-9][a-z0-9-]{0,62}$/;
+function claudeTurnModel(mode, model) {
+  return mode === 'shots' && SHOTS_AGENT_MODEL_RE.test(String(model || ''))
+    ? model : models.resolve(model);
+}
+
+// Shots diagnostics deliberately record only a fixed vocabulary. Page
 // text, tool arguments/results, URLs, provider messages and journal lines can
 // contain private app data or credentials and must never enter a run trace.
-const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
-  'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
-  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
+const SHOTS_DIAGNOSTIC_TOOLS = new Set([
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -512,23 +517,23 @@ const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close',
 ]);
-const EVIDENCE_DIAGNOSTIC_PHASES = new Set([
-  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
-  'evidence_mcp_ready', 'claude', 'agent', 'done',
+const SHOTS_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'shots_proxy', 'shots_browser_bootstrap',
+  'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 
-function evidenceDiagnosticTool(name) {
+function shotsDiagnosticTool(name) {
   const parts = String(name || '').split(/__|[./]/);
   const tool = parts.at(-1);
-  if (!EVIDENCE_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
+  if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
   const server = parts.includes('browser_member') ? 'member'
     : parts.includes('browser_full_admin') ? 'full_admin'
       : parts.includes('browser_admin') ? 'admin' : null;
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
-function evidenceNavigationTarget(state, input) {
-  if (!state.evidenceOrigins) return {};
+function shotsNavigationTarget(state, input) {
+  if (!state.shotsOrigins) return {};
   let args = input;
   if (typeof args === 'string' && args.length <= 8192) {
     try { args = JSON.parse(args); } catch { return {}; }
@@ -539,19 +544,19 @@ function evidenceNavigationTarget(state, input) {
   let side = null;
   for (const candidate of ['base', 'head']) {
     try {
-      if (destination.origin === new URL(state.evidenceOrigins?.[candidate]).origin) {
+      if (destination.origin === new URL(state.shotsOrigins?.[candidate]).origin) {
         side = candidate;
         break;
       }
-    } catch { /* No paired origin is available in a non-evidence turn. */ }
+    } catch { /* No paired origin is available in a non-shots turn. */ }
   }
   if (!side) return { side: 'outside' };
   // Only an ordinal leaves the worker. It distinguishes repeated routes and
   // base/head navigation without storing private paths, queries, or tokens.
-  const routes = state.evidenceRouteOrdinals || (state.evidenceRouteOrdinals = new Map());
+  const routes = state.shotsRouteOrdinals || (state.shotsRouteOrdinals = new Map());
   const key = `${destination.pathname}${destination.search}${destination.hash}`;
   if (!routes.has(key) && routes.size < 1000) routes.set(key, routes.size + 1);
-  const hints = state.evidenceNavigationHints || {};
+  const hints = state.shotsNavigationHints || {};
   const checkRank = Array.isArray(hints.declaredPaths) ? hints.declaredPaths.indexOf(key) + 1 : 0;
   const intentStart = Array.isArray(hints.intentPaths) && hints.intentPaths.includes(key);
   return {
@@ -562,36 +567,36 @@ function evidenceNavigationTarget(state, input) {
   };
 }
 
-function emitEvidenceDiagnostic(state, event) {
-  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
-  try { state.evidenceDiagnosticObserver(event); }
+function emitShotsDiagnostic(state, event) {
+  if (typeof state?.shotsDiagnosticObserver !== 'function') return;
+  try { state.shotsDiagnosticObserver(event); }
   catch { /* Diagnostics must never affect the worker turn. */ }
 }
 
-function observeEvidenceTool(state, { phase, id, name, input = null, failed = false }) {
-  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+function observeShotsTool(state, { phase, id, name, input = null, failed = false }) {
+  if (typeof state?.shotsDiagnosticObserver !== 'function') return;
   const key = id == null ? null : String(id);
-  const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
-  const completed = state.evidenceDiagnosticCompleted || (state.evidenceDiagnosticCompleted = new Set());
+  const starts = state.shotsDiagnosticStarts || (state.shotsDiagnosticStarts = new Map());
+  const completed = state.shotsDiagnosticCompleted || (state.shotsDiagnosticCompleted = new Set());
   if (phase === 'start') {
     if (key && starts.has(key)) return;
-    const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
-    state.evidenceDiagnosticSequence = sequence;
-    const tool = evidenceDiagnosticTool(name);
+    const sequence = (state.shotsDiagnosticSequence || 0) + 1;
+    state.shotsDiagnosticSequence = sequence;
+    const tool = shotsDiagnosticTool(name);
     const safeTool = {
       ...tool,
       ...(tool.tool === 'browser_navigate'
-        ? evidenceNavigationTarget(state, input) : {}),
+        ? shotsNavigationTarget(state, input) : {}),
     };
     if (key) starts.set(key, { sequence, ...safeTool });
-    emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
+    emitShotsDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
     return;
   }
   if (key && completed.has(key)) return;
   if (key) completed.add(key);
   const prior = key ? starts.get(key) : null;
   if (key) starts.delete(key);
-  emitEvidenceDiagnostic(state, {
+  emitShotsDiagnostic(state, {
     kind: 'tool_end',
     sequence: prior?.sequence || null,
     ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
@@ -599,7 +604,7 @@ function observeEvidenceTool(state, { phase, id, name, input = null, failed = fa
       ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
       ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
       ...(prior.checkRank ? { checkRank: prior.checkRank } : {}) }
-      : evidenceDiagnosticTool(name)),
+      : shotsDiagnosticTool(name)),
     outcome: failed ? 'error' : 'ok',
   });
 }
@@ -622,12 +627,12 @@ function collectionCount(value) {
   return null;
 }
 
-function evidenceToolAvailable(tools, toolName) {
+function shotsToolAvailable(tools, toolName) {
   if (collectionCount(tools) == null) return null;
   const names = Array.isArray(tools)
     ? tools.map((item) => typeof item === 'string' ? item : item?.name)
     : Object.keys(tools);
-  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
+  return names.some((name) => name === toolName || name === `mcp__shots__${toolName}`);
 }
 
 function mcpToolCount(tools, serverName) {
@@ -639,7 +644,7 @@ function mcpToolCount(tools, serverName) {
     && name.startsWith(`mcp__${serverName}__`)).length;
 }
 
-function evidenceContextResultShape(content) {
+function shotsContextResultShape(content) {
   const text = typeof content === 'string' ? content
     : Array.isArray(content) ? content.find((item) => item?.type === 'text')?.text : null;
   const responseCharacters = typeof text === 'string' ? text.length : 0;
@@ -649,10 +654,10 @@ function evidenceContextResultShape(content) {
   return {
     responseCharacters,
     jsonValid: !!object,
-    acceptedIntentPresent: !!object?.acceptedIntent,
-    originsPresent: !!(object?.origins?.base && object?.origins?.head),
-    revisionsPresent: !!(object?.revisions?.baseSha && object?.revisions?.headSha),
-    storyCount: Array.isArray(object?.acceptedIntent?.stories) ? object.acceptedIntent.stories.length : null,
+    declaredChangesPresent: Array.isArray(object?.declaredChanges),
+    addressesPresent: !!(object?.addresses?.before && object?.addresses?.after),
+    revisionsPresent: !!(object?.revisions?.before && object?.revisions?.after),
+    storyCount: Array.isArray(object?.declaredChanges) ? object.declaredChanges.length : null,
   };
 }
 
@@ -757,9 +762,9 @@ function finalizeHarnessResult(state) {
 
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
-  if (event?.type === 'stream_event' && !state.evidenceFirstStreamSeen) {
-    state.evidenceFirstStreamSeen = true;
-    emitEvidenceDiagnostic(state, { kind: 'first_stream' });
+  if (event?.type === 'stream_event' && !state.shotsFirstStreamSeen) {
+    state.shotsFirstStreamSeen = true;
+    emitShotsDiagnostic(state, { kind: 'first_stream' });
   }
   if (state.hostSessionId && state.liveSpendEnabled) {
     workerProgress.setSpend(state.hostSessionId, liveAgentSpend.snapshot(state.liveSpend));
@@ -804,24 +809,24 @@ function applyStreamEvent(event, onProgress, state) {
     state.sessionId = state.sessionId || event.session_id;
   }
   if (systemEvent?.type === 'system' && systemEvent.subtype === 'init'
-      && !state.evidenceProviderInitSeen) {
-    state.evidenceProviderInitSeen = true;
-    emitEvidenceDiagnostic(state, {
+      && !state.shotsProviderInitSeen) {
+    state.shotsProviderInitSeen = true;
+    emitShotsDiagnostic(state, {
       kind: 'provider_init',
       mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
       toolDefinitionCount: collectionCount(systemEvent.tools),
-      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
-      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
-      evidenceReportBlockerAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_report_blocker'),
+      briefToolAvailable: shotsToolAvailable(systemEvent.tools, 'get_brief'),
+      saveShotToolAvailable: shotsToolAvailable(systemEvent.tools, 'save_shot'),
+      skipChangeToolAvailable: shotsToolAvailable(systemEvent.tools, 'skip_change'),
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
-    if (!state.evidenceFirstOutputSeen) {
-      state.evidenceFirstOutputSeen = true;
-      emitEvidenceDiagnostic(state, { kind: 'first_output' });
+    if (!state.shotsFirstOutputSeen) {
+      state.shotsFirstOutputSeen = true;
+      emitShotsDiagnostic(state, { kind: 'first_output' });
     }
     if (observeDiagnostics) {
       noteFirstAgentOutput(state);
@@ -856,10 +861,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
+        observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
+        observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -888,15 +893,15 @@ function applyStreamEvent(event, onProgress, state) {
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
       const diagnosticStart = block.tool_use_id == null ? null
-        : state.evidenceDiagnosticStarts?.get(String(block.tool_use_id));
-      if (diagnosticStart?.tool === 'evidence_get_context') {
-        emitEvidenceDiagnostic(state, {
+        : state.shotsDiagnosticStarts?.get(String(block.tool_use_id));
+      if (diagnosticStart?.tool === 'get_brief') {
+        emitShotsDiagnostic(state, {
           kind: 'context_result',
           outcome: block.is_error === true ? 'error' : 'ok',
-          ...evidenceContextResultShape(block.content),
+          ...shotsContextResultShape(block.content),
         });
       }
-      observeEvidenceTool(state, {
+      observeShotsTool(state, {
         phase: 'end', id: block.tool_use_id,
         name: state.toolUses.get(block.tool_use_id)?.name,
         failed: block.is_error === true,
@@ -924,7 +929,7 @@ function applyStreamEvent(event, onProgress, state) {
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
-    emitEvidenceDiagnostic(state, {
+    emitShotsDiagnostic(state, {
       kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
       resultSubtype: state.resultSubtype,
       providerStopReason: state.providerStopReason,
@@ -1081,26 +1086,17 @@ function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
     try {
-      if (state.agentBackend === 'codex_openrouter' && !state.evidenceDiagnosticObserver) {
+      if (state.agentBackend === 'codex_openrouter') {
         observeCodingProviderTiming(JSON.parse(line.slice('__USERNODE_CODING_PROVIDER__ '.length)), onProgress, state);
       }
     } catch { /* Malformed diagnostics must not change the agent turn. */ }
     return;
   }
-  if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
+  if (line.startsWith('__USERNODE_SHOTS_BROWSER__ ')) {
     try {
-      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
+      const event = JSON.parse(line.slice('__USERNODE_SHOTS_BROWSER__ '.length));
       if (event && typeof event === 'object' && !Array.isArray(event)) {
-        emitEvidenceDiagnostic(state, event);
-      }
-    } catch { /* A malformed diagnostic must not change the agent turn. */ }
-    return;
-  }
-  if (line.startsWith('__USERNODE_EVIDENCE_BROWSER__ ')) {
-    try {
-      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length));
-      if (event && typeof event === 'object' && !Array.isArray(event)) {
-        emitEvidenceDiagnostic(state, event);
+        emitShotsDiagnostic(state, event);
       }
     } catch { /* A malformed diagnostic must not change the agent turn. */ }
     return;
@@ -1108,8 +1104,8 @@ function parseLine(line, onProgress, state) {
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
     const phase = state.phase.split(/[\s(]/, 1)[0];
-    if (EVIDENCE_DIAGNOSTIC_PHASES.has(phase)) {
-      emitEvidenceDiagnostic(state, { kind: 'runner_phase', phase });
+    if (SHOTS_DIAGNOSTIC_PHASES.has(phase)) {
+      emitShotsDiagnostic(state, { kind: 'runner_phase', phase });
     }
     onProgress(`[${state.phase}]`);
     return;
@@ -1142,10 +1138,13 @@ function parseLine(line, onProgress, state) {
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
+      // The agent ended on a line that does not build on the session branch
+      // (worker/session-branch.sh): nothing was committed or pushed.
+      else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
-    emitEvidenceDiagnostic(state, {
+    emitShotsDiagnostic(state, {
       kind: 'runner_result', outcome: terminalExit === 0 ? 'ok' : 'error',
     });
     return;
@@ -1161,7 +1160,7 @@ function parseLine(line, onProgress, state) {
     const code = parseInt(line.replace('__USERNODE_EXIT__', '').trim(), 10);
     state.exitCode = Number.isFinite(code) ? code : -1;
     state.execExitSeen = true;
-    emitEvidenceDiagnostic(state, { kind: 'runner_exit', outcome: code === 0 ? 'ok' : 'error' });
+    emitShotsDiagnostic(state, { kind: 'runner_exit', outcome: code === 0 ? 'ok' : 'error' });
     return;
   }
   if (line.startsWith('__USERNODE_WARN__')) {
@@ -1177,7 +1176,7 @@ function parseLine(line, onProgress, state) {
     if (state.telemetryDiagnosticsEnabled === true
         && /^resume failed \(exit -?\d+\); retrying fresh$/.test(msg)) {
       state.providerRetryCount = (state.providerRetryCount || 0) + 1;
-      emitEvidenceDiagnostic(state, { kind: 'resume_retry' });
+      emitShotsDiagnostic(state, { kind: 'resume_retry' });
     }
     // Surface runner warnings ("resume failed (exit N); retrying fresh",
     // "push failed", …) in the session's progress log too — both the
@@ -1210,28 +1209,6 @@ function parseLine(line, onProgress, state) {
           || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
-        if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
-          const completionReminder = state.evidenceCompletionReminder === true;
-          emitEvidenceDiagnostic(state, {
-            kind: 'provider_init',
-            completionReminder,
-          });
-        }
-        if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
-          state.evidenceFirstOutputSeen = true;
-          emitEvidenceDiagnostic(state, { kind: 'first_output' });
-        }
-        if (isToolStart) {
-          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName,
-            input: event?.item?.arguments });
-        }
-        if (isToolCompletion) {
-          observeEvidenceTool(state, {
-            phase: 'end', id: ev.itemId, name: ev.toolName,
-            failed: (ev.exitCode != null && Number(ev.exitCode) !== 0)
-              || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
-          });
-        }
         if (ev.itemId && (ev.kind === 'command_started' || ev.kind === 'mcp_started')) {
           const open = state.codexOpenTools || (state.codexOpenTools = new Map());
           open.set(ev.itemId, ev.kind === 'command_started'
@@ -1239,12 +1216,6 @@ function parseLine(line, onProgress, state) {
             : { kind: 'mcp', label: ev.toolName });
         }
         if (ev.itemId && isToolCompletion) state.codexOpenTools?.delete(ev.itemId);
-        if (ev.kind === 'error') {
-          emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
-        }
-        if (ev.kind === 'usage') {
-          emitEvidenceDiagnostic(state, { kind: 'provider_usage' });
-        }
         if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
         if (observeDiagnostics && isToolCompletion) {
           // A future CLI may omit item.started for a completed item. Infer the
@@ -1449,6 +1420,9 @@ function newWatchState() {
     // #8: clean|resolved|conflict|already_synced (MODE=sync only). The
     // route handler routes the chat message off this.
     syncResult: null,
+    // The build ended off the session branch, on work that does not build
+    // on it; the runner committed and pushed nothing (session-branch.sh).
+    branchMismatch: false,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -2264,6 +2238,9 @@ const BOOTSTRAP_ERROR_PREFIXES = Object.freeze([
   'checkout failed',
   'warm-ready timeout',
   'warm wrapper exited before warm-ready',
+  // Kubernetes only: the kubelet could not start the worker container at
+  // all. Carries a typed `bootstrapReason` (see kubernetes-worker-bootstrap).
+  'worker could not start',
 ]);
 
 // Only the two failure modes with a plausible transient cause. A private
@@ -2401,28 +2378,46 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    try {
-      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-        sessionId, env: safeEnv, onProgress, temporary,
-        reclaimVolumes: async () => {
-          const pool = _getPoolSafe();
-          if (!pool) return 0;
-          const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
-            pool, excludeSessionId: sessionId,
-          });
-          return freed.length;
-        },
-      });
-      containerName = result.runtimeName;
-      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-      return containerName;
-    } catch (err) {
-      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
-      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
-        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
-        logTail: err.bootstrapLog?.join('\n') || null });
-      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    // Same bounded retry as the Docker path below: same attempts, same
+    // backoff, same halved budget after the first, and only for the
+    // transient failures. A Pod the kubelet cannot even start (no image, no
+    // node, broken config) fails fast with a typed reason and is not retried.
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+          sessionId, env: safeEnv, onProgress, temporary,
+          timeoutMs: attempt === 1 ? WARM_READY_TIMEOUT_MS : Math.round(WARM_READY_TIMEOUT_MS / 2),
+          retryAttempt: attempt === 1 ? null : attempt,
+          reclaimVolumes: async () => {
+            const pool = _getPoolSafe();
+            if (!pool) return 0;
+            const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
+              pool, excludeSessionId: sessionId,
+            });
+            return freed.length;
+          },
+        });
+        containerName = result.runtimeName;
+        log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName, attempt });
+        return containerName;
+      } catch (err) {
+        Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+        const retryable = isRetryableBootstrapError(err);
+        const willRetry = retryable && attempt < BOOTSTRAP_MAX_ATTEMPTS;
+        log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+          attempt, maxAttempts: BOOTSTRAP_MAX_ATTEMPTS, retryable, willRetry,
+          phase: err.bootstrapPhase || null, reason: err.bootstrapReason || null,
+          message: log.redactString(err.message),
+          logTail: err.bootstrapLog?.join('\n') || null });
+        if (!willRetry) throw attachBootstrapContext(err, { containerName, attempts: attempt });
+        progress(`[retrying setup (attempt ${attempt + 1} of ${BOOTSTRAP_MAX_ATTEMPTS})]`);
+        const backoffMs = BOOTSTRAP_RETRY_BASE_MS * (2 * attempt - 1);
+        await new Promise((r) => setTimeout(r, backoffMs + Math.floor(Math.random() * 250)));
+      }
     }
+    // Unreachable: the loop either returns or throws on its last attempt.
+    throw new Error(`warm bootstrap exhausted ${BOOTSTRAP_MAX_ATTEMPTS} attempts for ${containerName}`);
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
@@ -2694,6 +2689,10 @@ async function ensureWorker(sessionId, {
             containerName, err: err.message,
           });
         });
+      } else {
+        // The Recreate below replaces the Pod, and the workspace with it,
+        // without passing through evictWorker.
+        await rescueUnpushedCommit(sessionId, { branchName });
       }
       // Kubernetes falls through without deleting the Deployment. Its
       // Recreate strategy updates the immutable image and stops the old Pod
@@ -2756,9 +2755,8 @@ async function execInWorker(sessionId, {
   // non-Claude backend. This remains user-level input; it is never promoted
   // into the authoritative system-context transport below.
   resumeFallbackPrompt = null,
-  // Hosted Claude system context; Codex evidence turns receive the same
-  // purpose-bound contract as developer instructions. Materialized separately
-  // so it is a stable instruction layer, not another conversation message.
+  // Hosted Claude system context. Materialized separately so it is a stable
+  // instruction layer, not another conversation message.
   systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
@@ -2787,11 +2785,20 @@ async function execInWorker(sessionId, {
   agentModelMetadata = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
-  evidenceRunId = null,
-  evidenceOrigins = null,
-  evidenceAuthTokens = null,
-  evidenceNavigationHints = null,
-  evidenceCompletionReminder = false,
+  shotsRunId = null,
+  shotsOrigins = null,
+  shotsAuthTokens = null,
+  shotsNavigationHints = null,
+  // Record browser video for this turn: only when a declared change is
+  // motion a still cannot show.
+  shotsRecordClips = false,
+  // The size clips are recorded at, WIDTHxHEIGHT: the motion screens' own,
+  // so a phone clip is not a phone in the corner of a desktop-sized frame.
+  shotsClipSize = null,
+  // The app under test is a child app: the shots proxy serves its
+  // /usernode-bridge|native|tailwind/ requests from the platform, as the
+  // production edge does. The platform's own pairs serve their own.
+  shotsPlatformAssets = false,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2805,9 +2812,9 @@ async function execInWorker(sessionId, {
   // transaction; ordinary callers leave it null.
   journalPath = null,
   onProgress,
-  // Content-free lifecycle events for the owner-only visual-evidence trace.
+  // Content-free lifecycle events for the owner-only shots trace.
   // Never pass journal text, tool arguments/results, URLs or model output.
-  onEvidenceDiagnostic = null,
+  onShotsDiagnostic = null,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
   // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
@@ -2907,11 +2914,17 @@ async function execInWorker(sessionId, {
     backend: resolvedBackend, harness: resolvedHarness, isCodex, isClaude,
     isClaudeOpenRouter, isOpenRouter, runsClaude,
   } = resolveTurnBackend(agentBackend, agentHarness);
+  // Every shots turn runs on Claude Code (shots-agent
+  // dispatches only claude_code); neither OpenRouter harness has a shots
+  // mode, so refuse before anything is minted or written.
+  if (mode === 'shots' && !isClaude) {
+    throw new Error('execInWorker: shots turns run on Claude Code');
+  }
   if (isClaudeOpenRouter && !['scout', 'build'].includes(mode)) {
     throw new Error(`execInWorker: Claude over OpenRouter supports scout and build turns, not ${mode}`);
   }
-  if (systemPrompt && !runsClaude && !(isCodex && mode === 'evidence')) {
-    throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
+  if (systemPrompt && !runsClaude) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
@@ -2922,26 +2935,29 @@ async function execInWorker(sessionId, {
   if (resumeFallbackPrompt && !resumeSessionId) {
     throw new Error('execInWorker: resumeFallbackPrompt requires resumeSessionId');
   }
-  if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
+  if (isClaude && ['build', 'shots'].includes(mode) && !systemPrompt) {
     throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
   }
-  if (isCodex && mode === 'evidence' && !systemPrompt) {
-    throw new Error('execInWorker: hosted Codex evidence requires systemPrompt');
-  }
-  if (mode === 'evidence') {
-    if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))
-        || !evidenceOrigins || !evidenceAuthTokens) {
-      throw new Error('execInWorker: evidence mode requires a run id, paired origins, and auth tokens');
+  if (mode === 'shots') {
+    if (!/^[0-9a-f]{32}$/.test(String(shotsRunId || ''))
+        || !shotsOrigins || !shotsAuthTokens) {
+      throw new Error('execInWorker: shots mode requires a run id, paired origins, and auth tokens');
     }
     for (const side of ['base', 'head']) {
       let parsed;
-      try { parsed = new URL(evidenceOrigins[side]); } catch {}
+      try { parsed = new URL(shotsOrigins[side]); } catch {}
       if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.pathname !== '/') {
-        throw new Error(`execInWorker: invalid ${side} evidence origin`);
+        throw new Error(`execInWorker: invalid ${side} shots origin`);
       }
     }
-    if (typeof evidenceCompletionReminder !== 'boolean') {
-      throw new Error('execInWorker: evidence completion reminder must be boolean');
+    if (typeof shotsRecordClips !== 'boolean') {
+      throw new Error('execInWorker: shots clip recording must be boolean');
+    }
+    if (shotsClipSize != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(shotsClipSize))) {
+      throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+    }
+    if (typeof shotsPlatformAssets !== 'boolean') {
+      throw new Error('execInWorker: shots platform assets must be boolean');
     }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
@@ -2961,9 +2977,9 @@ async function execInWorker(sessionId, {
   let issuesReadJwt = null;
   let anthropicProxyJwt = null;
   let prodDebugJwt = null;
-  let evidenceJwt = null;
-  if (mode !== 'evidence') issuesReadJwt = mintIssuesReadJwt(sessionId);
-  else evidenceJwt = mintEvidenceJwt(sessionId, evidenceRunId);
+  let shotsJwt = null;
+  if (mode !== 'shots') issuesReadJwt = mintIssuesReadJwt(sessionId);
+  else shotsJwt = mintShotsJwt(sessionId, shotsRunId);
   if (isOpenRouter) {
     if (mode === 'build') {
       workerPushJwt = mintWorkerPushJwt(sessionId);
@@ -2972,14 +2988,15 @@ async function execInWorker(sessionId, {
     // A scout must never mint a general token at all. Hiding WORKER_JWT while
     // placing the same capability in ISSUES_JWT/ANTHROPIC_API_KEY is not an
     // isolation boundary when the agent has Bash.
-    if (mode !== 'scout' && mode !== 'evidence') workerSessionJwt = mintWorkerJwt(sessionId);
+    if (mode !== 'scout' && mode !== 'shots') workerSessionJwt = mintWorkerJwt(sessionId);
     if (useAnthropicProxy) anthropicProxyJwt = mintAnthropicProxyJwt(sessionId);
-    if (prodDebug && mode !== 'sync' && mode !== 'evidence') {
+    if (prodDebug && mode !== 'sync' && mode !== 'shots') {
       prodDebugJwt = mintProdDebugJwt(sessionId);
     }
   }
 
-  const persistedModel = isOpenRouter ? (agentModel || '') : models.resolve(model);
+  const claudeModel = claudeTurnModel(mode, model);
+  const persistedModel = isOpenRouter ? (agentModel || '') : claudeModel;
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
@@ -3025,10 +3042,10 @@ async function execInWorker(sessionId, {
       anthropicApiKey,
       prodDebugJwt,
       openrouterApiKey,
-      evidenceJwt,
-      evidenceMemberToken: evidenceAuthTokens?.member,
-      evidenceAdminToken: evidenceAuthTokens?.read_only_admin,
-      evidenceFullAdminToken: evidenceAuthTokens?.full_admin,
+      shotsJwt,
+      shotsMemberToken: shotsAuthTokens?.member,
+      shotsAdminToken: shotsAuthTokens?.read_only_admin,
+      shotsFullAdminToken: shotsAuthTokens?.full_admin,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {
@@ -3042,16 +3059,18 @@ async function execInWorker(sessionId, {
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
-    PLATFORM_URL: mode === 'evidence' ? evidenceControlUrl() : PLATFORM_INTERNAL_URL,
-    ...(mode === 'evidence' ? {
-      EVIDENCE_RUN_ID: evidenceRunId,
-      EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
-      EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
-      EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
-      EVIDENCE_COMPLETION_REMINDER: evidenceCompletionReminder ? '1' : '0',
+    PLATFORM_URL: mode === 'shots' ? shotsControlUrl() : PLATFORM_INTERNAL_URL,
+    ...(mode === 'shots' ? {
+      SHOTS_RUN_ID: shotsRunId,
+      SHOTS_BASE_ORIGIN: new URL(shotsOrigins.base).origin,
+      SHOTS_HEAD_ORIGIN: new URL(shotsOrigins.head).origin,
+      SHOTS_NAVIGATION_HINTS: JSON.stringify(shotsNavigationHints || {}),
+      SHOTS_RECORD_CLIPS: shotsRecordClips ? '1' : '0',
+      ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
+      SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
-      MODEL: models.resolve(model),
+      MODEL: claudeModel,
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
       RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
         ? TURN_RESUME_FALLBACK_PROMPT_PATH
@@ -3083,6 +3102,12 @@ async function execInWorker(sessionId, {
       : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    // #3426: '1' lets the adapter pass image blocks through to a model the
+    // OpenRouter catalog lists as taking images; anything else is text only.
+    safeEnv.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata?.supportsImages === true ? '1' : '';
+    // #3557: '1' lets it pass a PDF (a document block) through to a model
+    // the catalog lists as taking files; anything else is a note.
+    safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
     safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
     safeEnv.TURN_UUID = turnUuid || '';
@@ -3108,6 +3133,9 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL_SUPPORTS_TOOLS = agentModelMetadata?.supportsTools == null
       ? ''
       : (agentModelMetadata.supportsTools ? '1' : '0');
+    // #3426: declares image input in Codex's model catalog, which is what
+    // lets view_image run. Text only unless the catalog says otherwise.
+    safeEnv.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata?.supportsImages === true ? '1' : '';
     safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
     safeEnv.TURN_UUID = turnUuid || '';
     // The operator-configured OpenRouter endpoint (plan 4): always forward
@@ -3164,6 +3192,10 @@ async function execInWorker(sessionId, {
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
+    // A new turn starts from GitHub's copy of the branch (the runner resets
+    // to it), so an earlier turn's unpushed commit is no longer this
+    // worker's to rescue.
+    unpushed: null,
   });
   const activeTurnPersisted = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
@@ -3287,16 +3319,15 @@ async function execInWorker(sessionId, {
     state.agentBackend = agentBackend;
     // #3296: and the harness, which decides that parser for OpenRouter.
     state.agentHarness = resolvedHarness;
-    if (mode === 'evidence') {
-      state.evidenceOrigins = evidenceOrigins;
-      state.evidenceNavigationHints = evidenceNavigationHints;
-      state.evidenceCompletionReminder = evidenceCompletionReminder === true;
+    if (mode === 'shots') {
+      state.shotsOrigins = shotsOrigins;
+      state.shotsNavigationHints = shotsNavigationHints;
     }
-    if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
-      state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
-      emitEvidenceDiagnostic(state, {
+    if (mode === 'shots' && typeof onShotsDiagnostic === 'function') {
+      state.shotsDiagnosticObserver = onShotsDiagnostic;
+      emitShotsDiagnostic(state, {
         kind: 'provider_dispatched',
-        backend: isCodex ? 'codex_openrouter' : 'claude_code',
+        backend: 'claude_code',
         requestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
       });
     }
@@ -3368,6 +3399,10 @@ async function execInWorker(sessionId, {
       // Remembered for finishTurn so the caller's `finally` doesn't have
       // to thread the journal path back through its own scope.
       ...(holdTurnRecord ? { finishedJournal: journal, finishedTurnId: durableTurnId } : {}),
+      // What a finished build committed but could not push. The tail's heal
+      // re-pushes it (and clears this); if that fails too, evictWorker
+      // tries once more before the workspace is thrown away.
+      unpushed: unpushedCommit(mode, execState, branchName),
     });
     if (holdTurnRecord) {
       // Hand the record to the tail rather than dropping it. Seed the
@@ -3799,13 +3834,18 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 //
 // `stopRequestedAt` on the registry entry tightens the watchdog cadence as
 // a fallback for the case where this append doesn't land at all.
-async function stopTurn(sessionId) {
+async function stopTurn(sessionId, { force = false } = {}) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
-  await execWorkerCommand(containerName, ['sh', '-c',
-    buildTurnStopScript(meta?.journal || null),
-  ]).catch(() => {});
+  const command = execWorkerCommand(containerName, ['sh', '-c',
+    buildTurnStopScript(meta?.journal || null, { force }),
+  ], null, { timeoutMs: force ? 5000 : 30000 });
+  if (force) {
+    const result = await command;
+    return /__USERNODE_STOP_CONFIRMED__/.test(result?.stdout || '');
+  }
+  await command.catch(() => {});
   log.info('worker', 'Stop signal sent (in-container kill + journal exit marker)', {
     containerName, sessionId, journal: meta?.journal || '(discovered in-container)',
   });
@@ -3984,11 +4024,50 @@ async function resumeTurnFromJournal(sessionId, {
   }
 }
 
+// A finished build whose runner committed but could not push: the runner
+// printed its RESULT line (a stopped turn is killed before it does, and a
+// stop means its work is dropped), reported commits ahead of main and a sha,
+// and push_ok=0. Anything else is null.
+function unpushedCommit(mode, state, branchName) {
+  if (mode !== 'build' || !state || !state.resultSeen) return null;
+  if (state.pushOk === true || !(state.ahead > 0) || !state.sha || !branchName) return null;
+  return { sha: state.sha, branchName };
+}
+
+// The workspace lives on the container's own filesystem, so evicting or
+// replacing a worker (idle, a stale image, a new runtime contract) deletes
+// any commit it still holds. For the one kind the platform means to publish,
+// a finished build's commit whose push and heal both failed, push once more
+// first. Best effort: it never blocks the eviction, and a failure is logged
+// with the sha so the commit can still be named. Sheep countrr's session
+// 5030 lost a whole feature to a stale-image replacement this way
+// (usernode-bot/sheep-countrr-a08857#48).
+async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
+  const meta = _registryGet(sessionId);
+  const pending = meta?.unpushed;
+  if (!pending || meta?.inFlight) return { attempted: false };
+  const branch = branchName || pending.branchName;
+  try {
+    const pushed = await execPushFromWorker(sessionId, branch);
+    log.info('worker', 'Pushed an unpushed commit before the worker was replaced', {
+      sessionId, branch, sha: String(pushed?.sha || pending.sha).slice(0, 8),
+    });
+    return { attempted: true, pushed: true };
+  } catch (err) {
+    log.warn('worker', 'Could not push an unpushed commit before the worker was replaced', {
+      sessionId, branch, sha: pending.sha, code: err.code || null, err: err.message,
+    });
+    return { attempted: true, pushed: false };
+  }
+}
+
 // Tear down a warm worker container (eviction). Volume is preserved so
-// the next `ensureWorker` re-warms with CC's session memory intact.
+// the next `ensureWorker` re-warms with CC's session memory intact. A
+// finished build's unpushed commit is pushed first (rescueUnpushedCommit).
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
+  await rescueUnpushedCommit(sessionId);
   if (usesKubernetesWorkers()) {
     await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false }).catch(() => {});
   } else {
@@ -4153,14 +4232,15 @@ const TURN_STOP_GRACE_TICKS = 20;
 // `journal` is the host's recorded path for the in-flight turn. When it is
 // unknown (an adopted worker whose registry entry predates this dispatch)
 // the script discovers the newest turn journal itself — the dispatch
-// wrapper rm's stale ones first, so at most one exists. `exit 0` throughout:
-// a stop must never fail loudly, the watchdog is behind it either way.
-function buildTurnStopScript(journal) {
+// wrapper rm's stale ones first, so at most one exists. Classic stops are
+// best-effort; force stops must return confirmation or fail for recovery.
+function buildTurnStopScript(journal, { force = false } = {}) {
   const journalExpr = journal
     // Single-quoted: the path is platform-generated (/home/node/.claude/
     // turn-<ms>.log), never user input, and quoting keeps it one word.
     ? `J='${journal}'`
     : 'J=$(ls -t /home/node/.claude/turn-*.log 2>/dev/null | head -1)';
+  if (force) return buildImmediateTurnStopScript(journalExpr);
   return [
     turnProcSignalSnippet('TERM'),
     // Wait for the SIGTERMed processes to actually disappear. Breaks out on
@@ -4175,6 +4255,40 @@ function buildTurnStopScript(journal) {
     // 143 = 128 + SIGTERM, what a docker-stop-based kill would have produced.
     '[ -n "$J" ] && [ -f "$J" ] && echo "__USERNODE_EXIT__ 143" >> "$J" 2>/dev/null',
     'exit 0',
+  ].join('; ');
+}
+
+// Hard cancellation preserves the warm worker and workspace. Freeze the
+// owned roots before walking descendants so a stopped parent cannot fork
+// fresh tools while we terminate its process tree. The warm idle wrapper,
+// journal reader and this control shell are not roots.
+function buildImmediateTurnStopScript(journalExpr) {
+  return [
+    'targets=" "',
+    'for d in /proc/[0-9]*; do '
+      + '[ "$d" = "/proc/$$" ] && continue; '
+      + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
+      + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' || continue; `
+      + 'p=${d#/proc/}; targets="$targets$p "; kill -STOP "$p" 2>/dev/null; done',
+    'added=1; while [ "$added" = 1 ]; do added=0; '
+      + 'for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue; '
+      + 'case "$targets" in *" $p "*) continue;; esac; '
+      + 'parent=$(sed -n "s/^PPid:[[:space:]]*//p" "$d/status" 2>/dev/null); '
+      + '[ -n "$parent" ] || continue; '
+      + 'case "$targets" in *" $parent "*) targets="$targets$p "; added=1; kill -STOP "$p" 2>/dev/null;; esac; '
+      + 'done; done',
+    'for p in $targets; do kill -KILL "$p" 2>/dev/null; done',
+    // Do not write a terminal marker while any signalled process can run.
+    // A zombie has already exited; reaping it belongs to its parent.
+    'i=0; while :; do alive=0; for p in $targets; do '
+      + '[ -r "/proc/$p/stat" ] || continue; '
+      + 'state=$(sed "s/^.*) //" "/proc/$p/stat" 2>/dev/null); '
+      + 'case "$state" in Z*|X*|"") ;; *) alive=1;; esac; done; '
+      + '[ "$alive" = 0 ] && break; [ "$i" -ge 10 ] && exit 75; '
+      + 'i=$((i+1)); sleep 0.05; done',
+    journalExpr,
+    '[ -n "$J" ] && [ -f "$J" ] && echo "__USERNODE_EXIT__ 137" >> "$J" 2>/dev/null',
+    'echo __USERNODE_STOP_CONFIRMED__',
   ].join('; ');
 }
 
@@ -4340,6 +4454,34 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 // excluded `@`, which every email-address username produces — so those
 // sessions committed fine and then failed every push, heal included.
 
+// The push, as the one-shot script that runs in the worker. Two things it
+// does beyond `git push`, both from Sheep countrr's session 5030
+// (usernode-bot/sheep-countrr-a08857#48), where an agent committed its
+// feature on a local branch of its own (`wolf-mechanic`):
+//
+//   - If HEAD is on another branch that grew from the session branch, the
+//     session branch is moved up to it first. That is the turn's work; the
+//     runner does the same before its own push (worker/session-branch.sh),
+//     and this covers a heal against a worker whose runner predates that.
+//   - It prints the commit it pushed (the session branch), not HEAD. It used
+//     to print HEAD, so the heal reported the stray commit as pushed while
+//     GitHub had nothing new, and every retry of the PR 422'd with "No
+//     commits between main and <branch>".
+//
+// $PAT and $BRANCH come from the exec's environment, never argv. `workspace`
+// is overridable for tests only.
+function buildPushScript({ workspace = '/home/node/workspace' } = {}) {
+  return `set -e; cd ${shellQuote(workspace)}; `
+    + 'cur=$(git symbolic-ref --quiet --short HEAD || true); '
+    + 'if [ "$cur" != "$BRANCH" ] '
+    + '&& git rev-parse --quiet --verify "refs/heads/$BRANCH" >/dev/null '
+    + '&& git merge-base --is-ancestor "refs/heads/$BRANCH" HEAD; then '
+    + 'git branch --force "$BRANCH" HEAD >&2; fi; '
+    + 'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" '
+    + 'push -u origin "$BRANCH" >&2 && '
+    + 'git rev-parse "refs/heads/$BRANCH"';
+}
+
 async function execPushFromWorker(sessionId, branchName) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
   if (!botToken) {
@@ -4388,14 +4530,10 @@ async function execPushFromWorker(sessionId, branchName) {
   // reads $PAT and $BRANCH from the exec env (passed via bare `-e`
   // so the values aren't in argv).
   //
-  // Final `git rev-parse HEAD` prints the SHA we pushed, which the
-  // caller surfaces back to the worker for logging and the
-  // __USERNODE_RESULT__ accounting.
-  const inlineScript =
-    'set -e; cd /home/node/workspace && ' +
-    'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" ' +
-    'push -u origin "$BRANCH" >&2 && ' +
-    'git rev-parse HEAD';
+  // The script (buildPushScript below) settles the session branch first and
+  // prints the SHA it pushed, which the caller surfaces back to the worker
+  // for logging and the __USERNODE_RESULT__ accounting.
+  const inlineScript = buildPushScript();
 
   const args = [
     'exec',
@@ -4421,6 +4559,7 @@ async function execPushFromWorker(sessionId, branchName) {
     log.info('worker', 'Push proxied to GitHub', {
       sessionId, branch: branchName, sha: (sha || '').slice(0, 8),
     });
+    if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
     return { sha, stderr: (stderr || '').trim() };
   } catch (err) {
     // Don't leak the PAT into log lines if `docker exec` printed any
@@ -4519,6 +4658,7 @@ module.exports = {
   // exposed for unit tests (watchdog strike policy + line parsing)
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
+  _registryUpsertForTests: _registryUpsert,
   parseLine,
   newWatchdogCounters,
   recordWatchdogProbe,
@@ -4530,12 +4670,16 @@ module.exports = {
   workerRuntimeName,
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
+  buildPushScript,
+  unpushedCommit,
+  rescueUnpushedCommit,
   mintWorkerJwt,
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
-  mintEvidenceJwt,
-  evidenceControlUrl,
+  mintShotsJwt,
+  shotsControlUrl,
+  claudeTurnModel,
   buildTurnSecretEnv,
   // #3296: harness-aware backend resolution and result shape (for tests)
   resolveTurnBackend,

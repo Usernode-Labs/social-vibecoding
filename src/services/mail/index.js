@@ -440,7 +440,7 @@ async function sendPasswordResetMail(config, email, token) {
 }
 
 /**
- * "Your Homeroom access is ready" — the one mail whose whole job is a link.
+ * The "you're in" welcome on release from the waitlist. Its one action is a link.
  *
  * #1545: the destination is a QUERY, not a fragment. It was
  * `/#signup`, and the report was that following it from a desktop mail client
@@ -456,7 +456,7 @@ async function sendPasswordResetMail(config, email, token) {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, mobile = null } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
@@ -485,6 +485,9 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
       ? `${PRODUCTION_ORIGIN}/?login=1`
       : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
     hasAccount,
+    // { ios, android } store listings from services/mobile-store-links.js; a
+    // platform with no published link gets no install steps.
+    mobile,
   });
 }
 

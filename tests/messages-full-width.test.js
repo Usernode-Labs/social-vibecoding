@@ -71,13 +71,15 @@ test('a conversation, a group and #general: at the right of the header, just bef
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
   assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
     'immediately before the ⋯ menu');
-  assert.match(header, /<header className="messages-thread-header">\s*\{channel/, 'no longer leading the row');
+  // #3407: #general's way back to its hub leads the row; the toggle does not.
+  assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
 });
 
 test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
   const pane = fn('AppDiscussionThread');
   assert.match(pane, /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
-  assert.match(pane, /<header className="messages-thread-header">\s*<span\s+data-icon=/, 'no longer leading the row');
+  // #3407: the channel's way back to its hub leads the row, then the tile.
+  assert.match(pane, /<header className="messages-thread-header">\s*<PageBackButton [^\n]*\/>\s*<AppIconLink\s+slug=\{slug\}\s+name=\{name\}\s+data-icon=/, 'no longer leading the row');
   // A channel is its community's room and opens with no list beside it, so
   // the toggle for that list stands down on it.
   assert.match(fn('FullWidthToggle'),

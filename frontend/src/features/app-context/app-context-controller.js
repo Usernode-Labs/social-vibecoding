@@ -80,7 +80,7 @@ if (typeof window !== 'undefined') {
   // The sheet is modal over whatever the address bar now names, so ANY
   // client-side navigation dismisses it — rows call dismissForNav themselves,
   // but browser back/forward and programmatic fragment writes arrive through
-  // these events instead (found in the evidence run: a deep link rendered
+  // these events instead (found in the shots run: a deep link rendered
   // Activity underneath a still-open sheet). Clean pushState navigation uses
   // popstate on traversal; legacy platform routes still use hashchange.
   window.addEventListener('popstate', () => AppContext.dismissForNav());

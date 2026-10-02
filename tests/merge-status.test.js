@@ -101,6 +101,34 @@ test('state 6 — checks pending is neutral + spinner (not amber)', () => {
   assert.equal(life.spinner, true);
 });
 
+test('state 6 — a run older than a minute says how long it has been going (#3232)', () => {
+  const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', checks_checked_at: minsAgo(12.5),
+  });
+  assert.equal(life.key, 'checks_running');
+  assert.equal(life.label, 'Checks running · 12 min');
+  assert.equal(life.tone, 'neutral');
+  assert.equal(life.spinner, true);
+  assert.match(MergeStatus.pillHtml(life), /Checks running · 12 min/);
+  assert.equal(MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', checks_checked_at: minsAgo(1),
+  }).label, 'Checks running · 1 min');
+});
+
+test('state 6 — under a minute, or with no usable start time, keeps "Checks running…" (#3232)', () => {
+  const at = (ms) => new Date(Date.now() + ms).toISOString();
+  for (const checks_checked_at of [at(-30 * 1000), at(5 * 60000), 'not-a-date', null, undefined]) {
+    const life = MergeStatus.lifecycle({ status: 'promoted', check_state: 'pending', checks_checked_at });
+    assert.equal(life.label, 'Checks running…', String(checks_checked_at));
+  }
+  // A deferred run is not running, so it never carries a duration.
+  assert.equal(MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', check_phase: 'deferred',
+    checks_checked_at: at(-20 * 60000),
+  }).label, 'Checks deferred');
+});
+
 test('state 6b — checks skipped (#461) is neutral, terminal (no spinner) and carries the reason', () => {
   const life = MergeStatus.lifecycle({
     status: 'promoted', check_state: 'skipped',

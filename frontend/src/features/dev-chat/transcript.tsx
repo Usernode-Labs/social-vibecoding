@@ -172,6 +172,16 @@ function VenueCaption({ text }: { text: string | undefined }): ReactNode {
   return <span className="dc-status-venue">{text}</span>;
 }
 
+/**
+ * #3559: the sentence is a span of its own, `.dc-status-text`, so it is the
+ * one part of the row that may wrap inside a word. A status row is a flex
+ * row, and its sentence (bare text before this, an anonymous flex item that
+ * nothing could be set on) was held at the width of its longest word. A
+ * step that names a link or a branch made the row wider than a phone, and
+ * the transcript, which scrolls, slid sideways with it. The rule is on the
+ * sentence alone, not the row: the stamp and the elapsed clock beside it
+ * keep their own words whole, rather than being broken to make room.
+ */
 function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): ReactNode {
   return (
     <div
@@ -180,8 +190,8 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
     >
       <StatusIcon kind={r.icon} />
       {r.html !== undefined
-        ? <Html as="span" html={` ${r.html} `} />
-        : ` ${r.text} `}
+        ? <Html as="span" className="dc-status-text" html={` ${r.html} `} />
+        : <span className="dc-status-text">{` ${r.text} `}</span>}
       <Elapsed e={r.elapsed} />
       {r.forceStop ? (
         <button
@@ -487,6 +497,22 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
 }
 
 /**
+ * #3605: once the change is up for a vote, its lifecycle badge ("In vote",
+ * "Merging…", "Merged") is the way to its proposal's vote page. Before that
+ * there is no vote to open, so the badge stays a plain label.
+ */
+function StatusLink({ id, children }: { id: number | null; children: ReactNode }): ReactNode {
+  if (!id) return children;
+  return (
+    <button
+      type="button" className="dc-pr-status-link" data-open-vote={id}
+      title="Open this proposal's vote page"
+      onClick={() => controller()?.openProposalVote?.(id)}
+    >{children}</button>
+  );
+}
+
+/**
  * The card under a `changes` row's status line, on its own. `ChangesCard`
  * draws both; `DevChatTranscript` draws this after the LAST row once later
  * iterations follow the change (#1889), with the status line left in the
@@ -502,7 +528,14 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
-          {r.closesHtml ? <Html as="span" className="contents" html={r.closesHtml} /> : null}
+          {(r.closes || []).map((c) => (
+            <button
+              key={c.n} type="button" data-issue-chip={c.n}
+              className="dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400"
+              title={`Open request #${c.n}`}
+              onClick={() => controller()?.openIssueRef?.(c.n)}
+            >{`${c.verb} #${c.n}`}</button>
+          ))}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
         {r.visualsHtml ? (
@@ -546,10 +579,10 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             </button>
           ) : null}
           {r.status2.kind === 'merged'
-            ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged, now live in the app</span>
+            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : MERGED_TITLE}>✓ Merged, now live in the app</span></StatusLink>
             : null}
           {r.status2.kind === 'badge'
-            ? <Html as="span" className="contents" html={r.status2.html} />
+            ? <StatusLink id={r.proposalId}><Html as="span" className="contents" html={r.status2.html} /></StatusLink>
             : null}
         </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>
@@ -850,10 +883,6 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
       {s.empty ? (
         <div id="dc-empty-state" className="dc-empty-state">
           <div className="dc-empty-title">What should this session change?</div>
-          <p className="dc-empty-text">
-            Describe it in the box below. The agent works it out with you, builds it, and
-            gives you a preview to try before anything goes to a vote.
-          </p>
         </div>
       ) : null}
       {s.rows.map((r, i) => {

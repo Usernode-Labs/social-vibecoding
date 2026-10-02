@@ -70,7 +70,9 @@ async function connect(t, { beforeMigration = null } = {}) {
       -- reduced copy creates them up front, the way it creates every other
       -- column the agent-sessions statements touch.
       icon_emoji VARCHAR(32), icon_image_id VARCHAR(32),
+      moderation_suspended_at TIMESTAMPTZ,
       collab_visibility TEXT NOT NULL DEFAULT 'public', view_visibility TEXT NOT NULL DEFAULT 'public');
+    CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
@@ -78,11 +80,11 @@ async function connect(t, { beforeMigration = null } = {}) {
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,
-      visual_evidence_state VARCHAR(24), visual_evidence_run_id VARCHAR(32),
+      shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB);
     -- The active change's running preview (activeChange.previewCapture).
-    CREATE TABLE visual_evidence_runs (
+    CREATE TABLE shot_runs (
       id VARCHAR(32) PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
       started_at TIMESTAMPTZ);
@@ -467,6 +469,36 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
   }
 });
 
+test('stop intent is durable and idempotent; a recovered coding job blocks a new lease on every connection', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const other = schemaPool();
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const args = { agentSessionId: session.id, userId: 7, turnId: 'old-turn' };
+    assert.equal(await agentSessions.acquireTurnLease(client, args), true);
+    const first = await agentSessions.markTurnStopRequested(client, { ...args, by: 'ada' });
+    const again = await agentSessions.markTurnStopRequested(other, { ...args, by: 'other-device' });
+    assert.equal(again.stopRequestedAt, first.stopRequestedAt);
+    assert.equal(again.stopRequestedBy, 'ada');
+    assert.equal((await agentSessions.readState(other, { userId: 7, id: session.id })).lease.stopping, true);
+    assert.equal(await agentSessions.markTurnStopRequested(client, { ...args, userId: 8 }), null);
+    await agentSessions.releaseTurnLease(client, args);
+    const job = { turnId: 'coding-1', mode: 'build', stopRequestedAt: first.stopRequestedAt };
+    const { rows: [change] } = await client.query(
+      'INSERT INTO chat_sessions (app_id, user_id, agent_session_id, active_turn) VALUES (3, 7, $1, $2::jsonb) RETURNING id',
+      [session.id, JSON.stringify(job)],
+    );
+    await client.query('UPDATE agent_sessions SET active_change_id = $1 WHERE id = $2', [change.id, session.id]);
+    assert.equal(await agentSessions.acquireTurnLease(other, { ...args, turnId: 'new-turn' }), false,
+      'the Mayor lease is gone but its coding job still exists');
+    await client.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [change.id]);
+    assert.equal(await agentSessions.acquireTurnLease(other, { ...args, turnId: 'new-turn' }), true);
+    assert.equal(await agentSessions.markTurnStopRequested(client, { ...args, by: 'late-device' }), null,
+      'an old stop cannot stamp the replacement turn');
+  } finally { await other.end(); await done(client); }
+});
+
 test('a lease its turn stopped renewing is not busy, and only such a lease is handed back', async (t) => {
   const client = await connect(t);
   if (!client) return;
@@ -843,12 +875,14 @@ test('a turn left behind by its process is ended once, with a note the screen of
     await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead' });
     assert.equal(await end(false), true);
 
+    // Acquire the conversation first, then dispatch its coding job, as the
+    // real flow does. A job already on record correctly refuses a new lease.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'building' }), true);
     // A build the dead turn dispatched is restart recovery's to hand back.
     const { rows: [change] } = await client.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, agent_session_id, active_turn) VALUES (3, 7, 'active', $1, '{"phase":"executing"}') RETURNING id`,
       [session.id]);
     await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [session.id, change.id]);
-    await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'building' });
     await client.query(
       `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW() - make_interval(secs => $2)) WHERE id = $1`,
       [session.id, agentSessions.TURN_LEASE_STALE_SECONDS + 30]);

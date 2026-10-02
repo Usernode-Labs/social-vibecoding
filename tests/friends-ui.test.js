@@ -141,7 +141,7 @@ test('the public card puts the button on its own row under the name', () => {
   assert.doesNotMatch(without, /data-friend-button/, 'the owner\'s preview and anonymous reads draw none');
 });
 
-test('Me renders the private Friends section between More and Your contributions', () => {
+test('Me\'s Friends row opens the private Friends section as a card', () => {
   const real = loadTsx(STORE);
   const state = {
     open: true,
@@ -151,15 +151,19 @@ test('Me renders the private Friends section between More and Your contributions
     },
     user: { username: 'evan', links: {} },
     sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false,
-    friendsPending: 2, friendsStatus: '',
+    friendsPending: 2, friendsStatus: '', friendsOpen: true,
   };
   const mod = loadTsx('frontend/src/features/profile/profile-view.tsx', {
     stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
   const at = (needle) => html.indexOf(needle);
-  assert.ok(at('id="profile-more"') < at('id="profile-friends"'), 'after More');
-  assert.ok(at('id="profile-friends"') < at('id="profile-contributions"'), 'before Your contributions');
+  // A row of More (UI overhaul), saying only how many requests wait; its
+  // card, when open, holds the section it used to be.
+  assert.match(html, /id="profile-row-friends"[\s\S]*?1 request waiting/);
+  assert.ok(at('id="profile-friends-sheet"') >= 0 && at('id="profile-friends-sheet"') < at('id="profile-friends"'),
+    'the section is in the card');
+  assert.match(html, /<h2 class="text-lg font-bold">Friends<\/h2>/, 'titled by the card, not a second label');
   assert.ok(at('id="profile-friend-requests"') < at('id="profile-friends-list"'), 'requests lead');
   assert.match(html, /data-friend-request="lin"/);
   assert.match(html, /data-friend-request-accept="lin"[^>]*disabled/, 'the row being answered is inert');
@@ -169,6 +173,10 @@ test('Me renders the private Friends section between More and Your contributions
   assert.match(read('frontend/src/features/profile/profile.js'), /await actOnFriend\(id, 'cancel'\)/);
   assert.match(html, /Only you can see your friends/);
   assert.doesNotMatch(html, /\b\d+ friends?\b/i, 'no count');
+  const closedHtml = renderToHtml(createElement(loadTsx('frontend/src/features/profile/profile-view.tsx', {
+    stubs: { './profile-store.js': { ...real, profileStore: { get: () => ({ ...state, friendsOpen: false }), subscribe: () => () => {} } } },
+  }).ProfileRoot, {}));
+  assert.doesNotMatch(closedHtml, /id="profile-friends"/, 'closed, it is a row and nothing more');
 
   const empty = renderToHtml(createElement(loadTsx('frontend/src/features/profile/profile-view.tsx', {
     stubs: { './profile-store.js': { ...real, profileStore: { get: () => ({ ...state, data: { ...state.data, friends: { friends: [], incoming: [], outgoing: [] } } }), subscribe: () => () => {} } } },
@@ -275,6 +283,7 @@ test('Me\'s Friends section leads with the search box, which fetches nothing unt
       friends: { friends: [], incoming: [], outgoing: [] } },
     user: { username: 'evan', links: {} },
     sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false, friendsPending: null, friendsStatus: '',
+    friendsOpen: true,
   };
   // The bell's test above leaves `window` as a bare globalThis; load the
   // profile controller the way the first Me test does, with no window at all.
@@ -295,8 +304,8 @@ test('Me\'s Friends section leads with the search box, which fetches nothing unt
   assert.doesNotMatch(html, /profile-friend-search-results/, 'no results before anything is typed');
   assert.match(html, /No friends yet\. Find someone by username above\./);
 
-  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /<SectionHeader>Friends<\/SectionHeader>\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
-    'the search sits right under the Friends header');
+  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /\{heading \? <SectionHeader>Friends<\/SectionHeader> : null\}\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
+    'the search sits right under the Friends header (the card\'s title, in the card)');
   const src = read(SEARCH);
   assert.match(src, /import \{ searchUsers \} from '\.\.\/messages\/api'/,
     'reuses the messages-scoped people search, which leaves out you and anyone blocked either way');

@@ -20,11 +20,27 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const models = require('./models');
 
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
 const MESSAGES_LIMIT_MAX = 200;
-const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner']);
+const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner', 'global-chat']);
+
+// The stored choice as it is shown and run. A Claude model the platform has
+// retired (#3579: Sonnet 5, saved before Sonnet 5.5 replaced it) reads as its
+// successor, so the composer's picker ticks the model the conversation now
+// runs on rather than listing a name it no longer offers. The row keeps the
+// id it was written with until the owner picks again.
+function choiceFromRow(row) {
+  const backend = row.agent_backend;
+  let model = row.agent_model || null;
+  if (backend === 'claude_code' && model
+    && Object.prototype.hasOwnProperty.call(models.RETIRED_MODELS, model)) {
+    model = models.RETIRED_MODELS[model];
+  }
+  return { backend, model, reasoningEffort: row.agent_reasoning_effort || null };
+}
 
 class AgentSessionError extends Error {
   constructor(status, message) {
@@ -133,13 +149,13 @@ function shapeChangeRow(row) {
     // checks panel's to show.
     checkSkipReason: row.change_check_skip_reason || null,
     appSelfHosted: !!row.change_app_self_hosted,
-    // The visual change preview being captured now, which the conversation
+    // The before/after shots being taken now, which the conversation
     // shows with a Stop. Null once it settles, and on the changes-list rows,
     // which do not read it.
-    previewCapture: CAPTURING_STATES.has(row.change_evidence_state)
+    previewCapture: CAPTURING_STATES.has(row.change_shots_state)
       ? {
-        state: row.change_evidence_state,
-        startedAt: row.change_evidence_started_at ? new Date(row.change_evidence_started_at).toISOString() : null,
+        state: row.change_shots_state,
+        startedAt: row.change_shots_started_at ? new Date(row.change_shots_started_at).toISOString() : null,
       }
       : null,
   };
@@ -165,13 +181,7 @@ function shapeSession(row) {
       : null,
     focusContext: row.focus_context || {},
     // The composer's model choice; null follows the user's default.
-    agent: row.agent_backend
-      ? {
-        backend: row.agent_backend,
-        model: row.agent_model || null,
-        reasoningEffort: row.agent_reasoning_effort || null,
-      }
-      : null,
+    agent: row.agent_backend ? choiceFromRow(row) : null,
     activeChange: shapeChangeRow(row),
     // A lease its turn stopped renewing is not work in progress: the
     // process holding it died, and the next message takes it over.
@@ -233,8 +243,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
@@ -272,8 +282,8 @@ async function getAgentSession(pool, { userId, id }) {
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
@@ -333,11 +343,7 @@ async function getAgentChoice(pool, agentSessionId) {
   );
   const row = rows[0];
   if (!row || !row.agent_backend) return null;
-  return {
-    backend: row.agent_backend,
-    model: row.agent_model || null,
-    reasoningEffort: row.agent_reasoning_effort || null,
-  };
+  return choiceFromRow(row);
 }
 
 async function renameAgentSession(pool, { userId, id, title }) {
@@ -445,6 +451,8 @@ function leaseTurn(activeTurn) {
   return {
     id: typeof turn.id === 'string' ? turn.id : null,
     phase,
+    stopping: !!turn.stopRequestedAt,
+    stopRequestedAt: Date.parse(turn.stopRequestedAt || '') || null,
     // What the screen's clock counts from: the build once one was
     // dispatched, else the turn (agent-turn.js turnState's rule).
     startedAt: phase !== 'mayor' && Number.isFinite(phaseStartedAt) && phaseStartedAt > 0
@@ -769,6 +777,11 @@ async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
         SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW(), 'phase', 'mayor'),
             last_activity_at = NOW()
       WHERE id = $1 AND user_id = $2 AND status = 'open'
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_sessions c WHERE c.id = agent_sessions.active_change_id
+            AND c.user_id = $2 AND c.active_turn IS NOT NULL
+            AND COALESCE(c.active_turn->>'mode', 'build') <> 'shots'
+        )
         AND (active_turn IS NULL
              OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
                 < NOW() - make_interval(secs => $4))
@@ -862,6 +875,27 @@ async function renewTurnLease(pool, { agentSessionId, turnId }) {
     [agentSessionId, turnId]
   );
   return rows.length > 0;
+}
+
+async function markTurnStopRequested(pool, { agentSessionId, userId, turnId, by }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object(
+       'stopRequestedAt', COALESCE(active_turn->>'stopRequestedAt', NOW()::text),
+       'stopRequestedBy', COALESCE(active_turn->>'stopRequestedBy', $4::text))
+     WHERE id = $1 AND user_id = $2 AND active_turn->>'id' = $3
+       AND COALESCE(active_turn->>'phase', 'mayor') <> 'mayor2'
+     RETURNING active_turn`,
+    [agentSessionId, userId, turnId, by || null],
+  );
+  return rows[0]?.active_turn || null;
+}
+
+async function readTurnStopRequest(pool, { agentSessionId, turnId }) {
+  const { rows } = await pool.query(
+    `SELECT active_turn FROM agent_sessions WHERE id = $1 AND active_turn->>'id' = $2`,
+    [agentSessionId, turnId],
+  );
+  return rows[0]?.active_turn?.stopRequestedAt ? rows[0].active_turn : null;
 }
 
 // Where the turn is (the Mayor, the coding agent, the wrap-up), on the lease
@@ -1030,6 +1064,9 @@ module.exports = {
   listMessages,
   shapeMessage,
   readState,
+  leaseTurn,
+  markTurnStopRequested,
+  readTurnStopRequest,
   appendConversationEvent,
   parkChange,
   prepareChangeStart,

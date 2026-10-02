@@ -7,10 +7,12 @@
  * The screen the Me tab lands on was the older long Profile: identity,
  * public-profile controls, a points figure, rank, the token card, a points
  * breakdown, the completed challenges, then Platform and Account groups. The
- * navigation prototype's Me (`scrMe`) is four things — a compact profile card,
- * three stat cards (merged, kudos, challenges), a "More" list whose rows say
- * what is behind them, and "Your contributions" — and that is what this file
- * shapes now. Nothing that was here was dropped; each piece moved to the
+ * navigation prototype's Me (`scrMe`) is a compact profile card, three stat
+ * cards (merged, kudos, challenges), and lists of rows that say what is
+ * behind them: "Your work" (Your changes, Your requests, Your votes) and
+ * "More", since the UI overhaul, which also retired "Your contributions"
+ * under them (Your changes lists every merged change) — and that is what
+ * this file shapes now. Nothing that was here was dropped; each piece moved to the
  * place the prototype gives it:
  *
  *   points, rank, breakdown, token  → the Challenges tab's standing card
@@ -25,7 +27,9 @@
  *   wallet and staking rows, Log out → Settings (the spec's retired-chip table:
  *                                     "Me, with Admin and Validator inside
  *                                     Settings"), features/settings/account-rows.tsx
- *   the builder-profile chip        → "See all" on Your contributions
+ *   the builder-profile chip        → the Kudos tab's builders, behind
+ *                                     "Kudos" (it was "See all" on Your
+ *                                     contributions until the UI overhaul)
  *
  * Plain JS, no React import, for the reason lib/plain-store.js documents: the
  * root test suite is `node --test` with no JSX transform, and
@@ -53,6 +57,10 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {any} user          — a snapshot of App.user, taken by the controller
  * @property {string|null} pendingAvatarUrl — object URL of a staged photo
  * @property {boolean} pendingRemove        — the staged change is a deletion
+ * @property {{url: string, width: number, height: number}|null} cropSource
+ *   — the chosen photo while "Position your photo" is up (#3525): its object
+ *   URL and decoded size. The File itself stays on Profile, as the staged
+ *   Blob does.
  * @property {boolean} sheetOpen
  * @property {string} publicStatus
  * @property {boolean} publishing
@@ -60,6 +68,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {number|null} friendsPending — the incoming request being answered (#2386)
  * @property {string} friendsStatus         — why the last answer failed, if it did
  * @property {boolean} feedbackOpen         — the "Your feedback" list is up (#3186)
+ * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -68,6 +77,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   user: null,
   pendingAvatarUrl: null,
   pendingRemove: false,
+  cropSource: null,
   sheetOpen: false,
   publicStatus: '',
   publishing: false,
@@ -75,6 +85,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsPending: null,
   friendsStatus: '',
   feedbackOpen: false,
+  friendsOpen: false,
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -210,7 +221,7 @@ export function memberSinceLabel(iso) {
  * many apps they have shipped to), the bio, and the verified links.
  *
  * The "Your builder profile" chip left: it pointed at the viewer's proposed
- * PRs, which is what "See all" over Your contributions opens now.
+ * PRs, which Your changes lists now.
  */
 export function identityView(state) {
   const u = state.user || {};
@@ -274,18 +285,70 @@ export function moreRowsView(data) {
   return {
     challenges: challenges.length ? challenges.join(' · ') : null,
     kudos: kudos == null ? null : `${kudos.toLocaleString()} received`,
+    changes: changesLine(summary),
+    requests: requestsLine(d.requests),
+    votes: votesLine(d.votes),
+    friends: friendsLine(d.friends),
     feedback: feedbackLine(d.feedback),
   };
 }
 
-/** "4 sent · 1 counted", from GET /api/feedback/mine (#3186). Null when the
- *  read failed or has not answered, so the row falls back to saying what is
- *  behind it rather than claiming none were sent. */
+// ── Your work's lines (UI overhaul) ─────────────────────────────────────
+//
+// Each says what is there in words, and a zero says nothing: "12 merged ·
+// 2 in progress" drops the half that is zero, and when both are, the row
+// falls back to saying what is behind it. Null whenever the read failed or
+// has not answered, for the same reason.
+
+/** "12 merged · 2 in progress", from GET /api/me/summary. */
+function changesLine(summary) {
+  if (!summary || typeof summary !== 'object') return null;
+  const parts = [];
+  const merged = Number(summary.merged) || 0;
+  const underway = Number(summary.inProgress) || 0;
+  if (merged) parts.push(`${merged.toLocaleString()} merged`);
+  if (underway) parts.push(`${underway.toLocaleString()} in progress`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** "2 open · 1 done", from GET /api/me/requests. */
+function requestsLine(requests) {
+  if (!requests || typeof requests !== 'object' || !Array.isArray(requests.requests)) return null;
+  const parts = [];
+  const open = Number(requests.open) || 0;
+  const done = Number(requests.done) || 0;
+  if (open) parts.push(`${open.toLocaleString()} open`);
+  if (done) parts.push(`${done.toLocaleString()} done`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** "Latest: <what you voted on>", from GET /api/me/history?type=votes&limit=1. */
+function votesLine(votes) {
+  const item = votes && Array.isArray(votes.items) ? votes.items[0] : null;
+  if (!item) return null;
+  const title = voteTitle(item);
+  return title ? `Latest: ${title}` : null;
+}
+
+/** "1 request waiting". Friends are never counted (#2386), only requests to answer. */
+function friendsLine(friends) {
+  const incoming = friends && Array.isArray(friends.incoming) ? friends.incoming.length : 0;
+  if (!incoming) return null;
+  return `${incoming.toLocaleString()} ${incoming === 1 ? 'request' : 'requests'} waiting`;
+}
+
+/** "4 sent · 1 counted", from GET /api/feedback/mine (#3186); "4 sent" while
+ *  none has counted, since a zero says nothing. Null when the read failed or
+ *  has not answered, so the row falls back to saying what is behind it rather
+ *  than claiming none were sent. */
 function feedbackLine(feedback) {
   if (!feedback || typeof feedback !== 'object' || !Number.isFinite(Number(feedback.sent))) return null;
   const sent = Number(feedback.sent) || 0;
   if (sent === 0) return 'Nothing sent yet';
-  return `${sent.toLocaleString()} sent · ${(Number(feedback.counted) || 0).toLocaleString()} counted`;
+  const counted = Number(feedback.counted) || 0;
+  return counted
+    ? `${sent.toLocaleString()} sent · ${counted.toLocaleString()} counted`
+    : `${sent.toLocaleString()} sent`;
 }
 
 /** A report's status as the list says it. Two, not three: see
@@ -310,7 +373,7 @@ const APP_SLUG = /^[a-z0-9][a-z0-9-]*$/;
  * GET /api/feedback/mine. Each row says what was sent (its title and where
  * it went), its status, and links to the request it became, on that app's
  * board. `loaded: false` is a read that failed, told apart from "nothing
- * sent yet" the way Your contributions tells them apart.
+ * sent yet".
  */
 export function feedbackListView(feedback, now = Date.now()) {
   const valid = feedback && typeof feedback === 'object' && Array.isArray(feedback.reports);
@@ -345,17 +408,6 @@ export function feedbackListView(feedback, now = Date.now()) {
   };
 }
 
-/** A contribution's app tile: the app's image, else its emoji, else a letter. */
-function tileOf(row) {
-  if (row.platform) return { kind: 'platform' };
-  if (typeof row.appIconUrl === 'string' && /^\/app-icons\/[A-Za-z0-9_-]+$/.test(row.appIconUrl)) {
-    return { kind: 'image', url: row.appIconUrl };
-  }
-  if (row.appIconEmoji) return { kind: 'emoji', text: String(row.appIconEmoji) };
-  const match = String(row.appName || row.appSlug || '?').match(/[\p{L}\p{N}]/u);
-  return { kind: 'letter', text: match ? match[0].toUpperCase() : '?' };
-}
-
 /** "3 days ago", or "Sep 3" (with the year once it is not this one) past a
  *  fortnight — a month and day reads in every locale, "9/3/2026" does not. */
 export function mergedAgo(iso, now = Date.now()) {
@@ -375,31 +427,157 @@ export function mergedAgo(iso, now = Date.now()) {
 }
 
 /**
- * "Your contributions": the viewer's newest merged proposals, each a real
- * link to its proposal page in its app's Workshop. "See all" is the builder
- * page (#leaderboard/users/<you>), every proposal with its kudos.
+ * "Your changes" (UI overhaul; it was "Your proposals", #5310): every change
+ * the viewer has started, from GET /api/me/proposal-history, in three groups.
+ * In progress takes what is in an agent session and what is up for a vote,
+ * newest first, each saying which (it was two sections, and also the
+ * Communities tab's "What you are working on"); then Merged; then Closed. A
+ * group with no rows is left out. `loaded: false` is a read that has not
+ * answered yet, distinct from a real "you have started nothing".
  */
-export function contributionsView(summary, username, now = Date.now()) {
-  const rows = (summary && Array.isArray(summary.contributions)) ? summary.contributions : [];
-  return {
-    seeAllHref: username ? `#leaderboard/users/${encodeURIComponent(username)}` : null,
-    loaded: !!summary,
-    rows: rows
-      .filter((c) => c && c.appSlug && Number(c.sessionId) > 0)
-      .map((c) => {
-        const meta = [c.appName || c.appSlug];
-        const when = mergedAgo(c.mergedAt, now);
-        if (when) meta.push(`merged ${when}`);
-        if (Number(c.kudos) > 0) meta.push(`${Number(c.kudos)} kudos`);
-        return {
-          key: String(c.sessionId),
-          href: `#app/${encodeURIComponent(c.appSlug)}/dev/proposals/${Number(c.sessionId)}`,
-          title: c.title || 'Merged proposal',
-          meta: meta.join(' · '),
-          tile: tileOf(c),
-        };
-      }),
+export function proposalsView(data, now = Date.now()) {
+  const buckets = data && data.proposals && typeof data.proposals === 'object'
+    ? data.proposals : null;
+  if (!buckets) return { loaded: false, sections: [], empty: true };
+  const rowsOf = (key) => (Array.isArray(buckets[key]) ? buckets[key] : [])
+    .filter((row) => row && row.appSlug && Number(row.sessionId) > 0)
+    .map((row) => ({ row, key }));
+  const shape = ({ row, key }) => {
+    const app = row.appName || row.appSlug;
+    const when = mergedAgo(row.at, now);
+    let where = when;
+    if (key === 'openForVote') where = 'in vote';
+    else if (key === 'inProgress') where = 'in progress';
+    else if (key === 'closed') where = 'closed without merging';
+    const slug = encodeURIComponent(row.appSlug);
+    const id = Number(row.sessionId);
+    return {
+      key: String(row.sessionId),
+      href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
+      title: row.title || 'Change',
+      meta: [app, where].filter(Boolean).join(' · '),
+      // The project's own icon leads the row, so one list across every
+      // project still reads project by project (#3364). In app-card.js's
+      // field names, which is what AppIconContent draws from.
+      app: {
+        slug: row.appSlug,
+        name: app,
+        icon_emoji: row.appIconEmoji || null,
+        icon_url: row.appIconUrl || null,
+      },
+      at: Date.parse(row.at || '') || 0,
+    };
   };
+  const underway = rowsOf('openForVote').concat(rowsOf('inProgress')).map(shape)
+    .sort((x, y) => y.at - x.at);
+  const sections = [
+    { key: 'inProgress', label: 'In progress', rows: underway },
+    { key: 'merged', label: 'Merged', rows: rowsOf('merged').map(shape) },
+    { key: 'closed', label: 'Closed', rows: rowsOf('closed').map(shape) },
+  ].filter((section) => section.rows.length > 0);
+  return { loaded: true, sections, empty: sections.length === 0 };
+}
+
+/** Where a request stands, as its line says it. See MY_REQUESTS_SQL in
+ *  src/routes/profile.js for what each is read from. */
+const REQUEST_STATE = {
+  waiting: 'nobody on it yet',
+  underway: 'someone is on it',
+  shipped: 'shipped',
+  closed: 'closed',
+};
+
+/**
+ * "Your requests" (UI overhaul; it was "Your feedback", #3186): every
+ * request the viewer asked for, from the Ask for a change dialog or a
+ * board, from GET /api/me/requests. Open (nobody on it yet, or someone is),
+ * then Done (shipped, or closed by a vote). Each opens the request.
+ */
+export function requestsView(data) {
+  const list = data && Array.isArray(data.requests) ? data.requests : null;
+  if (!list) return { loaded: false, sections: [], empty: true, truncated: false };
+  const rows = list.filter((r) => r && Number(r.number) > 0).map((r) => {
+    const slug = typeof r.appSlug === 'string' && APP_SLUG.test(r.appSlug) ? r.appSlug : null;
+    const state = REQUEST_STATE[r.state] ? r.state : 'waiting';
+    return {
+      key: `${r.appSlug || ''}#${r.number}`,
+      href: slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${Number(r.number)}` : null,
+      title: r.title ? String(r.title) : `Request #${Number(r.number)}`,
+      meta: [r.appName || 'An app', REQUEST_STATE[state]].join(' · '),
+      done: state === 'shipped' || state === 'closed',
+    };
+  });
+  const sections = [
+    { key: 'open', label: 'Open', rows: rows.filter((r) => !r.done) },
+    { key: 'done', label: 'Done', rows: rows.filter((r) => r.done) },
+  ].filter((section) => section.rows.length > 0);
+  return { loaded: true, sections, empty: sections.length === 0, truncated: !!data.truncated };
+}
+
+/** What a vote was on, in the words its row leads with. */
+function voteTitle(item) {
+  if (item.type === 'pr_vote') {
+    const pr = item.pr || {};
+    return pr.title ? String(pr.title) : (pr.number ? `Change #${Number(pr.number)}` : 'A change');
+  }
+  const issue = item.issue || {};
+  return issue.title ? String(issue.title) : 'A group decision';
+}
+
+/** Whether the thing voted on is still being decided. */
+function voteOpen(item) {
+  if (item.type === 'pr_vote') return item.status === 'promoted' || item.status === 'merging';
+  return item.status === 'open';
+}
+
+/** How it was decided, once it was. */
+function voteOutcome(item) {
+  if (item.type === 'pr_vote') {
+    if (item.status === 'merged') return 'merged';
+    return 'closed';
+  }
+  return 'decided';
+}
+
+/**
+ * "Your votes" (UI overhaul; it was a filter of Kudos › My history): the
+ * changes and group decisions the viewer voted on, from GET
+ * /api/me/history?type=votes. Still open, then Decided. Only the vote
+ * standing now is kept (a vote can be changed while it is open), so each
+ * row says the vote as it stands.
+ */
+export function votesView(data) {
+  const items = data && Array.isArray(data.items) ? data.items : null;
+  if (!items) return { loaded: false, sections: [], empty: true, more: false };
+  const rows = items
+    .filter((item) => item && (item.type === 'pr_vote' || item.type === 'proposal_vote'))
+    .map((item, index) => {
+      const app = item.app || {};
+      const slug = typeof app.slug === 'string' && APP_SLUG.test(app.slug) ? app.slug : null;
+      const open = voteOpen(item);
+      const vote = item.vote === 'yes' || item.vote === 'no' ? item.vote : null;
+      const meta = [app.name || app.slug || 'An app'];
+      if (vote) meta.push(`you voted ${vote}`);
+      if (!open) meta.push(voteOutcome(item));
+      let href = null;
+      if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
+        href = `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(item.pr.sessionId)}`;
+      } else if (slug && item.type === 'proposal_vote' && Number(item.issue && item.issue.id) > 0) {
+        href = `#app/${encodeURIComponent(slug)}/dev/governance/${Number(item.issue.id)}`;
+      }
+      return {
+        key: `${item.type}:${(item.pr && item.pr.sessionId) || (item.issue && (item.issue.id || item.issue.number)) || index}`,
+        href,
+        title: voteTitle(item),
+        meta: meta.join(' · '),
+        open,
+      };
+    });
+  const sections = [
+    { key: 'open', label: 'Still open', rows: rows.filter((r) => r.open) },
+    { key: 'decided', label: 'Decided', rows: rows.filter((r) => !r.open) },
+  ].filter((section) => section.rows.length > 0);
+  return { loaded: true, sections, empty: sections.length === 0, more: !!data.nextBefore };
 }
 
 /** The opt-in public profile's owner controls (#582). */
@@ -462,8 +640,7 @@ function monthYear(iso) {
  * declined still reads "Requested": the sender is never told.
  *
  * `loaded: false` is a read that failed (or has not answered), told apart
- * from "no friends yet" the same way Your contributions tells a failure from
- * an empty list.
+ * from "no friends yet", as every list here tells a failure from an empty one.
  */
 export function friendsView(lists, now = Date.now()) {
   const valid = lists && typeof lists === 'object'
@@ -563,7 +740,6 @@ export function buildProfileView(state, now = Date.now()) {
     };
   }
 
-  const u = state.user || {};
   return {
     kind: 'own',
     identity: identityView(state),
@@ -571,7 +747,6 @@ export function buildProfileView(state, now = Date.now()) {
     stats: statsView(d.summary || null),
     rows: moreRowsView(d),
     friends: friendsView(d.friends || null, now),
-    contributions: contributionsView(d.summary || null, u.username || null, now),
     feedback: feedbackListView(d.feedback || null, now),
   };
 }

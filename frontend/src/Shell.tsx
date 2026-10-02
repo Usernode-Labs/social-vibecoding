@@ -87,6 +87,7 @@ import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
+import { ProfileProposalsScreen } from './features/profile/my-proposals';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -191,6 +192,16 @@ export function Shell() {
           App.REACT_SCREEN_IDS).
       */}
       <Island name="WorkshopScreen"><WorkshopScreen /></Island>
+      {/*
+          The Your work screen (hidden by default; "Your proposals" #5310
+          until the UI overhaul): Your changes, Your requests or Your votes,
+          the three rows of Profile's "Your work", one view at a time
+          (#profile/your-changes, /your-requests, /your-votes). Fully
+          React-owned like #workshop-screen, shipped hidden and empty; the
+          rows arrive in the controller's open(). Mounted by
+          App.navigateToProfileProposals(kind).
+      */}
+      <Island name="ProfileProposalsScreen"><ProfileProposalsScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -574,6 +585,12 @@ export function Shell() {
       */}
       <script src={assetUrl('/js/nav-link.js')} />
       <script src={assetUrl('/js/platform-ui.js')} />
+      {/**
+          Privacy-bounded UI experience collector. It has no dependencies and
+          listens for the session event app.js publishes, so load it before
+          every instrumented journey and before app.js begins boot.
+      */}
+      <script src={assetUrl('/js/ui-telemetry.js')} />
       {/*
           /js/offline.js used to load here. #1078 retired it: the banner it
           owned is a React island (features/shell/banners.tsx), the

@@ -31,7 +31,8 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
     'Actually, on reflection:',
     '```json',
     '{ "verdict": "Question", "determined": false, "missing_fact": "Which screen shows the pins.",',
-    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored" }',
+    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored",',
+    '  "blocker": "user_facing", "why_default_fails": "The two maps draw pins in different code." }',
     '```',
   ].join('\n');
   const v = bot.parseVerdict(text);
@@ -41,7 +42,7 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
   assert.equal(v.question, 'Which screen do the pins drift on?');
   assert.equal(v.questionDefault, 'The route map');
   assert.equal(v.buildNote, null, 'a build note only rides a ready verdict');
-  assert.equal(v.reason, null);
+  assert.equal(v.reason, 'user_facing: The two maps draw pins in different code.', 'which blocker, and why');
 });
 
 test('parseVerdict: "none" clears missing_fact, ready keeps its note, person keeps its reason', () => {
@@ -117,6 +118,11 @@ test('settings default to off and clamp their numbers', () => {
   assert.deepEqual(s, {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
+    shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
+    // #3624: nobody gets the bot's DM by default; $50 a week each.
+    dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
+    // #3624 stage 2: live work, 6 at once and 2 per person; a DM is read.
+    liveAtOnce: 6, perPerson: 2, dmChat: true,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -129,6 +135,20 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(t.batchSize, 1, 'clamped to the floor');
   assert.deepEqual(t.pausedApps, ['a-b', 'c']);
   assert.deepEqual(bot.parseSettings([{ key: bot.KEY_PAUSED_APPS, value: 'not json' }]).pausedApps, []);
+  const u = bot.parseSettings([
+    { key: bot.KEY_LIVE_AT_ONCE, value: '99' },
+    { key: bot.KEY_PER_PERSON, value: '0' },
+    { key: bot.KEY_DM_CHAT, value: 'off' },
+  ]);
+  assert.equal(u.liveAtOnce, 16, 'clamped to the ceiling');
+  assert.equal(u.perPerson, 1, 'clamped to the floor');
+  assert.equal(u.dmChat, false);
+  assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
+    [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
+  ]);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 17 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -420,7 +440,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id[,)]/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -929,7 +949,7 @@ test('runOnce: each pass frees rows an unfinished pass claimed, past one turn\'s
 
 test('the loop waits out a fault backoff instead of the 30-second idle', () => {
   assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
-  assert.match(SRC, /if \(r\.ran\) \{ processed \+= 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
+  assert.match(SRC, /if \(r\.ran\) \{ o\.processed = 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
 });
 
 test('releaseBotVolumes frees only the bot\'s own volumes whose worker is gone', async () => {
@@ -1048,7 +1068,10 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
+  // ...except a row the bot queued for itself (a restart's, a failing
+  // check's) on an issue that is open, unchanged and nobody else's: #2.
+  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2]]);
   assert.equal(out.removed, 2);
 });
 
@@ -1107,12 +1130,16 @@ test('capRoomFor counts the same two things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (/FROM chat_sessions/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
-  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9), { proposals_per_app: 1, question_tripwire: 0 });
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
+    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'shadow: a ceiling of one app\'s cap');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { liveApps: ['a', 'b'] }),
+    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, '#3576: 5 per live app, across them all');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');
@@ -1147,9 +1174,9 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
     assert.ok(!SRC.includes(forbidden), `shadow mode never reaches ${forbidden}`);
   }
   // The runner blanks the push token in scout mode — the structural half of
-  // "nothing is built".
+  // "nothing is built". (The Codex runner refuses shots turns outright.)
   const runner = read('worker/run-codex-agent.sh');
-  assert.match(runner, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "evidence" \]; then\s*\n\s*WORKER_JWT=""/);
+  assert.match(runner, /if \[ "\$MODE" = "scout" \]; then\s*\n\s*WORKER_JWT=""/);
 });
 
 test('the bot session is not work on any issue: is_headless FALSE, empty linked_issues, paused at rest', () => {
@@ -1162,7 +1189,8 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
     'headless and in_progress derivations both skip synthetic authors');
   const sessions = read('src/routes/sessions.js');
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 5,
+  // Four: the fork's count went with the fork (#2779).
+  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 4,
     'every global-cap count leaves synthetic sessions out');
 });
 
@@ -1199,25 +1227,23 @@ test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
   assert.match(prompt, /never an `empty`/);
 });
 
-test('the triage prompt asks about what is not in the repository instead of searching for it', () => {
+test('the triage prompt decides what is not in the repository instead of searching for it', () => {
   // rss-reader #24, 2026-09-25: "a dark colour closer to the platform's
   // background". The model hunted the app's repository for the platform's
   // colour: 183 reads, over 50 of the same lines of index.html, 15 fresh
-  // starts, no words and no verdict, until the 20-minute wall clock.
+  // starts, no words and no verdict, until the 20-minute wall clock. The
+  // first fix sent it to ASK instead; since the question bar it DECIDES:
+  // the closest value in the app, stated as an assumption in the spec.
   const prompt = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(prompt, /It depends on something that neither this repository nor the platform conventions answer: a value of the Homeroom platform the conventions do not state/,
-    'what the platform leaves unstated, other services and taste are reasons to ask');
+  assert.match(prompt, /A value of the Homeroom platform the conventions do not state \(such as the exact colours of its own screens\) is not in anything you can read, so do not search for it: use the closest value you found in the app and say so\./);
   assert.match(prompt, /"darker", "nicer", "like the platform"/);
-  assert.match(prompt, /Nothing you can read answers these, so do not search for them\. Ask\./);
-  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: ask instead of searching further\./,
+  assert.match(prompt, /is built with the closest dark colour the app already has, listed as an assumption, not asked about/);
+  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: stop searching and decide\./,
     '"the repository can answer it" has a limit');
   assert.match(prompt, /Do not read a file or line range you have already read/);
   assert.match(prompt, /List or search the whole repository at most once/);
-  assert.match(prompt, /still unsure after about ten reads, you have your answer: it is a `question`/);
+  assert.match(prompt, /still unsure after about ten reads, stop reading and decide now/);
   assert.match(prompt, /a turn that ends without the JSON block below has decided nothing/);
-  // The counter-rules still stand, so it does not over-ask what the code says.
-  assert.match(prompt, /Never ask something the repository or the platform conventions can answer/);
-  assert.match(prompt, /Never ask when a sensible default exists/);
 });
 
 test('the triage prompt sends platform questions to the conventions tool, not to the repository', () => {

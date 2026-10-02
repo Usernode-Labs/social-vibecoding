@@ -901,12 +901,23 @@ function buildWorkOrder({
     ...setup,
     '',
     'RULES',
-    '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
-    '  the upstream repository — you do not have access to it, and Homeroom opens',
-    '  the pull request for you.',
-    '- Create the fork yourself if you do not have one:',
-    '  Homeroom has no write access to your GitHub account and will not make it',
-    '  for you.',
+    ...(hasTask && !update
+      ? [
+        '- Hand the change in as a patch (see WHEN YOU ARE DONE). If you push a',
+        '  branch instead, push only to YOUR FORK. Do not push to the upstream',
+        '  repository — you do not have access to it, and Homeroom opens the pull',
+        '  request for you.',
+        '- A fork is needed only to push a branch. Homeroom has no write access to',
+        '  your GitHub account and will not make one for you.',
+      ]
+      : [
+        '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
+        '  the upstream repository — you do not have access to it, and Homeroom opens',
+        '  the pull request for you.',
+        '- Create the fork yourself if you do not have one:',
+        '  Homeroom has no write access to your GitHub account and will not make it',
+        '  for you.',
+      ]),
     '- Any branch name works. A branch name that differs from the suggestion above',
     '  is never a reason to rewrite, rebase or redo a commit you have already',
     '  finished — just report the name you pushed.',
@@ -990,7 +1001,8 @@ function buildWorkOrder({
       'You already have the task id, the branch and the base commit — everything a',
       'new one would give you. Calling it again mints a SECOND job for the same',
       'request, holds another of the user\'s work-order slots, and leaves the first',
-      'one dangling. It does not obtain push access and it does not fix anything.'
+      'one dangling. It does not obtain push access and it does not fix anything.',
+      ...(update ? [] : ['The one exception is revising a proposal you sent as a patch: step 7 says how.'])
     );
     if (update) {
       lines.push(
@@ -1036,17 +1048,37 @@ function buildWorkOrder({
   );
 
   // ── The closing decision tree ────────────────────────────────────────
-  lines.push(
-    '',
-    'WHEN YOU ARE DONE',
-    '',
-    forkIsHome
-      ? `1. PUSH, to ${branch} — the branch this proposal follows.`
-      : '1. PUSH. Any branch name.',
-    `${CMD}git push -u origin HEAD`,
-    `${CMD}git rev-parse --abbrev-ref HEAD`,
-    '   The second command prints the branch name you just pushed. You need it.'
-  );
+  //
+  // New work is handed in as a patch first (#2460): submit_work applies it at
+  // the base commit in the app's own repository, so an ordinary change needs
+  // no fork and no GitHub write access — the push is what failed in most
+  // production runs. A branch stays the fallback for a change over the patch
+  // limit, or for an agent that already pushes to its fork. An update has no
+  // patch path at all (a patch opens a second proposal), so it keeps the push.
+  const patchFirst = hasTask && !update;
+  lines.push('', 'WHEN YOU ARE DONE', '');
+  if (patchFirst) {
+    lines.push(
+      '1. COMMIT, THEN MAKE A PATCH of your commits. This is the default way to',
+      '   hand the change in: you do NOT need GitHub write access, a fork or a',
+      '   push for it.',
+      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
+      '   Patches over about 250 KB are refused. For a change that large, or when',
+      '   you already push to your fork, push a branch instead (any branch name):',
+      `${CMD}git push -u origin HEAD`,
+      `${CMD}git rev-parse --abbrev-ref HEAD`,
+      '   The second command prints the branch name you just pushed. You need it.'
+    );
+  } else {
+    lines.push(
+      forkIsHome
+        ? `1. PUSH, to ${branch} — the branch this proposal follows.`
+        : '1. PUSH. Any branch name.',
+      `${CMD}git push -u origin HEAD`,
+      `${CMD}git rev-parse --abbrev-ref HEAD`,
+      '   The second command prints the branch name you just pushed. You need it.'
+    );
+  }
 
   if (hasTask && update) {
     // ── The update path's closing tree ─────────────────────────────────
@@ -1069,29 +1101,24 @@ function buildWorkOrder({
       '   force-pushed past anybody else\'s work: if the proposal moved in the',
       '   meantime the call is refused rather than overwriting it.',
       '   The proposal keeps its manual testing routes unless you replace them.',
-      '   Pass `visualEvidence` for this revision. If available, call',
-      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   Pass `visibleChanges` for this revision: the changes a person will',
+      '   see, for before/after shots. If available, call',
+      '   `declare_visible_changes` and pass its version-1 object unchanged.',
       '   If that helper is not exposed in this connector session, constructing the',
       '   documented version-1 object directly is supported too.',
-      '   Visible work uses impact "ui" or "motion" with one to three claims and',
-      '   their real user flows. Text, counts, loading, error and status changes',
-      '   are visible even when existing markup and styles are reused. An absent',
-      '   fixture or a hard-to-reach error state is a blocker to report, not a',
-      '   reason to call a visible change non-visual. For an error state reached',
-      '   only by a failed request, declare the exact GET /api/ path as',
-      '   intent.controlledFailurePath; Homeroom blocks it on both revisions',
-      '   when the first intent.steps entry is exactly "Controlled test:',
-      '   deliberately block the declared API GET on both revisions." This',
-      '   labels the evidence clearly. Genuinely non-visual work',
-      '   uses impact "none", no',
-      '   stories, and a specific rationale. Homeroom produces new exact-base/head',
-      '   evidence instead of reusing old captures.',
-      '   On an UPDATE, submit_work does not accept visualEvidencePlan. Locally',
-      '   verify a revised executable flow before this call when your app has a',
-      '   paired local replay runner, then use the separate plan action below.',
-      '   After submit_work, use get_proposal and submit_visual_evidence_plan',
-      '   to send your UI flow for exact-head replay and PNG/WebM capture.',
-      '   If that tool is absent, the hosted evidence agent remains available.',
+      '   Visible work uses impact "ui" or "motion" with one to three declared',
+      '   changes and how a person reaches each one; changes that show on the',
+      '   same screen are one declared change. Text, counts, loading,',
+      '   error and status changes are visible even when existing markup and',
+      '   styles are reused. An absent fixture or a hard-to-reach state is a',
+      '   blocker to report, not a reason to call a visible change non-visual.',
+      '   For an error state reached only by a failed',
+      '   request, declare the exact GET /api/ path as',
+      '   intent.controlledFailurePath and make the first intent.steps entry',
+      '   exactly "Controlled test: deliberately block the declared API GET on',
+      '   both revisions." Genuinely non-visual work uses impact "none", no',
+      '   changes, and a short rationale. Homeroom\'s shots agent takes fresh',
+      '   before/after shots of every new revision.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
@@ -1190,11 +1217,13 @@ function buildWorkOrder({
     lines.push(
       '',
       '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
-      `   with taskId ${taskRef}, branch set to the name you actually pushed,`,
+      `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
+      '   you pushed instead, `branch` set to the name you actually pushed),',
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
-      '   BOTH pieces of prose described next. It answers with a link to the new',
-      '   proposal — give that link to the user and tell them it is up for the',
-      '   group\'s vote.',
+      '   BOTH pieces of prose described next. Homeroom applies a patch at that',
+      '   exact commit in the app\'s own repository and opens the pull request',
+      '   itself. It answers with a link to the new proposal — give that link to',
+      '   the user and tell them it is up for the group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows
       // a non-technical voter nothing but the diff explained in developer
@@ -1212,7 +1241,7 @@ function buildWorkOrder({
       '   lost. Write the summary from what the person voting would NOTICE, not',
       '   from what you edited. Not every member of the group is a developer.',
       // testingPaths remain the human/manual test entry point. Reviewer-facing
-      // visual evidence carries the interaction that reaches the relevant
+      // before & after shots carries the interaction that reaches the relevant
       // state instead of pretending every state is URL-addressable.
       '   ALSO PASS `testingPaths` AND `testingSteps`. `testingPaths` is the list',
       '   of in-app routes your change is actually visible on, most important',
@@ -1222,67 +1251,56 @@ function buildWorkOrder({
       '   they are not visual proof. Point them at THE SCREEN YOU CHANGED, not the',
       '   home page, but do not add a screenshot-only route to expose interactive',
       '   state.',
-      '   ALSO PASS `visualEvidence` for this exact revision. If available, call',
-      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   ALSO PASS `visibleChanges` for this exact revision: the changes a',
+      '   person will see, for before/after shots. If available, call',
+      '   `declare_visible_changes` and pass its version-1 object unchanged.',
       '   If that helper is not exposed in this connector session, construct the',
       '   documented version-1 object directly; submit_work validates the same shape.',
-      '   For a visible change use impact "ui" or "motion" and one to three stories.',
-      '   Text, counts, loading, error and status changes are visible even when',
-      '   existing markup and styles are reused. If the required fixture or',
-      '   failure state is unavailable, report that blocker; do not label a',
-      '   visible change "none" just because the current replay cannot reach it.',
-      '   For an error state that needs a failed request, declare its exact GET',
-      '   /api/ path as intent.controlledFailurePath. The replay blocks that',
-      '   request on both revisions. Set the first intent.steps entry exactly',
-      '   to "Controlled test: deliberately block the declared API GET on both',
-      '   revisions." so the captures carry a clear label.',
-      '   Each story names the user-visible claim and its persona: member,',
-      '   read_only_admin, or (for Homeroom controls hidden from view-only admins)',
-      '   full_admin. The full-admin identity exists only in disposable evidence runs.',
-      '   viewport, starting path, real interaction steps, final checkpoint, focus,',
-      '   whether the UI existed on the base revision, and animation "none", "steps",',
-      '   or "motion". For a genuinely non-visual change use impact "none", an empty',
-      '   stories array, and a specific rationale. Never include secrets or personal',
-      '   data. Without a submitted plan, Homeroom lets an evidence agent perform',
-      '   the flow, turns its interaction trace into a bounded plan, and replays',
-      '   it twice against exact base and head revisions before publishing evidence.',
-      '   If this is the Homeroom platform repository with a running local',
-      '   Compose stack, follow AGENTS.md: write a typed plan, replay it on',
-      '   exact local base/head builds, inspect the PNG/WebM, and refine the',
-      '   actions and assertions until the plan actually proves the claim.',
-      '   Pass both fields from the successful submission.json in this SAME',
-      '   submit_work call. The import rejects a moved PR head or mismatched',
-      '   plan, then the platform replays the stored plan independently.',
-      '   For apps without a local paired runner, omit visualEvidencePlan;',
-      '   the hosted evidence agent authors a plan from visualEvidence.',
+      '   For a visible change use impact "ui" or "motion" and one to three',
+      '   declared changes; changes that show on the same screen are one',
+      '   declared change. Text, counts, loading, error and status changes are',
+      '   visible even when existing markup and styles are reused. If the required',
+      '   fixture or state is unavailable, report that blocker; do not label a',
+      '   visible change "none" because it is hard to reach. For an error',
+      '   state that needs a failed request, declare its exact GET /api/ path',
+      '   as intent.controlledFailurePath and make the first intent.steps entry',
+      '   exactly "Controlled test: deliberately block the declared API GET on',
+      '   both revisions."',
+      '   Each change says, in plain words, what a person will see (claim) and',
+      '   who is signed in: member, read_only_admin, or (for Homeroom controls',
+      '   hidden from view-only admins) full_admin. Add each screen size',
+      '   (viewport), the starting path, the real steps, what the finished state',
+      '   looks like (checkpoint), the element that matters (focus), whether it',
+      '   existed before (baseState), and animation "none", "steps", or',
+      '   "motion" (motion gets a short before/after clip). Optional hints help',
+      '   the shots agent go straight there: setup (data to create first),',
+      '   expectText (words visible once it shows), focusTarget (a locator).',
+      '   For a genuinely non-visual change use impact "none", no changes, and a',
+      '   short rationale. Never include secrets or personal data.',
       // #1214: the answer now says which routes it took and which it could
       // not use, so a malformed route is caught while the agent is still
       // holding the branch rather than from a boolean minutes later.
       '   READ THE ANSWER: `testingPaths` is what the manual test link will use and',
       '   `testingPathsRejected` names anything Homeroom could not use. Correct a',
       '   rejected route only when that manual entry point needs it. Separately,',
-      '   `visualEvidenceAccepted`, `visualEvidenceState`, and',
-      '   `visualEvidenceNextStep` report whether the interaction proof was accepted',
+      '   `visibleChangesAccepted`, `shotsState`, and',
+      '   `shotsNextStep` report whether your declared changes were accepted',
       '   and what happens next. A same-commit route correction is not a second',
       '   proposal and clears no votes.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
       '',
-      '3. IF submit_work ANSWERS `pr_open_failed`, relay GitHub\'s status and the',
-      '   field it named word for word, and give the user the `compareUrl` the',
-      '   error returns — it opens a pre-filled pull request they can create in',
-      '   one click. When they give you the pull request number, call `submit_work`',
+      '3. IF YOU PUSHED A BRANCH and submit_work answers `pr_open_failed`, relay',
+      '   GitHub\'s status and the field it named word for word, and give the user',
+      '   the `compareUrl` the error returns — it opens a pre-filled pull request',
+      '   they can create in one click. When they give you the pull request',
+      '   number, call `submit_work`',
       `   again with slug "${appSlug}" and prNumber set to it.`,
       '',
-      '4. IF THE PUSH IS REFUSED AT ALL and the remedy above does not clear it,',
-      '   send the change as a patch instead — you do NOT need GitHub write access',
-      '   for this:',
-      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
-      `   then call \`submit_work\` with taskId ${taskRef} and that text as`,
-      '   `patch`. Homeroom applies it at that exact commit in the app\'s own',
-      '   repository and opens the pull request itself. Patches over about 250 KB',
-      '   are refused — push a branch for anything that large.',
+      '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
+      `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
+      '   that push is refused, the remedy above is the fix.',
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1295,7 +1313,7 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost.',
+      '   first one\'s. The work is not lost.',
       ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
@@ -1306,17 +1324,17 @@ function buildWorkOrder({
       // that applies comes first.
       ...(startedFromWalkthrough
         ? [
-          '   Otherwise finish from Homeroom: the walkthrough that produced this',
-          '   work order checks for the pushed branch when the user returns to that',
-          '   tab, and its Submit button opens the proposal. Print the branch name',
-          '   so they can confirm it.',
+          '   Otherwise finish from Homeroom: push the branch as in step 1. The',
+          '   walkthrough that produced this work order checks for the pushed branch',
+          '   when the user returns to that tab, and its Submit button opens the proposal.',
+          '   Print the branch name so they can confirm it.',
         ]
         : [
-          '   Otherwise hand it back: print the branch name you pushed and, in case',
-          '   the push was refused, save the patch from step 4 to a `.patch` file, and',
-          '   tell the user to give both to the assistant that started this — it',
-          '   finishes the same way. If they started from the Homeroom tab instead,',
-          '   that tab checks for the pushed branch and its Submit button does it.',
+          '   Otherwise hand it back: save the patch from step 1 to a `.patch` file',
+          '   (or print the branch name, if you pushed one), and tell the user to give',
+          '   it to the assistant that started this — it finishes the same way.',
+          '   If they started from the Homeroom tab instead, that tab checks for a',
+          '   pushed branch and its Submit button does it.',
         ]),
       '',
       // Submitting is not the finish line: checks GATE MERGE, so a proposal
@@ -1329,13 +1347,20 @@ function buildWorkOrder({
       `   passing cannot merge however the vote goes. Call \`get_proposal\` with the`,
       '   proposal id `submit_work` returned — it reports `checks` with the state,',
       '   the number of tests and the names of the failing ones. If any are failing,',
-      '   fix them and push again to the SAME branch: the proposal follows your',
-      '   branch, so a new commit re-runs the checks by itself. Do not call',
-      '   `submit_work` again and do not call `prepare_work` — the pull request',
-      '   already exists, and a second submission would duplicate it.',
-      '   `get_proposal` also reports `visualEvidence`. For a user-visible',
-      '   change, verify that your structured claim and flow were accepted and',
-      '   wait for `verified`; `failed` includes a specific recovery reason.',
+      '   fix them. If you pushed a branch, push again to the SAME branch: the',
+      '   proposal follows your branch, so a new commit re-runs the checks by',
+      '   itself. If you sent a patch, the proposal\'s branch is in the app\'s own',
+      '   repository: revise it through `prepare_work` with its `proposalId` (an',
+      '   update work order). Do not call',
+      '   `submit_work` again and do not call `prepare_work` without that id — the',
+      '   pull request already exists, and a second submission would duplicate it.',
+      '   `get_proposal` also reports `shots`. For a user-visible',
+      '   change, check that your declared changes were accepted and',
+      '   wait for `verified`; `shotResults` says why any change was skipped,',
+      '   and a ready change\'s `note` says what its shots leave out. A skip or',
+      '   note usually means the declared steps or data cannot reach the state:',
+      '   fix `steps` or `hints` rather than accepting a partial pair.',
+      '   `failed` includes a specific reason.',
       '   Homeroom does not substitute a home-page screenshot when the declared',
       '   UI state cannot be reached.',
       '',
@@ -2794,7 +2819,7 @@ async function submitUpdate(deps, params, proposalId) {
     expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
-    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+    ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
     // The agent's own name for the change. On a session it is stored and
     // names the pull request created at propose time; on a target with a PR
     // it renames it — including a fork-tracked one, which is how an agent's
@@ -2806,6 +2831,11 @@ async function submitUpdate(deps, params, proposalId) {
     // kept whatever the FIRST submission said — the title bug of #1319 on the
     // surface that matters more.
     ...(params.body ? { description: String(params.body) } : {}),
+    // #3344. And the plain-English summary a voter reads first, which until
+    // now only the FIRST submission could set. The route caps it exactly as
+    // the import does and stores it as the author's, replacing the old one.
+    ...(typeof params.summary === 'string' && params.summary.trim()
+      ? { summary: params.summary.trim() } : {}),
     // #1323. And an explicit re-run of the checks against the commit already
     // on the proposal, which until now could only be had by CHANGING a capture
     // route so the testing-metadata write triggered one as a side effect.
@@ -2910,11 +2940,11 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
-    visualEvidenceState: result.visualEvidenceState || null,
-    visualEvidenceAccepted: result.visualEvidenceAccepted === true,
-    visualEvidenceRejected: result.visualEvidenceRejected === true,
-    visualEvidenceRequired: result.visualEvidenceRequired === true,
-    visualEvidenceNextStep: result.visualEvidenceNextStep || 'none',
+    shotsState: result.shotsState || null,
+    visibleChangesAccepted: result.visibleChangesAccepted === true,
+    visibleChangesRejected: result.visibleChangesRejected === true,
+    shotsRequired: result.shotsRequired === true,
+    shotsNextStep: result.shotsNextStep || 'none',
     // Whether the submitted title landed — stored as the session's proposed
     // PR name, or applied as a rename of the proposal that already has one
     // (false on a repeat of the value already stored).
@@ -2933,6 +2963,14 @@ async function submitUpdate(deps, params, proposalId) {
     // same call retries it.
     descriptionUpdated: result.descriptionUpdated === true,
     descriptionRejected: result.descriptionRejected || null,
+    // #3344. The same for the summary: 'imported_pr' — the pull request
+    // belongs to another author; 'write_failed' — the update landed and the
+    // summary did not, so the same call retries it.
+    summaryUpdated: result.summaryUpdated === true,
+    summaryRejected: result.summaryRejected || null,
+    // Stored, but the pull request body that leads with it was not rewritten
+    // ('github_unreadable' / 'github_write_failed'); resending retries it.
+    summaryBodyRejected: result.summaryBodyRejected || null,
     // Whether the task's request number was newly recorded on the target
     // (#1310) — false when the row already carried it, or the task names no
     // request.
@@ -2964,7 +3002,7 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, testing, visualEvidence, importProposal, updateProposal }
+//           body, testing, visibleChanges, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
@@ -3196,7 +3234,7 @@ async function submitWorkLocked(deps, params) {
       ...(params.expectedHeadSha ? { expectedHeadSha: String(params.expectedHeadSha).trim().toLowerCase() } : {}),
       ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
       ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
-      ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+      ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
@@ -3244,11 +3282,11 @@ async function submitWorkLocked(deps, params) {
         previewRebuilding: !!(advanced.body && advanced.body.previewRebuilding),
         testingPaths: (advanced.body && advanced.body.testingPaths) || null,
         testingPathsRejected: (advanced.body && advanced.body.testingPathsRejected) || null,
-        visualEvidenceState: (advanced.body && advanced.body.visualEvidenceState) || null,
-        visualEvidenceAccepted: !!(advanced.body && advanced.body.visualEvidenceAccepted),
-        visualEvidenceRejected: !!(advanced.body && advanced.body.visualEvidenceRejected),
-        visualEvidenceRequired: !!(advanced.body && advanced.body.visualEvidenceRequired),
-        visualEvidenceNextStep: (advanced.body && advanced.body.visualEvidenceNextStep) || 'none',
+        shotsState: (advanced.body && advanced.body.shotsState) || null,
+        visibleChangesAccepted: !!(advanced.body && advanced.body.visibleChangesAccepted),
+        visibleChangesRejected: !!(advanced.body && advanced.body.visibleChangesRejected),
+        shotsRequired: !!(advanced.body && advanced.body.shotsRequired),
+        shotsNextStep: (advanced.body && advanced.body.shotsNextStep) || 'none',
       };
     }
 
@@ -3321,11 +3359,11 @@ async function submitWorkLocked(deps, params) {
       previewRebuilding: !!(shared.body && shared.body.previewRebuilding),
       testingPaths: (shared.body && shared.body.testingPaths) || null,
       testingPathsRejected: (shared.body && shared.body.testingPathsRejected) || null,
-      visualEvidenceState: (shared.body && shared.body.visualEvidenceState) || null,
-      visualEvidenceAccepted: !!(shared.body && shared.body.visualEvidenceAccepted),
-      visualEvidenceRejected: !!(shared.body && shared.body.visualEvidenceRejected),
-      visualEvidenceRequired: !!(shared.body && shared.body.visualEvidenceRequired),
-      visualEvidenceNextStep: (shared.body && shared.body.visualEvidenceNextStep) || 'none',
+      shotsState: (shared.body && shared.body.shotsState) || null,
+      visibleChangesAccepted: !!(shared.body && shared.body.visibleChangesAccepted),
+      visibleChangesRejected: !!(shared.body && shared.body.visibleChangesRejected),
+      shotsRequired: !!(shared.body && shared.body.shotsRequired),
+      shotsNextStep: (shared.body && shared.body.shotsNextStep) || 'none',
     };
   }
 
@@ -3539,8 +3577,7 @@ async function submitWorkLocked(deps, params) {
   // it was.
   const imported = await importProposal(slug, pr.number, {
     linkedIssues: linkedIssuesFor(task),
-    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
-    ...(params.visualEvidencePlan ? { visualEvidencePlan: params.visualEvidencePlan } : {}),
+    ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
   });
   if (!imported || !imported.ok) {
     const retryable = retryableImportFailure(imported);
@@ -3618,11 +3655,11 @@ async function submitWorkLocked(deps, params) {
     appSlug: slug,
     externalAgent: label,
     submittedVia: via,
-    visualEvidenceState: (imported.body && imported.body.visualEvidenceState) || null,
-    visualEvidenceAccepted: !!(imported.body && imported.body.visualEvidenceAccepted),
-    visualEvidenceRejected: !!(imported.body && imported.body.visualEvidenceRejected),
-    visualEvidenceRequired: !!(imported.body && imported.body.visualEvidenceRequired),
-    visualEvidenceNextStep: (imported.body && imported.body.visualEvidenceNextStep) || 'none',
+    shotsState: (imported.body && imported.body.shotsState) || null,
+    visibleChangesAccepted: !!(imported.body && imported.body.visibleChangesAccepted),
+    visibleChangesRejected: !!(imported.body && imported.body.visibleChangesRejected),
+    shotsRequired: !!(imported.body && imported.body.shotsRequired),
+    shotsNextStep: (imported.body && imported.body.shotsNextStep) || 'none',
     // What the proposal was linked to, and — only when that is nothing — the
     // request numbers its brief mentions. A number in free text is never
     // linked by itself (it may name a request the work only touches, or one it

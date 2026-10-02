@@ -17,10 +17,15 @@
 //                   proposal's own discussion: answered, asked about, or
 //                   made on the proposal's branch (#3264, see
 //                   homeroom-bot-followup.js)
-//   ready           one GLM build turn in a dev session of the bot's own,
-//                   then the SAME /promote handler a person's Propose button
-//                   runs — pull request, staging, checks, vote — and a post
-//                   on the issue that links the proposal
+//   blocked         the spec found a ready request impossible as written:
+//                   nothing is built, and the post says why
+//   ready           a spec, then one GLM build turn in a dev session of the
+//                   bot's own, then the SAME /promote handler a person's
+//                   Propose button runs — pull request, staging, checks,
+//                   vote — and a post on the issue that links the proposal.
+//                   The spec is posted on the issue as soon as it is written
+//                   and on the proposal once it is up, for reference: the
+//                   build does not wait for anybody to approve it
 //
 // Every post goes to two places: a GitHub comment on the issue, and a
 // message from the bot's own user in the issue's Homeroom discussion thread
@@ -51,6 +56,11 @@
 // stays exactly one implementation of "put a change up for a vote".
 
 const log = require('./logger');
+const { stripSpecWrapperFence } = require('./spec-format');
+const { agentApiFailure } = require('./agent-result-text');
+const proposalDescription = require('./proposal-description');
+const { SPEC_DESIGN_BRIEF } = require('./prompts');
+const buildContract = require('./build-contract');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -70,11 +80,16 @@ function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-/** Whether the bot acts for real on this app, in this process. */
+/**
+ * Whether the bot acts for real on this app, in this process: an app in
+ * the live list, or (#3624) a project it is building for somebody it talks
+ * to in a DM (settings.firstVersionApps, homeroom-bot-dm.js).
+ */
 function isLiveFor(settings, app) {
   if (!settings || settings.mode === 'off' || isStaging()) return false;
   const live = Array.isArray(settings.liveApps) ? settings.liveApps : [];
-  return !!app && live.includes(app.slug);
+  const built = Array.isArray(settings.firstVersionApps) ? settings.firstVersionApps : [];
+  return !!app && (live.includes(app.slug) || built.includes(app.slug));
 }
 
 const MAX_QUOTED_CHARS = 1500;
@@ -134,6 +149,10 @@ function heldText({ cap, verdict, limit }) {
     return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
       + 'It will come back to this issue when one of them is merged or closed.';
   }
+  if (cap === 'proposals_total') {
+    return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
+      + 'It will come back to this issue when one of them is merged or closed.';
+  }
   const what = verdict === 'question' ? 'a question about' : 'a note on';
   return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
     + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
@@ -159,6 +178,391 @@ function proposalLink(domain, appSlug, sessionId) {
   return `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
 }
 
+// ── The spec ─────────────────────────────────────────────────────────────
+//
+// Before it builds a ready request, the bot writes a spec for it, the way a
+// person's dev session does: a read-only scout turn in the build's own
+// session, whose final message IS the spec, stored as that session's spec
+// doc (spec_md and a numbered version). The build then works from it. On a
+// live app it is posted on the issue as soon as it exists, and on the
+// proposal once it is up. For reference only: nothing waits on it.
+
+// The spec gets a clock of its own, shorter than a build's: the triage has
+// already read the code, so this is writing down a plan, not discovering one.
+const SPEC_TURN_MAX_MS = 10 * 60 * 1000;
+// GitHub refuses a comment over 65,536 characters.
+const MAX_SPEC_COMMENT_CHARS = 60_000;
+// A timed-out build's last few progress lines, kept for its failure reason.
+// Three short ones fit the run's error column (600 characters).
+const PROGRESS_LINES_KEPT = 3;
+const PROGRESS_LINE_CHARS = 160;
+
+/**
+ * What a turn was last doing, so one stopped on its clock says what it was
+ * waiting on (#3385): the last few distinct progress lines, clipped.
+ * `suffix()` is "" when there were none.
+ */
+function lastActivity() {
+  const recent = [];
+  return {
+    note(line) {
+      const text = clipText(String(line || '').replace(/\s+/g, ' '), PROGRESS_LINE_CHARS);
+      if (!text || recent[recent.length - 1] === text) return;
+      recent.push(text);
+      if (recent.length > PROGRESS_LINES_KEPT) recent.shift();
+    },
+    suffix() { return recent.length ? `; last activity: ${recent.join(' | ')}` : ''; },
+  };
+}
+
+// #3426: a reporter's screenshot (feedback's `/issue-images/<id>` line) is
+// often the only description of what they mean, and the bot used to guess
+// past it: recipebot #47 ("Can not comment", a phone screenshot) was built
+// on an assumption. Said only when the thread has one, in each turn that
+// reads the request: triage, spec and build.
+const ISSUE_IMAGE_URL = /https?:\/\/[^\s)]+\/issue-images\/[A-Za-z0-9_-]+/;
+
+function screenshotNote(seed) {
+  if (!ISSUE_IMAGE_URL.test(String(seed || ''))) return [];
+  return [
+    'The request includes a screenshot (an `/issue-images/<id>` link above). Download each one, for example',
+    '`curl -sS -o /tmp/issue-shot-1.png <url>`, and look at it with your image tool (view_image, or the Read',
+    'tool) before you decide anything: it is often the clearest description of what the reporter means. If the',
+    'tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art',
+    'or with OCR): treat what it shows as unknown, and say so.',
+    '',
+  ];
+}
+
+function specPrompt({ seed, buildNote }) {
+  return [
+    seed,
+    '',
+    ...screenshotNote(seed),
+    'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
+    '',
+    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    '',
+    'Before it is built, write the SPEC for it: a markdown document the app\'s group can read, and that the build',
+    'that follows will work from. You are running in PLAN MODE: read and search the repository with read-only',
+    'shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push',
+    'anything; anything this run changes in the repository is discarded when it ends.',
+    '',
+    'The spec must be:',
+    '- Grounded in the real code: name actual files and describe current behaviour, not guesses.',
+    '- Two halves under these exact H2 headings, in this order: "## User-facing changes" then',
+    '  "## Technical implementation". Start with a "# " title line; keep everything else inside one of the',
+    '  two halves, and use ### or deeper for any other heading. "User-facing changes" is for a non-developer:',
+    '  what people will see and do differently, no file paths or code. "Technical implementation" holds the',
+    '  files, data, edge cases and tests.',
+    '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
+    '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
+    '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
+    '- As small as the request: the plan above, no refactoring or extra features.',
+    `- ${SPEC_DESIGN_BRIEF}`,
+    '',
+    'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
+    'Where something is open, make the sensible choice yourself. End the "User-facing changes" half with a',
+    '"### Assumptions" subsection: every assumption listed in the plan above and every choice you made, one',
+    'plain-language line each, so the group can see them and object in review. Do not write a "### Questions"',
+    'section.',
+    '',
+    'Before you finish, read the two halves against each other. Every assumption, and everything "User-facing',
+    'changes" says people will see, must be true of what "Technical implementation" builds, and the technical half',
+    'must build nothing the user-facing half leaves out. Where they disagree, change one so they agree: the build',
+    'follows the technical half, so a promise only the other half makes is a promise the build breaks.',
+    '',
+    'There is one exception. If reading the code shows the request is IMPOSSIBLE as written (it depends on',
+    'something that does not exist and cannot be built here, or the code contradicts what it asks), do not write',
+    'a spec: reply with a single line that starts with "BLOCKED:" and says why in one sentence. That is for',
+    'impossible only. A choice, however unsure you are about it, is an assumption, never a BLOCKED.',
+    'A reported bug counts as impossible when the code does not show it: if the request reports a bug and you',
+    'cannot find where in the code it happens, reply "BLOCKED:" and say where you looked. A fix for a cause you',
+    'could not find is a guess, and the build does not guess.',
+    '',
+    'Otherwise your final message must be ONLY the markdown spec, as raw markdown: no preamble, and not wrapped',
+    'in a code fence. It is captured verbatim.',
+  ].join('\n');
+}
+
+// The spec turn's one way out: a first line "BLOCKED: <why>".
+const BLOCKED_RE = /^\s*BLOCKED:\s*(.+)/i;
+
+/**
+ * The spec from its "# " title line on. A model sometimes says what it is
+ * about to do before the document ("All the code I need is verified.
+ * Writing the spec now…": 7 of the first 32 shadow specs, #3385), and on a
+ * live app that line would be posted on the issue with it. Only lines
+ * before a title near the top are dropped; a spec with no title is kept.
+ */
+function specFromTitle(text) {
+  const lines = String(text || '').split('\n');
+  const at = lines.findIndex((l) => /^# \S/.test(l));
+  if (at <= 0 || at > 40) return String(text || '');
+  return lines.slice(at).join('\n').trim();
+}
+
+/** Why the spec turn found the request impossible, or null. */
+function specBlocked(text) {
+  const firstLine = String(text || '').trim().split('\n')[0] || '';
+  const m = BLOCKED_RE.exec(firstLine);
+  return m ? clipText(m[1], 500) : null;
+}
+
+function blockedText(reason) {
+  return [
+    'Homeroom bot started on this and found it cannot be built as asked:',
+    '',
+    clipText(reason, 500) || '(no reason given)',
+    '',
+    REPLY_HINT,
+  ].join('\n');
+}
+
+// The longest spec title the card shows, and the longest the proposal is
+// named with whole (see proposalTitle).
+const SPEC_TITLE_MAX = 120;
+
+/** The spec's whole "# " heading, unclipped, or null. */
+function specHeading(spec) {
+  const lines = String(spec || '').split('\n');
+  for (let i = 0; i < Math.min(lines.length, 30); i += 1) {
+    const line = lines[i].trim();
+    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim();
+  }
+  return null;
+}
+
+/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
+function specTitle(spec) {
+  const heading = specHeading(spec);
+  return heading ? heading.slice(0, SPEC_TITLE_MAX) : null;
+}
+
+// ── What the proposal is called, and what it says (#3518) ────────────────
+//
+// The promote route names a pull request from the session's first request
+// and leads it with the coding agent's latest description (pr-metadata's
+// deterministic path, which every OpenRouter session takes). The bot's build
+// gave it neither: its only request was the "Build issue #N: …" seed, and
+// its turn ran outside the dev chat, so no completion row recorded what it
+// said. Every bot proposal came out titled with the issue number and a
+// severed run of the plan, with no summary at all.
+//
+// The spec already holds both halves of a better answer, written for people:
+// a title naming the change (the spec prompt asks for one shaped like a pull
+// request title) and a "User-facing changes" half written for somebody who
+// is not a developer. The build adds the most accurate half: a DESCRIPTION
+// block written after the change exists, the one an OpenRouter dev chat turn
+// ends with (proposal-description.js, #2820).
+
+// Scaffolding a title is not: a "Spec:" label, and the issue number, which
+// the proposal shows as its own Addresses chip.
+const TITLE_LABEL_RE = /^(?:spec(?:ification)?|plan)(?:\s+for\b)?\s*(?:[:\u2013\u2014-]\s*|(?=(?:(?:github\s+)?issue\s+)?#\d))/i;
+const TITLE_ISSUE_LEAD_RE = /^(?:(?:build\s+)?(?:github\s+)?issue\s+#?\d+|#\d+)\s*[:\u00b7\u2013\u2014-]?\s*/i;
+const TITLE_ISSUE_TAIL_RE = /\s*(?:[([]\s*(?:(?:github\s+)?issue\s+)?#\d+\s*[)\]]|[\u2013\u2014-]\s*(?:issue\s+)?#\d+)$/i;
+
+/**
+ * The name the bot proposes a change under: the spec's title, the way the
+ * spec prompt asks for it (what the change does, in pull request form),
+ * with a "Spec:" label or an issue number taken off, or null when there is
+ * none worth using. Null sends the promote route to its own deterministic
+ * name, which since #3518 is the issue's title with the seed peeled off
+ * (session-title.js parseIssueSeed).
+ *
+ * Never cut. The prompt asks for 72 characters, as the platform's own
+ * generated titles are asked for, and a model that runs over has still
+ * written a whole name: a title up to the spec card's own bound is used as
+ * it is, and one past it is not a title, so the fallback names the change
+ * instead. Cutting a name short is the fault this replaces.
+ */
+function proposalTitle(spec) {
+  const heading = specHeading(spec);
+  if (!heading) return null;
+  const title = heading
+    .replace(/[`*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(TITLE_LABEL_RE, '')
+    .replace(TITLE_ISSUE_LEAD_RE, '')
+    .replace(TITLE_ISSUE_TAIL_RE, '')
+    .replace(/\.+$/, '')
+    .trim();
+  // One word ("Spec", "Leaderboard") names a topic, not a change.
+  if (!title || title.length > SPEC_TITLE_MAX || title.split(' ').length < 2) return null;
+  return title;
+}
+
+/**
+ * The spec's "User-facing changes" half, as far as its "### Assumptions"
+ * subsection: what people will see and do differently, written for somebody
+ * who is not a developer (specPrompt). The assumptions stay in the spec,
+ * which is on the proposal as a card; they are choices, not changes. Null
+ * when the spec has no such half.
+ */
+function specUserFacing(spec) {
+  const lines = String(spec || '').split('\n');
+  const start = lines.findIndex((l) => /^##\s+user[- ]facing changes\s*:?\s*$/i.test(l.trim()));
+  if (start === -1) return null;
+  const kept = [];
+  for (const line of lines.slice(start + 1)) {
+    const t = line.trim();
+    if (/^##\s/.test(t) || /^###\s+assumptions\b/i.test(t)) break;
+    kept.push(line);
+  }
+  const text = kept.join('\n').trim();
+  if (!text) return null;
+  const max = proposalDescription.DESCRIPTION_MAX;
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/**
+ * What the build said, as the completion row a dev chat turn writes stores
+ * it: `ccOutput` is its message with the DESCRIPTION block taken out, and
+ * `proposalDescription` the block, or the spec's user-facing half when the
+ * build left the block out. A final message that is a wire failure (a run
+ * can commit and then die on the API) says nothing about the change.
+ */
+function buildDescription({ text, spec = null }) {
+  const raw = String(text || '').trim();
+  const said = raw && !agentApiFailure(raw) ? proposalDescription.extract(raw) : { cleanedText: '', description: null };
+  const description = said.description || specUserFacing(spec);
+  return { ccOutput: String(said.cleanedText || '').trim() || description || '', description: description || null };
+}
+
+/**
+ * Write the proposal's name and description onto the build's session, just
+ * before the promote route reads them. Both go through the seams a person's
+ * change uses, so nothing downstream learns about the bot:
+ *   - the name is proposed_pr_title, the author's own title for a change not
+ *     yet proposed, which the route names the pull request with verbatim.
+ *     submit_work stores an external agent's title there, and the bot is
+ *     this change's author the same way. (#2779 keeps a Mayor's start_change
+ *     name out of it because that name is a guess made before any work; the
+ *     spec's title is written from the code, and the proposal goes up as
+ *     soon as the build ends.) Only written while the session has no pull
+ *     request and no chosen title;
+ *   - the description is the completion row every dev chat build leaves
+ *     (a system row carrying ccOutput and proposalDescription), which
+ *     pr-metadata's gatherSessionContext reads for the summary the group
+ *     sees first, and the pull request body leads with.
+ * Best-effort: a proposal that cannot be named or described still goes up,
+ * under the fallback name. Resolves { title, description }; never throws.
+ */
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null }) {
+  const title = proposalTitle(spec);
+  if (title) {
+    try {
+      await pool.query(
+        `UPDATE chat_sessions SET proposed_pr_title = $1
+          WHERE id = $2 AND user_id = $3 AND pr_number IS NULL AND proposed_pr_title IS NULL`,
+        [title, Number(sessionId), bot.id],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not name the proposal; the route names it', { sessionId, err: err.message });
+    }
+  }
+  const { ccOutput, description } = buildDescription({ text: buildText, spec });
+  if (ccOutput) {
+    try {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
+          ccOutput,
+          ...(description ? { proposalDescription: description } : {}),
+          ccOutcome: 'success',
+          agentBackend: 'codex_openrouter',
+          agentModel: model || null,
+        })],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not record what the build said; proposing without a summary', {
+        sessionId, err: err.message,
+      });
+    }
+  }
+  return { title, description };
+}
+
+/** The card's preview: the body after the title, as the share route cuts it. */
+function specSnippet(spec, title) {
+  const lines = String(spec || '').split('\n');
+  let start = 0;
+  if (title) {
+    while (start < lines.length && !lines[start].trim()) start += 1;
+    if (start < lines.length && lines[start].trim().startsWith('# ')) start += 1;
+  }
+  while (start < lines.length && !lines[start].trim()) start += 1;
+  return lines.slice(start).join('\n').slice(0, 280);
+}
+
+/** The spec as a GitHub comment: said what it is for, then the document. */
+function specCommentText(spec) {
+  return [
+    'Homeroom bot wrote a spec for this request and is building it now. It is here for reference: nobody needs '
+      + 'to approve it, and the proposal will be linked here when it is up.',
+    '',
+    '<details><summary>The spec</summary>',
+    '',
+    clipText(spec, MAX_SPEC_COMMENT_CHARS),
+    '',
+    '</details>',
+  ].join('\n');
+}
+
+/**
+ * The spec as a thread message: the same spec card a person's "Share"
+ * posts (metadata.specShare), opening the version the build worked from.
+ */
+function specCard({ sessionId, version, spec, bot, proposed = false }) {
+  const title = specTitle(spec);
+  const content = proposed
+    ? `📋 The spec this proposal was built from${title ? `: "${title}"` : ''}.`
+    : `📋 Homeroom bot's spec for this request${title ? `: "${title}"` : ''}. It is building it now; this is for reference, not for approval.`;
+  return {
+    content,
+    msgType: 'spec_share',
+    metadata: {
+      specShare: {
+        sessionId: Number(sessionId),
+        version: Number(version),
+        builtAt: null,
+        commitSha: null,
+        prNumber: null,
+        title,
+        snippet: specSnippet(spec, title),
+        totalChars: String(spec || '').length,
+        sharedBy: { id: bot.id, username: bot.username },
+      },
+    },
+  };
+}
+
+/**
+ * Make the spec version readable by everyone who can see the card: a
+ * version is private to its session's owner until it is shared, exactly as
+ * the share route marks it.
+ */
+async function shareSpecVersion(pool, sessionId, version) {
+  await pool.query(
+    `UPDATE chat_session_specs SET shared_to_group_at = NOW()
+      WHERE session_id = $1 AND version = $2 AND shared_to_group_at IS NULL`,
+    [Number(sessionId), Number(version)],
+  );
+}
+
+/** The spec card in the proposal's own discussion, once it is up. */
+async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec }) {
+  if (!spec || !version || !sessionId) return null;
+  await shareSpecVersion(pool, sessionId, version);
+  const card = specCard({ sessionId, version, spec, bot, proposed: true });
+  return ws.sendBotMessage(pool, app.id, {
+    user: bot, content: card.content, metadata: card.metadata,
+    thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
+  });
+}
+
 // ── Who filed the issue ──────────────────────────────────────────────────
 //
 // An issue filed from Homeroom is authored on GitHub by the platform's bot
@@ -172,13 +576,195 @@ function proposalLink(domain, appSlug, sessionId) {
 // report, then the body's "**Source:**" line; for an issue opened on
 // GitHub, the Homeroom account linked to its author's GitHub login.
 
-// The kinds of post that ask something of the person who filed the issue.
-// Not "looking" (a notice, before anything is known) and not a held note
-// (nothing for them to do; the bot comes back on its own).
-const POSTER_KINDS = new Set(['question', 'person', 'empty', 'proposal', 'build_failed']);
+// The kinds of post that tag people: whoever filed the issue and whoever
+// took part in its discussion (see mentionTargets). Every answer, the spec
+// and the proposal, and every follow-up on the proposal. Not "looking" (a
+// notice, before anything is known) and not a held note (nothing for them
+// to do; the bot comes back on its own).
+const TAGGING_KINDS = new Set([
+  'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
+  'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
+]);
 
 function tagsPoster(kind) {
-  return POSTER_KINDS.has(kind);
+  return TAGGING_KINDS.has(kind);
+}
+
+// At most this many people are tagged on one post: whoever filed it, then
+// the earliest to join in. A crowded issue does not become a crowded inbox.
+const MAX_MENTIONS = 6;
+
+function isOtherBotLogin(login, botLogin) {
+  const l = String(login || '').toLowerCase();
+  return !l || l.endsWith('[bot]') || l === 'usernode-bot' || (botLogin && l === String(botLogin).toLowerCase());
+}
+
+/**
+ * Who a post on this issue tags, as Homeroom usernames, in order: whoever
+ * filed it, then everybody who wrote in its Homeroom thread (and the
+ * proposal's, when there is one) or commented on GitHub from an account
+ * linked to Homeroom, earliest first. Never the bot or another synthetic
+ * account, never somebody who asked the bot to stop tagging them here
+ * (homeroom_bot_mention_optouts), and at most MAX_MENTIONS.
+ */
+async function mentionTargets({
+  pool, github, app, repo, issueNumber, issue, botLogin = null, bot = null, proposalSessionId = null,
+}) {
+  const names = [];
+  const poster = await issuePoster(pool, { app, repo, issueNumber, issue, botLogin }).catch(() => null);
+  if (poster) names.push(poster);
+  const { rows: talked } = await pool.query(
+    `SELECT u.username, MIN(m.id) AS first_id
+       FROM chat_messages m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.msg_type = 'message' AND m.deleted_at IS NULL
+        AND u.is_synthetic = FALSE
+        AND ((m.thread_type = 'issue' AND m.thread_ref = $2)
+             OR ($3::int IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = $3::int))
+      GROUP BY u.username
+      ORDER BY first_id`,
+    [app.id, issueNumber, proposalSessionId == null ? null : Number(proposalSessionId)],
+  );
+  names.push(...talked.map((r) => r.username));
+  let comments = [];
+  try {
+    ({ comments = [] } = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber));
+  } catch {
+    comments = [];
+  }
+  const logins = [...new Set(comments.map((c) => String(c.author || '')).filter((l) => !isOtherBotLogin(l, botLogin))
+    .map((l) => l.toLowerCase()))];
+  if (logins.length) {
+    const { rows: linked } = await pool.query(
+      `SELECT username, LOWER(github_login) AS login FROM users
+        WHERE LOWER(github_login) = ANY($1::text[]) AND is_synthetic = FALSE`,
+      [logins],
+    );
+    const byLogin = new Map(linked.map((r) => [r.login, r.username]));
+    for (const l of logins) if (byLogin.has(l)) names.push(byLogin.get(l));
+  }
+  const { rows: out } = await pool.query(
+    `SELECT u.username FROM homeroom_bot_mention_optouts o JOIN users u ON u.id = o.user_id
+      WHERE o.app_id = $1 AND o.issue_number = $2`,
+    [app.id, issueNumber],
+  );
+  const optedOut = new Set(out.map((r) => r.username.toLowerCase()));
+  const botName = String(bot?.username || BOT_USERNAME).toLowerCase();
+  const seen = new Set();
+  const targets = [];
+  for (const name of names) {
+    const key = String(name || '').toLowerCase();
+    if (!key || key === botName || key === BOT_USERNAME || optedOut.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    targets.push(name);
+    if (targets.length >= MAX_MENTIONS) break;
+  }
+  return targets;
+}
+
+/** The names a triage or follow-up turn read asking the bot to stop tagging them. */
+function parseStopMentioning(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((n) => (typeof n === 'string' ? n.replace(/^@/, '').trim() : ''))
+    .filter((n) => /^[A-Za-z0-9_.-]{1,64}$/.test(n)))].slice(0, 20);
+}
+
+/**
+ * Of the names a turn read, the people who actually wrote on this issue: a
+ * Homeroom username from the issue's thread (or the proposal's, on a
+ * follow-up), or a GitHub login linked to a Homeroom account that commented
+ * on the issue. Only they can change whether the bot tags them here, and
+ * only for themselves. Resolves Map(user id → username).
+ */
+async function issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId = null }) {
+  const asked = [...new Set((names || []).map((n) => String(n || '').replace(/^@/, '').trim().toLowerCase()).filter(Boolean))];
+  if (!asked.length) return new Map();
+  const { rows: fromThread } = await pool.query(
+    `SELECT DISTINCT u.id, u.username
+       FROM chat_messages m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.msg_type = 'message' AND m.deleted_at IS NULL
+        AND u.is_synthetic = FALSE AND LOWER(u.username) = ANY($4::text[])
+        AND ((m.thread_type = 'issue' AND m.thread_ref = $2)
+             OR ($3::int IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = $3::int))`,
+    [app.id, issueNumber, proposalSessionId == null ? null : Number(proposalSessionId), asked],
+  );
+  let fromGithub = [];
+  try {
+    const { comments = [] } = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber);
+    const logins = [...new Set(comments.map((c) => String(c.author || '').toLowerCase()))].filter((l) => asked.includes(l));
+    if (logins.length) {
+      ({ rows: fromGithub } = await pool.query(
+        `SELECT id, username FROM users WHERE LOWER(github_login) = ANY($1::text[]) AND is_synthetic = FALSE`,
+        [logins],
+      ));
+    }
+  } catch {
+    fromGithub = [];
+  }
+  return new Map([...fromThread, ...fromGithub].map((u) => [u.id, u.username]));
+}
+
+/**
+ * The people a triage or follow-up turn read asking the bot to stop tagging
+ * them on this issue, recorded so no later post does. Resolves the
+ * usernames recorded.
+ */
+async function recordMentionOptOuts({
+  pool, github, app, repo, issueNumber, names, runId = null, proposalSessionId = null,
+}) {
+  const people = await issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId });
+  if (!people.size) return [];
+  await pool.query(
+    `INSERT INTO homeroom_bot_mention_optouts (app_id, issue_number, user_id, run_id)
+     SELECT $1, $2, u, $4 FROM UNNEST($3::int[]) AS u
+     ON CONFLICT (app_id, issue_number, user_id) DO NOTHING`,
+    [app.id, issueNumber, [...people.keys()], runId],
+  );
+  log.info('homeroom-bot', 'Stopped tagging people who asked', { app: app.slug, issueNumber, people: [...people.values()] });
+  return [...people.values()];
+}
+
+/**
+ * The people a turn read asking to be tagged again on this issue, after
+ * they had asked it to stop. The same rule: only somebody who wrote there,
+ * only for themselves. Resolves the usernames tagged again.
+ */
+async function clearMentionOptOuts({
+  pool, github, app, repo, issueNumber, names, proposalSessionId = null,
+}) {
+  const people = await issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId });
+  if (!people.size) return [];
+  const { rows } = await pool.query(
+    `DELETE FROM homeroom_bot_mention_optouts
+      WHERE app_id = $1 AND issue_number = $2 AND user_id = ANY($3::int[])
+      RETURNING user_id`,
+    [app.id, issueNumber, [...people.keys()]],
+  );
+  const back = rows.map((r) => people.get(r.user_id));
+  if (back.length) log.info('homeroom-bot', 'Tagging people again who asked', { app: app.slug, issueNumber, people: back });
+  return back;
+}
+
+/**
+ * What a turn read about tagging, applied before anything from that run is
+ * posted. A name in both lists is left as it was: the turn could not tell
+ * which ask came last, and the prompt forbids listing anybody twice.
+ */
+async function applyMentionAsks({
+  pool, github, app, repo, issueNumber, stop = [], resume = [], runId = null, proposalSessionId = null,
+}) {
+  const lower = (list) => new Set((list || []).map((n) => String(n).toLowerCase()));
+  const both = [...lower(stop)].filter((n) => lower(resume).has(n));
+  const keep = (list) => (list || []).filter((n) => !both.includes(String(n).toLowerCase()));
+  const stopped = keep(stop).length
+    ? await recordMentionOptOuts({ pool, github, app, repo, issueNumber, names: keep(stop), runId, proposalSessionId })
+    : [];
+  const resumed = keep(resume).length
+    ? await clearMentionOptOuts({ pool, github, app, repo, issueNumber, names: keep(resume), proposalSessionId })
+    : [];
+  return { stopped, resumed };
 }
 
 /** The Homeroom username of whoever filed the issue, or null. */
@@ -229,9 +815,23 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
  */
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
-  msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null,
+  msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null,
 }) {
+  // Everybody this post tags (mentionTargets); `mention` is the one-person
+  // form the older callers pass.
+  let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  // #3624: a requester the bot tells in a DM is not also tagged here: the
+  // DM is where the news reaches them, and it would ring twice.
+  if (dm && sender && tagged.length) {
+    try {
+      const recipient = await require('./homeroom-bot-dm').dmRecipient(pool, app.id, issueNumber);
+      if (recipient) tagged = tagged.filter((n) => String(n).toLowerCase() !== recipient.username.toLowerCase());
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check the DM recipient (tagging as before)', { app: app.slug, issueNumber, err: err.message });
+    }
+  }
+  const handles = tagged.map((n) => `@${n}`).join(' ');
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
@@ -259,23 +859,31 @@ async function post({
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
-  const threadText = mention ? `@${mention} ${text}` : text;
+  const threadText = handles ? `${handles} ${text}` : text;
   try {
-    message = await inThread(threadText, { type: 'issue', ref: issueNumber });
+    // A spec is a card in the thread (its full text is on GitHub, and one
+    // click away from the card), not a wall of markdown in a chat bubble.
+    message = threadMessage && sender
+      ? await ws.sendBotMessage(pool, app.id, {
+        user: sender, content: handles ? `${handles} ${threadMessage.content}` : threadMessage.content,
+        metadata: threadMessage.metadata,
+        thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
+      })
+      : await inThread(threadText, { type: 'issue', ref: issueNumber });
   } catch (err) {
     log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
-  // (conversation-prompt.js). Only for the poster: the content handed over
-  // is their handle alone, never the message, whose model-written text could
-  // name anybody.
+  // (conversation-prompt.js). Only for the people it tags: the content
+  // handed over is their handles alone, never the message, whose
+  // model-written text could name anybody.
   let notified = 0;
-  if (mention && message?.id) {
+  if (handles && message?.id) {
     try {
       const notify = notifications || require('./notifications');
       const rows = await notify.createMentionNotifications(pool, {
-        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: `@${mention}`,
+        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: handles,
       });
       await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
       notified = rows.length;
@@ -301,10 +909,53 @@ async function post({
   ).catch(() => {});
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
-    ...(mention ? { mentioned: mention, notified } : {}),
+    ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
+  // #3624: the same news, in the requester's DM with the bot, when they
+  // are somebody it talks to there. A post that carries `dm` is one worth
+  // telling them about; the issue stays the record either way.
+  if (dm && sender) {
+    try {
+      await require('./homeroom-bot-dm').relayIssuePost({
+        pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+}
+
+/**
+ * One message from the bot in a proposal's own discussion, recorded like
+ * every post (homeroom_bot_posts) but said nowhere else: no GitHub comment
+ * and nothing in the issue's thread. For news that is the proposal's alone,
+ * such as a revision that fixed its failing checks. Never throws on the
+ * send; resolves { postId, thread }.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId }) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id ?? null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  if (postId && message?.id) {
+    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
+      .catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
+  return { postId, thread: !!message };
 }
 
 /**
@@ -348,7 +999,13 @@ async function advanceSeen({
   ]);
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
-  const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
+  // A comment this run posted is the bot's own whatever the login lookup
+  // said: when it failed, the bot's own note read as a person's reply, and
+  // the issue was triaged again minutes later (todo #78, #3509).
+  const ours = new Set(times);
+  const bots = (c) => ours.has(Date.parse(c.createdAt))
+    || (!!botLogin && String(c.author || '').toLowerCase() === botLogin);
+  const someoneElse = comments.some((c) => !bots(c) && newer(c.createdAt))
     || (thread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt))
     || (proposalThread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt));
   if (someoneElse) {
@@ -388,7 +1045,7 @@ let votesRouter = null;
  * Run POST /api/sessions/:id/promote as the bot, in-process. Resolves the
  * status and JSON the route answered with; never throws.
  */
-function promoteAsBot({ config, bot, sessionId, router = null }) {
+function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null }) {
   const target = router || (votesRouter ||= require('../routes/votes').voteRoutes(config));
   const url = `/api/sessions/${Number(sessionId)}/promote`;
   return new Promise((resolve) => {
@@ -404,6 +1061,10 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
       user: {
         id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
         [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+        // Its own ceiling on proposals up for a vote, in place of the
+        // per-user cap (#3576). Symbol-keyed for the same reason.
+        ...(Number.isInteger(ceiling) && ceiling > 0
+          ? { [require('./session-caps').BOT_PROMOTED_CEILING]: ceiling } : {}),
       },
       get() { return undefined; },
       header() { return undefined; },
@@ -431,22 +1092,73 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
   });
 }
 
-function buildPrompt({ seed, buildNote }) {
+// #3518: the proposal's summary, the text the group reads before it votes.
+// The same block an OpenRouter dev chat turn ends with (#2820), parsed by
+// proposal-description.js; prepareProposal files it where the promote route
+// reads it.
+const BUILD_DESCRIPTION_LINES = Object.freeze([
+  '',
+  'After that summary, end your final message with a description of the change for the people who will vote on',
+  'it, between these two marker lines:',
+  '',
+  '==== DESCRIPTION ====',
+  'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
+  'now do, or what stops going wrong.',
+  '==== END DESCRIPTION ====',
+  '',
+  'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
+  'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
+]);
+
+// A build of the platform's own repository runs its tests the way that
+// repository's AGENTS.md asks every agent to: the suites that pin what it
+// changed, never the whole suite, which the platform runs on every proposal
+// anyway. Half the platform's shadow builds ran out of time (2026-10-02),
+// several in a mapped run of thousands of tests chasing failures that were
+// not theirs. Said in the build prompt as well as in AGENTS.md because a
+// build that reads past it loses its whole clock.
+const PLATFORM_TEST_NOTE = Object.freeze([
+  '',
+  'This is the platform\'s own repository, which is large, and the platform runs its whole test suite on the',
+  'proposal by itself. Do not run `npm test` or the whole suite. Run only the suites for the files you changed:',
+  '`npm run test:changed -- --files <the files you changed, comma-separated>` (add `--list` first to see what it',
+  'would run), or `node --test <test file>` for the test files that name them. If that maps to more than a few',
+  'hundred tests because you changed shared code, run only the test files that name your changed files. A',
+  'failure in a suite that does not read anything you changed is not yours: name it in your summary and move on.',
+]);
+
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
+  const specBlock = spec
+    ? [
+      '',
+      '==== SPEC (written for this request just before this build; authoritative for what to build) ====',
+      '',
+      String(spec),
+      '',
+      '==== END SPEC ====',
+      '',
+      'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
+      'the spec wins. The repository\'s own agent instructions still come first.',
+    ]
+    : [];
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot, building this request so the app\'s group can review it as a proposal.',
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    ...specBlock,
     '',
-    'Make exactly that change, and nothing else:',
-    '- Read the repository\'s own agent instructions (AGENTS.md, CLAUDE.md) first, and follow them.',
-    '- Keep the change as small as the request needs. Do not refactor or tidy unrelated code.',
-    '- Run the tests that cover what you changed, if the repository has them.',
-    '- Do not commit or push yourself: when you finish, your working tree is committed and pushed for you.',
-    '- If you find you cannot make the change safely, stop and say why instead of changing code.',
-    'End with a short, plain-language summary of what you changed.',
+    // The rules every on-platform build works under (services/build-contract.js):
+    // this bot's own list, which the dev chat now shares.
+    buildContract.buildContractBlock({
+      heading: 'Make exactly that change, and nothing else:',
+      commits: 'harness',
+    }),
+    ...(platformRepo ? PLATFORM_TEST_NOTE : []),
+    ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
 
@@ -454,12 +1166,113 @@ function buildPrompt({ seed, buildNote }) {
  * Build the change in a dev session of the bot's own and put it up for a
  * vote. Resolves { ok, sessionId, prNumber, costUsd, error }; never throws.
  */
+/**
+ * The spec turn: read-only, in the build's own session and worker, its
+ * final message stored as the session's spec doc. Resolves
+ * { ok, specMd, version, costUsd, error, stopped }; never throws. A spec
+ * that fails is not a failed build: the build goes ahead from the plan.
+ */
+/**
+ * A spec turn's final message, as the build will use it: unwrapped, started
+ * at its title, and checked for the one way out and for a wire failure.
+ * { ok, specMd } or { ok: false, error, blocked? }. Shared with the restart
+ * recovery of a spec turn (#3401), which reads the same message back from
+ * the turn's journal.
+ */
+function readSpec(text) {
+  const specMd = specFromTitle(stripSpecWrapperFence(String(text || '').trim()));
+  if (!specMd) return { ok: false, error: 'the spec turn returned nothing' };
+  const blocked = specBlocked(specMd);
+  if (blocked) return { ok: false, blocked, error: `blocked: ${blocked}` };
+  // A run that died on the wire can report the failure as its final message,
+  // which would otherwise be stored as the spec.
+  if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
+  return { ok: true, specMd };
+}
+
+async function draftSpec({
+  pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
+  specBudgetMs = SPEC_TURN_MAX_MS,
+}) {
+  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
+  const progress = lastActivity();
+  let stopped = false;
+  let stopping = null;
+  const timer = setTimeout(() => {
+    stopped = true;
+    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+  }, budgetMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  activeWorkers.add(session.id);
+  const prompt = specPrompt({ seed, buildNote });
+  let routed;
+  try {
+    routed = await sessions.runCodexAttemptLoop({
+      pool, session, userId: bot.id, config, isCodexSession: true,
+      turnModel: model, resumeThreadId: null, mode: 'scout',
+      telemetryComponent: 'homeroom_bot_spec',
+      resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+        pool, session, userId: bot.id, model, resumeThreadId: null, config,
+      }),
+      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+        mode: 'scout',
+        prompt,
+        model,
+        commitMsg: '',
+        resumeSessionId: null,
+        branchName: session.branch_name,
+        ...(ctx || {}),
+        telemetryComponent: 'homeroom_bot_spec',
+        onProgress: progress.note,
+      }),
+      retryPredicate: () => null,
+      sendStatus: async () => {},
+      waitForStopped: async () => {},
+      prepareRetry: async () => false,
+      classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+      containerName,
+    });
+  } catch (err) {
+    routed = { error: `dispatch: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+    if (stopping) await stopping;
+    activeWorkers.delete(session.id);
+  }
+  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  if (stopped) return { ok: false, stopped: true, costUsd, error: `the spec ran past its time limit${progress.suffix()}` };
+  if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
+  if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
+  const read = readSpec(routed.result?.lastResultText);
+  if (!read.ok) return { ...read, costUsd };
+  const { specMd } = read;
+  let version = null;
+  try {
+    // The same three effects a person's scout has: spec_md, a numbered
+    // version, and the spec card in the session's own transcript.
+    const published = await sessions.persistScoutPublication({
+      pool, sessionId: session.id, content: specMd, hadSpec: false,
+      agentBackend: 'codex_openrouter', agentModel: model,
+    });
+    version = published?.specVersion ?? null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not store the spec; building from it anyway', { sessionId: session.id, err: err.message });
+  }
+  return { ok: true, specMd, version, costUsd };
+}
+
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
-  turnBudgetMs, model, deps,
+  turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
+  // A shadow build (`propose: false`) is the same build, on a session of the
+  // bot's own that links no issue, so no board reads it as work under way
+  // on one, and that is archived the moment the build ends. Its branch is
+  // the only thing it leaves, on the app's repository, for spot checks.
   let session;
   try {
     const { rows } = await pool.query(
@@ -467,10 +1280,12 @@ async function buildAndPropose({
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
                                   agent_reasoning_effort)
-       VALUES ($1, $2, NULL, 'active', FALSE, $3, ARRAY[$3]::int[], TRUE, $4,
+       VALUES ($1, $2, NULL, 'active', FALSE, $3,
+               CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
                'codex_openrouter', 'openrouter', $5, $6)
        RETURNING *`,
-      [app.id, bot.id, issueNumber, `Homeroom bot: #${issueNumber} ${title}`,
+      [app.id, bot.id, propose ? issueNumber : null,
+        `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low'],
     );
     session = rows[0];
@@ -481,7 +1296,27 @@ async function buildAndPropose({
   } catch (err) {
     return { ok: false, error: `could not open a session: ${err.message}` };
   }
+  // The caller's durable link to this session, written before any turn runs:
+  // a restart mid-turn leaves the worker running, and restart recovery finds
+  // the run it belongs to through this (#3401).
+  if (onSession) {
+    try {
+      await onSession(session);
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not link the build session to its run', { sessionId: session.id, err: err.message });
+    }
+  }
 
+  // What the spec turn wrote, carried on every outcome below so a run that
+  // failed to build still shows what it meant to build. A spec that failed
+  // (not one that found the request impossible) is carried as `specNote`,
+  // so the run records why the build worked from the plan alone.
+  let spec = null;
+  const specOut = () => {
+    if (spec?.ok) return { specMd: spec.specMd, specVersion: spec.version };
+    if (spec && !spec.blocked && spec.error) return { specNote: `no spec (${spec.error}); the build worked from the plan` };
+    return {};
+  };
   const fail = async (error) => {
     // The bot's own failed attempt. Archived so it never reads as work
     // under way; its branch stays on GitHub for a person to look at.
@@ -490,7 +1325,7 @@ async function buildAndPropose({
         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
       [session.id, bot.id],
     ).catch(() => {});
-    return { ok: false, sessionId: session.id, error };
+    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut() };
   };
 
   let branchName;
@@ -505,7 +1340,9 @@ async function buildAndPropose({
 
   // The request, as the proposal's pull request metadata reads it: the
   // promote route drafts the title and body from the session's last user
-  // message.
+  // message. Its "Build issue #N:" line is scaffolding, peeled off wherever
+  // a name is derived from it (session-title.js parseIssueSeed, #3518), and
+  // the name the bot proposes under is the spec's (prepareProposal).
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content)
      VALUES ($1, 'user', $2)`,
@@ -523,6 +1360,51 @@ async function buildAndPropose({
     return fail(`the worker would not start: ${err.message}`);
   }
 
+  // A spec already written, by a spec turn a restart interrupted and
+  // recovery finished (#3401), is built from as it is, not written again.
+  spec = presetSpec
+    ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
+    : await draftSpec({
+      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
+    });
+  if (spec.blocked) {
+    // Impossible as written: nothing is built, and the caller says why.
+    log.info('homeroom-bot', 'The spec found the request impossible; not building', {
+      sessionId: session.id, why: spec.blocked,
+    });
+    return { ...(await fail(spec.error)), blocked: spec.blocked, costUsd: spec.costUsd };
+  }
+  if (spec.ok) {
+    if (onSpec && !spec.preset) {
+      // Posted, not waited on: the build starts whatever happens to the post.
+      try {
+        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd });
+      } catch (err) {
+        log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
+      }
+    }
+  } else {
+    log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
+    if (spec.stopped) {
+      // Stopping a turn takes its container down with it.
+      try {
+        containerName = await worker.ensureWorker(session.id, {
+          repoOwner: repo.owner, repoName: repo.repo, branchName,
+          temporary: true, onProgress: () => {},
+        });
+      } catch (err) {
+        return { ...(await fail(`the worker would not start: ${err.message}`)), costUsd: spec.costUsd };
+      }
+    }
+  }
+
+  // A spec stopped on its clock leaves the session's stop pending, and the
+  // worker skips every dispatch until a new turn clears it (#937). Without
+  // this, the build after a spec time-out was skipped at once and recorded
+  // as "no change to propose" (#3396). Cleared before the build's own clock
+  // starts, so a stop aimed at the build is never the one erased.
+  worker.clearPendingStop?.(session.id);
+
   // The same wall clock a triage turn has, ended the same way.
   let stopped = false;
   let stopping = null;
@@ -532,7 +1414,11 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
+  // What the build was last doing, so a turn stopped on its clock says what
+  // it was waiting on (#3385): 12 of the first 18 shadow failures were
+  // time-outs, most of them cheap, with nothing recorded about why.
+  const progress = lastActivity();
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -551,7 +1437,7 @@ async function buildAndPropose({
         branchName,
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_build',
-        onProgress: () => {},
+        onProgress: progress.note,
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -573,22 +1459,55 @@ async function buildAndPropose({
   }
 
   const result = (routed && routed.result) || {};
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  if (stopped) return { ...(await fail('the build ran past its time limit')), costUsd };
+  const buildCostUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  // Both turns, the spec's and the build's, are the build's cost.
+  const costUsd = buildCostUsd == null && spec.costUsd == null
+    ? null
+    : (buildCostUsd || 0) + (spec.costUsd || 0);
+  if (stopped) {
+    return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
+  }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
 
-  const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
+  if (!propose) {
+    // Built, pushed, and put away: the session is archived exactly as a
+    // failed attempt is, and nothing is promoted, posted or shown.
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
+      [session.id, bot.id],
+    ).catch(() => {});
+    return {
+      ok: true, sessionId: session.id, branchName: session.branch_name,
+      sha: result.sha || null, commits: Number(result.ahead) || 0, costUsd, ...specOut(),
+    };
+  }
+
+  // What the build pushed, recorded on a live run as a shadow build's is (#3509).
+  const pushed = { branchName: session.branch_name, sha: result.sha || null, commits: Number(result.ahead) || 0 };
+  // Named and described first: the route reads both as it opens the pull
+  // request (#3518).
+  await prepareProposal({
+    pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
+    buildText: result.lastResultText, model,
+  });
+  const promoted = await promoteAsBot({
+    config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+  });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
     // Built but not proposed: the branch holds the work. Left paused, not
     // archived, so a person can open the session and propose it.
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
-    return { ok: false, sessionId: session.id, costUsd, error: `the change was built but could not be proposed: ${why}` };
+    return {
+      ok: false, sessionId: session.id, ...pushed, costUsd,
+      error: `the change was built but could not be proposed: ${why}`, ...specOut(),
+    };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, costUsd };
+  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut() };
 }
 
 module.exports = {
@@ -608,11 +1527,38 @@ module.exports = {
   proposalLink,
   tagsPoster,
   issuePoster,
+  mentionTargets,
+  recordMentionOptOuts,
+  clearMentionOptOuts,
+  applyMentionAsks,
+  parseStopMentioning,
+  MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  prepareProposal,
+  proposalTitle,
+  specUserFacing,
+  buildDescription,
   buildPrompt,
+  PLATFORM_TEST_NOTE,
+  screenshotNote,
   buildAndPropose,
+  draftSpec,
+  specPrompt,
+  specTitle,
+  specSnippet,
+  specCommentText,
+  specCard,
+  specBlocked,
+  specFromTitle,
+  blockedText,
+  shareSpecVersion,
+  postSpecOnProposal,
+  SPEC_TURN_MAX_MS,
+  readSpec,
+  MAX_SPEC_COMMENT_CHARS,
 };

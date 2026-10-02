@@ -127,6 +127,7 @@ function makeMockPool(initial = {}) {
 
   async function query(sql, params = []) {
     const s = String(sql);
+    if (/FROM user_app_blocks/.test(s)) return { rows: [] };
     // ------------ SELECT session + app context ------------
     if (/SELECT[\s\S]*FROM chat_sessions cs[\s\S]*JOIN apps a/i.test(s)) {
       const id = params[0];
@@ -484,6 +485,25 @@ test('POST kudos: 404 when session does not exist', async () => {
   }
 });
 
+test('kudos routes: a malformed session id is 404 without a query', async () => {
+  const pool = makeMockPool({ sessions: [] });
+  const calls = [];
+  const counted = { query: (sql, params) => { calls.push(sql); return pool.query(sql, params); } };
+  const { baseUrl, close } = await startTestServer(counted, { id: 1, username: 'alice' });
+  try {
+    for (const id of ['abc', '0', '-1', '12abc', '99999999999']) {
+      for (const method of ['GET', 'POST', 'DELETE']) {
+        const r = await fetch(`${baseUrl}/api/sessions/${id}/kudos`, { method });
+        assert.equal(r.status, 404, `${method} ${id}`);
+        assert.deepEqual(await r.json(), { error: 'Session not found' });
+      }
+    }
+    assert.deepEqual(calls, [], 'no query reached Postgres');
+  } finally {
+    await close();
+  }
+});
+
 test('POST kudos: each of promoted/merging/merged is accepted', async () => {
   for (const status of ['promoted', 'merging', 'merged']) {
     const pool = makeMockPool({
@@ -806,6 +826,7 @@ function makeBountyPool(bounties) {
     : b === null || b === undefined ? true : a !== b);
   async function query(sql, params = []) {
     const s = String(sql);
+    if (/FROM user_app_blocks/.test(s)) return { rows: [] };
     // Combined weekly-allowance count (countWeeklyAllowanceUsed): pr_kudos
     // (none in this pool) + non-voided issue_bounties for the user/week. The
     // `status <> 'voided'` filter is what refunds a voided self-bounty.

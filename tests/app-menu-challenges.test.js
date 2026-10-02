@@ -61,13 +61,18 @@ test('the app menu carries no platform destination at all', () => {
   // went because the view strip's Workshop segment was the same destination
   // said twice. It came BACK when the strip retired (#2761): the owner asked
   // for a plain "Go to workshop" row, not a toggle. Still the app's own, so
-  // the split holds: nothing here is the platform's.
-  for (const row of ['app-menu-row-workshop', 'app-menu-row-discussion', 'app-menu-row-about']) {
+  // the split holds: nothing here is the platform's. The discussion row left
+  // in the UI overhaul (the channel is on the hub), and Agent sessions, which
+  // are yours on every app, follow the app's own rows.
+  for (const row of ['app-menu-row-workshop', 'app-menu-row-about']) {
     assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
   }
+  assert.ok(!nav.includes('id="app-menu-row-discussion"'), 'the discussion is the hub\'s now');
+  assert.ok(nav.indexOf('id="app-menu-row-about"') < nav.indexOf('id="app-menu-sessions"'),
+    'Agent sessions follow the app\'s own rows');
   const sheet = html.slice(html.indexOf('id="apps-switcher-sheet"'), html.indexOf('id="switcher-nav"'));
   assert.ok(!nav.includes('id="improve-row-feedback"') && sheet.includes('id="improve-row-feedback"'),
-    'feedback is a button above the list, not a row in it');
+    'Ask for a change is a button above the list, not a row in it');
   assert.ok(!html.includes('id="app-context-row-workshop"')
     && !html.includes('id="improve-views"'),
     'and the Workshop is a row, not a toggle segment as well (#2761)');

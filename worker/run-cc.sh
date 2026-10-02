@@ -34,7 +34,7 @@
 # Optional env:
 #   MODE                       build (default) | scout | sync
 #   WORKER_JWT                 required for build/sync; absent for scout
-#   MODEL                      default: claude-sonnet-5
+#   MODEL                      default: claude-sonnet-5-5
 #   COMMIT_MSG                 default: "Changes via Homeroom"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
 #   AGENT_PROVIDER             anthropic (default) | openrouter (#3296). With
@@ -86,20 +86,20 @@ fi
 : "${MODE:=build}"
 : "${BRANCH:=}"
 : "${WORKER_JWT:=}"
-: "${MODEL:=claude-sonnet-5}"
+: "${MODEL:=claude-sonnet-5-5}"
 : "${COMMIT_MSG:=Changes via Homeroom}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
-: "${EVIDENCE_JWT:=}"
-: "${EVIDENCE_RUN_ID:=}"
-: "${EVIDENCE_BASE_ORIGIN:=}"
-: "${EVIDENCE_HEAD_ORIGIN:=}"
-: "${EVIDENCE_MEMBER_TOKEN:=}"
-: "${EVIDENCE_ADMIN_TOKEN:=}"
-: "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
+: "${SHOTS_JWT:=}"
+: "${SHOTS_RUN_ID:=}"
+: "${SHOTS_BASE_ORIGIN:=}"
+: "${SHOTS_HEAD_ORIGIN:=}"
+: "${SHOTS_MEMBER_TOKEN:=}"
+: "${SHOTS_ADMIN_TOKEN:=}"
+: "${SHOTS_FULL_ADMIN_TOKEN:=}"
 : "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -135,22 +135,23 @@ run_claude() {
 if { [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; } && [ -z "$WORKER_JWT" ]; then
   die "WORKER_JWT required for $MODE mode"
 fi
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
-if [ "$MODE" = "evidence" ]; then
-  [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
-  [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+if [ "$MODE" = "shots" ]; then
+  [ -n "$SHOTS_JWT" ] || die "SHOTS_JWT required for shots mode"
+  [ -n "$SHOTS_RUN_ID" ] || die "SHOTS_RUN_ID required for shots mode"
 fi
 
 # Every hosted Anthropic build has a shortened task prompt and therefore
 # requires the separate authoritative system context. Fail before invoking
 # Claude if the host omitted it or failed to materialize it; there is no
 # reduced-context fallback that could silently drop platform rules. An
-# OpenRouter build carries the full conventions block in its prompt instead,
-# exactly as a Codex build does, so the system file is optional there.
-if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
+# OpenRouter build may have none: the dev chat sends the handbook here for an
+# OpenRouter model too (sessions.js openRouterBuildPrompts), but the Homeroom
+# bot's builds work from the repository's own instructions alone.
+if { [ "$MODE" = "build" ] || [ "$MODE" = "shots" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
     && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
 fi
@@ -168,9 +169,9 @@ if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
     || die "resume fallback prompt file missing or empty: $RESUME_FALLBACK_PROMPT_FILE"
 fi
 
-if [ "$MODE" = "evidence" ]; then
-  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-evidence-agent-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence workspace"
+if [ "$MODE" = "shots" ]; then
+  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-shots-agent-${SHOTS_RUN_ID}.XXXXXX") \
+    || die "could not create shots workspace"
 else
   WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 fi
@@ -183,18 +184,34 @@ if [ -n "$PAT" ] && ! git config --get credential.helper >/dev/null 2>&1; then
     "!f() { echo username=x-access-token; echo password=$PAT; }; f"
 fi
 
+# Session-branch integrity helpers (fetch scope, turn start, settling the
+# session branch, the post-turn commit). See the file for why each exists.
+# Sourced here, after the readiness and argument guards above, so a turn
+# that must stop early never depends on it.
+. "$(dirname "$0")/session-branch.sh"
+
 # Pre-exec hygiene: every turn starts from a known-good tree. Pulls in
 # anything pushed by a parallel turn / merge bot since we last ran, and
 # discards any uncommitted state from a prior turn that didn't get
-# committed (rare, but worth defending against).
+# committed (rare, but worth defending against). The fetch brings main and
+# this session's branch only, and the turn starts ON the session branch
+# whatever an earlier turn left checked out. A build or sync also drops the
+# untracked files an earlier (for example stopped) turn left behind, so the
+# commit step below only ever sees this turn's files; a read-only scout
+# leaves them alone.
 echo "__USERNODE_PHASE__ refresh"
-if [ "$MODE" != "evidence" ]; then
-  if ! git fetch origin --quiet 2>&1; then
+if [ "$MODE" != "shots" ]; then
+  if ! usernode_fetch_session_refs; then
     echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
   fi
   if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-    git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-      echo "__USERNODE_WARN__ git reset failed"
+    if [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
+      usernode_start_turn_on_session_branch clean_untracked || \
+        echo "__USERNODE_WARN__ git reset failed"
+    else
+      usernode_start_turn_on_session_branch || \
+        echo "__USERNODE_WARN__ git reset failed"
+    fi
   elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
     # Branch missing upstream after PR merge → unrecoverable for build/sync.
     # Scout mode can still run against the local checkout, so we don't bail.
@@ -328,8 +345,8 @@ fi
 # worker container even if CC misbehaves.
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
-elif [ "$MODE" = "evidence" ]; then
-  # Evidence turns operate only through platform-seeded MCP servers. Removing
+elif [ "$MODE" = "shots" ]; then
+  # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
   # reading browser storage state or inherited process credentials.
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install"
@@ -368,49 +385,66 @@ if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   fi
 fi
 
-EVIDENCE_PROXY_PID=""
-EVIDENCE_DIAGNOSTIC_TAIL_PID=""
-EVIDENCE_TMP=""
-cleanup_evidence() {
-  if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
-  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+SHOTS_PROXY_PID=""
+SHOTS_DIAGNOSTIC_TAIL_PID=""
+SHOTS_TMP=""
+cleanup_shots() {
+  if [ -n "$SHOTS_PROXY_PID" ]; then kill "$SHOTS_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$SHOTS_DIAGNOSTIC_TAIL_PID" ]; then
     sleep 0.3
-    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
+    kill "$SHOTS_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
   fi
-  if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
+  if [ -n "$SHOTS_TMP" ]; then rm -rf "$SHOTS_TMP" 2>/dev/null || true; fi
 }
-if [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "shots" ]; then
   command -v mcp-server-playwright >/dev/null 2>&1 \
-    || die "the evidence browser MCP executable is missing"
-  echo "__USERNODE_PHASE__ evidence_proxy"
-  EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence browser state"
-  chmod 700 "$EVIDENCE_TMP"
-  export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
-  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
-  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
-  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
-  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
-  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
-  export EVIDENCE_PROXY_PORT=17891
-  export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
-  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
-  export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
-  export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
-  node /usr/local/bin/evidence-origin-proxy.js &
-  EVIDENCE_PROXY_PID=$!
-  trap cleanup_evidence EXIT INT TERM
+    || die "the shots browser MCP executable is missing"
+  echo "__USERNODE_PHASE__ shots_proxy"
+  SHOTS_TMP=$(mktemp -d "/tmp/usernode-shots-browser-${SHOTS_RUN_ID}.XXXXXX") \
+    || die "could not create shots browser state"
+  chmod 700 "$SHOTS_TMP"
+  export SHOTS_BROWSER_STATE_DIR="$SHOTS_TMP/state"
+  export SHOTS_HOSTED_ORIGINS_FILE="$SHOTS_BROWSER_STATE_DIR/hosted-origins.json"
+  export SHOTS_BROWSER_DIAGNOSTIC_FILE="$SHOTS_TMP/browser-diagnostics.log"
+  : > "$SHOTS_BROWSER_DIAGNOSTIC_FILE"
+  # Each persona's browser saves the shots agent's named screenshots (and
+  # clips, when a motion change is declared) here; the shots bridge reads
+  # them back by name to publish them.
+  export SHOTS_DIR="$SHOTS_TMP/shots"
+  mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" \
+    || die "could not create the shots directories"
+  tail -n +1 -s 0.2 -f "$SHOTS_BROWSER_DIAGNOSTIC_FILE" &
+  SHOTS_DIAGNOSTIC_TAIL_PID=$!
+  export SHOTS_PROXY_PORT=17891
+  export SHOTS_PROXY_SERVER="http://127.0.0.1:$SHOTS_PROXY_PORT"
+  # One proxy listener per fixture persona, so a hosted app's pages carry
+  # that persona's identity on every load (shots-origin-proxy.js). The
+  # bootstrap and the control plane keep the shared port above.
+  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894}'
+  export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
+  export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
+  # The proxy also samples the worker's memory every 5 seconds into the
+  # shots trace (shots-memory.js), so a turn that dies says whether memory
+  # ran out.
+  export SHOTS_MEMORY_SAMPLE_MS=5000
+  node /usr/local/bin/shots-origin-proxy.js &
+  SHOTS_PROXY_PID=$!
+  trap cleanup_shots EXIT INT TERM
   i=0
-  while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
-  [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
-  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
-  node /usr/local/bin/evidence-browser-bootstrap.js \
-    || die "evidence browser authentication failed"
-  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN EVIDENCE_FULL_ADMIN_TOKEN
-  BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
-  node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
-    || die "could not create evidence MCP config"
-  echo "__USERNODE_PHASE__ evidence_mcp_ready"
+  while [ ! -f "$SHOTS_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
+  [ -f "$SHOTS_PROXY_READY" ] || die "shots origin proxy failed to start"
+  echo "__USERNODE_PHASE__ shots_browser_bootstrap"
+  # On failure the bootstrap writes one credential-free line naming the
+  # persona, side, stage and cause; it becomes the run's failure reason.
+  export SHOTS_BOOTSTRAP_FAILURE_FILE="$SHOTS_TMP/browser-bootstrap.failure"
+  node /usr/local/bin/shots-browser-bootstrap.js \
+    || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
+  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN
+  BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
+  node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \
+    || die "could not create shots MCP config"
+  echo "__USERNODE_PHASE__ shots_mcp_ready"
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
@@ -421,6 +455,10 @@ if [ "$MODE" = "build" ]; then
   sh "$(dirname "$0")/start-inloop-db.sh" \
     || echo "__USERNODE_WARN__ in-loop postgres setup failed"
 fi
+
+# What HEAD was when the agent started, so the commit step can tell whether
+# the agent committed its own work this turn.
+TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
@@ -452,7 +490,7 @@ else
   CC_EXIT=$?
 fi
 
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
   # behind=0 because scout never modifies the tree; the real number
@@ -464,22 +502,21 @@ if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
   exit "$CC_EXIT"
 fi
 
+# The platform-side push proxy pushes the session's own branch, never the
+# worker's HEAD. So work the agent committed on a branch of its own is
+# brought onto the session branch first; work on a line that does not build
+# on it (another member's branch) is neither committed nor pushed, and the
+# turn reports no changes with branch_mismatch=1 rather than a commit that
+# can never reach GitHub.
 echo "__USERNODE_PHASE__ commit"
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A
-  git commit -m "$COMMIT_MSG" || echo "__USERNODE_WARN__ commit failed"
+if usernode_settle_session_branch; then
+  usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
 echo "__USERNODE_PHASE__ push"
 PUSH_OK=0
-HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [ "$HEAD_BRANCH" != "$BRANCH" ]; then
-  # Belt-and-suspenders: the platform-side push proxy ignores the
-  # worker's local HEAD and pushes the session's canonical branch
-  # from its own DB lookup, but if HEAD has drifted we likely
-  # committed onto the wrong branch, so the push would push stale
-  # content. Skip and surface clearly.
-  echo "__USERNODE_WARN__ HEAD branch ($HEAD_BRANCH) != session branch ($BRANCH); skipping push"
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  echo "__USERNODE_WARN__ skipping push"
 elif /usr/local/bin/usernode-push; then
   PUSH_OK=1
 else
@@ -492,6 +529,12 @@ AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 # dev-chat "Sync with main" banner and the merge-time block.
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+BRANCH_MISMATCH_FIELD=""
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  AHEAD=0
+  SHA=""
+  BRANCH_MISMATCH_FIELD=" branch_mismatch=1"
+fi
 
 # Terminal phase marker: the dev-chat progress card's collapsed label is
 # the LAST line of the log, so without this every build turn ends frozen
@@ -503,5 +546,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD"
 exit "$CC_EXIT"

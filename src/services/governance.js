@@ -369,7 +369,34 @@ async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, expli
   return gate;
 }
 
+// #3234: the electorate count to stamp on a proposal as it is promoted —
+// the same number computeGate is handed. Display only, so a failed read
+// answers null (no note) rather than holding up the promote.
+async function electorateAtPromote(pool, appId) {
+  try {
+    const gov = await getGovernance(pool, appId);
+    const { active } = await getElectorate(pool, appId, gov);
+    return Math.max(parseInt(active, 10) || 0, 1);
+  } catch (err) {
+    log.warn('governance', 'Could not read the electorate at promote', { appId, err: err.message });
+    return null;
+  }
+}
+
+// #3234: the Yes votes this proposal would need had the electorate stayed
+// what it was when voting opened, with today's No votes — so the only
+// difference from the live threshold is who joined or left. Null when the
+// row has no stamp, or under "at least N" (a fixed count that cannot move).
+function requiredAtPromote(gov, activeAtPromote, noCount) {
+  if (!gov || gov.approvalsRequired != null) return null;
+  const a = parseInt(activeAtPromote, 10);
+  if (!Number.isFinite(a) || a < 1) return null;
+  return activeUsers().requiredVotes(a, noCount);
+}
+
 module.exports = {
+  electorateAtPromote,
+  requiredAtPromote,
   getGovernance,
   invalidateGovernance,
   getApproverSet,

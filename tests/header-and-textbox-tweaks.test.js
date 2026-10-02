@@ -108,7 +108,7 @@ test('both message text boxes use it, keyed on their own value', () => {
   // typing, pasting, a clear on send and a draft restored on mount.
   assert.match(COMPOSER, /useAutoGrow\(inputRef, value\)/);
   assert.match(ROW, /useAutoGrow\(editRef, editValue\)/);
-  assert.match(ROW, /<textarea ref=\{editRef\}/);
+  assert.match(ROW, /<textarea ref=\{editRef\} aria-label="Edit message"/);
 });
 
 test('a hand-dragged edit box is not undone by the next keystroke', () => {

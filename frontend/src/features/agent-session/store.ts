@@ -52,7 +52,7 @@ import { sameChoice } from './model-choice';
 import {
   markStranded, mergeRows, newClientId, readOutbox, withoutLanded, writeOutbox, type OutboxItem,
 } from './outbox';
-import { requestSeed } from './request-seed';
+import { draftSeed } from './request-seed';
 import { toolActivity } from './transcript';
 import { writeUnsent } from './unsent';
 
@@ -73,6 +73,10 @@ export interface LiveTurn {
   running: boolean;
   phase: 'mayor' | 'cc' | 'mayor2' | null;
   stopping: boolean;
+  stopRequestedAt: number | null;
+  stopToken: string | null;
+  stopPending: boolean;
+  stopError: string | null;
   streamText: string;
   activity: string;
   progress: string;
@@ -198,6 +202,10 @@ const IDLE_TURN: LiveTurn = {
   running: false,
   phase: null,
   stopping: false,
+  stopRequestedAt: null,
+  stopToken: null,
+  stopPending: false,
+  stopError: null,
   streamText: '',
   activity: '',
   progress: '',
@@ -382,16 +390,6 @@ function errorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/**
- * Whether new work starts in an agent session for this viewer (#2779): the
- * per-user experimental flag, as /api/auth/me reported it. Only STARTING
- * reads it; a conversation that already exists opens either way.
- */
-export function agentSessionsEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.App?.user?.agentSessionsEnabled === true;
-}
-
 export function composerId(host: AgentSessionHost) {
   return host === 'messages' ? 'agent-session-pane-composer' : 'agent-session-composer';
 }
@@ -506,6 +504,10 @@ async function syncOnce(id: number, whole: boolean) {
     if (!working && state.turn.running && !sendingIn(id) && !stale) {
       publish({ turn: IDLE_TURN });
       following(id);
+    } else if (working) {
+      // A job's stop stamp and the force-stop deadline can change without
+      // a conversation revision. Reconnects and other devices still need it.
+      publish({ turn: settleTurn(state.turn, { busy: true, turn: answer.turn, messages: state.messages, sending: sendingIn(id) }) });
     }
     return;
   }
@@ -573,7 +575,8 @@ export function settleTurn(turn: LiveTurn, read: {
   if (!read.busy) return read.sending ? { ...turn, running: true } : (turn === IDLE_TURN ? turn : IDLE_TURN);
   const server = read.turn || null;
   let next: LiveTurn = { ...turn, running: true };
-  if (server && server.id && turn.turnId && server.id !== turn.turnId) {
+  if (server && ((server.id && turn.turnId && server.id !== turn.turnId)
+    || (server.stopToken && turn.stopToken && server.stopToken !== turn.stopToken))) {
     // Another turn than the one drawn (started on another device, or the
     // follow-up after a card): start its drawing afresh.
     next = { ...IDLE_TURN, running: true };
@@ -582,7 +585,9 @@ export function settleTurn(turn: LiveTurn, read: {
     if (server.id) next.turnId = server.id;
     if (!next.phase || server.phase !== 'mayor') next.phase = server.phase;
     if (typeof server.startedAt === 'number' && server.startedAt > 0) next.startedAt = server.startedAt;
-    if (server.stopping) next.stopping = true;
+    next.stopping = next.stopPending || !!server.stopping;
+    next.stopRequestedAt = server.stopRequestedAt || null;
+    next.stopToken = server.stopToken || null;
   }
   if (!next.phase) next.phase = 'mayor';
   if (!next.startedAt) next.startedAt = Date.now();
@@ -909,10 +914,11 @@ function openDraft(host: AgentSessionHost) {
   const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
-  // Started from a request (Start work): the box offers that request's first
-  // message (the composer reads it off the hint, ./request-seed.ts), not the
-  // text an earlier unsent conversation left behind.
-  if (requestSeed(hint)) writeUnsent('new', '');
+  // Started from a request (Start work), or handed a message (Global Chat,
+  // Explore): the box offers that first message (the composer reads it off
+  // the hint, ./request-seed.ts), not the text an earlier unsent
+  // conversation left behind.
+  if (draftSeed(hint)) writeUnsent('new', '');
   seen.clear();
   closeEvents();
   stopPoll();
@@ -939,7 +945,9 @@ function openDraft(host: AgentSessionHost) {
     drafts: [],
     attachments: dropAllAttachments(),
     credits: null,
-    handoff: null,
+    // The out-of-credits card's "Use Claude Code" / "Use Codex" opens the
+    // conversation on its "Build with" tab (AppView.createProposal).
+    handoff: hint?.handoff === 'claude-code' || hint?.handoff === 'codex' ? hint.handoff : null,
     outbox: [],
     version: null,
   });
@@ -1058,8 +1066,14 @@ export function closeAgentSession() {
  * stays as it was).
  */
 async function createFromDraft(draft: AgentDraft): Promise<number | null> {
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('change_workspace');
+  const attemptId = telemetry?.attempt?.('change_create', {
+    screen: 'change_workspace', timeoutMs: 15_000, abandonOnHide: true,
+  });
   try {
     const session = await api.createSession(draft.hint, draft.agent);
+    telemetry?.outcome?.(attemptId, 'success');
     publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
@@ -1070,6 +1084,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
     }
     return session.id;
   } catch (error) {
+    const status = (error as { status?: number })?.status;
+    telemetry?.outcome?.(attemptId, 'failure', {
+      errorCode: status ? telemetry?.errorCodeFor?.(status)
+        : (navigator.onLine === false ? 'offline' : 'network'),
+    });
     if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
     return null;
   }
@@ -1466,28 +1485,37 @@ export function stoppedText(current: Pick<AgentSessionState, 'messages'> & { out
 
 export async function stopAgentTurn() {
   const id = state.id;
-  if (!id || !state.turn.running) return;
+  if (!id || !state.turn.running || state.turn.stopPending) return;
+  const token = state.turn.stopToken;
+  const turnId = state.turn.turnId;
+  const sameTurn = () => state.id === id && state.turn.running
+    && state.turn.stopToken === token && state.turn.turnId === turnId;
   // Back in the box to edit and send again, as the dev chat's Stop does. The
   // sent bubble stays: that turn really ran. Stopping first, so the box
   // filling up never turns the button under this click into Save.
   const text = stoppedText(state);
-  patchTurn({ stopping: true });
+  patchTurn({ stopping: true, stopPending: true, stopError: null });
   if (text) publish({ returnedText: text });
   try {
-    const answer = await api.stopTurn(id);
+    const answer = await api.stopTurn(id, { token });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false });
+    if (answer.stopRequestedAt) patchTurn({ stopRequestedAt: answer.stopRequestedAt });
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
     if (!answer.stopped && answer.reason === 'no_active_turn') {
       // Nothing is running here to send a `done`: settle from the server.
       patchTurn({ stopping: false });
       await requestSync(id);
     }
+    if (answer.stopped) await requestSync(id);
   } catch (error) {
-    patchTurn({ stopping: false });
-    publish({ error: errorText(error, 'Could not stop the Mayor.') });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false, stopError: errorText(error, 'Could not stop the agent. Try again.') });
+    await requestSync(id);
   }
 }
 
-/** Stop the active change's visual change preview; the conversation re-reads to drop it. */
+/** Stop the active change's before/after shots; the conversation re-reads to drop them. */
 export async function stopPreviewCapture() {
   const id = state.id;
   const change = state.session?.activeChange;
@@ -1564,6 +1592,20 @@ export async function renameCurrentSession() {
 }
 
 /**
+ * The one question archiving asks, wherever it is asked from: the bar's ⋯
+ * and a swipe on a row of the Homeroom menu's Agent sessions (#3515) do the
+ * same thing to the same session, so they say the same words. Resolves
+ * false, never undefined, when there is no kit to ask with.
+ */
+async function confirmArchive(): Promise<boolean> {
+  return !!(await window.PlatformUI?.confirm?.({
+    title: 'Archive this session?',
+    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    confirmLabel: 'Archive',
+  }));
+}
+
+/**
  * Archive the conversation, after a confirm. It leaves the lists; its
  * active change is paused (a change up for a vote keeps its vote), and the
  * conversation stays on screen, read-only, with Unarchive.
@@ -1571,11 +1613,7 @@ export async function renameCurrentSession() {
 export async function archiveCurrentSession() {
   const id = state.id;
   if (!id || state.session?.status === 'archived') return;
-  const ok = await window.PlatformUI?.confirm?.({
-    title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
-    confirmLabel: 'Archive',
-  });
+  const ok = await confirmArchive();
   if (!ok || state.id !== id) return;
   try {
     const session = await api.archiveSession(id);
@@ -1584,6 +1622,39 @@ export async function archiveCurrentSession() {
     void loadAgentSessions();
   } catch (error) {
     if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+  }
+}
+
+/**
+ * Archive a session from a LIST rather than from its own screen (#3515): a
+ * left swipe on a row of the Homeroom menu's Agent sessions. The same
+ * confirm and the same route as the ⋯'s Archive above; what differs is
+ * where the answer lands. The row leaves every list at once (the menu,
+ * Recents and Messages all read `sessions`), and the list is read again so
+ * the next session fills the place it left. When it is also the
+ * conversation on screen, that screen takes the archived session, read-only
+ * with Unarchive, exactly as if its own ⋯ had done it.
+ *
+ * Resolves whether it was archived. False is a Cancel or a refusal, and the
+ * caller puts its row back; a refusal also says why, in a toast, because a
+ * list has no error line of its own to say it in, and reads the list again
+ * all the same: the likeliest refusal is "already archived" (another tab
+ * did it), and then the row the caller puts back is gone on that read.
+ */
+export async function archiveListedSession(id: number): Promise<boolean> {
+  if (!id || !(await confirmArchive())) return false;
+  try {
+    const session = await api.archiveSession(id);
+    publish((current) => ({
+      sessions: current.sessions.filter((s) => s.id !== id),
+      ...(current.id === id ? { session } : {}),
+    }));
+    void loadAgentSessions();
+    return true;
+  } catch (error) {
+    window.PlatformUI?.toast?.(errorText(error, 'Could not archive this session.'));
+    void loadAgentSessions();
+    return false;
   }
 }
 
@@ -1946,11 +2017,17 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
  * confirmation is the card's own panel under the button (#3032,
  * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
  * reads "In vote" from the refreshed change.
+ *
+ * `title` is a title the person typed in that panel (#3251), passed only when
+ * it differs from the change's own. It is saved first, so the proposal goes
+ * to the vote under it; if saving fails, nothing is proposed.
  */
-export async function proposeChange(changeId: number) {
+export async function proposeChange(changeId: number, title?: string | null) {
   if (state.changeAction) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
+    const rename = (title || '').replace(/\s+/g, ' ').trim();
+    if (rename) await api.renameChange(changeId, rename);
     await api.promoteChange(changeId);
     if (state.id != null) await requestSync(state.id);
   } catch (error) {

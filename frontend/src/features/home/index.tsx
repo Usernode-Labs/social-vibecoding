@@ -109,7 +109,7 @@ export function HomeScreen() {
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }}>
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -203,11 +203,12 @@ export function HomeScreen() {
             there.
         */}
         {/*
-            GETTING STARTED (communities, stage 5): three first steps for an
-            account that has just come through "What communities do you want
-            to join?", on top of everything until it is closed. Ships empty
-            and hidden, like the widget strip below it: whether to draw it is
-            known only after the session is read (./getting-started.tsx).
+            GETTING STARTED (communities, stage 5): the tour and the season's
+            First challenges, for a new account that has just come through
+            "What communities do you want to join?", on top of everything
+            until it is done and closed (the one list, 2026-10-01). Ships
+            empty and hidden, like the widget strip below it: whether to draw
+            it is known only after the session is read (./getting-started.tsx).
         */}
         <GettingStarted />
         <WidgetStrip />
@@ -251,13 +252,15 @@ export function HomeScreen() {
           {/*
               The area's label, in the same treatment the two below it use —
               see ./panels/ui.tsx's SectionHeading for why every area on this
-              screen is now "grey label, then the thing". This one is what the
-              reference screen calls "Your saved apps"; "Your apps" is the name
-              the rest of the product already uses for the same set (the tile
-              menus' "Add to Your apps", the browse screen's badge), and two
-              names for one collection is worse than a shorter label.
+              screen is now "grey label, then the thing". It was "Your apps";
+              it is "Shortcuts" since the UI overhaul gave your communities
+              (every project you are in) the Communities tab, which left this
+              set as what it always was: the apps you keep a tile for. The
+              rest of the product names the set the same way (the tile menus'
+              "Add to Shortcuts", the browse screen's badge), because two
+              names for one collection is worse than either.
           */}
-          <SectionHeading>Your apps</SectionHeading>
+          <SectionHeading>Shortcuts</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

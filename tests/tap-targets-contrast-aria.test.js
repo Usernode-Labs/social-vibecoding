@@ -145,13 +145,22 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-btn ${KIT}"`), 'the ? beside it');
   has('frontend/src/features/dev-board/card/fold.tsx', new RegExp(`className="dev-fold-mark ${KIT}" data-open="1"`), 'Fold the card');
   const ws = 'frontend/src/features/dev-board/workshop/workshop.tsx';
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-week-more ${KIT}"`), 'Show past week');
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show older');
+  // "Show past week" went with the walk: the weeks head the since list now,
+  // and Show an earlier week below them steps back a week (#3524 renamed it
+  // from "Show older").
+  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
+  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show an earlier week');
+  // #3524: a week's one Show N more sits 4px under its last row, so it takes
+  // the dense 32px slop rather than the kit's 44px, as Your work's does.
+  has(ws, /className="dev-ws-reveal dev-ws-since-week-more touch-target-32"/, 'a week\'s Show N more');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
-  has(ws, new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to its tab');
+  has('frontend/src/features/dev-board/workshop/page-back.tsx', new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}"`), 'the channel\'s Open');
+  // #852: the requests line (#3408) went with the hub's doors; the since
+  // card's Week by week is its door in the head's corner now (#3510).
+  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-since-card-more ${KIT}"`), 'the summary\'s Week by week');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');
   has(ui, new RegExp(`className="home-panel-lb-browse [^"]*${KIT}"`), 'Open challenges');
@@ -162,6 +171,12 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   }
   const files = read('frontend/src/features/settings/agent-files-list.tsx');
   assert.equal((files.match(/font-medium touch-target-32"/g) || []).length, 2, 'agent files View and Delete');
+  // Each row's View and Delete name their file, and View says whether it is
+  // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
+  assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
+  assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
+  assert.match(files, /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
+  assert.match(files, /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -200,6 +215,19 @@ test('Q20: form controls the audit found unnamed have names', () => {
   const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
   assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
     'the dev-flow select is named after its heading');
+  // Four text boxes that took focus announcing only "edit text".
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Issue title'\}/,
+    'the card title editor, named by kind');
+  const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue<\/h4>/);
+  assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
+    'the issue body editor is named after its heading');
+  const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
+  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
+  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {

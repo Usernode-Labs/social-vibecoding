@@ -6439,6 +6439,53 @@
   })();
   /* __USERNODE_BACKGROUND_END__ */
 
+
+  // Engaged-use readiness and input lease.  A parent frame load alone cannot
+  // distinguish an app document from a browser/proxy error document, so the
+  // shell probes this installed bridge after each navigation.  Only this
+  // generation may answer, and only browser-trusted input refreshes activity.
+  /* __USERNODE_ENGAGEMENT_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var generation = null;
+    var parentOrigin = null;
+    var lastActivityAt = 0;
+
+    function post(kind) {
+      if (!generation || !parentOrigin) return;
+      try {
+        window.parent.postMessage({
+          __usernode_engagement: kind,
+          generation: generation,
+        }, parentOrigin);
+      } catch (_) { /* parent unreachable */ }
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_engagement !== "probe") return;
+      if (typeof data.generation !== "string" || !data.generation || data.generation.length > 160) return;
+      generation = data.generation;
+      parentOrigin = e.origin;
+      post("ready");
+    });
+
+    function activity(e) {
+      if (!e.isTrusted || !generation) return;
+      var now = Date.now();
+      if (now - lastActivityAt < 1000) return;
+      lastActivityAt = now;
+      post("activity");
+    }
+
+    window.addEventListener("pointerdown", activity, true);
+    window.addEventListener("keydown", activity, true);
+    window.addEventListener("touchstart", activity, { capture: true, passive: true });
+    window.addEventListener("wheel", activity, { capture: true, passive: true });
+  })();
+  /* __USERNODE_ENGAGEMENT_END__ */
+
   // #2902: the shell keeps the last few apps loaded in hidden frames so that
   // coming back to one shows it exactly as it was left. A hidden app must not
   // keep playing into the room, so on `hidden` this pauses every <audio> and

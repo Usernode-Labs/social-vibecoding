@@ -64,13 +64,14 @@ function makeDom() {
 
 // `stubSwap: false` keeps the REAL swapToStaging so the verified fast path /
 // fallback poll can be exercised end to end (#816).
-function makeAppView(fetchImpl, { stubSwap = true } = {}) {
+function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
   const dom = makeDom();
   const sandbox = {
     console,
     relTime: () => 'now',
     App: { user: { id: 1 }, currentTab: 'dev' },
     Kudos: { renderButton: () => '' },
+    UITelemetry: uiTelemetry || undefined,
     document: dom.document,
     fetch: fetchImpl,
     alert: () => {},
@@ -167,6 +168,85 @@ test('ensureStaging shows the demo copy and never opens when {unavailable,demo}'
   assert.match(dom.els['staging-loader-sub'].textContent, /demo/i, 'explains it is the demo env');
 });
 
+// ── #3413: a failed preview keeps a reachable retry ─────────────────────
+//
+// The terminal failure states leave the full-screen loader over the page, and
+// the card's own "Retry preview" (swapToStagingForSession → ensureStaging) sat
+// under it. The loader now carries that same action, labelled for a preview,
+// for exactly the viewers the card offers it to (not read-only ones).
+
+test('#3413 a failed rebuild keeps its reason and offers "Retry preview" that re-runs the same open', async () => {
+  const bodies = [{ status: 'rebuilding' }, { status: 'ready', url: 'https://rebuilt.example', verified: true }];
+  let requests = 0;
+  const endpoints = [];
+  const { AppView, dom, swaps } = makeAppView(async (url) => {
+    endpoints.push(url);
+    return { ok: true, json: async () => bodies[requests++] };
+  });
+  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'no retry while the rebuild runs');
+  AppView.onStagingRebuildResult(7, { failed: true, error: 'Container config error: bad port' });
+  assert.match(dom.els['staging-loader-title'].textContent, /couldn|n.t be rebuilt/i, 'failure title stays up');
+  assert.match(dom.els['staging-loader-sub'].textContent, /Container config error/, 'failure reason stays up');
+  assert.equal(dom.els['staging-loader'].classList._hidden, false);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry is visible inside the loader');
+  assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry preview');
+
+  await AppView._staging()._handlers.onRetry();
+  assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging', '/api/sessions/7/ensure-staging'],
+    'retry asks the same collaborator ensure route the card button does');
+  assert.equal(swaps.length, 1, 'the retried open resolves normally');
+  assert.equal(swaps[0].url, 'https://rebuilt.example');
+  assert.equal(swaps[0].opts.jump, true, 'carries the original open arguments');
+  assert.deepEqual(swaps[0].testing, { md: 'do x', path: '/x' });
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'the retry hides once the open restarts');
+});
+
+test('#3413 an ensure-staging error and a network error both offer "Retry preview"', async () => {
+  for (const fail of ['http', 'network']) {
+    let calls = 0;
+    const { AppView, dom, swaps } = makeAppView(async () => {
+      if (++calls === 1) {
+        if (fail === 'network') throw new Error('offline');
+        return { ok: false, json: async () => ({ error: 'Staging build failed: invalid container config' }) };
+      }
+      return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+    });
+    await AppView.ensureStaging(7, '', null, {});
+    assert.match(dom.els['staging-loader-title'].textContent, /unavailable/i, fail);
+    assert.match(dom.els['staging-loader-sub'].textContent, fail === 'network' ? /network error/i : /invalid container config/, fail);
+    assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, fail);
+    assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry preview', fail);
+    await AppView._staging()._handlers.onRetry();
+    assert.equal(calls, 2, fail);
+    assert.equal(swaps.length, 1, fail);
+  }
+});
+
+test('#3413 read-only viewers and the demo environment get no retry (mirrors the card)', async () => {
+  const ro = makeAppView(async () => ({ ok: true, json: async () => ({ status: 'unavailable', reason: 'missing' }) }));
+  await ro.AppView.ensureStaging(7, '', null, { readOnly: true });
+  assert.match(ro.dom.els['staging-loader-sub'].textContent, /collaborator can rebuild/i);
+  assert.equal(ro.dom.els['staging-retry-btn'].classList._hidden, true, 'read-only: no retry');
+
+  const demo = makeAppView(okJson({ status: 'unavailable', reason: 'demo' }));
+  await demo.AppView.ensureStaging(7, '', null, {});
+  assert.equal(demo.dom.els['staging-retry-btn'].classList._hidden, true, 'demo: a retry could only loop');
+});
+
+test('#3413 a stale retry (the user moved on) does nothing', async () => {
+  let calls = 0;
+  const { AppView } = makeAppView(async () => {
+    calls++;
+    return { ok: false, json: async () => ({ error: 'boom' }) };
+  });
+  await AppView.ensureStaging(7, '', null, {});
+  const staleRetry = AppView._staging()._handlers.onRetry;
+  AppView._stagingLoadId++;
+  await staleRetry();
+  assert.equal(calls, 1, 'no second ensure request from a superseded open');
+});
+
 // ── #816: the rebuild estimate is reserved for actual rebuilds ───────────
 //
 // The reported bug in one assertion: clicking Preview on a live preview
@@ -261,6 +341,91 @@ test('#816 the loader clears on the iframe load event, and a stale load id is ig
   AppView._setStagingLoader(false);
   staleHandler();
   assert.equal(dom.els['staging-loader'].classList._hidden, true, 'stale load event is a no-op');
+});
+
+test('preview telemetry resolves only after the verified iframe paints', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt(action, context) { calls.push(['attempt', action, context]); return 'preview-attempt-1'; },
+    screen(screen, context) { calls.push(['screen', screen, context]); },
+    outcome(attemptId, outcome, detail) { calls.push(['outcome', attemptId, outcome, detail]); },
+    cancel(attemptId) { calls.push(['cancel', attemptId]); },
+    errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }),
+    { stubSwap: false, uiTelemetry }
+  );
+  await AppView.ensureStaging(7, null, null, {});
+  assert.equal(calls.filter((call) => call[0] === 'outcome').length, 0,
+    'ensure and health success are not yet a painted preview');
+  dom.els['staging-iframe'].onload();
+  assert.deepEqual(calls.filter((call) => call[0] === 'outcome'), [
+    ['outcome', 'preview-attempt-1', 'success', undefined],
+  ]);
+});
+
+test('rebuild verification carries one preview attempt through to iframe readiness', async () => {
+  let ensures = 0;
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { calls.push(['attempt']); return 'preview-rebuild-1'; },
+    screen() { calls.push(['screen']); },
+    outcome(attemptId, outcome, detail) { calls.push(['outcome', attemptId, outcome, detail]); },
+    cancel(attemptId) { calls.push(['cancel', attemptId]); },
+    errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(async (url) => {
+    if (url.includes('ensure-staging')) {
+      ensures += 1;
+      return { ok: true, json: async () => ensures === 1
+        ? ({ status: 'rebuilding' })
+        : ({ status: 'ready', url: 'https://rebuilt.example', verified: true }) };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  }, { stubSwap: false, uiTelemetry });
+  await AppView.ensureStaging(7, null, null, {});
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  assert.equal(calls.filter((call) => call[0] === 'attempt').length, 1,
+    'the staging_ready verification does not start or finish a second attempt');
+  assert.equal(calls.filter((call) => call[0] === 'outcome').length, 0);
+  dom.els['staging-iframe'].onload();
+  assert.deepEqual(calls.filter((call) => call[0] === 'outcome'), [
+    ['outcome', 'preview-rebuild-1', 'success', undefined],
+  ]);
+});
+
+test('preview iframe navigation failure is a terminal failure, not a success', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { return 'preview-error-1'; }, screen() {},
+    outcome(attemptId, outcome, detail) { calls.push([attemptId, outcome, detail]); },
+    cancel() {}, errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }),
+    { stubSwap: false, uiTelemetry }
+  );
+  await AppView.ensureStaging(7, null, null, {});
+  dom.els['staging-iframe'].onerror();
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['preview-error-1', 'failure', { errorCode: 'unavailable' }],
+  ]));
+});
+
+test('an invalid ensure response is a classified terminal preview failure', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { return 'preview-invalid-1'; }, screen() {},
+    outcome(attemptId, outcome, detail) { calls.push([attemptId, outcome, detail]); },
+    cancel() {}, errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(okJson({}), { uiTelemetry });
+  await AppView.ensureStaging(7, null, null, {});
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['preview-invalid-1', 'failure', { errorCode: 'invalid_response' }],
+  ]));
+  assert.match(dom.els['staging-loader-sub'].textContent, /unexpected response/i);
 });
 
 test('#816 an UNVERIFIED {ready} falls back to the readiness poll', async () => {
@@ -393,6 +558,7 @@ test('#1993 failed token request exposes a retry that obtains a new token', asyn
   assert.equal(dom.els['staging-iframe'].src, '');
   assert.match(dom.els['staging-loader-title'].textContent, /could not sign in/i);
   assert.equal(dom.els['staging-retry-btn'].classList._hidden, false);
+  assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry sign-in', '#3413: the sign-in path keeps its label');
   await AppView._staging()._handlers.onRetry();
   assert.equal(mints, 2);
   assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?demo=1&token=retry-token&un-theme=light');

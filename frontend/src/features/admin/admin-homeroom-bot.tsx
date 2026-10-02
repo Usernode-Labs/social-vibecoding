@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { UserFieldRow, userHandle } from './admin-user-field';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, slice 1.
 //
@@ -31,6 +32,65 @@ interface Settings {
   liveApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
+  // Shadow builds: ready verdicts off the live list built on a branch
+  // nobody is shown, in a lane of their own, this many at once. The
+  // platform's own repository is left out unless included.
+  shadowBuilds: boolean;
+  buildConcurrency: number;
+  shadowBuildPlatform: boolean;
+  // #3624: the people it talks to in a DM, and what each one's requests may
+  // cost the platform in a week (cents; 0 for no limit).
+  dmUsers: string[];
+  userWeeklyCents: number;
+  // The projects it is building for them, live like liveApps.
+  firstVersionApps: string[];
+  // #3624 stage 2: live work at once across the platform and per person,
+  // and whether a DM to the bot is read by its model.
+  liveAtOnce: number;
+  perPerson: number;
+  dmChat: boolean;
+}
+
+// #3624 stage 2: one piece of work running now.
+interface Working {
+  appSlug: string;
+  appName: string;
+  issueNumber: number;
+  since: string;
+  lane: 'live' | 'background';
+  person: string | null;
+}
+
+// #3624 stage 2: the bot's answers in DMs this week.
+interface DmChat {
+  turns: number;
+  failed: number;
+  people: number;
+  costUsd: number;
+}
+
+// #3624: one person on the DM list, with what their requests cost this week.
+interface DmUser {
+  username: string;
+  exists: boolean;
+  weeklySpentCents: number | null;
+}
+
+// One row of the DM list as edited. The key outlives the row's position, so
+// a field keeps its focus and its suggestions while rows above it go.
+interface DmRow { key: string; username: string }
+
+// The server keeps at most this many (MAX_DM_USERS in services/homeroom-bot.js).
+const DM_USERS_MAX = 50;
+
+interface BuildLane {
+  queued: number;
+  building: number;
+  built: number;
+  failed: number;
+  costUsd: number;
+  lane: { at: string; started: number; inFlight: number; paused: string | null; detail?: string } | null;
+  fault: { error: string; retryAt: string } | null;
 }
 
 interface Bot {
@@ -92,6 +152,17 @@ interface Run {
   created_at: string;
   // #3146: the proposal a live `ready` run opened.
   proposal_session_id: number | null;
+  build_ok: boolean | null;
+  build_branch: string | null;
+  build_sha: string | null;
+  build_commits: number | null;
+  build_error: string | null;
+  build_cost_usd: number | null;
+  build_at: string | null;
+  build_queued_at: string | null;
+  // The spec the bot wrote before building, live or shadow.
+  build_spec_md: string | null;
+  buildUrl: string | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
@@ -108,7 +179,10 @@ interface LastPass {
   mode: string | null;
   busy: boolean;
   refreshed: boolean;
-  processed: number;
+  processed?: number;
+  // #3624 stage 2: a pass starts work and does not wait for it.
+  dispatched?: number;
+  inFlight?: number;
   paused: string | null;
   detail?: string | null;
   // How long the bot waits before trying again after a platform fault (#3122).
@@ -133,7 +207,21 @@ interface Payload {
   queue: { depth: number; items: QueueItem[] };
   runs: Run[];
   apps: { slug: string; name: string }[];
-  caps: { proposalsPerApp: number; questionsPerAppPerDay: number };
+  caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
+  builds: BuildLane;
+  mentionOptOuts: { total: number; items: MentionOptOut[] };
+  dmUsers?: DmUser[];
+  workingNow?: Working[];
+  dmChat?: DmChat;
+}
+
+// Somebody who asked the bot to stop tagging them on one issue.
+interface MentionOptOut {
+  app_slug: string;
+  app_name: string;
+  issue_number: number;
+  username: string;
+  created_at: string;
 }
 
 type Tone = 'ok' | 'err';
@@ -190,9 +278,108 @@ function ProposalLink({ run, children }: { run: Run; children: string }) {
 }
 
 const CAP_LABEL: Record<string, string> = {
-  proposals_per_app: 'would be held: 2 bot proposals already open on this app',
+  proposals_per_app: 'would be held: 5 bot proposals already open on this app',
+  proposals_total: 'would be held: the bot is at its ceiling of proposals open across Homeroom',
   question_tripwire: 'would be held: question tripwire for this app tripped today',
 };
+
+/**
+ * A shadow build of a ready verdict: the branch it left on the app's
+ * repository, for a spot check, or why there is none. The compare address
+ * is text to copy, not a link: it is built from the app's repo_url, and the
+ * console never renders an API-supplied URL as an anchor.
+ */
+function ShadowBuild({ run }: { run: Run }) {
+  if (run.build_ok == null) {
+    if (run.build_at) {
+      return <p className={AdminUI.muted} data-shadow-build="building">{`Shadow build under way since ${when(run.build_at)}.`}</p>;
+    }
+    if (run.build_queued_at) {
+      return <p className={AdminUI.muted} data-shadow-build="queued">{`Shadow build queued ${when(run.build_queued_at)}.`}</p>;
+    }
+    // Skipped (the issue closed, the app went live) or replaced by a later
+    // verdict: the reason is kept, and there is no branch.
+    if (run.build_error) {
+      return <p className={`${AdminUI.muted} break-words`} data-shadow-build="skipped">{`Not shadow built: ${run.build_error.replace(/^(skipped|superseded): /, '')}.`}</p>;
+    }
+    return null;
+  }
+  if (!run.build_ok) {
+    return (
+      <p className={`${AdminUI.muted} break-words`} data-shadow-build="failed">
+        {`Shadow build did not produce a change: ${run.build_error || 'no reason recorded'}.`}
+      </p>
+    );
+  }
+  const parts = [
+    `Shadow build on ${run.build_branch}`,
+    run.build_commits != null ? `${run.build_commits} commit${run.build_commits === 1 ? '' : 's'}` : null,
+    run.build_sha ? `at ${String(run.build_sha).slice(0, 7)}` : null,
+    run.build_cost_usd != null ? money(run.build_cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5" data-shadow-build="built">
+      <p className={AdminUI.muted}>{`${parts.join(', ')}. Not proposed, not posted.`}</p>
+      {run.buildUrl ? <p className={`${AdminUI.muted} break-all select-all`}>{run.buildUrl}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * What a live build came to (#3509), recorded on the run in the columns a
+ * shadow build fills. A build that became a proposal is said by the
+ * proposal link below; this says what else is worth knowing: what it pushed,
+ * why it did not become a proposal, or why it worked without a spec.
+ */
+function LiveBuild({ run }: { run: Run }) {
+  if (run.build_ok == null) return null;
+  if (!run.build_ok) {
+    const why = run.build_error || 'no reason recorded';
+    return (
+      <p className={`${AdminUI.muted} break-words`} data-live-build={why.startsWith('blocked: ') ? 'blocked' : 'failed'}>
+        {why.startsWith('blocked: ')
+          ? `Building showed it cannot be done as asked: ${why.slice('blocked: '.length)}.`
+          : `Live build did not become a proposal: ${why}.`}
+      </p>
+    );
+  }
+  const parts = [
+    run.build_branch ? `Built on ${run.build_branch}` : 'Built',
+    run.build_commits != null ? `${run.build_commits} commit${run.build_commits === 1 ? '' : 's'}` : null,
+    run.build_sha ? `at ${String(run.build_sha).slice(0, 7)}` : null,
+    run.build_cost_usd != null ? money(run.build_cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5" data-live-build="built">
+      <p className={AdminUI.muted}>{`${parts.join(', ')}.`}</p>
+      {run.build_error ? <p className={`${AdminUI.muted} break-words`}>{run.build_error}</p> : null}
+    </div>
+  );
+}
+
+/** A question's "user_facing: why" as words. */
+function blockerLabel(reason: string): string {
+  const [kind, ...rest] = reason.split(': ');
+  const why = rest.join(': ');
+  if (kind === 'user_facing') return `it changes what people see, and the default could be the wrong build. ${why}`;
+  if (kind === 'impossible') return `it may not be buildable as asked. ${why}`;
+  return reason;
+}
+
+/**
+ * The spec the bot wrote just before it built, folded away: on a live app it
+ * was also posted on the issue and the proposal, on a shadow one it was
+ * shown to nobody. Plain text, as the rest of this table is.
+ */
+function BuildSpec({ run }: { run: Run }) {
+  if (!run.build_spec_md) return null;
+  return (
+    <details className="text-sm" data-build-spec>
+      <summary className={`${AdminUI.muted} cursor-pointer`}>The spec it built from</summary>
+      <p className="mt-1 whitespace-pre-wrap break-words">{run.build_spec_md}</p>
+    </details>
+  );
+}
 
 /** What the bot would have posted, as one block of plain text per verdict. */
 function VerdictBody({ run }: { run: Run }) {
@@ -203,6 +390,9 @@ function VerdictBody({ run }: { run: Run }) {
         {run.question_default ? (
           <p className={AdminUI.muted}>Suggested default: {run.question_default}</p>
         ) : null}
+        {run.reason ? (
+          <p className={AdminUI.muted} data-question-blocker>{`Why it is a blocker: ${blockerLabel(run.reason)}`}</p>
+        ) : null}
       </div>
     );
   }
@@ -210,6 +400,9 @@ function VerdictBody({ run }: { run: Run }) {
     return (
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        {run.reason ? <p className={AdminUI.muted} data-demoted-question>{run.reason}</p> : null}
+        {run.mode === 'live' ? <LiveBuild run={run} /> : <ShadowBuild run={run} />}
+        <BuildSpec run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>
             {'Built and '}
@@ -279,6 +472,193 @@ function VerdictBody({ run }: { run: Run }) {
   return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
 }
 
+/** The build lane in one line: what is waiting, running, done, and why it idles. */
+function buildLaneLine(b: BuildLane | undefined): string {
+  if (!b) return '';
+  const parts = [
+    `${b.queued} queued`,
+    `${b.building} building`,
+    `${b.built} built`,
+    `${b.failed} failed`,
+    `${money(b.costUsd)} spent on builds`,
+  ];
+  let line = `${parts.join(', ')}.`;
+  if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
+  else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
+  return line;
+}
+
+/**
+ * #3624: the people the bot talks to in a DM, edited like the live apps
+ * list: one person per row, each row's field suggesting accounts as you type
+ * (GET /api/admin/homeroom-bot/people), and nothing saved until Save. A saved
+ * row says what that person's requests cost this week, or that the name is
+ * no account. The draft is null while it matches what is saved, so the
+ * dashboard's poll can refresh the rows without throwing an edit away.
+ */
+function DmPeople({ saved, spend, mode, userWeeklyCents, canWrite, busy, onSave }: {
+  saved: string[];
+  spend: DmUser[];
+  mode: Settings['mode'] | undefined;
+  userWeeklyCents: number | undefined;
+  canWrite: boolean;
+  busy: boolean;
+  onSave: (names: string[]) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState<DmRow[] | null>(null);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const nextKey = useRef(0);
+  const inputs = useRef(new Map<string, HTMLInputElement>());
+
+  // A row just added takes the focus, so "Add person" goes straight to typing.
+  useEffect(() => {
+    if (focusKey == null) return;
+    inputs.current.get(focusKey)?.focus();
+    setFocusKey(null);
+  }, [focusKey]);
+
+  // Saved rows are keyed by place, so the first edit turns them into the
+  // draft without remounting the field being typed in.
+  const rows: DmRow[] = draft ?? saved.map((username, i) => ({ key: `saved-${i}`, username }));
+  const chosen = [...new Set(rows.map((r) => userHandle(r.username).toLowerCase()).filter(Boolean))];
+  const dirty = chosen.join(',') !== saved.join(',');
+  const spendOf = new Map(spend.map((u) => [u.username.toLowerCase(), u]));
+
+  const edit = (key: string, username: string) => setDraft(rows.map((r) => (r.key === key ? { ...r, username } : r)));
+  const remove = (key: string) => setDraft(rows.filter((r) => r.key !== key));
+  const add = () => {
+    nextKey.current += 1;
+    const key = `new-${nextKey.current}`;
+    setDraft([...rows, { key, username: '' }]);
+    setFocusKey(key);
+  };
+  const save = async () => {
+    if (!dirty) return;
+    if (await onSave(chosen)) setDraft(null);
+  };
+
+  return (
+    <>
+      <p className={AdminUI.label} id="admin-homeroom-bot-dm-users-label">People it talks to in a DM</p>
+      <div id="admin-homeroom-bot-dm-users" role="group" aria-labelledby="admin-homeroom-bot-dm-users-label" className="mt-1 space-y-2 max-w-xl">
+        {rows.length ? rows.map((row, i) => {
+          const name = userHandle(row.username).toLowerCase();
+          const known = name && saved.includes(name) ? spendOf.get(name) : undefined;
+          return (
+            <UserFieldRow
+              key={row.key}
+              idPrefix="admin-homeroom-bot-dm-user" dataPrefix="dm-user"
+              searchPath="/api/admin/homeroom-bot/people"
+              index={i} value={row.username}
+              taken={rows.filter((r) => r.key !== row.key).map((r) => userHandle(r.username).toLowerCase()).filter(Boolean).join('\n')}
+              disabled={!canWrite} canWrite={canWrite}
+              ariaLabel={`Person ${i + 1}`}
+              onEdit={(username) => edit(row.key, username)}
+              onRemove={() => remove(row.key)}
+              inputRef={(el) => { if (el) inputs.current.set(row.key, el); else inputs.current.delete(row.key); }}
+            >
+              {known ? (
+                <p className={`${AdminUI.muted} mt-1`} data-dm-user={known.username}>
+                  {known.exists
+                    ? `Their requests this week: ${dollarsFromCents(known.weeklySpentCents ?? 0)}${userWeeklyCents ? ` of ${dollarsFromCents(userWeeklyCents)}` : ', no limit'}.`
+                    : 'No account by that name.'}
+                </p>
+              ) : null}
+            </UserFieldRow>
+          );
+        }) : (
+          <p className={AdminUI.muted} id="admin-homeroom-bot-dm-users-none">Nobody: it talks to people only on their requests.</p>
+        )}
+      </div>
+      {canWrite ? (
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <button
+            type="button"
+            id="admin-homeroom-bot-dm-add"
+            className={AdminUI.btn.outlineSm}
+            disabled={rows.length >= DM_USERS_MAX}
+            onClick={add}
+          >
+            Add person
+          </button>
+          <button
+            type="button"
+            id="admin-homeroom-bot-dm-save"
+            className={AdminUI.btn.primarySm}
+            disabled={!dirty || busy}
+            onClick={save}
+          >
+            Save
+          </button>
+          {draft !== null ? (
+            <button
+              type="button"
+              id="admin-homeroom-bot-dm-reset"
+              className={AdminUI.btn.ghost}
+              onClick={() => setDraft(null)}
+            >
+              Undo changes
+            </button>
+          ) : null}
+          <span className={AdminUI.muted} id="admin-homeroom-bot-dm-state">
+            {dirty
+              ? 'Not saved yet.'
+              : saved.length
+                ? `Saved: talks to ${saved.map((n) => `@${n}`).join(', ')} in a DM${mode === 'off' ? ', once the bot is turned on' : ''}.`
+                : 'Saved: talks to nobody in a DM.'}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * #3624 stage 2: one whole-number setting saved when the field loses focus,
+ * like the other numbers on this screen.
+ */
+function NumberSetting({ id, label, value, min, max, canWrite, onSave }: {
+  id: string; label: string; value: number; min: number; max: number; canWrite: boolean;
+  onSave: (n: number) => void;
+}) {
+  return (
+    <div>
+      <label className={AdminUI.label} htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="number" min={min} max={max} step="1"
+        className={`${AdminUI.input} mt-1`}
+        defaultValue={value}
+        key={`${id}-${value}`}
+        disabled={!canWrite}
+        onBlur={(e) => {
+          const n = Number(e.target.value);
+          if (n !== value) onSave(n);
+        }}
+      />
+    </div>
+  );
+}
+
+/** What runs now, one line each: the app, the request, who it is for, since when. */
+function WorkingNow({ items }: { items: Working[] }) {
+  if (!items.length) {
+    return <p className={AdminUI.muted} id="admin-homeroom-bot-working-none">Nothing is running right now.</p>;
+  }
+  return (
+    <ul className="text-sm space-y-1" id="admin-homeroom-bot-working">
+      {items.map((w) => (
+        <li key={`${w.appSlug}#${w.issueNumber}`} className="flex flex-wrap items-center gap-2" data-working={`${w.appSlug}#${w.issueNumber}`}>
+          <span className={w.lane === 'live' ? AdminUI.badge.success : AdminUI.badge.default}>{w.lane === 'live' ? 'live' : 'background'}</span>
+          <span>{`${w.appName} #${w.issueNumber}`}</span>
+          {w.person ? <span className={AdminUI.muted}>{`for @${w.person}`}</span> : null}
+          <span className={AdminUI.muted}>{`since ${when(w.since)}`}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function HomeroomBotSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -296,6 +676,9 @@ function HomeroomBotSection() {
   // saved. Null is what lets the 30-second poll refresh the rows without
   // throwing away an edit in progress.
   const [liveDraft, setLiveDraft] = useState<string[] | null>(null);
+  // #3624: the per-person weekly cap in dollars; null until edited. The DM
+  // list keeps its own draft, in DmPeople.
+  const [userCapDraft, setUserCapDraft] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -376,6 +759,63 @@ function HomeroomBotSection() {
     if (data) { setRunIssue(''); load(); }
   };
 
+  // Every open request whose latest verdict is ready and that has no build
+  // yet, into the build lane. The lane works through it at its own pace.
+  const backfill = async () => {
+    const data = await write('/api/admin/homeroom-bot/shadow-builds/backfill', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    const left = data.left || {};
+    const notes = [
+      left.live ? `${left.live} on live apps` : null,
+      left.platform ? `${left.platform} on the platform's own repository` : null,
+      left.paused ? `${left.paused} on paused apps` : null,
+    ].filter(Boolean);
+    setStatus({
+      text: data.queued
+        ? `Queued ${data.queued} build${data.queued === 1 ? '' : 's'} across ${data.apps} app${data.apps === 1 ? '' : 's'}.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`
+        : `Nothing new to build.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // The questions the bot asked under an older bar, triaged again under the
+  // current prompt: old and new verdicts sit side by side in the export.
+  const retriage = async () => {
+    const data = await write('/api/admin/homeroom-bot/retriage-questions', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    setStatus({
+      text: data.queued
+        ? `${data.queued} question${data.queued === 1 ? '' : 's'} will be triaged again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`
+        : `No questions to triage again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // A live app's open issues, all of them, as if just posted (#3480): the
+  // loop takes them one at a time, as it takes new ones.
+  const retriageApp = async (slug: string) => {
+    const data = await write('/api/admin/homeroom-bot/retriage-app', 'POST', { slug }, 'Queued.');
+    if (!data || !alive.current) return;
+    const busy = data.left?.busy || 0;
+    setStatus({
+      text: data.queued
+        ? `${data.queued} open issue${data.queued === 1 ? '' : 's'} on ${appName(slug)} will be triaged again, one at a time, oldest first.${busy ? ` ${busy} somebody is working on left alone.` : ''}`
+        : `No open issues on ${appName(slug)} to triage again.${busy ? ` ${busy} somebody is working on left alone.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // An ask the bot misread: tag this person on this issue again.
+  const tagAgain = async (o: MentionOptOut) => {
+    const data = await write('/api/admin/homeroom-bot/mention-optouts/remove', 'POST',
+      { slug: o.app_slug, issueNumber: o.issue_number, username: o.username },
+      `@${o.username} is tagged again on ${o.app_name} #${o.issue_number}.`);
+    if (data && alive.current && payload) setPayload({ ...payload, mentionOptOuts: data.mentionOptOuts });
+  };
+
   const savedLive = payload?.settings.liveApps || [];
   const liveRows = liveDraft ?? savedLive;
   const liveChosen = [...new Set(liveRows.filter(Boolean))];
@@ -400,6 +840,28 @@ function HomeroomBotSection() {
     const willPause = !paused.has(slug);
     if (willPause) paused.add(slug); else paused.delete(slug);
     await saveSettings({ pausedApps: [...paused] }, willPause ? `${slug} paused.` : `${slug} resumed.`);
+  };
+
+  const saveDm = async (names: string[]) => {
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { dmUsers: names }, names.length
+      ? `Saved. The bot now talks to ${names.map((n) => `@${n}`).join(', ')} in a DM.`
+      : 'Saved. The bot talks to nobody in a DM.');
+    if (data) apply(data as Payload);
+    return !!data;
+  };
+  const saveUserCap = async () => {
+    if (userCapDraft === null) return;
+    const dollars = Number(userCapDraft);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setStatus({ text: 'Enter a dollar amount (0 for no limit).', tone: 'err' });
+      return;
+    }
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { userWeeklyCents: Math.round(dollars * 100) },
+      dollars > 0 ? `Each person's requests may now cost up to $${dollars.toFixed(2)} a week.` : 'Each person\'s requests now have no weekly limit.');
+    if (data) {
+      setUserCapDraft(null);
+      apply(data as Payload);
+    }
   };
 
   const settings = payload?.settings;
@@ -428,8 +890,8 @@ function HomeroomBotSection() {
         <p className={`${AdminUI.muted} mb-4`} id="admin-homeroom-bot-intro">
           In shadow mode the bot reads each open request, its discussion and the app’s code, and records what it
           would do: the one question it would ask, that the request is ready to build, or that a person has to decide.
-          It posts nothing, claims nothing and builds nothing. Rate its verdicts here; that is what decides whether it
-          is ever allowed to post.
+          It posts nothing and claims nothing, and builds nothing unless shadow builds are on below. Rate its verdicts
+          here; that is what decides whether it is ever allowed to post.
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -560,6 +1022,68 @@ function HomeroomBotSection() {
           </div>
 
           <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Shadow builds</label>
+            <select
+              id="admin-homeroom-bot-shadow-builds"
+              className={`${AdminUI.select} mt-1`}
+              value={settings?.shadowBuilds ? 'on' : 'off'}
+              disabled={!canWrite || busy !== ''}
+              onChange={(e) => saveSettings({ shadowBuilds: e.target.value === 'on' }, e.target.value === 'on'
+                ? 'Shadow builds on: each new ready request is built on a branch nobody is shown.'
+                : 'Shadow builds are off. A build under way finishes; nothing new starts.')}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+            <label className={`${AdminUI.label} block mt-3`} htmlFor="admin-homeroom-bot-build-concurrency">Builds at once</label>
+            <input
+              id="admin-homeroom-bot-build-concurrency"
+              type="number" min="1" max="4" step="1"
+              className={`${AdminUI.input} mt-1`}
+              defaultValue={settings?.buildConcurrency ?? 2}
+              key={`builds-${settings?.buildConcurrency ?? 2}`}
+              disabled={!canWrite}
+              onBlur={(e) => {
+                const n = Number(e.target.value);
+                if (n === settings?.buildConcurrency) return;
+                if (!Number.isInteger(n) || n < 1 || n > 4) {
+                  setStatus({ text: 'Builds at once must be a whole number from 1 to 4.', tone: 'err' });
+                  return;
+                }
+                saveSettings({ buildConcurrency: n }, `The bot now runs up to ${n} shadow build${n === 1 ? '' : 's'} at once, shared between apps in turns.`);
+              }}
+            />
+            <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-shadow-build-platform">
+              <input
+                id="admin-homeroom-bot-shadow-build-platform" type="checkbox"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                checked={!!settings?.shadowBuildPlatform}
+                disabled={!canWrite || busy !== ''}
+                onChange={(e) => saveSettings({ shadowBuildPlatform: e.target.checked }, e.target.checked
+                  ? "The platform's own repository is shadow built too."
+                  : "The platform's own repository is left out of shadow builds.")}
+              />
+              <span>Include the platform's own repository</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-build-lane">{buildLaneLine(payload?.builds)}</p>
+            {canWrite ? (
+              <button
+                type="button" id="admin-homeroom-bot-shadow-backfill"
+                className={`${AdminUI.btn.outlineSm} mt-2`}
+                disabled={busy !== '' || !settings?.shadowBuilds}
+                onClick={backfill}
+              >Build every open ready request</button>
+            ) : null}
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-shadow-builds-note">
+              On apps outside the live list, a ready request is also built on a branch
+              of the app's repository, and nothing else happens: no proposal, no post,
+              nothing in the app. Each build first writes a spec and then works from it.
+              Builds run beside triage, never in its way, and are paid from the weekly cap
+              above. Each run below shows its branch and its spec for a spot check.
+            </p>
+          </div>
+
+          <div>
             <p className={AdminUI.label} id="admin-homeroom-bot-live-apps-label">Apps it acts on for real</p>
             <div id="admin-homeroom-bot-live-apps" role="group" aria-labelledby="admin-homeroom-bot-live-apps-label" className="mt-1 space-y-2">
               {liveRows.length ? liveRows.map((slug, i) => (
@@ -580,6 +1104,17 @@ function HomeroomBotSection() {
                       .filter((a) => a.slug === slug || !liveRows.includes(a.slug))
                       .map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
                   </select>
+                  {canWrite && slug && savedLive.includes(slug) && !settings?.pausedApps.includes(slug) ? (
+                    <button
+                      type="button"
+                      className={AdminUI.btn.outlineSm}
+                      data-live-app-retriage={slug}
+                      title="Every open issue on this app, as if just posted: the bot takes them one at a time, oldest first."
+                      onClick={() => retriageApp(slug)}
+                    >
+                      Triage again
+                    </button>
+                  ) : null}
                   {canWrite ? (
                     <button
                       type="button"
@@ -640,17 +1175,109 @@ function HomeroomBotSection() {
               to be on, and a staging copy never acts.
             </p>
           </div>
+
+          <div className="md:col-span-3" id="admin-homeroom-bot-at-once">
+            <p className={AdminUI.label}>How much at once</p>
+            <div className="grid gap-3 md:grid-cols-3 mt-1">
+              <NumberSetting
+                id="admin-homeroom-bot-live-at-once" label="Live requests at once"
+                value={settings?.liveAtOnce ?? 6} min={1} max={16} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 16) { setStatus({ text: 'Live requests at once must be a whole number from 1 to 16.', tone: 'err' }); return; }
+                  saveSettings({ liveAtOnce: n }, `The bot now works on up to ${n} live request${n === 1 ? '' : 's'} at once.`);
+                }}
+              />
+              <NumberSetting
+                id="admin-homeroom-bot-per-person" label="Per person"
+                value={settings?.perPerson ?? 2} min={1} max={4} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 4) { setStatus({ text: 'Per person must be a whole number from 1 to 4.', tone: 'err' }); return; }
+                  saveSettings({ perPerson: n }, `The bot now works on up to ${n} of one person's requests at once.`);
+                }}
+              />
+              <NumberSetting
+                id="admin-homeroom-bot-concurrency" label="Background apps at once"
+                value={settings?.concurrency ?? 1} min={1} max={4} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 4) { setStatus({ text: 'Background apps at once must be a whole number from 1 to 4.', tone: 'err' }); return; }
+                  saveSettings({ concurrency: n }, `Shadow triage now runs on up to ${n} app${n === 1 ? '' : 's'} at once.`);
+                }}
+              />
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-at-once-note">
+              Live requests, counted across the whole platform, are the ones on apps it acts on for real and the
+              projects it builds for people. It takes one request per app at a time, since it has one session per
+              app, and shares the slots between people in turns. Shadow triage of every other app runs in slots of
+              its own, so it never holds up live work. Each slot uses a worker from the same pool as people&apos;s
+              own coding sessions.
+            </p>
+          </div>
+
+          <div className="md:col-span-3" id="admin-homeroom-bot-dm">
+            <DmPeople
+              saved={settings?.dmUsers || []}
+              spend={payload?.dmUsers || []}
+              mode={settings?.mode}
+              userWeeklyCents={settings?.userWeeklyCents}
+              canWrite={canWrite}
+              busy={busy !== ''}
+              onSave={saveDm}
+            />
+            <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-dm-chat">
+              <input
+                id="admin-homeroom-bot-dm-chat" type="checkbox"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                checked={settings?.dmChat !== false}
+                disabled={!canWrite || busy !== ''}
+                onChange={(e) => saveSettings({ dmChat: e.target.checked }, e.target.checked
+                  ? 'The bot now reads and answers their messages.'
+                  : 'The bot no longer reads their messages: a message answers its newest open question, as before.')}
+              />
+              <span>Read and answer their messages</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-dm-chat-note">
+              {payload?.dmChat
+                ? `This week: ${payload.dmChat.turns} answer${payload.dmChat.turns === 1 ? '' : 's'} to ${payload.dmChat.people} ${payload.dmChat.people === 1 ? 'person' : 'people'}, ${money(payload.dmChat.costUsd)}${payload.dmChat.failed ? `, ${payload.dmChat.failed} failed` : ''}. `
+                : ''}
+              It can say what it is working on for them, pass an answer on to its question, and offer to file a
+              new request, which it files only when they tap File it. Its answers count in their weekly allowance.
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <label className={AdminUI.label} htmlFor="admin-homeroom-bot-user-cap">Each person's weekly allowance, dollars</label>
+              <input
+                id="admin-homeroom-bot-user-cap"
+                type="number" min="0" step="1" inputMode="decimal"
+                className={`${AdminUI.input} max-w-[8rem]`}
+                value={userCapDraft ?? ((settings?.userWeeklyCents ?? 5000) / 100).toFixed(2)}
+                disabled={!canWrite}
+                onChange={(e) => setUserCapDraft(e.target.value)}
+              />
+              {canWrite ? (
+                <button type="button" id="admin-homeroom-bot-user-cap-save" className={AdminUI.btn.primarySm} disabled={userCapDraft === null || !!busy} onClick={saveUserCap}>
+                  Save
+                </button>
+              ) : null}
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-dm-note">
+              For these people the bot brings each request&apos;s questions (with answers to tap), and the news that it is
+              building it, ready to vote on, or live, to their DM with it, and posts their answers on the request. A
+              project they create with a description is built by the bot, and acted on for real while they stay on
+              this list{settings?.firstVersionApps?.length ? ` (now: ${settings.firstVersionApps.map(appName).join(', ')})` : ''}.
+              What their requests cost the platform is capped per person per week, apart from their own agent
+              allowance. Being on the list turns these on; the bot only does the work while the mode above is on.
+            </p>
+          </div>
         </div>
 
         <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-identity">
           {`${bot
             ? `Runs as ${bot.username} on ${bot.model || 'the platform default model'}, ${bot.hasIncludedKey ? 'with its included OpenRouter key' : 'with no OpenRouter key yet (the first pass mints one)'}.`
-            : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before posting anything the live rules would hold a verdict at ${payload?.caps.proposalsPerApp ?? 2} open bot proposals per app and ${payload?.caps.questionsPerAppPerDay ?? 10} questions per app per day; rows below say when they would have.`}
+            : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before posting anything the live rules would hold a verdict at ${payload?.caps.proposalsPerApp ?? 5} open bot proposals per app (${payload?.caps.proposalsTotal ?? 5} across all its live apps) and ${payload?.caps.questionsPerAppPerDay ?? 10} questions per app per day; rows below say when they would have.`}
         </p>
 
         <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-loop">
           {payload?.loop
-            ? `Last pass ${when(payload.loop.at)}: ${payload.loop.processed} triaged${payload.loop.refreshed ? ', queue refreshed' : ''}${
+            ? `Last pass ${when(payload.loop.at)}: ${payload.loop.dispatched ?? payload.loop.processed ?? 0} started, ${payload.loop.inFlight ?? 0} running${payload.loop.refreshed ? ', queue refreshed' : ''}${
               payload.loop.paused === 'budget' ? '; paused on the weekly cap'
                 : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
                   retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
@@ -674,6 +1301,15 @@ function HomeroomBotSection() {
       </div>
 
       <div className={`${AdminUI.card} p-4`}>
+        <div className={AdminUI.cardHeader}>
+          <h3 className={AdminUI.cardTitle}>Working on now</h3>
+          <span className={AdminUI.cardDescription} id="admin-homeroom-bot-working-count">
+            {payload ? `${(payload.workingNow || []).length} running` : ''}
+          </span>
+        </div>
+        <div className="mb-4">
+          <WorkingNow items={payload?.workingNow || []} />
+        </div>
         <div className={AdminUI.cardHeader}>
           <h3 className={AdminUI.cardTitle}>Queue</h3>
           <span className={AdminUI.cardDescription} id="admin-homeroom-bot-queue-depth">
@@ -722,8 +1358,46 @@ function HomeroomBotSection() {
             <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={runNow}>
               Queue it first
             </button>
+            <button
+              type="button" id="admin-homeroom-bot-retriage"
+              className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={retriage}
+            >
+              Triage every open question again
+            </button>
           </div>
         ) : null}
+      </div>
+
+      <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-optouts">
+        <div className={AdminUI.cardHeader}>
+          <h3 className={AdminUI.cardTitle}>Asked not to be tagged</h3>
+          <span className={AdminUI.cardDescription} id="admin-homeroom-bot-optouts-count">
+            {payload ? `${payload.mentionOptOuts.total} ${payload.mentionOptOuts.total === 1 ? 'person' : 'people'}` : ''}
+          </span>
+        </div>
+        <p className={`${AdminUI.muted} mb-2`}>
+          The bot tags whoever filed an issue and whoever took part in it, except these people, who asked
+          it to stop on that issue. They are tagged again when they say so there. Tag again from here only
+          when the bot misread what somebody said.
+        </p>
+        {payload && payload.mentionOptOuts.items.length ? (
+          <ul className="text-sm space-y-1" id="admin-homeroom-bot-optouts-list">
+            {payload.mentionOptOuts.items.map((o) => (
+              <li key={`${o.app_slug}-${o.issue_number}-${o.username}`} className="flex flex-wrap items-center gap-2"
+                data-optout={`${o.app_slug}#${o.issue_number}@${o.username}`}>
+                <span>{`@${o.username} on ${o.app_name} #${o.issue_number}`}</span>
+                <span className={AdminUI.muted}>{`since ${when(o.created_at)}`}</span>
+                {canWrite ? (
+                  <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={() => tagAgain(o)}>
+                    Tag again
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className={AdminUI.muted} id="admin-homeroom-bot-optouts-none">Nobody has asked.</p>
+        )}
       </div>
 
       <div className={`${AdminUI.card} p-4`}>
@@ -902,4 +1576,5 @@ const AdminHomeroomBot = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminHomeroomBot = AdminHomeroomBot;
 
-export { AdminHomeroomBot };
+// DmPeople is exported for tests/admin-homeroom-bot.test.js, which renders it.
+export { AdminHomeroomBot, DmPeople, WorkingNow };

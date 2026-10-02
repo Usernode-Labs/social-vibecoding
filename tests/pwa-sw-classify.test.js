@@ -162,6 +162,96 @@ test('group-chat attachment files and previews never fall back to the SPA shell'
   }
 });
 
+// #3381: every admin "Download CSV" saved the app page as export.csv. A
+// download link is a navigation, and the shell-release cache answers every
+// navigation it is handed with a shell document. Nothing under /api/ is a
+// SPA route, so no navigation there is handed to it.
+test('a navigation to /api/ (a download, an export, a redirect) never gets the shell', () => {
+  for (const path of [
+    '/api/admin/homeroom-bot/export.csv',
+    '/api/admin/homeroom-bot/export.csv?app=todo&verdict=ready',
+    '/api/apps/demo/files/report.pdf',
+    '/api/anything/else',
+  ]) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'bypass', path);
+  }
+  // Only navigations: the offline-cached JSON reads keep their lane, and a
+  // SPA route still falls back to the cached shell.
+  assert.equal(classify('GET', '/api/apps', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/api/admin/homeroom-bot', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/apis-are-not-api', 'text/html', 'navigate'), 'navigate');
+});
+
+test('the installed worker leaves a CSV download to the browser (#3381)', () => {
+  const handlers = {};
+  const intercepted = [];
+  let fetches = 0;
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => { fetches++; return new Promise(() => {}); },
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/api/admin/homeroom-bot/export.csv`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the server\'s CSV, not a cached document');
+  assert.equal(fetches, 0);
+});
+
+// #3585: clicking an issue's screenshot opens /issue-images/<id> in a new tab.
+// That navigation got the cached shell, which has no route for it, so the tab
+// showed the home screen instead of the image.
+test('a navigation to a server-served file (an issue screenshot) never gets the shell', () => {
+  const id = '0123456789abcdef0123456789abcdef';
+  for (const prefix of ['issue-images', 'visuals', 'app-icons', 'avatars', 'app-files']) {
+    assert.equal(classify('GET', `/${prefix}/${id}`, 'text/html', 'navigate'), 'bypass', prefix);
+  }
+  // Only navigations: as images on a page the content-addressed ones keep
+  // their cache-first lane.
+  for (const prefix of ['visuals', 'app-icons', 'avatars']) {
+    assert.equal(classify('GET', `/${prefix}/${id}`, 'image/*', 'no-cors'), 'immutable', prefix);
+  }
+  // Near misses are not file routes and still fall back to the shell.
+  for (const path of [
+    `/issue-images/${id}/extra`,
+    `/issue-images/${id.slice(1)}`,
+    `/issue-images/${id.toUpperCase()}`,
+    `/issue-imagesx/${id}`,
+    '/issue-images/',
+  ]) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'navigate', path);
+  }
+});
+
+test('the installed worker leaves an issue screenshot to the browser (#3585)', () => {
+  const handlers = {};
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/issue-images/${'f'.repeat(32)}`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the image, not a cached document');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

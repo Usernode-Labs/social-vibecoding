@@ -156,6 +156,23 @@ origin including the scheme, with no path or trailing slash; the application
 appends `/waitlist/connect/<provider>/callback`. When overriding it, register
 the resulting callback URLs with the OAuth providers.
 
+Invite links let people skip the waitlist unless an admin switches that off
+in Admin → Waitlist; the switch is a platform setting, not a chart value. How
+many skips each generation gets is `config.inviteTreeBudgets`, which maps to
+`INVITE_TREE_BUDGETS` in the platform Deployment:
+
+```yaml
+config:
+  inviteTreeBudgets: "10"
+```
+
+Only accounts an admin let off the waitlist by hand (Admit, or a direct access
+grant) have skips: the first number each. Accounts that already had access,
+activation codes, genesis wallets and anyone a link let in get none. The
+default `"10"` stops there, so invites do not chain; a later number would give
+the next generation that many. Explicit `env` entries win over `envFrom`, so
+set this here rather than in the platform Secret.
+
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
 `OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
@@ -207,10 +224,10 @@ Platform links, CLI authentication, and access-grant redirects continue to use
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
 
-Agent-authored visual evidence is active by default. The chart always injects
-`VISUAL_EVIDENCE_V2_ENABLED=true`; in an incident, set
-`platform.visualEvidenceV2Enabled: false` and sync Argo CD to stop collection,
-execution, and presentation together. This kill switch does not restore
+Before & after shots are on by default. The chart always injects
+`SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`
+(formerly `platform.visualEvidenceV2Enabled`) and sync Argo CD to stop
+collection, execution, and presentation together. This kill switch does not restore
 legacy default-route screenshots.
 
 DNS and cert-manager must support both hostname sets before rollout. Keep
@@ -263,27 +280,40 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
-Previews prefer the node hosting the external CloudNativePG primary by default
-(`config.previewFollowDatabasePrimary: true`). The chart derives
+Previews and production apps prefer to run near the external CloudNativePG
+primary by default (`config.previewFollowDatabasePrimary: true`; the name
+predates apps following it too). The chart derives
 `PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
 `PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
 namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Only staging preview Deployments receive a weight-100 preferred Pod affinity
-term matching that cluster's `cnpg.io/instanceRole: primary` across
-`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
-node is full, unavailable, or no matching primary exists. This is a scheduler
+Staging preview and production app Deployments receive two preferred Pod
+affinity terms matching that cluster's `cnpg.io/instanceRole: primary`: weight
+100 across `topology.kubernetes.io/zone`, and weight 50 across
+`kubernetes.io/hostname`. The zone term is the one that matters on a cluster
+spread over data centres: a page makes many sequential queries, so a pod in
+another data centre pays that round trip on every one, and checks against such
+a preview fail on data that arrives too late. Label every node with its
+location for the zone term to apply, for example:
+
+```sh
+kubectl label node <node> topology.kubernetes.io/zone=<location>
+```
+
+A node without the label matches no zone, so an unlabelled cluster keeps the
+host preference alone. Other eligible nodes remain available if the zone is
+full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
-no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+no extra runtime RBAC or node lookup.
 
 After releasing the platform image and chart together, newly created or
-reconciled preview Deployments get this policy. Existing Deployments are not
-patched automatically. Following a database failover, newly scheduled Pods
-prefer the new primary; running previews stay where they are. Opting out affects
-future reconciliation too. Production apps, build Pods, workers and captures
-retain their existing placement. See the
+reconciled preview and app Deployments get this policy. Existing Deployments
+are not patched automatically: a running app moves when it is next deployed.
+Following a database failover, newly scheduled Pods prefer the new primary;
+running pods stay where they are. Opting out affects future reconciliation too.
+Build Pods, workers and captures retain their existing placement. See the
 [Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
 and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
 

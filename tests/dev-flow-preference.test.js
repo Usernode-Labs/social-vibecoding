@@ -319,16 +319,20 @@ test('the "+" menu asks nothing about venue', () => {
     'the out-of-credits hand-off still opens its walkthrough directly');
 });
 
-test('the "+" menu is two named groups, not one flat list', () => {
+test('the ⋯ menu leads with its asks and names its settings group', () => {
   const appView = read('public/js/app-view.js');
   // #1084 chunk G converted the menu to JSX: the two headings are
   // <PlusMenuHeading> elements in the toolbar row now (actions-row.tsx, split
   // out of the board frame when the Workshop gained its own copy), not
   // AppView._plusMenuHeading() calls. #1490 moved New change to Improve and
-  // left import alone in the first group; #1900 put File an issue back beside
-  // it, so the group is "Add to the board" — what both rows do.
+  // left import alone in the first group; #1900 put filing an issue back
+  // beside it, under "Add to the board". The hub's ⋯ leads with that row as
+  // "Ask for a change", and the first group needs no heading: it is the
+  // menu's first, and "Settings & rules" says where the rest begins.
   const frame = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(frame, /label="Add to the board" groupKey="build" divider=\{false\}/);
+  assert.doesNotMatch(frame, /label="Add to the board"/);
+  assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
+    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('groupKey="settings"'));
   assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
   // A heading must not be a <button>: _wirePlusMenu collects
   // `button[data-plus]` for the touch action sheet, and a heading that

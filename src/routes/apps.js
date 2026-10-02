@@ -19,19 +19,24 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
+const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const appActivity = require('../services/app-activity');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -173,6 +178,9 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorC
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
+    // All reporting entry points use the same server-derived eligibility.
+    can_report: !!user?.id && !app.demo && !app.moderation_suspended_at
+      && Number(app.created_by) !== Number(user.id),
     // Deletion is deliberately narrower than general app management. App
     // admins can manage settings, but only a full platform admin or the
     // creator while they remain the app's ONE contributor may destroy it.
@@ -203,6 +211,7 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
     status: app.status,
     icon_emoji: app.icon_emoji || null,
     icon_url: app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    icon_color: app.icon_color || null,
     isFavorited: !!app.is_favorited,
     isCollaborator,
     canCollaborate: !!user?.isAdmin || app.collab_visibility !== 'private' || isCollaborator,
@@ -229,218 +238,8 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-// Staging-gated (?demo=1) home-feed rows so a tester can see the new
-// homescreen icon tiles (emoji / custom image / letter fallback) — the
-// staging clone's real app rows predate the feature and would all
-// render letter tiles. Read-only request-time injection per the
-// "Staging mock data" convention: never persisted, strictly a no-op
-// outside staging. The image row carries a tiny inline data-URI PNG so
-// no app_icons blob needs to exist in the clone (the client renders
-// whatever icon_url it's given).
-const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
-// Relative ISO timestamp for the demo rows below, so their ages read the
-// same however long the staging container has been up.
-function demoAgo(hours) {
-  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
-}
-
-function demoIconApps(curation = false) {
-  const base = {
-    status: 'running',
-    self_hosted: false,
-    locked: false,
-    collab_visibility: 'public',
-    view_visibility: 'public',
-    created_at: new Date().toISOString(),
-    last_deploy_at: new Date().toISOString(),
-    // Synthetic preview reviews, never assigned to real apps.
-    main_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_at: new Date().toISOString(),
-    directory_review_status: 'working',
-    url: null,
-    version: null,
-    deployProgress: null,
-    missingSecrets: null,
-    active_users: 0,
-    is_favorited: false,
-    your_apps_hidden: false,
-    favorite_order: null,
-    featured: false,
-    featured_order: null,
-    is_collaborator: false,
-    open_prs: 0,
-    active_sessions: 0,
-    merged_prs: 0,
-    merged_prs_recent: 0,
-    last_merged_at: null,
-    open_issues: 0,
-    // Communities (services/communities.js). Outsiders by default, like the
-    // Your-apps flags above; the three rows below that set is_member are
-    // the Workshop's three sections, one each, so ?demo=1 shows every
-    // audience label whatever the clone's own memberships are.
-    is_member: false,
-    member_count: 0,
-    audience: 'open',
-    last_active_at: null,
-    icon_emoji: null,
-    icon_url: null,
-    can_collaborate: false,
-    can_manage: false,
-    // Marks the tile inert for client gestures: these slugs don't
-    // exist in the DB, so drag-to-favorite (issue #746) would 404 —
-    // home.js excludes [data-demo] cards from the kit drag.
-    demo: true,
-  };
-  const apps = [
-    // "Just you" in the Workshop: a private project nobody else is in.
-    {
-      ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮',
-      view_visibility: 'private', collab_visibility: 'private',
-      is_member: true, member_count: 1, audience: 'solo', last_active_at: demoAgo(26),
-    },
-    {
-      ...base,
-      id: 900002,
-      slug: 'staging-demo-image-icon',
-      name: 'Staging demo image icon',
-      icon_url: DEMO_ICON_PNG,
-      // Deterministic tile for the home screen's "Find more apps" row
-      // and the browse screen's featured-first ordering: featured_apps
-      // is created by this change, so a prod-cloned staging DB has no
-      // real rows to show there (migrate.js also seeds a few from real
-      // cloned apps for the no-?demo=1 case).
-      featured: true,
-      featured_order: 0,
-    },
-    {
-      ...base,
-      id: 900003,
-      slug: 'staging-demo-featured',
-      name: 'Staging demo featured app',
-      icon_emoji: '⭐',
-      featured: true,
-      featured_order: 1,
-    },
-    // A deliberately LONG name (#951). The tile label is two 11px lines
-    // clamped with an ellipsis, and the only way a reviewer can see that
-    // working — here and in the before/after screenshots — is a name that
-    // actually overflows one line at phone width.
-    {
-      ...base,
-      id: 900012,
-      slug: 'staging-demo-long-name',
-      name: 'Staging demo photo album and journal',
-      icon_emoji: '📔',
-      // A "Group" in the Workshop: private, and more than one person in it.
-      view_visibility: 'private',
-      collab_visibility: 'private',
-      is_member: true,
-      member_count: 4,
-      audience: 'invited',
-      last_active_at: demoAgo(3),
-    },
-    // #1838: the ONE demo row that lands in "Your apps". Every other row
-    // here inherits is_favorited/is_collaborator false from `base`, so
-    // Home.isYours excludes them all and the launcher grid under ?demo=1
-    // holds only whatever the checks clone happens to have — which is why
-    // the card-menu deep link carries a featured-row fallback at all. The
-    // gesture-driven variants of that link have to dispatch onto a real
-    // launcher tile, so seed one deterministically.
-    //
-    // favorite_order 99 sorts it LAST inside Your apps, so the existing
-    // shot=home-apps / shot=home-grid expectations keep their leading tiles;
-    // demo:true keeps it out of the kit's placement selector
-    // (.app-card[data-yours]:not([data-demo])) so no drag shot changes.
-    {
-      ...base,
-      id: 900013,
-      slug: 'staging-demo-your-app',
-      name: 'Staging demo your app',
-      icon_emoji: '🏠',
-      is_favorited: true,
-      favorite_order: 99,
-      // ...and a "Community" in the Workshop, the most recent one, so the
-      // declared checks that find it there do not depend on the clone.
-      is_member: true,
-      member_count: 12,
-      last_active_at: demoAgo(0.5),
-    },
-    // Four more featured rows so the Discover widget's curated lane is
-    // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
-    // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid
-    // is that all six fit on ONE row. With only the two rows above, a
-    // staging capture showed a third-full lane and proved nothing.
-    {
-      ...base, id: 900004, slug: 'staging-demo-featured-2',
-      name: 'Staging demo featured 2', icon_emoji: '🎲',
-      featured: true, featured_order: 2,
-    },
-    {
-      ...base, id: 900005, slug: 'staging-demo-featured-3',
-      name: 'Staging demo featured 3', icon_emoji: '🧩',
-      featured: true, featured_order: 3,
-    },
-    {
-      ...base, id: 900006, slug: 'staging-demo-featured-4',
-      name: 'Staging demo featured 4', icon_emoji: '🚀',
-      featured: true, featured_order: 4,
-    },
-    {
-      ...base, id: 900007, slug: 'staging-demo-featured-5',
-      name: 'Staging demo featured 5', icon_emoji: '🎨',
-      featured: true, featured_order: 5,
-    },
-    // ...and four NON-featured rows carrying an active-user count, for the
-    // desktop widget's second lane (Home.popularApps ranks by
-    // `active_users` and drops anything at zero). Without these the Popular
-    // lane is empty in every staging preview — the clone's own rows keep
-    // their real counts, but a check runs against a fresh database.
-    // Numbers here where production sends bigint STRINGS; the client
-    // coerces either, and tests cover both shapes.
-    //
-    // The four also carry deliberately DIFFERENT merged-proposal and age
-    // profiles, so the #apps sort control (#1383) puts a different row on
-    // top under each of its five orders instead of looking broken against
-    // an otherwise uniform fixture set. Read them as: 1 = popular but
-    // dormant, 2 = the workhorse, 3 = brand new and busy, 4 = neither.
-    {
-      ...base, id: 900008, slug: 'staging-demo-popular-1',
-      name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
-      merged_prs: 3, merged_prs_recent: 0, last_merged_at: demoAgo(90 * 24),
-      created_at: demoAgo(200 * 24), last_deploy_at: demoAgo(60 * 24),
-    },
-    {
-      ...base, id: 900009, slug: 'staging-demo-popular-2',
-      name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
-      merged_prs: 41, merged_prs_recent: 11, last_merged_at: demoAgo(2),
-      created_at: demoAgo(120 * 24), last_deploy_at: demoAgo(2),
-    },
-    {
-      ...base, id: 900010, slug: 'staging-demo-popular-3',
-      name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
-      merged_prs: 6, merged_prs_recent: 5, last_merged_at: demoAgo(24),
-      created_at: demoAgo(3 * 24), last_deploy_at: demoAgo(24),
-    },
-    {
-      ...base, id: 900011, slug: 'staging-demo-popular-4',
-      name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
-      created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
-    },
-  ];
-  if (curation) apps.push(
-    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
-      icon_emoji: '🧩', featured: true, featured_order: -1 },
-    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
-      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
-    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
-      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
-    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
-      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
-    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
-  );
-  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
-}
+// Catalog samples are stored rows; all app APIs use the same identity.
+const stagingApps = require('../services/staging-apps');
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -697,8 +496,7 @@ async function sweepStuckCreatingApps(pool) {
 // native app returning from the background, say — without leaving the door
 // open. It is the DAILY cap that actually holds the line, because a ceiling
 // on one request is defeated by sending many.
-const ACTIVITY_MAX_PER_POST = 3600;
-const ACTIVITY_MAX_PER_DAY = 86400;
+const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
 
 /**
  * The seconds to credit for one heartbeat, or `null` to refuse the body.
@@ -710,16 +508,10 @@ const ACTIVITY_MAX_PER_DAY = 86400;
  * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
  * this body comes from our own client, which sends a number.
  */
-function activitySeconds(raw) {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  const rounded = Math.round(raw);
-  if (rounded <= 0) return null;
-  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
-}
+const { activitySeconds } = appActivity;
 
-function appRoutes(config) {
+function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
-  const pool = getPool(config);
 
   router.get('/api/apps', async (req, res) => {
     try {
@@ -857,7 +649,8 @@ function appRoutes(config) {
           WHERE status = 'open'
           GROUP BY app_id
         ) iss ON iss.app_id = a.id
-        WHERE (NOT a.self_hosted OR $1::boolean)
+        WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
+          AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `, [showSelfHosted, userId, isAdmin]);
@@ -882,7 +675,7 @@ function appRoutes(config) {
         pool, rows.map((a) => a.id)
       );
 
-      const apps = await Promise.all(rows.map(async (a) => {
+      let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
         // without each card making its own /secrets fetch on render.
@@ -913,8 +706,9 @@ function appRoutes(config) {
           }
         }
 
+        const stagingSample = stagingApps.isSample(a);
         let url = null;
-        if (a.status === 'running') {
+        if (!stagingSample && a.status === 'running') {
           if (IS_LOCAL_DEV) {
             const containerName = `usernode-app-${a.slug}`;
             const hostPort = await docker.getHostPort(containerName, 3000);
@@ -976,11 +770,17 @@ function appRoutes(config) {
         const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
+          // The launcher's copy of the manifest: everything but the declared
+          // tests and platform env, which no client reads and which were most
+          // of this payload (see summarizeManifestSnapshot). GET
+          // /api/apps/:slug still answers the whole snapshot.
+          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          staging_sample: stagingSample,
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
@@ -1010,9 +810,11 @@ function appRoutes(config) {
       // Resolve fork lineage (live source-name lookup, "<deleted>"
       // fallback) for every serialized app in one batched query.
       await attachForkLineage(pool, apps);
-      // Staging demo tiles for the icon feature (see demoIconApps above).
-      if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps(req.query.curation === '1'));
+      // Keep optional catalog samples behind their display flags, after the
+      // same visibility and block filters as every stored app.
+      if (IS_STAGING) {
+        apps = apps.filter(app => !stagingApps.isCatalogSlug(app.slug)
+          || (req.query.demo === '1' && (req.query.curation === '1' || !app.slug.startsWith('directory-sample-'))));
       }
       res.json({ apps });
     } catch (err) {
@@ -1113,7 +915,7 @@ function appRoutes(config) {
     }
   });
 
-  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, async (req, res) => {
+  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
@@ -1122,6 +924,36 @@ function appRoutes(config) {
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
+    }
+  });
+
+  // The create dialog's suggested one-line "What is it?", from what the
+  // person said the project should do (#3624, asked of everyone making a
+  // project since). Any signed-in person who can reach the create dialog;
+  // the platform-access gate in front of /api/ decides who that is. A
+  // helper-model call billed like a session title, and the description's own
+  // first sentence when the model is unavailable.
+  router.post('/api/apps/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
+      const name = typeof req.body?.name === 'string' ? req.body.name.slice(0, 120) : '';
+      const out = await homeroomBotDm.suggestShortDescription({ name, brief, max: createOptions.DESCRIPTION_MAX });
+      if (!out) return res.status(400).json({ error: 'Describe the project in a sentence or two first.' });
+      if (out.usage && out.model) {
+        try {
+          const llm = require('../services/llm');
+          const limits = require('../services/limits');
+          await limits.recordSpend(pool, req.user.id, llm.estimateCostCents(out.usage, out.model), { byok: false });
+        } catch (err) {
+          log.warn('apps', 'Short description spend debit failed', { err: err.message });
+        }
+      }
+      return res.json({ description: out.description });
+    } catch (err) {
+      log.error('apps', 'Short description suggestion failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -1139,7 +971,7 @@ function appRoutes(config) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, template } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1285,6 +1117,18 @@ function appRoutes(config) {
         appRow = described[0] || appRow;
       }
 
+      // WHAT IT STARTS FROM (#3521; services/app-templates.js), when it is a
+      // starter rather than the empty scaffold. On the row, like the rule
+      // above, because app-creator scaffolds from the row: a Retry after a
+      // failed create writes the same starter.
+      if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const { rows: templated } = await pool.query(
+          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
+          [template, appRow.id]
+        );
+        appRow = templated[0] || appRow;
+      }
+
       // A Group's invites go out now, each the same invite (and the same
       // notification) Members & approvals sends. Best-effort per person: the
       // project exists either way, and anyone missed can be invited from
@@ -1327,6 +1171,7 @@ function appRoutes(config) {
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
+          ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
         },
       });
 
@@ -1345,7 +1190,24 @@ function appRoutes(config) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      // What the project should do, from the create dialog: filed as its
+      // first request, under its creator's name, once the project runs. For
+      // somebody the Homeroom bot builds for (#3624), the bot builds it and
+      // says so in their DM, which the dialog then offers to open; for
+      // anybody else it is left to the group. Optional here (a connector
+      // or an older client sends none), and never a reason the create fails.
+      let homeroomBot = null;
+      if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
+        try {
+          homeroomBot = await require('../services/homeroom-bot-dm').startFirstVersion(pool, config, {
+            app: appRow, user: req.user, brief: req.body.brief,
+          });
+        } catch (err) {
+          log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+      }
+
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
@@ -1480,8 +1342,9 @@ function appRoutes(config) {
       if (!req.user?.isAdmin && appRow.view_visibility === 'private' && !isCollaborator) {
         return res.status(404).json({ error: 'App not found' });
       }
+      const stagingSample = stagingApps.isSample(appRow);
       let url = null;
-      if (appRow.status === 'running') {
+      if (!stagingSample && appRow.status === 'running') {
         if (IS_LOCAL_DEV) {
           const containerName = `usernode-app-${appRow.slug}`;
           const hostPort = await docker.getHostPort(containerName, 3000);
@@ -1549,19 +1412,35 @@ function appRoutes(config) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        // `?manifest=summary`: the shell's own reads of an app (the Improve
+        // target, AppView) use only the snapshot's description, and the
+        // platform's snapshot alone is ~280 KB. Without the flag the whole
+        // snapshot is answered, as it always was.
+        ...(req.query.manifest === 'summary'
+          ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
+          : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,
+        // Server-built icon URL so the client never assembles ids into
+        // paths (and staging demo rows can inject arbitrary sources) —
+        // same computation as the /api/apps list. Without it the header
+        // tile (features/header/header-title.tsx via improve-status.js)
+        // only ever sees the raw `icon_image_id` column, never a usable
+        // URL, so it falls back to the letter/emoji even when the app has
+        // a real icon image (#3348).
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
+        staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
-        // Reviewer copy needs to distinguish an advisory evidence run from
+        // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
         // secret or capability grant.
-        visualEvidenceEnforced: !!config.visualEvidence?.enforce,
+        shotsEnforced: !!config.shots?.enforce,
         // The whole-tree verdict under direct merges (services/main-watch.js):
         // is main green, and are this app's merges paused because it is not?
         mainCheck: require('../services/main-watch').describe(appRow),
@@ -2011,7 +1890,7 @@ function appRoutes(config) {
     }
   });
 
-  router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
+  router.delete('/api/apps/:slug/secrets/:key', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
@@ -2311,7 +2190,7 @@ function appRoutes(config) {
   // by the secret_change vote-apply path). Returns immediately; the
   // rebuild streams progress via the existing `app_redeploy_status` WS
   // event so the UI's version pill flips to its yellow spinning state.
-  router.post('/api/apps/:slug/redeploy', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/redeploy', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
@@ -2349,7 +2228,7 @@ function appRoutes(config) {
   // apps; rejects with 400 otherwise. `manual` skips the poller's
   // backoff on a commit that has failed to rebuild before: an admin
   // pressing this has usually just fixed the thing that was failing.
-  router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/check-updates', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query(
@@ -2488,7 +2367,7 @@ function appRoutes(config) {
   // the red sha the app is paused on, so the next red is a new pause. The
   // cheaper way out is still to merge the fix; this is for when the red is
   // a flake, an unrelated breakage, or the fix IS the proposal waiting.
-  router.post('/api/apps/:slug/main-check/resume', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/main-check/resume', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
@@ -3203,7 +3082,7 @@ function appRoutes(config) {
 
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
-  router.post('/api/apps/:slug/retry', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/retry', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows } = await pool.query(
         "SELECT * FROM apps WHERE slug = $1 AND status = 'error'",
@@ -3322,6 +3201,17 @@ function appRoutes(config) {
           [appId, req.user.id]
         );
       }
+      // The state row can later be hidden or deleted. Record this explicit
+      // user toggle in the best-effort append-only analytics log so a
+      // successfully captured favorite day survives a later preference.
+      if (favorited) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.APP_FAVORITED,
+          userId: req.user.id,
+          appId,
+          metadata: { source: 'user_favorite_toggle' },
+        });
+      }
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
@@ -3365,9 +3255,8 @@ function appRoutes(config) {
       const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
       // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
       // project talks in the platform's one channel, which every signed-in
-      // person can read; its old project discussion stays reachable as
-      // read-only history (`archive_href`). Any other project's channel is
-      // its own discussion, at its own address.
+      // person can read. Any other project's channel is its own
+      // discussion, at its own address.
       let channel = null;
       if (app.slug === config.selfAppSlug) {
         const general = await communities.generalChannelSummary(pool, req.user?.id);
@@ -3380,7 +3269,6 @@ function appRoutes(config) {
             // which gates it on Homeroom membership (generalNeedsJoin).
             post_url: `/api/conversations/${conversationId}/messages`,
             handle: 'general',
-            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
           };
         }
       } else if (canChat) {
@@ -3462,6 +3350,10 @@ function appRoutes(config) {
       }
       if (joined) {
         await communities.join(pool, app, req.user.id);
+        // "Find people to build with" counts the join now, not on the
+        // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
+        // throws, so the join answers the same either way.
+        await challengeScorer.scoreOnJoin(pool, config);
       } else {
         const result = await communities.leave(pool, app, req.user.id);
         if (!result.ok) return res.status(result.status).json({ error: result.error });
@@ -3544,12 +3436,72 @@ function appRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/activity', async (req, res) => {
-    const seconds = activitySeconds(req.body?.seconds);
-
-    if (seconds === null) {
-      return res.status(400).json({ error: 'Invalid seconds value' });
+  // A successful App-tab entry, distinct from the later activity heartbeat.
+  // This write is awaited because the browser keeps an idempotent retry queue:
+  // only a 2xx means the durable row exists. `getAppForUser` supplies the same
+  // visibility, suspension and viewer-block guard as the app detail request.
+  router.post('/api/apps/:slug/openings', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    let opening;
+    try {
+      opening = appOpenings.parseOpening(req.body);
+    } catch (err) {
+      if (err instanceof appOpenings.OpeningValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
     }
+
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+
+      const result = await appOpenings.record(pool, {
+        userId: req.user.id,
+        appId: appRow.id,
+        opening,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
+    } catch (err) {
+      log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
+    const modern = req.body && Object.prototype.hasOwnProperty.call(req.body, 'batchId');
+    const legacySeconds = modern ? null : activitySeconds(req.body?.seconds);
+    const activityRequest = modern
+      ? appActivity.parseActivityRequest(req.body)
+      : (legacySeconds === null ? null : { legacy: true, seconds: legacySeconds });
+    if (!activityRequest) {
+      return res.status(400).json({
+        error: modern ? 'Invalid activity payload' : 'Invalid seconds value',
+      });
+    }
+    if (!activityRequest.legacy) {
+      try {
+        const stored = await appActivity.recordActivityBatch(pool, {
+          slug: req.params.slug,
+          user: req.user,
+          request: activityRequest,
+        });
+        if (!stored.duplicate) {
+          await challengeScorer.scoreOnAppTime(pool, config, stored.scoring);
+        }
+        return res.json({ ok: true, duplicate: stored.duplicate });
+      } catch (err) {
+        if (err?.code === 'not_found') return res.status(404).json({ error: 'App not found' });
+        if (err?.code === 'batch_id_reused') {
+          return res.status(409).json({ error: 'Batch ID was reused' });
+        }
+        log.error('apps', 'Failed to track activity batch', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+    const seconds = activityRequest.seconds;
 
     try {
       const appRow = await appAccess.getAppForUser(
@@ -3580,7 +3532,7 @@ function appRoutes(config) {
          ON CONFLICT (app_id, user_id, date)
          DO UPDATE SET seconds_spent = LEAST(
            app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
-         RETURNING (xmax = 0) AS inserted`,
+         RETURNING (xmax = 0) AS inserted, seconds_spent`,
         [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
@@ -3591,6 +3543,20 @@ function appRoutes(config) {
           appId: appRows[0].id,
         });
       }
+
+      // "Try an app" counts the heartbeat that takes this person's time in
+      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
+      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // heartbeat is answered without a scoring pass, and nearly all without
+      // even a read: today's total, returned above, says whether this one can
+      // be the crossing at all. Never throws.
+      await challengeScorer.scoreOnAppTime(pool, config, {
+        appId: appRows[0].id,
+        ownerId: appRows[0].created_by,
+        userId: req.user.id,
+        seconds,
+        daySeconds: activityRows[0]?.seconds_spent,
+      });
 
       res.json({ ok: true });
     } catch (err) {

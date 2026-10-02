@@ -225,7 +225,9 @@ test('an unloaded board draws placeholders, not four empty columns', () => {
   assert.match(html, /animate-pulse/, 'placeholder rows are drawn instead');
   assert.match(html, /role="status"/, 'with one live-region label for a reader');
   // Every column says so, not just the one the mobile strip shows.
-  for (const col of ['Issues', 'Underway', 'In review', 'Done']) {
+  // The first column is "Requests" since the UI overhaul (it was "Issues");
+  // its key stays `issues`.
+  for (const col of ['Requests', 'Underway', 'In review', 'Done']) {
     assert.ok(html.includes(`Loading ${col}`), `${col} announces itself as loading`);
   }
 });
@@ -237,8 +239,8 @@ test('a loaded board draws its counts and its empty notes again', () => {
   const html = kanbanHtml(AppView);
   assert.ok(!html.includes('animate-pulse'), 'no placeholders once the data is real');
   assert.ok(html.includes('Nothing here yet'), 'the genuinely empty columns say so');
-  assert.match(html, /Issues <span class="[^"]*font-mono">· 1<\/span>/,
-    'the Issues count is the real one');
+  assert.match(html, /Requests <span class="[^"]*font-mono">· 1<\/span>/,
+    'the Requests count is the real one');
 });
 
 test('the Workshop shows placeholders before the load and its own rows after', () => {

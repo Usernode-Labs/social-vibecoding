@@ -7,6 +7,8 @@ const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
+const appAccess = require('../services/app-access');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -221,6 +223,17 @@ function stagingMockNotifications() {
     // row of this age is one click away from every screenshot and declared
     // check. An old unread notification is exactly the row that used to read
     // as a four-hundred-day duration.
+    // #3233: an app allowance change, account-level like the real row (no
+    // app). Its copy is built from the "<old>:<new>" detail, so a preview
+    // shows the plain-words line instead of "0:2".
+    {
+      ...base,
+      id: 990212, kind: 'app_quota_changed',
+      createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '0:2',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     {
       ...base,
       id: 990209, kind: 'session_done',
@@ -293,7 +306,7 @@ function notificationsRoutes(config) {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     return next();
-  }, testAlertLimiter, async (req, res) => {
+  }, testAlertLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       return res.json(await queueTestAlert(pool, req.user.id));
     } catch (err) {
@@ -351,24 +364,40 @@ function notificationsRoutes(config) {
   // `adminOnly` categories are hidden from everyone else, because the
   // notifications behind them are only ever addressed to admins and the
   // creator in the first place.
-  async function resolveApp(slug, userId) {
+  //
+  // Answers only for an app the user may VIEW (appAccess.checkAppAccess,
+  // as every other /api/apps/:slug route): a private, suspended or blocked
+  // app is null, exactly like a missing one, so these routes never disclose
+  // it. `allowOwnRows` is the reset's exception: someone who has since lost
+  // access may still clear preference rows they already hold for the app,
+  // which is what the Settings roll-up offers them. Without such rows the
+  // answer is the same null as for a slug that does not exist.
+  async function resolveApp(slug, user, { allowOwnRows = false } = {}) {
     const { rows } = await pool.query(
-      `SELECT a.id, a.slug, a.name, a.created_by,
+      `SELECT ${appAccess.ACCESS_COLUMNS}, name,
               EXISTS (SELECT 1 FROM app_admins ad
-                       WHERE ad.app_id = a.id AND ad.user_id = $2) AS is_admin
-         FROM apps a WHERE a.slug = $1`,
-      [slug, userId]
+                       WHERE ad.app_id = apps.id AND ad.user_id = $2) AS is_admin
+         FROM apps WHERE slug = $1`,
+      [slug, user.id]
     );
     const app = rows[0];
     if (!app) return null;
-    return { ...app, isAdmin: !!app.is_admin || app.created_by === userId };
+    if (!(await appAccess.checkAppAccess(pool, app, user, 'view'))) {
+      if (!allowOwnRows) return null;
+      const own = await pool.query(
+        'SELECT 1 FROM notification_preferences WHERE user_id = $1 AND app_id = $2 LIMIT 1',
+        [user.id, app.id]
+      );
+      if (!own.rows.length) return null;
+    }
+    return { ...app, isAdmin: !!app.is_admin || app.created_by === user.id };
   }
 
   router.get('/api/apps/:slug/notification-preferences', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      const app = await resolveApp(req.params.slug, req.user.id);
+      const app = await resolveApp(req.params.slug, req.user);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const overrides = await notificationPreferences.readOverrides(pool, req.user.id, app.id);
       return res.json({
@@ -388,7 +417,7 @@ function notificationsRoutes(config) {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      const app = await resolveApp(req.params.slug, req.user.id);
+      const app = await resolveApp(req.params.slug, req.user);
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       // The allowed set is computed from THIS user's admin status, so a
@@ -495,11 +524,11 @@ function notificationsRoutes(config) {
   // defaults again" button. A DELETE of the overrides rather than writing
   // them all to the default value, so the app goes back to INHERITING and
   // keeps doing so if a default ever changes.
-  router.delete('/api/apps/:slug/notification-preferences', async (req, res) => {
+  router.delete('/api/apps/:slug/notification-preferences', sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      const app = await resolveApp(req.params.slug, req.user.id);
+      const app = await resolveApp(req.params.slug, req.user, { allowOwnRows: true });
       if (!app) return res.status(404).json({ error: 'App not found' });
       await pool.query(
         'DELETE FROM notification_preferences WHERE user_id = $1 AND app_id = $2',
@@ -685,7 +714,7 @@ function notificationsRoutes(config) {
     }
   });
 
-  router.post('/api/notifications/read', async (req, res) => {
+  router.post('/api/notifications/read', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const {

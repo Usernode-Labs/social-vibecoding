@@ -633,6 +633,23 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Delivery receipts for engaged-use batches. A browser retains the same UUID
+-- until acknowledgement, so a response lost after COMMIT can be retried
+-- without adding its seconds twice. The payload hash also prevents a caller
+-- from reusing a receipt for different data. Receipts contain user-level
+-- analytics delivery history and therefore do not copy into staging.
+CREATE TABLE IF NOT EXISTS app_activity_receipts (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  payload_sha256  CHAR(64) NOT NULL,
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
+  ON app_activity_receipts(received_at);
+COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.
 --
@@ -1001,6 +1018,9 @@ ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_test
 --   revert PR — the UI hides chat input + the undo button on
 --   reverts so we can't vote-to-undo-an-undo from the merged list.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    VARCHAR(40);
+-- A recovery sweep may release a failed merge claim only after its GitHub
+-- request has had time to finish. The timestamp is set with the claim.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 
@@ -1631,6 +1651,15 @@ COMMENT ON TABLE chat_session_agent_model_costs IS 'staging:private';
 -- clones with the rest of the row.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
+
+-- #3234: the electorate a proposal's vote OPENED with. The threshold is
+-- still computed live and merge rules do not read this column; it is shown
+-- only, so a voter can see the goalpost moved ("was N when voting opened")
+-- when members joined or left mid-vote. Set where a row becomes 'promoted'
+-- (routes/votes.js promote and the promote-on-import path) from the same
+-- governance.getElectorate count the gate uses. NULL for rows promoted
+-- before it existed, which show no note.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
 
 -- #788: "explicit approval" flag — this proposal's diff changes a
 -- privilege-granting block in dapp.json (today only the top-level
@@ -2772,6 +2801,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_llm_invocation_key
   ON events ((metadata->>'invocation_key'))
   WHERE event_type = 'llm_invocation' AND metadata ? 'invocation_key';
 
+-- A navigation keeps one browser-generated UUID through offline / transport
+-- retries. Scope it to its authenticated viewer and app: the same opaque UUID
+-- from another account is unrelated, while an exact replay is one opening.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dapp_opening_key
+  ON events (user_id, app_id, (metadata->>'openingId'))
+  WHERE event_type = 'dapp_opened' AND metadata ? 'openingId';
+
+-- UI telemetry is uploaded in retryable batches. Both ids are opaque random
+-- client values validated by services/ui-telemetry.js; these indexes make a
+-- lost response safe to replay without double-counting either observations
+-- or delivery receipts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
+  ON events (user_id, (metadata->>'eventId'))
+  WHERE event_type = 'ui_experience' AND metadata ? 'eventId';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
+  ON events (user_id, (metadata->>'batchId'))
+  WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
+
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
 -- clones rather than leaking social history into previews.
@@ -2902,6 +2949,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_open_featured_illustration
 
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
+-- A project's colour, when its dapp.json sets one beside its icon
+-- ("icon": { "color": "#2e6660" }). NULL means the page derives one from the
+-- icon in the browser (frontend/src/lib/community-color.ts).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_color VARCHAR(7);
 
 -- #1523: an admin's directory review, independent of container health and
 -- of the staging-only `demo` fixture flag. Existing apps remain unreviewed.
@@ -3109,13 +3160,70 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 
 -- Plain-language, user-facing summary of a proposed change (1-3 sentences,
--- no jargon/file names/code). Generated alongside pr_title by the Haiku
--- PR-metadata call, prepended as the first paragraph of the GitHub PR body,
+-- no jargon/file names/code). Generated alongside pr_title by the
+-- PR-metadata call (Sonnet 5.5, llm.PR_METADATA_MODEL), prepended as the first paragraph of the GitHub PR body,
 -- and rendered at the top of the in-app proposal view (the column is this
 -- surface's single source of truth). NULL = none generated yet (legacy /
 -- pre-feature proposals, or an LLM-unavailable fallback); the view simply
 -- omits the summary paragraph in that case.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
+
+-- A summary is a snapshot of proposal inputs, not a timeless description.
+-- Keep the last copy visible when inputs change and track its freshness
+-- separately. Generated writes may publish only against the input version
+-- they read before generation.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source TEXT
+  CHECK (pr_summary_source IN ('author', 'generated'));
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_body_hash VARCHAR(64);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_input_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_applied_version BIGINT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_previous_md TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_stale BOOLEAN NOT NULL DEFAULT FALSE;
+-- Existing summaries have no recorded input revision. Preserve their words,
+-- but do not assert that they describe today's branch or description.
+UPDATE chat_sessions
+   SET pr_summary_source = CASE WHEN source = 'imported' THEN 'author' ELSE 'generated' END,
+       pr_summary_previous_md = pr_summary_md,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NOT NULL AND pr_summary_source IS NULL;
+-- The previous freshness migration archived live summaries. Restore them
+-- without claiming they describe the current revision. Normal invalidation
+-- no longer clears this column, so this remains safe on repeated startup.
+UPDATE chat_sessions
+   SET pr_summary_md = pr_summary_previous_md,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NULL AND pr_summary_previous_md IS NOT NULL;
+
+-- History is an input to generated PR metadata. Invalidate in the same
+-- transaction as a new request or native handoff summary, including context
+-- that arrives after the PR was first written. Hosted turn summaries are
+-- saved after PR generation; that generation already receives the in-flight
+-- text, so saving the same text must not invalidate its new summary.
+CREATE OR REPLACE FUNCTION invalidate_pr_summary_on_history() RETURNS TRIGGER AS $$
+DECLARE relevant BOOLEAN := FALSE;
+BEGIN
+  IF NEW.session_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' THEN
+    relevant := NEW.role = 'user' OR NEW.metadata->>'handoffSummary' = 'true';
+  ELSE
+    relevant := (NEW.role = 'user' AND NEW.content IS DISTINCT FROM OLD.content)
+      OR NEW.metadata->>'handoffSummary' IS DISTINCT FROM OLD.metadata->>'handoffSummary';
+  END IF;
+  IF relevant THEN
+    UPDATE chat_sessions
+       SET pr_summary_input_version = pr_summary_input_version + 1,
+           pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
+           pr_summary_stale = pr_summary_stale OR pr_summary_md IS NOT NULL
+     WHERE id = NEW.session_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_pr_summary_history ON chat_session_messages;
+CREATE TRIGGER trg_pr_summary_history
+  AFTER INSERT OR UPDATE OF content, metadata ON chat_session_messages
+  FOR EACH ROW EXECUTE FUNCTION invalidate_pr_summary_on_history();
 
 -- App access to user LLM budgets (issue #34). One row per (app, user)
 -- consent: the user explicitly allowed this app to spend from their
@@ -4210,9 +4318,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_source_key_unique
 -- `measure` is a slug from a fixed list the code implements
 -- (services/topochain/challenge-rules.js: TRY_APPS, USE_APPS_MINUTES,
 -- PROPOSAL_SENT, PROPOSAL_ACCEPTED, USEFUL_FEEDBACK, CONNECT_ACCOUNTS,
--- BLOCK_PRODUCTION_ON). Deliberately NOT free-form logic: the thing that
--- decides who gets points has to be reviewable and testable, so what an
--- admin composes is the CONFIGURATION of a measure, never its body. It is
+-- BLOCK_PRODUCTION_ON, COMMUNITY_JOINED, COMMUNITY_APP_CREATED,
+-- INVITES_JOINED, VOTE_CAST, FEEDBACK_SENT). Deliberately NOT free-form
+-- logic: the thing that decides who gets points has to be reviewable and
+-- testable, so what an admin composes is the CONFIGURATION of a measure,
+-- never its body. It is
 -- also NOT `challenges.kind` — that column already means something to the
 -- phone app (which behaviour a card gets) and to the illustration picker,
 -- and overloading it would tie "how this is scored" to "how this is drawn".
@@ -5173,6 +5283,16 @@ COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
 COMMENT ON TABLE mobile_push_registration_events IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
+-- Personal app blocks affect one viewer, never the app's contributors.
+CREATE TABLE IF NOT EXISTS user_app_blocks (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, app_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_app_blocks_app ON user_app_blocks (app_id, user_id);
+COMMENT ON TABLE user_app_blocks IS 'staging:private';
+
 -- Capture the push outbox in the same transaction as the canonical
 -- notification. The kind/category registry is intentionally closed: adding a
 -- new inbox kind does not automatically make it a lock-screen event.
@@ -5182,6 +5302,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.read_at IS NOT NULL
+     OR EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = NEW.user_id AND b.app_id = NEW.app_id)
      OR NOT COALESCE((
        SELECT COALESCE(preference.enabled, policy.default_enabled)
          FROM mobile_push_kind_categories policy
@@ -7167,6 +7288,17 @@ INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_
 VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
 ON CONFLICT (backend, model_id) DO NOTHING;
 
+-- The OpenRouter model catalog, one copy for the whole platform
+-- (services/agent-models.js): OpenRouter's public GET /models, refreshed in
+-- the background. Kept here so every pod, a fresh deploy included, answers a
+-- model menu from it at once instead of asking OpenRouter while it waits.
+-- One row; `models` is OpenRouter's own list, less the descriptions.
+CREATE TABLE IF NOT EXISTS openrouter_model_catalog (
+  id         BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  models     JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL
+);
+
 -- AI-generated progress report cache (Reporting tab). One row per app —
 -- the summary is shared by every viewer, which is why its input is built
 -- exclusively from data every app member can see (no private sessions).
@@ -7289,6 +7421,32 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
+
+-- The hub's since-your-last-visit line (services/since-summary.js). One row
+-- per app per WINDOW, shared by every viewer whose last visit falls in it:
+-- a visit is floored to a six-hour block within the last day, to its UTC
+-- day within two weeks, and to two weeks ago before that, so a project has
+-- about twenty live windows whoever is visiting. Built from merged changes
+-- only, which every viewer of the app may see, exactly like
+-- app_workshop_themes above. head_at is the newest change the line was
+-- written for; a newer merge makes it stale, and a stale line is served as
+-- is while it is rewritten behind the request, at most once an hour.
+--   summary      the one or two sentences (Claude Sonnet 5.5)
+--   error        the last failed attempt, for the hourly retry backoff
+--   version      llm.SINCE_SUMMARY_VERSION the line was written under
+-- Rows for windows older than the longest one are dropped on write.
+CREATE TABLE IF NOT EXISTS app_since_summaries (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  window_start  TIMESTAMPTZ NOT NULL,
+  head_at       TIMESTAMPTZ NOT NULL,
+  change_count  INTEGER NOT NULL DEFAULT 0,
+  summary       TEXT,
+  error         TEXT,
+  model         VARCHAR(64),
+  version       INTEGER NOT NULL DEFAULT 1,
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, window_start)
+);
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
@@ -7518,6 +7676,33 @@ CREATE INDEX IF NOT EXISTS idx_conversation_objects_message
   ON conversation_message_objects (message_id, position);
 CREATE INDEX IF NOT EXISTS idx_conversation_objects_app
   ON conversation_message_objects (app_id, object_type, object_ref);
+
+-- Staging's old /messages/91000x links name recipes, not shared private
+-- conversations. Each viewer gets separate persisted rows; every subsequent
+-- action uses the ordinary conversation/message IDs and permission checks.
+CREATE TABLE IF NOT EXISTS staging_conversation_fixtures (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  legacy_id INTEGER NOT NULL CHECK (legacy_id BETWEEN 910001 AND 910004),
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, legacy_id)
+);
+COMMENT ON TABLE staging_conversation_fixtures IS 'staging:private';
+-- #3624: a fifth address, 910005, for the Homeroom bot's DM with a question
+-- open (services/staging-messages.js ensureBotDmFixture). Widening a CHECK
+-- rejects no row already stored.
+DO $$
+BEGIN
+  ALTER TABLE staging_conversation_fixtures DROP CONSTRAINT IF EXISTS staging_conversation_fixtures_legacy_id_check;
+  ALTER TABLE staging_conversation_fixtures ADD CONSTRAINT staging_conversation_fixtures_legacy_id_check
+    CHECK (legacy_id BETWEEN 910001 AND 910005);
+END $$;
+
+CREATE TABLE IF NOT EXISTS staging_app_fixtures (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE staging_app_fixtures IS 'staging:private';
+ALTER TABLE staging_app_fixtures
+  ADD COLUMN IF NOT EXISTS home_favorite_seeded BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Sharing an exact immutable spec version into a conversation grants it to
 -- current members. Membership is checked at every read, so leaving/removal
@@ -8624,18 +8809,140 @@ CREATE TABLE IF NOT EXISTS check_runs (
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
--- #2380: agent-authored, revision-scoped visual evidence. The hot proposal
+-- Renamed from visual_evidence_* when visual evidence became before & after
+-- shots. Guarded so boot is idempotent either way: an existing deployment
+-- renames in place and keeps its rows, a fresh one falls straight through
+-- to the CREATEs below.
+--
+-- The previous release's pods keep serving through the rolling update after
+-- this runs, and they still name the old tables and columns. So a renamed
+-- deployment also keeps the old names answering for them: a view under each
+-- old table name, and a legacy copy of each chat_sessions column that
+-- chat_sessions_shots_legacy_sync() keeps equal to the new one, in both
+-- directions. Nothing in this release reads either. Once no deployment runs
+-- an older release, drop the three views, the trigger and its function, and
+-- the four chat_sessions.visual_evidence_* columns. A rollback past this
+-- release needs the views dropped and the renames reversed by hand first.
+DO $$
+DECLARE
+  pair TEXT[];
+  rec RECORD;
+BEGIN
+  FOREACH pair SLICE 1 IN ARRAY ARRAY[
+    ['visual_evidence_runs', 'shot_runs'],
+    ['visual_evidence_artifacts', 'shot_artifacts'],
+    ['visual_evidence_diagnostic_artifacts', 'shot_diagnostic_artifacts']
+  ] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = pair[1]
+                  AND table_type = 'BASE TABLE')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = pair[2])
+    THEN
+      EXECUTE format('ALTER TABLE %I RENAME TO %I', pair[1], pair[2]);
+      EXECUTE format('CREATE VIEW %I AS SELECT * FROM %I', pair[1], pair[2]);
+    END IF;
+  END LOOP;
+  -- Constraint and index names carry the old table names too.
+  FOR rec IN
+    SELECT con.conname, con.conrelid::regclass::text AS rel
+      FROM pg_constraint con
+     WHERE con.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace = current_schema()::regnamespace
+                              AND relname IN ('shot_runs', 'shot_artifacts', 'shot_diagnostic_artifacts'))
+       AND con.conname LIKE 'visual\_evidence\_%'
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = replace(rec.conname, 'visual_evidence_', 'shot_')
+                      AND connamespace = current_schema()::regnamespace) THEN
+      EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+        rec.rel, rec.conname, replace(rec.conname, 'visual_evidence_', 'shot_'));
+    END IF;
+  END LOOP;
+  FOR rec IN
+    SELECT indexname FROM pg_indexes
+     WHERE schemaname = current_schema()
+       AND tablename IN ('shot_runs', 'shot_artifacts', 'shot_diagnostic_artifacts')
+       AND indexname LIKE 'idx\_visual\_evidence\_%'
+  LOOP
+    IF to_regclass(replace(rec.indexname, 'idx_visual_evidence_', 'idx_shot_')) IS NULL THEN
+      EXECUTE format('ALTER INDEX %I RENAME TO %I',
+        rec.indexname, replace(rec.indexname, 'idx_visual_evidence_', 'idx_shot_'));
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'visual_evidence_state')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'shots_state')
+  THEN
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_state TO shots_state;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_run_id TO shots_run_id;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_detail TO shots_detail;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_updated_at TO shots_updated_at;
+    ALTER TABLE chat_sessions
+      ADD COLUMN visual_evidence_state VARCHAR(24),
+      ADD COLUMN visual_evidence_run_id VARCHAR(32),
+      ADD COLUMN visual_evidence_detail JSONB,
+      ADD COLUMN visual_evidence_updated_at TIMESTAMPTZ;
+    UPDATE chat_sessions
+       SET visual_evidence_state = shots_state, visual_evidence_run_id = shots_run_id,
+           visual_evidence_detail = shots_detail, visual_evidence_updated_at = shots_updated_at
+     WHERE shots_state IS NOT NULL OR shots_run_id IS NOT NULL
+        OR shots_detail IS NOT NULL OR shots_updated_at IS NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'visual_evidence_state')
+  THEN
+    CREATE OR REPLACE FUNCTION chat_sessions_shots_legacy_sync() RETURNS trigger AS $fn$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        NEW.shots_state := COALESCE(NEW.shots_state, NEW.visual_evidence_state);
+        NEW.shots_run_id := COALESCE(NEW.shots_run_id, NEW.visual_evidence_run_id);
+        NEW.shots_detail := COALESCE(NEW.shots_detail, NEW.visual_evidence_detail);
+        NEW.shots_updated_at := COALESCE(NEW.shots_updated_at, NEW.visual_evidence_updated_at);
+      ELSE
+        IF NEW.shots_state IS NOT DISTINCT FROM OLD.shots_state THEN
+          NEW.shots_state := NEW.visual_evidence_state;
+        END IF;
+        IF NEW.shots_run_id IS NOT DISTINCT FROM OLD.shots_run_id THEN
+          NEW.shots_run_id := NEW.visual_evidence_run_id;
+        END IF;
+        IF NEW.shots_detail IS NOT DISTINCT FROM OLD.shots_detail THEN
+          NEW.shots_detail := NEW.visual_evidence_detail;
+        END IF;
+        IF NEW.shots_updated_at IS NOT DISTINCT FROM OLD.shots_updated_at THEN
+          NEW.shots_updated_at := NEW.visual_evidence_updated_at;
+        END IF;
+      END IF;
+      NEW.visual_evidence_state := NEW.shots_state;
+      NEW.visual_evidence_run_id := NEW.shots_run_id;
+      NEW.visual_evidence_detail := NEW.shots_detail;
+      NEW.visual_evidence_updated_at := NEW.shots_updated_at;
+      RETURN NEW;
+    END $fn$ LANGUAGE plpgsql;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_shots_legacy_sync'
+                     AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+      CREATE TRIGGER chat_sessions_shots_legacy_sync
+        BEFORE INSERT OR UPDATE ON chat_sessions
+        FOR EACH ROW EXECUTE FUNCTION chat_sessions_shots_legacy_sync();
+    END IF;
+  END IF;
+END $$;
+
+-- #2380: agent-authored, revision-scoped before & after shots. The hot proposal
 -- reads need only the current state and a bounded public summary; executable
 -- plans, verdicts and binary artifacts live in their own private tables.
 -- A head change clears these pointers synchronously through
--- services/visual-evidence-state.js so a screenshot from an older revision
--- can never be presented as evidence for newer code.
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_state VARCHAR(24);
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_run_id VARCHAR(32);
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_detail JSONB;
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_updated_at TIMESTAMPTZ;
+-- services/shots-state.js so a screenshot from an older revision
+-- can never be presented as shots of newer code.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_state VARCHAR(24);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_run_id VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_detail JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_updated_at TIMESTAMPTZ;
 
-CREATE TABLE IF NOT EXISTS visual_evidence_runs (
+CREATE TABLE IF NOT EXISTS shot_runs (
   id                     VARCHAR(32) PRIMARY KEY
     CHECK (id ~ '^[0-9a-f]{32}$'),
   session_id             INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -8672,7 +8979,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
     'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden'
   )),
-  CONSTRAINT visual_evidence_runs_verified_integrity_check
+  CONSTRAINT shot_runs_verified_integrity_check
     CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
       AND completed_at IS NOT NULL)),
   CHECK (state <> 'not_required' OR completed_at IS NOT NULL),
@@ -8680,7 +8987,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     AND NULLIF(BTRIM(override_reason), '') IS NOT NULL AND overridden_at IS NOT NULL
     AND completed_at IS NOT NULL))
 );
-ALTER TABLE visual_evidence_runs ADD COLUMN IF NOT EXISTS author_plan JSONB;
+ALTER TABLE shot_runs ADD COLUMN IF NOT EXISTS author_plan JSONB;
 -- Earlier releases required a model's semantic verdict before captures could
 -- be published. Capture integrity is still enforced; judging relevance now
 -- belongs to the people reviewing the proposal.
@@ -8689,33 +8996,33 @@ DECLARE old_constraint TEXT;
 BEGIN
   FOR old_constraint IN
     SELECT conname FROM pg_constraint
-     WHERE conrelid = 'visual_evidence_runs'::regclass AND contype = 'c'
+     WHERE conrelid = 'shot_runs'::regclass AND contype = 'c'
        AND pg_get_constraintdef(oid) LIKE '%semantic_verdict%'
   LOOP
-    EXECUTE format('ALTER TABLE visual_evidence_runs DROP CONSTRAINT %I', old_constraint);
+    EXECUTE format('ALTER TABLE shot_runs DROP CONSTRAINT %I', old_constraint);
   END LOOP;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'visual_evidence_runs'::regclass
-       AND conname = 'visual_evidence_runs_verified_integrity_check'
+     WHERE conrelid = 'shot_runs'::regclass
+       AND conname = 'shot_runs_verified_integrity_check'
   ) THEN
-    ALTER TABLE visual_evidence_runs
-      ADD CONSTRAINT visual_evidence_runs_verified_integrity_check
+    ALTER TABLE shot_runs
+      ADD CONSTRAINT shot_runs_verified_integrity_check
       CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
         AND completed_at IS NOT NULL));
   END IF;
 END $$;
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_runs_session_created
-  ON visual_evidence_runs(session_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_evidence_runs_current_head
-  ON visual_evidence_runs(session_id, head_sha)
+CREATE INDEX IF NOT EXISTS idx_shot_runs_session_created
+  ON shot_runs(session_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_runs_current_head
+  ON shot_runs(session_id, head_sha)
   WHERE state NOT IN ('stale', 'cancelled');
-COMMENT ON TABLE visual_evidence_runs IS 'staging:private';
+COMMENT ON TABLE shot_runs IS 'staging:private';
 
-CREATE TABLE IF NOT EXISTS visual_evidence_artifacts (
+CREATE TABLE IF NOT EXISTS shot_artifacts (
   id                 VARCHAR(32) PRIMARY KEY
     CHECK (id ~ '^[0-9a-f]{32}$'),
-  run_id             VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  run_id             VARCHAR(32) NOT NULL REFERENCES shot_runs(id) ON DELETE CASCADE,
   story_id           VARCHAR(96) NOT NULL,
   viewport           VARCHAR(32) NOT NULL,
   side               VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head', 'paired')),
@@ -8733,15 +9040,15 @@ CREATE TABLE IF NOT EXISTS visual_evidence_artifacts (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, story_id, viewport, side, variant, media)
 );
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_artifacts_run
-  ON visual_evidence_artifacts(run_id, story_id, viewport);
-COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
+  ON shot_artifacts(run_id, story_id, viewport);
+COMMENT ON TABLE shot_artifacts IS 'staging:private';
 
 -- A failed two-pass comparison must retain the four images needed to see
--- which pixels changed. These never enter reviewer-visible evidence.
-CREATE TABLE IF NOT EXISTS visual_evidence_diagnostic_artifacts (
+-- which pixels changed. These never enter reviewer-visible shots.
+CREATE TABLE IF NOT EXISTS shot_diagnostic_artifacts (
   id             VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
-  run_id         VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  run_id         VARCHAR(32) NOT NULL REFERENCES shot_runs(id) ON DELETE CASCADE,
   attempt        SMALLINT NOT NULL CHECK (attempt BETWEEN 1 AND 8),
   pass           SMALLINT NOT NULL CHECK (pass IN (1, 2)),
   story_id       VARCHAR(96) NOT NULL,
@@ -8756,9 +9063,9 @@ CREATE TABLE IF NOT EXISTS visual_evidence_diagnostic_artifacts (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, attempt, pass, story_id, viewport, side, variant)
 );
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_diagnostic_artifacts_run
-  ON visual_evidence_diagnostic_artifacts(run_id, attempt);
-COMMENT ON TABLE visual_evidence_diagnostic_artifacts IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_shot_diagnostic_artifacts_run
+  ON shot_diagnostic_artifacts(run_id, attempt);
+COMMENT ON TABLE shot_diagnostic_artifacts IS 'staging:private';
 
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the
@@ -9146,6 +9453,33 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
 ALTER TABLE homeroom_bot_runs
   ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- Shadow builds: a ready verdict on an app outside the live list, built on a
+-- branch nobody is shown, so what the bot would have proposed can be
+-- spot-checked (see "The build lane" in services/homeroom-bot.js).
+-- build_ok is NULL on a run that was not built; the branch stays on the
+-- app's repository after the session is archived.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_ok BOOLEAN;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_branch TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_sha TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_commits INTEGER;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_error TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_cost_usd NUMERIC(18,8);
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_at TIMESTAMPTZ;
+-- The build lane's queue is the runs themselves: queued (build_queued_at
+-- set, build_at NULL), building (build_at set, build_ok NULL), then built
+-- or failed. build_attempts counts claims, so a build a restart interrupted
+-- is retried once and then recorded failed.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_queued_at TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NOT NULL DEFAULT 0;
+-- The spec the bot wrote just before building (live or shadow): the same
+-- text is the build session's spec doc; kept here for the dashboard and the
+-- export, since a shadow build's session is archived and nobody opens it.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
+  ON homeroom_bot_runs(app_id, build_queued_at)
+  WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
+
 -- Everything the bot posted on an issue: one row per post, both surfaces
 -- (the GitHub comment and the Homeroom thread message) on the same row.
 -- The partial unique index is what makes "looking at this" a once-per-issue
@@ -9165,6 +9499,153 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
   ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
 
+-- Who asked the Homeroom bot to stop tagging them on an issue. The bot's
+-- posts @-mention whoever filed the issue and the people who took part in
+-- its discussion; a person here is left out of that issue's mentions from
+-- then on. Recorded from the triage or follow-up turn that read the ask.
+CREATE TABLE IF NOT EXISTS homeroom_bot_mention_optouts (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number, user_id)
+);
+
+-- #3624: the bot in a DM (services/homeroom-bot-dm.js).
+--
+-- A triage question's suggested answers, the default first: what the DM
+-- offers to tap. NULL on every other verdict and on a run before #3624.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS question_answers JSONB;
+
+-- Who each request the live loop looked at is FOR: whoever filed it, or the
+-- creator a project's first version was filed for. Its questions and its
+-- outcome reach that person's DM, and its runs count against their weekly
+-- Homeroom bot allowance.
+CREATE TABLE IF NOT EXISTS homeroom_bot_requesters (
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number   INTEGER NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  issue_title    TEXT,
+  first_version  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
+  ON homeroom_bot_requesters(user_id);
+
+-- Every DM message the bot sent about a request, so a person's reply can
+-- be posted on the right request. A question is a row whose
+-- question_status is set: open until answered, or closed by newer news on
+-- the same request. Private: it indexes direct messages.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_messages (
+  message_id         INTEGER PRIMARY KEY REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id    INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number       INTEGER NOT NULL,
+  kind               TEXT NOT NULL,
+  run_id             INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  question_status    TEXT,
+  answer_message_id  INTEGER,
+  answered_at        TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_dm_messages_status_check
+    CHECK (question_status IS NULL OR question_status IN ('open', 'answered', 'closed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_open
+  ON homeroom_bot_dm_messages(user_id, created_at DESC) WHERE question_status = 'open';
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_issue
+  ON homeroom_bot_dm_messages(user_id, app_id, issue_number);
+COMMENT ON TABLE homeroom_bot_dm_messages IS 'staging:private';
+
+-- A project created with a description ("What should it do?" in the create
+-- dialog): filed as the project's first request, under its creator's name,
+-- once the project is running (waiting, then filing, then filed; failed
+-- after three tries). `bot_builds` says whether the Homeroom bot builds it:
+-- true when the creator is somebody the bot talks to in a DM, and then the
+-- bot acts live on the project while they are on the DM list; false for
+-- everybody else, whose request is filed and left to the group. Private:
+-- the brief is what the person typed, before they chose to post it
+-- anywhere.
+CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  brief         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'waiting',
+  issue_number  INTEGER,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  filed_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_first_versions_status_check
+    CHECK (status IN ('waiting', 'filing', 'filed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
+  ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
+COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
+-- Every row before the column was one the bot builds, so the default is true.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- The bot fixing its own failing checks: the head commit a checks
+-- follow-up looked at, on the run that recorded it (a revision, a hand-off
+-- to a person, or a turn that failed), so each failing head gets one look.
+-- NULL on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
+  ON homeroom_bot_runs(proposal_session_id) WHERE proposal_session_id IS NOT NULL;
+-- The verdicts export says, per run, whether its news reached the
+-- requester's DM and whether they answered it there.
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
+  ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
+
+-- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
+-- One row per answer it wrote: what it cost (counted in the person's weekly
+-- allowance with their requests' runs), how many model calls and which
+-- tools it took, and why it failed when it did. Never the words: those are
+-- the conversation's.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_turns (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  message_id      INTEGER REFERENCES conversation_messages(id) ON DELETE SET NULL,
+  model           TEXT,
+  rounds          INTEGER NOT NULL DEFAULT 0,
+  tools           TEXT[] NOT NULL DEFAULT '{}',
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  cost_usd        NUMERIC(12, 6),
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_turns_user
+  ON homeroom_bot_dm_turns(user_id, created_at DESC);
+COMMENT ON TABLE homeroom_bot_dm_turns IS 'staging:private';
+
+-- #3624 stage 2: something the bot offered to do in a DM, done only when
+-- the person taps to confirm (today: file a new request on a project). The
+-- offer is a bot message with File it / Not now under it; the tap decides
+-- it once.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'file_request',
+  title           TEXT NOT NULL,
+  details         TEXT,
+  status          TEXT NOT NULL DEFAULT 'open',
+  issue_number    INTEGER,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request')),
+  CONSTRAINT homeroom_bot_dm_actions_status_check
+    CHECK (status IN ('open', 'done', 'declined', 'failed'))
+);
+COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9176,8 +9657,90 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_concurrency', '1'),
   ('homeroom_bot_batch_size', '10'),
   ('homeroom_bot_paused_apps', '[]'),
-  ('homeroom_bot_live_apps', '[]')
+  ('homeroom_bot_live_apps', '[]'),
+  ('homeroom_bot_shadow_builds', 'off'),
+  ('homeroom_bot_build_concurrency', '2'),
+  ('homeroom_bot_shadow_build_platform', 'off'),
+  -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
+  ('homeroom_bot_dm_users', '[]'),
+  ('homeroom_bot_user_weekly_cents', '5000'),
+  -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
+  ('homeroom_bot_live_at_once', '6'),
+  ('homeroom_bot_per_person', '2'),
+  ('homeroom_bot_dm_chat', 'on')
 ON CONFLICT (key) DO NOTHING;
+
+-- #2721. Private, durable moderation records; target IDs intentionally have
+-- no cascading FK: removing a target must not remove evidence or the audit.
+ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(1200);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS participation_restricted_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS moderation_suspended_at TIMESTAMPTZ;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS moderation_cases (
+  id BIGSERIAL PRIMARY KEY,
+  target_type VARCHAR(32) NOT NULL CHECK (target_type IN ('app','user','app_message','conversation_message')),
+  target_id BIGINT NOT NULL,
+  target_label TEXT NOT NULL,
+  target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'new' CHECK (status IN ('new','in_review','resolved','dismissed')),
+  cycle INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  UNIQUE(target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS moderation_cases_queue ON moderation_cases(status, updated_at, id);
+CREATE TABLE IF NOT EXISTS moderation_reports (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  cycle INTEGER NOT NULL,
+  reporter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reason VARCHAR(32) NOT NULL,
+  detail VARCHAR(1000),
+  evidence JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  legacy_type VARCHAR(32), legacy_id BIGINT,
+  UNIQUE(legacy_type, legacy_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_evidence_files (
+  id BIGSERIAL PRIMARY KEY,
+  source_type VARCHAR(32) NOT NULL,
+  source_id VARCHAR(32) NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL,
+  UNIQUE(source_type, source_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_report_files (
+  report_id BIGINT NOT NULL REFERENCES moderation_reports(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL REFERENCES moderation_evidence_files(id) ON DELETE CASCADE,
+  PRIMARY KEY(report_id, file_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_actions (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(32) NOT NULL,
+  reason VARCHAR(1000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS moderation_message_originals (
+  target_type VARCHAR(32) NOT NULL,
+  target_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  metadata JSONB,
+  PRIMARY KEY(target_type, target_id)
+);
+COMMENT ON TABLE moderation_cases IS 'staging:private';
+COMMENT ON TABLE moderation_reports IS 'staging:private';
+COMMENT ON TABLE moderation_evidence_files IS 'staging:private';
+COMMENT ON TABLE moderation_report_files IS 'staging:private';
+COMMENT ON TABLE moderation_actions IS 'staging:private';
+COMMENT ON TABLE moderation_message_originals IS 'staging:private';
+
+CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
@@ -9299,11 +9862,12 @@ CREATE TRIGGER users_deleted_username_guard BEFORE INSERT OR UPDATE OF username 
 -- Mayor, not bound to an app, that never closes on its own. Its changes stay
 -- ordinary chat_sessions rows (one app, one branch, one PR, one vote), linked
 -- back through chat_sessions.agent_session_id, so every downstream system —
--- staging, checks, visual evidence, votes, merge, the sweepers — is untouched.
+-- staging, checks, before & after shots, votes, merge, the sweepers — is untouched.
 --
--- The experimental per-user flag. NULL follows the deployment default
--- (AGENT_SESSIONS_DEFAULT); TRUE or FALSE is the user's own choice, so an
--- opt-out survives the day the default flips. See services/agent-sessions.
+-- The retired experimental per-user flag. Agent sessions are on for
+-- everyone and nothing reads this column any more; it stays so a rolling
+-- deploy's older pods, which still SELECT it, keep working. Safe to drop in
+-- a later migration once no such pod can be running.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_sessions_enabled BOOLEAN;
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -9612,6 +10176,7 @@ BEGIN
     OR NEW.last_done_at IS DISTINCT FROM OLD.last_done_at
     OR (NEW.active_turn->>'id') IS DISTINCT FROM (OLD.active_turn->>'id')
     OR (NEW.active_turn->>'phase') IS DISTINCT FROM (OLD.active_turn->>'phase')
+    OR (NEW.active_turn->>'stopRequestedAt') IS DISTINCT FROM (OLD.active_turn->>'stopRequestedAt')
   ) THEN
     NEW.state_version := OLD.state_version + 1;
   END IF;
@@ -9699,8 +10264,8 @@ BEGIN
           OR NEW.check_state IS DISTINCT FROM OLD.check_state
           OR NEW.check_error_detail IS DISTINCT FROM OLD.check_error_detail
           OR NEW.test_results IS DISTINCT FROM OLD.test_results
-          OR NEW.visual_evidence_state IS DISTINCT FROM OLD.visual_evidence_state
-          OR NEW.visual_evidence_run_id IS DISTINCT FROM OLD.visual_evidence_run_id))
+          OR NEW.shots_state IS DISTINCT FROM OLD.shots_state
+          OR NEW.shots_run_id IS DISTINCT FROM OLD.shots_run_id))
       EXECUTE FUNCTION bump_agent_session_version_from_change();
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_sessions_state_touch'
@@ -10116,8 +10681,8 @@ END $$;
 -- ── Communities, stage 5: the first run ─────────────────────────────────
 --
 -- A new account picks the communities it wants to join (Homeroom first)
--- after its username and the terms, then gets the tour, then a "Getting
--- started" card on Home with three first steps (src/services/onboarding.js).
+-- after its username and the terms, then a "Getting started" card on Home:
+-- the tour, then the season's First challenges (src/services/onboarding.js).
 --
 -- users.needs_communities_choice — this account has not been asked yet.
 -- Set TRUE by every path a person signs up through (email, an activation
@@ -10137,10 +10702,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
 -- The card's close button. Server state, like the join screen's answer, so
 -- a card closed on the phone is closed on the laptop too.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
--- The two places the card sends people that leave no row behind of their
--- own (a visit to the Workshop, a visit to Discover), as
--- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
--- is showing, and read only by it.
+-- Visits the card asks for that leave no row behind of their own. The old
+-- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
+-- its steps became the season's First challenges (2026-10-01) nothing reads
+-- those two keys. One key is read: "vote_workshop", the last time the Vote
+-- step's Workshop opened while NOTHING was up for a vote in any community
+-- the account is in (services/onboarding.js markWorkshopVisit), which the
+-- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- because those old visits were recorded whether or not a vote was waiting.
+-- Reset first run clears the whole column. Kept rather than dropped: this
+-- file is replayed on every boot, and a DROP is the one statement here that
+-- cannot be taken back.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- When this account finished (or skipped) the welcome tour
 -- (frontend/src/features/home/tour). Server state for the same reason as the
@@ -10150,6 +10722,33 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- counts, and a browser that has it copies it here once. Reset first run
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
+-- The Getting started list that IS the First challenges (evan, 2026-10-01):
+-- the card on Home is the tour plus the season's ONBOARDING challenges, and
+-- until all of them are done the rest of the season is hidden
+-- (src/services/topochain/challenge-onboarding.js). Both only for accounts
+-- made after that shipped; everyone who was already here, and every
+-- signed-out visitor, sees the whole season and no card.
+--
+-- getting_started_gate — this account starts on that list. Set TRUE at
+-- sign-up by the same three INSERTs that set needs_communities_choice
+-- (email, an activation code, a wallet), and by an admin's Reset first run.
+-- A FLAG WRITTEN AT SIGN-UP, for the reasons needs_communities_choice is one
+-- (above): every existing row reads FALSE by default with no backfill, and
+-- so does every account the boot seeds (capture identities, staging
+-- fixtures), which a "created after <date>" rule would have caught on every
+-- fresh database, where every row is new. A cutoff kept as a platform
+-- setting would also need writing once at deploy, and a staging clone would
+-- carry production's value into a database whose seeded accounts are all
+-- younger than it.
+--
+-- getting_started_unlocked_at — when this account's gate first opened (the
+-- tour done and every First challenge done, read anywhere: Home, the
+-- Challenges tab, the phone app). Once set the gate never closes again, so
+-- an ONBOARDING challenge an admin adds to the season later is one more
+-- challenge to do, not a wall that comes back down over a season the person
+-- has already been let into. Reset first run clears it with the rest.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;
 
 -- ── Communities, stage 6: invite links ──────────────────────────────────
 --
@@ -10206,14 +10805,16 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. Built, and off until
--- INVITE_TREE_ENABLED says otherwise (services/community-invites.js).
--- `invite_generation` 0 is "let in by us" (an admin release, an activation
--- code, a genesis wallet, and everyone who had access before this); 1 is
--- somebody a generation-0 person's link let in, and so on. Skips used is a
--- COUNT of admitted_by, so there is no counter to drift. NULL generation on
--- an account with access reads as 0 (the reads COALESCE it); grantPlatform-
--- Access writes 0, the lowest, whenever we let somebody in ourselves.
+-- THE INVITE TREE: who let whom in. On unless an admin switches it off in
+-- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
+-- row (services/community-invites.js; no row is on).
+-- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
+-- admitting a waitlist row, or granting an account directly): grantPlatform-
+-- Access writes it only when that grant is what lets them in. 1 is somebody
+-- a link let in (a generation-0 person's, or an admin's), and so on. NULL is
+-- no place in the tree, and no skips: everyone who had access before this,
+-- activation codes, genesis wallets. Skips used is a COUNT of admitted_by,
+-- so there is no counter to drift.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
@@ -10336,3 +10937,80 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   measured_at TIMESTAMPTZ,
   notified_at TIMESTAMPTZ
 );
+
+-- ── Welcome messages ───────────────────────────────────────────────────
+--
+-- Somebody let in gets a group conversation with the people an admin
+-- chose (#admin/welcome-dm, services/welcome-dm.js), opened by a message
+-- from the first of them. This is the queue between the moment and the
+-- message: the trigger below writes one row per person on the
+-- has_platform_access false → true edge — every path that lets someone in
+-- passes through it, like join_platform_community above — and the leader's
+-- sweep turns each row into the group and the message.
+--
+-- The row is written only while the switch is on. Switching it on later
+-- does not reach back to everyone let in while it was off, and the primary
+-- key means a person revoked and let in again is welcomed once.
+--
+-- status: 'pending' until the sweep has sent the message; 'sent'; 'skipped'
+-- when there was nobody to send it or the person left first (detail says
+-- which); 'failed' after MAX_ATTEMPTS. conversation_id is recorded as soon
+-- as the group exists, so a retry posts into it rather than opening another.
+--
+-- staging:private: who joined and the conversation they were put in.
+CREATE TABLE IF NOT EXISTS welcome_dm_queue (
+  user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(16) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+  enqueued_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  detail          TEXT,
+  processed_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_welcome_dm_queue_pending
+  ON welcome_dm_queue (enqueued_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_welcome_dm_queue_recent
+  ON welcome_dm_queue (enqueued_at DESC);
+COMMENT ON TABLE welcome_dm_queue IS 'staging:private';
+
+CREATE OR REPLACE FUNCTION enqueue_welcome_dm() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.has_platform_access THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.is_synthetic THEN
+    RETURN NULL;
+  END IF;
+  IF COALESCE((SELECT value FROM platform_settings WHERE key = 'welcome_dm_enabled'), 'off') <> 'on' THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO welcome_dm_queue (user_id) VALUES (NEW.id)
+  ON CONFLICT (user_id) DO NOTHING;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_enqueue_welcome_dm'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_enqueue_welcome_dm
+      AFTER INSERT OR UPDATE OF has_platform_access ON users
+      FOR EACH ROW WHEN (NEW.has_platform_access)
+      EXECUTE FUNCTION enqueue_welcome_dm();
+  END IF;
+END $$;
+
+-- The starter template a project was created from (#3521;
+-- services/app-templates.js TEMPLATE_IDS, validated by POST /api/apps).
+-- Written only for a non-default starter: NULL is `empty`, which is also
+-- what every project created before templates existed, every import and
+-- every fork reads as. app-creator scaffolds from it, so a Retry after a
+-- failed create writes the same starter the creator picked.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);

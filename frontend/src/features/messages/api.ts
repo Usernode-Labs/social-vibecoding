@@ -4,6 +4,7 @@ import type {
   ConversationMessage,
   ConversationSummary,
   ConversationUser,
+  HomeroomBotMeta,
   MessageAttachment,
   MessageReaction,
   MessageThreadSummary,
@@ -12,6 +13,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
 
@@ -69,6 +71,42 @@ export function normalizeUser(input: unknown): ConversationUser {
     id: strictId(pick(row, 'id', 'userId', 'user_id')) || 0,
     username: text(pick(row, 'username', 'name'), 'unknown'),
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
+    // #3624: a platform account (the Homeroom bot). Named here, or dropped.
+    ...(pick(row, 'bot') === true ? { bot: true } : {}),
+  };
+}
+
+const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
+
+/**
+ * #3624: the Homeroom bot's structured part of a message (services/
+ * conversations.js publicMetadata), field by field like everything else
+ * here: its question, the answers to tap and their state. Null for any
+ * message without one.
+ */
+export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta } | null {
+  const bot = record(pick(record(input), 'homeroomBot'));
+  const kind = text(pick(bot, 'kind'));
+  if (!kind) return null;
+  const issueNumber = strictId(pick(bot, 'issueNumber'));
+  const status = text(pick(bot, 'status'));
+  const optional = (key: string) => text(pick(bot, key)) || undefined;
+  const answers = array(pick(bot, 'answers')).filter((a): a is string => typeof a === 'string' && !!a.trim()).slice(0, 6);
+  return {
+    homeroomBot: {
+      kind,
+      appSlug: optional('appSlug'),
+      appName: optional('appName'),
+      ...(issueNumber ? { issueNumber } : {}),
+      issueTitle: optional('issueTitle'),
+      ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
+      ...(pick(bot, 'mirrors') === true ? { mirrors: true } : {}),
+      question: optional('question'),
+      ...(answers.length ? { answers } : {}),
+      ...(BOT_QUESTION_STATES.has(status) ? { status: status as HomeroomBotMeta['status'] } : {}),
+      answer: optional('answer'),
+      link: optional('link'),
+    },
   };
 }
 
@@ -185,6 +223,7 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
   };
   const replyRow = record(pick(row, 'reply', 'replyTo', 'reply_to'));
   const replyId = strictId(pick(replyRow, 'id', 'messageId', 'message_id'));
+  const botMeta = normalizeBotMeta(pick(row, 'metadata'));
   return {
     id: strictId(pick(row, 'id', 'messageId', 'message_id')) || 0,
     conversationId,
@@ -210,6 +249,8 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     // exactly what happened to `saved` the first time: the API returned it,
     // the star rendered empty, and nothing anywhere errored.
     saved: pick(row, 'saved', 'bookmarked') === true,
+    // #3624: the Homeroom bot's question and its answers, when it has one.
+    ...(botMeta ? { metadata: botMeta } : {}),
   };
 }
 
@@ -243,7 +284,9 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     requester: pick(row, 'requester', 'inviter') ? normalizeUser(pick(row, 'requester', 'inviter')) : null,
     peer,
     latestMessage,
-    latestSummary: text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '',
+    // One line of plain text: the row is a preview, not the message, and a
+    // bot message's `**Project**` should not show its asterisks.
+    latestSummary: plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || ''),
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
@@ -285,6 +328,16 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 export async function getConversation(id: number): Promise<ConversationDetail> {
   const data = record(await request<unknown>(`/api/conversations/${id}`));
   return normalizeConversation(pick(data, 'conversation') ?? data);
+}
+
+// #3361: the `@` list for a conversation whose roster the client does not
+// hold — a channel, whose members the server counts rather than loads. A
+// username prefix in, at most `limit` people out (friends first, then whoever
+// spoke there last), from exactly the people who can read the room.
+export async function getMentionCandidates(id: number, prefix: string, limit = 8): Promise<ConversationUser[]> {
+  const q = encodeURIComponent(prefix.slice(0, 64));
+  const data = record(await request<unknown>(`/api/conversations/${id}/mention-candidates?q=${q}&limit=${limit}`));
+  return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
 }
 
 export async function createConversation(body: { kind: 'direct'; userId: number } | { kind: 'group'; title: string; memberIds: number[] }): Promise<ConversationDetail> {

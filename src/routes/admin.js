@@ -15,6 +15,7 @@ const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
@@ -26,7 +27,12 @@ const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const shotsExport = require('../services/shots-export');
+const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
+const journeyLeftOut = require('../services/journey-left-out');
+const journey = require('../services/journey');
+const journeyDemoData = require('../services/journey-demo');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
@@ -229,24 +235,27 @@ function adminRoutes(config) {
   //
   // #851: staleness is now detected automatically (an env-fingerprint label,
   // services/staging-env.js) and swept on a background pass, so this button
-  // is no longer the only remedy — it is the BIGGER HAMMER: it tears down
-  // every preview it can enumerate, stale or not, without waiting out the
-  // pass's interval. The GET reports the automatic pass's last run so an
-  // admin can tell whether pressing it is even necessary.
+  // is no longer the only remedy. It takes what that pass would take (out of
+  // date, or abandoned by a merged, archived or deleted session; never a
+  // preview backing a live vote), all at once instead of a few per interval.
+  // The GET reports the automatic pass's last run so an admin can tell
+  // whether pressing it is even necessary.
 
   router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
     try {
-      // This fleet-wide inventory sweep is Docker-specific. Kubernetes
-      // previews are managed through their runtime records instead of a
-      // Docker socket, so do not report a misleading successful no-op.
-      if (stagingReap.isStagingEnv() || applicationRuntime.mode(config) !== 'docker') {
+      // A staging preview cannot see the fleet it would sweep, so refuse
+      // rather than report an empty inventory as a successful sweep. Both
+      // production runtimes enumerate their previews (Docker containers,
+      // Kubernetes Deployments).
+      if (stagingReap.isStagingEnv()) {
         return res.status(400).json({
-          error: 'Stale-preview administration is not implemented for this runtime.',
+          error: 'The stale-preview sweep is unavailable in staging previews.',
         });
       }
       const { started, job } = stagingReap.start(config, {
         userId: req.user.id,
         username: req.user.username,
+        isInFlight: isSessionBusy,
       });
       if (!started) {
         return res.status(409).json({ error: 'Sweep already in progress', job });
@@ -287,21 +296,23 @@ function adminRoutes(config) {
           concurrency: stagingReap.concurrency(),
         });
       }
-      // `open` is every preview the manual button would shut down; `stale` is
-      // the subset the automatic pass (#851) considers out of date. Both come
-      // from one docker call. `stale` is kept as the legacy field name the
-      // console's confirm dialog already reads — see the note below.
-      const counts = await stagingReap.previewCounts(config).catch(() => ({ open: null, stale: null }));
+      // `open` is every preview; `stale` is the out-of-date subset and
+      // `abandoned` the further ones whose session finished. The button (and
+      // the automatic pass) takes `stale` + `abandoned`. All come from one
+      // inventory call.
+      const counts = await stagingReap.previewCounts(config)
+        .catch(() => ({ open: null, stale: null, abandoned: null }));
       res.json({
         job: stagingReap.read(),
         open: counts.open,
         stale: counts.stale,
+        abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: stagingReap.readAutomatic(),
         staging,
         runtimeKind,
-        available: !staging && runtimeKind === 'docker',
-        unavailableReason: staging ? 'staging' : (runtimeKind === 'kubernetes' ? 'kubernetes' : null),
+        available: !staging,
+        unavailableReason: staging ? 'staging' : null,
         concurrency: stagingReap.concurrency(),
       });
     } catch (err) {
@@ -591,7 +602,7 @@ function adminRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly, participation_restricted_at FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
@@ -599,10 +610,10 @@ function adminRoutes(config) {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly;
+      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly && !existing[0].participation_restricted_at;
       if (wasFullAdmin) {
         const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE AND participation_restricted_at IS NULL'
         );
         if (countRows[0].n <= 1) {
           await client.query('ROLLBACK');
@@ -780,6 +791,127 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Journey: people left out (#3369) ──────────────────────
+  //
+  // Test accounts, and people who objected to being recorded, kept out of
+  // the Journey page's numbers (services/journey-left-out.js). Any admin can
+  // read the list; only a full admin changes it. Adding someone as
+  // "objected" erases their UI telemetry and stops it being collected.
+
+  const leftOutFail = (res, err, what) => {
+    if (err instanceof journeyLeftOut.LeftOutError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    log.error('admin', `Journey left-out ${what} failed`, { message: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  };
+
+  // ── Journey readings (#3369) ───────────────────────────────
+  //
+  // Read-only, any admin. Under staging with ?demo=1 each one answers a
+  // whole, labelled demo payload (services/journey-demo.js): a staging
+  // clone mixes emptied private tables with reseeded fixtures, and half-real
+  // numbers would be worse than invented ones that say so.
+  const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
+  const journeyRead = (what, demo, handler) => async (req, res) => {
+    try {
+      if (journeyDemo(req)) return res.json(demo(req));
+      const leftOutIds = await journeyLeftOut.leftOutIds(pool);
+      const result = await handler(req, { leftOutIds, now: new Date() });
+      if (result && result.status) return res.status(result.status).json({ error: result.error });
+      return res.json(result);
+    } catch (err) {
+      log.error('admin', `Journey ${what} failed`, { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+  const journeyWeek = (req, now) => {
+    const week = journey.parseWeek(req.query.week, now);
+    return week || null;
+  };
+  const badWeek = { status: 400, error: 'week must be a Monday in YYYY-MM-DD, not in the future.' };
+
+  router.get('/api/admin/journey/summary', journeyRead('summary', () => journeyDemoData.summary(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      return week ? journey.summary(pool, { week, ...ctx }) : badWeek;
+    }));
+
+  router.get('/api/admin/journey/cohorts', journeyRead('cohorts', () => journeyDemoData.cohorts(),
+    async (req, ctx) => journey.cohorts(pool, ctx)));
+
+  router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
+    async (req, ctx) => {
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      return journey.firstMile(pool, { day, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/stages', journeyRead('stages', () => journeyDemoData.stages(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      return week ? journey.stages(pool, { week, ...ctx }) : badWeek;
+    }));
+
+  router.get('/api/admin/journey/loops', journeyRead('loops', () => journeyDemoData.loops(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      if (!week) return badWeek;
+      const [change, invite] = await Promise.all([
+        journey.changeLoop(pool, { week, ...ctx }),
+        journey.inviteLoop(pool, { week, ...ctx }),
+      ]);
+      return { change, invite };
+    }));
+
+  router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
+    async (req, ctx) => {
+      if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      const mile = await journey.firstMile(pool, { day, ...ctx });
+      const to = ctx.now;
+      const from = new Date(to.getTime() - journey.NEWCOMER_DAYS * journey.DAY_MS);
+      return journey.nextStepCounts(pool, { from, to, userIds: mile.people.filter((p) => p.userId).map((p) => p.userId) });
+    }));
+
+  router.get('/api/admin/journey/people/:id', journeyRead('person', (req) => journeyDemoData.person(req.params.id),
+    async (req, ctx) => {
+      const found = await journey.person(pool, { userId: req.params.id, now: ctx.now });
+      return found || { status: 404, error: 'There is no such person.' };
+    }));
+
+  router.get('/api/admin/journey/left-out', async (req, res) => {
+    if (journeyDemo(req)) return res.json(journeyDemoData.leftOut());
+    try {
+      res.json({ people: await journeyLeftOut.list(pool) });
+    } catch (err) {
+      leftOutFail(res, err, 'read');
+    }
+  });
+
+  router.post('/api/admin/journey/left-out', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await journeyLeftOut.add(pool, req.body || {}, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry saved', {
+        userId: result.entry.userId, reason: result.entry.reason, erased: result.erased, by: req.user.username,
+      });
+      res.json({ ok: true, entry: result.entry, erased: result.erased });
+    } catch (err) {
+      leftOutFail(res, err, 'add');
+    }
+  });
+
+  router.delete('/api/admin/journey/left-out/:userId', requireAdminWrite, async (req, res) => {
+    try {
+      await journeyLeftOut.remove(pool, req.params.userId, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry removed', { userId: Number(req.params.userId), by: req.user.username });
+      res.json({ ok: true });
+    } catch (err) {
+      leftOutFail(res, err, 'remove');
     }
   });
 
@@ -996,6 +1128,47 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Welcome messages (#admin/welcome-dm) ──────────────────
+  //
+  // Who greets somebody just let in, in a group with them, and what the
+  // first message says (services/welcome-dm.js). Read open to view-only
+  // admins; the write is requireAdminWrite. `members` is a list of
+  // usernames in order — the first sends the message and owns the group.
+  router.get('/api/admin/welcome-dm', async (_req, res) => {
+    try {
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read welcome messages failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The typeahead behind each "People in the group" row. Only accounts the
+  // PUT below would accept are suggested. Admin-only and debounced by the
+  // client, like /api/admin/support/search.
+  router.get('/api/admin/welcome-dm/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Welcome messages people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/welcome-dm', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await welcomeDm.writeSettings(pool, req.body || {}, req.user.id);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      log.info('admin', 'Welcome messages updated', {
+        by: req.user.username, patch: Object.keys(req.body || {}),
+      });
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Update welcome messages failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Model costs (#2570) ────────────────────────────────────
   //
   // One row per model: the note the picker shows, the estimate it shows
@@ -1126,6 +1299,17 @@ function adminRoutes(config) {
     }
   });
 
+  // #3624: the DM list's username rows suggest accounts as you type. The
+  // same people Welcome messages offers: let in, not deleted, not a bot.
+  router.get('/api/admin/homeroom-bot/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/homeroom-bot/settings', requireAdminWrite, async (req, res) => {
     try {
       const result = await homeroomBot.writeSettings(pool, req.body || {}, req.user.id, config);
@@ -1168,6 +1352,127 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Homeroom bot run request failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // An ask to stop tagging that the bot misread: the person is tagged again
+  // on that issue.
+  router.post('/api/admin/homeroom-bot/mention-optouts/remove', requireAdminWrite, async (req, res) => {
+    try {
+      const { slug, issueNumber, username } = req.body || {};
+      const result = await homeroomBot.removeMentionOptOut(pool, { slug, issueNumber, username });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot mention opt-out removed', { by: req.user.username, slug, issueNumber: Number(issueNumber), username });
+      res.json({ ok: true, mentionOptOuts: await homeroomBot.mentionOptOutList(pool) });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot mention opt-out removal failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Every question verdict on a shadow app, triaged again under the current
+  // prompt, so the old and new verdicts can be compared in the export.
+  router.post('/api/admin/homeroom-bot/retriage-questions', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const result = await homeroomBot.retriageQuestions(pool, { actorId: req.user.id });
+      log.info('admin', 'Homeroom bot questions re-triaged', { by: req.user.username, queued: result.queued });
+      res.status(202).json(result);
+    } catch (err) {
+      log.error('admin', 'Homeroom bot re-triage failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Triage this app again" (#3480): every open issue on a live app goes in
+  // its queue, oldest first, and the loop takes them one at a time.
+  router.post('/api/admin/homeroom-bot/retriage-app', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const result = await homeroomBot.retriageApp(pool, { slug: req.body?.slug, actorId: req.user.id });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot app re-triaged', { by: req.user.username, slug: req.body?.slug, queued: result.queued });
+      res.status(202).json(result);
+    } catch (err) {
+      log.error('admin', 'Homeroom bot app re-triage failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Shadow builds: queue every open request whose latest verdict is ready
+  // and that has not been built. The build lane drains it at its own pace.
+  router.post('/api/admin/homeroom-bot/shadow-builds/backfill', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const result = await homeroomBot.queueShadowBackfill(pool, config);
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot shadow build backfill', {
+        by: req.user.username, queued: result.queued, apps: result.apps,
+      });
+      res.status(202).json(result);
+    } catch (err) {
+      log.error('admin', 'Homeroom bot shadow build backfill failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Before & after shots runs export ───────────────────────
+  //
+  // Every shots run as one CSV, for debugging successes and failures in
+  // bulk: the per-proposal diagnostics answer one run at a time, and the
+  // admin gallery lists merged proposals only. services/shots-export.js
+  // owns the query, the filters and the columns; this layer only gates and
+  // streams.
+  //
+  // PERMISSIONS: requireAdminWrite, like the Homeroom bot's export above and
+  // for the same reason: a bulk downloadable artifact is the exposure class
+  // the other CSV exports and the database export already put behind the
+  // write gate. The agent's final responses are not in the file at all.
+  //
+  // Streamed, not buffered, and every value goes through `csvField`: the
+  // declared changes, titles and failure text are author- and model-written,
+  // which is the case the formula-injection guard exists for.
+  router.get('/api/admin/shots/export.csv', requireAdminWrite, async (req, res) => {
+    const parsed = shotsExport.parseFilters(req.query || {});
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const { filters } = parsed;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="shots-runs-${shotsExport.exportScope(filters)}-${day}.csv"`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.write(`${shotsExport.EXPORT_COLUMNS.join(',')}\n`);
+      // A row carries JSON trace columns, so a slow client could otherwise
+      // let whole pages pile up in this process's write buffer. Wait for the
+      // socket to drain between pages, and stop querying once the download
+      // is abandoned.
+      const drained = () => new Promise((resolve) => {
+        const done = () => { res.off('drain', done); res.off('close', done); resolve(); };
+        res.on('drain', done);
+        res.on('close', done);
+      });
+      let rows = 0;
+      for await (const chunk of shotsExport.iterateRunsForExport(pool, filters)) {
+        for (const row of chunk) {
+          res.write(`${shotsExport.exportRow(row).map(csvField).join(',')}\n`);
+        }
+        rows += chunk.length;
+        if (res.writableNeedDrain) await drained();
+        if (res.destroyed) {
+          log.info('admin', 'Shots runs export abandoned by the client', { by: req.user.username, rows });
+          return undefined;
+        }
+      }
+      log.info('admin', 'Shots runs exported', { by: req.user.username, rows, ...filters });
+      return res.end();
+    } catch (err) {
+      log.error('admin', 'Shots runs CSV export failed', { message: err.message });
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      // Past the first chunk the status line and part of the file are
+      // already on the wire. Destroy the socket rather than ending it: a
+      // clean end closes the chunked body normally and the browser saves a
+      // truncated file as though it were complete; an aborted one is reported
+      // as a failed download.
+      return res.destroy();
     }
   });
 
@@ -1279,7 +1584,7 @@ function adminRoutes(config) {
     try {
       const { rows: featured } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
@@ -1288,7 +1593,7 @@ function adminRoutes(config) {
       );
       const { rows: available } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM apps a
           WHERE NOT a.self_hosted
@@ -1304,6 +1609,10 @@ function adminRoutes(config) {
         icon_emoji: r.icon_emoji || null,
         icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
         sort_order: r.sort_order ?? null,
+        // Whether the Discover card has its own art (#2615). Without one it
+        // draws the app icon, and the section flags that so the gap is
+        // visible. A boolean, not the record: the list has no use for framing.
+        has_illustration: !!(r.featured_illustration && r.featured_illustration.url),
         main_sha: r.main_sha || null,
         last_deploy_at: r.last_deploy_at || null,
         directory_review_status: r.directory_review_status || 'unreviewed',

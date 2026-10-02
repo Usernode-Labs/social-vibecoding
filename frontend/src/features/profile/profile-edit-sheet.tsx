@@ -87,9 +87,20 @@
  * same status line. They act IMMEDIATELY, as they always did (the switch is a
  * PATCH of its own, not part of Save). #2787 folded them into one switch row —
  * see PublicPage below.
+ *
+ * ── A new photo is positioned before it is used (#3525) ───────────────
+ *
+ * Change photo used to stage the file's centred square the moment it was
+ * picked. Now a picked file opens "Position your photo"
+ * (./avatar-crop-dialog.tsx) over this card, and nothing is staged until its
+ * Use photo. The Photo row's second line says where a photo change stands:
+ * before a pick, that you choose the part that shows; after Use photo or
+ * Remove photo, that it waits for Save. The step renders as the last child of
+ * the root and this card is `inert` while it is up; the dialog's header says
+ * why both.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,6 +110,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import type { CropRect } from './avatar-crop';
+import { AvatarCropDialog, type CropSource } from './avatar-crop-dialog';
 import { Profile } from './profile.js';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -147,6 +160,16 @@ function Avatar({ url, initial }: { url: string | null; initial: string }): Reac
       {initial}
     </div>
   );
+}
+
+/**
+ * The Photo row's second line: what choosing does, and then where a change
+ * stands, because nothing about a staged photo is saved until Save (#3525).
+ */
+function photoNote(pending: 'new' | 'removed' | null): string {
+  if (pending === 'new') return 'New photo, not saved yet. Press Save to use it.';
+  if (pending === 'removed') return 'Your photo will be removed when you press Save.';
+  return 'PNG, JPEG or WebP. You choose the part that shows before it is used.';
 }
 
 /** The section heading + card pair every group is made of. */
@@ -289,6 +312,8 @@ export function ProfileEditSheet({
   publicStatus = '',
   publishing = false,
   previewOpen = false,
+  cropSource = null,
+  pendingPhoto = null,
 }: {
   avatarUrl: string | null;
   initial: string;
@@ -296,6 +321,10 @@ export function ProfileEditSheet({
   publicStatus?: string;
   publishing?: boolean;
   previewOpen?: boolean;
+  /** The chosen photo while "Position your photo" is up (#3525). */
+  cropSource?: CropSource | null;
+  /** A staged photo change that Save has not written yet. */
+  pendingPhoto?: 'new' | 'removed' | null;
 }): ReactNode {
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
@@ -303,6 +332,7 @@ export function ProfileEditSheet({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const chooseRef = useRef<HTMLButtonElement | null>(null);
 
   // What Back left behind the last time, if anything (QA 2026-09-24 Q16):
   // see Profile._draft. Taken once, by the opening render.
@@ -369,6 +399,22 @@ export function ProfileEditSheet({
   // through _dismissSheet, which calls it. So there is nothing for this
   // component to tear down beyond the kit adoption above.
 
+  // While the positioning step is up this card is `inert` (see the dialog's
+  // header), which takes focus off anything inside it. When the step closes,
+  // focus comes back to Change photo, where the viewer left it.
+  const cropping = !!cropSource;
+  const wasCropping = useRef(cropping);
+  useEffect(() => {
+    if (wasCropping.current && !cropping) chooseRef.current?.focus({ preventScroll: true });
+    wasCropping.current = cropping;
+  }, [cropping]);
+
+  const photoFailed = (err: unknown): void => {
+    setPhotoError((err instanceof Error && err.message)
+      || 'That image could not be used. Try a PNG, JPEG or WebP.');
+  };
+
+  // A picked file opens the positioning step; nothing is staged yet (#3525).
   const onFile = async (): Promise<void> => {
     const input = fileRef.current;
     const chosen = input && input.files && input.files[0];
@@ -376,11 +422,19 @@ export function ProfileEditSheet({
     if (!chosen) return;
     setPhotoError(null);
     try {
-      await Profile.stageAvatar(chosen);
-      setShowRemove(true);
+      await Profile.beginAvatarCrop(chosen);
     } catch (err) {
-      setPhotoError((err && (err as Error).message)
-        || 'That image could not be used. Try a PNG, JPEG or WebP.');
+      photoFailed(err);
+    }
+  };
+
+  // Use photo: the square the viewer chose is cut, downscaled and staged.
+  const onCropAccept = async (crop: CropRect): Promise<void> => {
+    setPhotoError(null);
+    try {
+      if (await Profile.acceptAvatarCrop(crop)) setShowRemove(true);
+    } catch (err) {
+      photoFailed(err);
     }
   };
 
@@ -399,7 +453,7 @@ export function ProfileEditSheet({
 
   return (
     <div id="profile-edit-root" ref={rootRef} className={ROOT_CLASS}>
-      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS}>
+      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS} inert={cropping}>
         <div className="text-lg font-bold pt-3 pb-4">Edit profile</div>
 
         {/*
@@ -424,13 +478,14 @@ export function ProfileEditSheet({
               </div>
               <div className="min-w-0">
                 <div className={ROW_LABEL_CLASS}>Profile photo</div>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  PNG, JPEG or WebP.
+                <p id="profile-edit-photo-note" className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
+                  {photoNote(pendingPhoto)}
                 </p>
               </div>
             </div>
             <button
               id="profile-edit-choose"
+              ref={chooseRef}
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => fileRef.current?.click()}
             >
@@ -638,6 +693,20 @@ export function ProfileEditSheet({
           Cancel
         </button>
       </div>
+      {/*
+          LAST, after the card: the card has been lifted into the kit and a
+          comment holds its place, so a sibling rendered before it would be
+          inserted against a node that is not there. Keyed by the photo, so a
+          second pick starts from its own centred square.
+      */}
+      {cropSource ? (
+        <AvatarCropDialog
+          key={cropSource.url}
+          source={cropSource}
+          onAccept={onCropAccept}
+          onCancel={() => Profile.cancelAvatarCrop()}
+        />
+      ) : null}
     </div>
   );
 }

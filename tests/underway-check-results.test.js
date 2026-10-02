@@ -24,6 +24,14 @@ const failing = { id: 123, user_id: 42, status: 'active', check_state: 'failing'
 
 function menu(av, card) { return av._cardMenus[card.rail.menuKey] || []; }
 
+// The window the dev-card bundle is loaded under. The bundle reaches the
+// Messages screen through the Workshop's Discussion tab (#3494), and a module
+// in that graph (lib/back-stack.ts) listens for popstate when it loads, so
+// the stand-in window needs the listener methods a browser's has.
+function bundleWindow() {
+  return { AppView: appView(), addEventListener() {}, removeEventListener() {} };
+}
+
 for (const status of ['active', 'paused']) {
   test(`${status} own card renders failure reason and provides inspection and rerun`, () => {
     const av = appView();
@@ -73,7 +81,7 @@ test('passing, closed, read-only and in-flight cards cannot offer a duplicate re
 
 test('results render paths, reasons and console errors as visible escaped text', () => {
   const previous = global.window;
-  global.window = { AppView: appView() };
+  global.window = bundleWindow();
   try {
     const { SessionCheckResults } = loadTsx('tests/fixtures/dev-card-api.ts');
     const html = renderToHtml(createElement(SessionCheckResults, { session: {
@@ -92,7 +100,7 @@ test('results render paths, reasons and console errors as visible escaped text',
 // row that recorded no reason reads the fallback line.
 test('a skipped run says why in the panel, with or without a recorded reason', () => {
   const previous = global.window;
-  global.window = { AppView: appView() };
+  global.window = bundleWindow();
   try {
     const { SessionCheckResults } = loadTsx('tests/fixtures/dev-card-api.ts');
     const skipped = { id: 124, user_id: 42, status: 'active', check_state: 'skipped', test_results: [] };

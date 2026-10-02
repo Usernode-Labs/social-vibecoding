@@ -2,20 +2,21 @@ import { memo, useRef, useState } from 'react';
 
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
-import * as api from './api';
+import { openReport } from '../dialogs/report';
 import {
   deleteMessage, discardFailed, edit, markUnread, messageAddress, openThread, react, retrySend, scopeKey, setReply,
   setUserBlocked, toggleSaved,
 } from './store';
 import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
+import { BotQuestion } from './bot-question';
+import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
-import { ReportForm, submitReport } from '../reports/report-form';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -41,7 +42,9 @@ import { useDismiss } from '../message-actions/use-dismiss';
  * three recent reactions, the picker, Reply, Save and ⋯ — on hover with a
  * pointer, and the same acts in a sheet on a long press on a phone. ⋯ holds
  * the rarer ones: the thread, edit, copy, the link, mark unread, delete,
- * report and block.
+ * report and block. Report message opens the shared reporting dialog
+ * (../dialogs/report.tsx), which feeds the platform's one moderation queue
+ * rather than an inline form of its own (issue #2721).
  */
 
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
@@ -101,8 +104,6 @@ export const MessageRow = memo(function MessageRow({
   const [editValue, setEditValue] = useState(message.content);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [reporting, setReporting] = useState(false);
-  const [userReporting, setUserReporting] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
   const pickerButton = useRef<HTMLButtonElement>(null);
@@ -203,9 +204,11 @@ export const MessageRow = memo(function MessageRow({
   if (mine) {
     items.push({ key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
   } else {
-    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: () => { setReporting(true); setUserReporting(false); setNotice(''); } });
+    items.push({
+      key: 'report', label: 'Report message', icon: FlagIcon, separated: true,
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id }),
+    });
     if (message.sender.id) {
-      items.push({ key: 'report-user', label: `Report @${message.sender.username}`, icon: UserIcon, onSelect: () => { setUserReporting(true); setReporting(false); } });
       items.push({ key: 'block', label: `Block @${message.sender.username}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
@@ -231,17 +234,18 @@ export const MessageRow = memo(function MessageRow({
     <p className="messages-deleted">Message deleted</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{message.reply.sender.id ? '@' : ''}{message.reply.sender.username}</span><p>{message.reply.deleted ? 'Message deleted' : message.reply.content || 'Attachment'}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{message.reply.sender.id ? '@' : ''}{message.reply.sender.username}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+        <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
       ) : message.content ? <MessageMarkdown content={message.content} channels={channels} /> : null}
     </>
   );
 
   // Everything a message carries besides its text: files, shared items,
-  // reactions, the thread under it, the report form and the status line.
+  // reactions, the thread under it and the status line.
   const extras = (
     <>
+      {message.sender.bot && message.metadata?.homeroomBot?.question ? <BotQuestion message={message} conversationId={conversationId} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
@@ -259,10 +263,6 @@ export const MessageRow = memo(function MessageRow({
           onOpen={() => openThread(message.id)}
         />
       ) : null}
-      {reporting ? <ReportForm kind="message" onCancel={() => setReporting(false)}
-        onSubmit={(reason, detail) => api.reportMessage(conversationId, message.id, reason as Parameters<typeof api.reportMessage>[2], detail)} /> : null}
-      {userReporting ? <ReportForm kind="user" onCancel={() => setUserReporting(false)}
-        onSubmit={(reason, detail) => submitReport(`/api/users/${encodeURIComponent(message.sender.username)}/report`, reason, detail)} /> : null}
       {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
     </>
   );
@@ -322,7 +322,7 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className="min-w-0 flex-1">
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{message.sender.id ? '@' : ''}{message.sender.username}</span><time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{message.sender.id ? '@' : ''}{message.sender.username}</span>{message.sender.bot ? <span className="messages-bot-badge">Bot</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}

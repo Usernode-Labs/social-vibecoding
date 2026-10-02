@@ -3,10 +3,11 @@
 // A proposal built from a request has to be linked to it, in two places that
 // do different jobs:
 //
-//   1. `Closes #N` in the PR BODY — GitHub is what actually closes the issue
-//      on merge; the platform's post-merge watcher only polls for it having
+//   1. `Closes #N` in the PR BODY — GitHub normally closes the issue on
+//      merge; the platform's post-merge watcher polls for it having
 //      happened (services/issue-close-watcher.js); and
 //   2. `chat_sessions.linked_issues` — what that watcher expects to close,
+//      and closes itself if GitHub has not when its polls run out,
 //      what the merge path suppresses optimistically, and what the Dev board
 //      reads to show a request as being worked on.
 //
@@ -100,8 +101,8 @@ test('the connector carries the task’s request number into the import', () => 
   );
   assert.match(tasks, /function linkedIssuesFor\(task\)/);
   assert.match(tasks, /importProposal\(slug, pr\.number, \{[\s\S]{0,240}linkedIssues: linkedIssuesFor\(task\)/);
-  assert.match(tasks, /\.\.\.\(params\.visualEvidence \? \{ visualEvidence: params\.visualEvidence \} : \{\}\)/,
-    'the same import envelope may also carry the exact-revision evidence intent');
+  assert.match(tasks, /\.\.\.\(params\.visibleChanges \? \{ visibleChanges: params\.visibleChanges \} : \{\}\)/,
+    'the same import envelope may also carry the declared visible changes');
   // And the closing keyword on the body, from pr-metadata's own builder so
   // the two closing blocks in the codebase cannot disagree.
   assert.match(tasks, /buildClosingBlock\(linkedIssuesFor\(task\)\)/);

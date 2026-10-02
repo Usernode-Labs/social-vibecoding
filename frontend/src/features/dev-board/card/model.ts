@@ -337,6 +337,11 @@ export type ListRow =
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
     /**
+     * When the row last moved (epoch ms), on the since list's rows only: the
+     * Workshop page files each one under the week it moved in.
+     */
+    at?: number;
+    /**
      * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
      * only. Null when the proposal has none — a legacy one, or a summary pass
      * that failed — and the deck says so rather than leaving a gap.
@@ -420,7 +425,7 @@ export interface DevWorkshopView {
    */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'workshop' | 'needs' | 'all' | null;
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -445,6 +450,23 @@ export interface DevWorkshopView {
     /** An issue's body as one plain run, the claim item's sub-hero. */
     body?: string | null;
     /**
+     * The project the row belongs to, on the Communities screen's Needs you
+     * (#3488), which mixes every project's. Unset inside a project, whose
+     * page says which one it is.
+     */
+    app?: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null } | null;
+    /**
+     * Where the vote stands when no status pill was worked out: the
+     * Communities feed has the counts but not each project's threshold.
+     */
+    tally?: { yes: number; no: number } | null;
+    /**
+     * The Description sheet's body: a proposal's summary or an issue's
+     * body, rendered and sanitised where it was built (app-view.js). Empty
+     * when there is none.
+     */
+    descriptionHtml?: string;
+    /**
      * The item's picture: the first before/after capture pair the checks
      * shot, one still per side. Null when there is none, and the feed then
      * leaves the space under the summary empty rather than faking one.
@@ -456,9 +478,32 @@ export interface DevWorkshopView {
       after: string | null;
       beforeWebm: string | null;
       afterWebm: string | null;
-      /** Authenticated evidence URLs rather than legacy public artifact ids. */
+      /** Authenticated shots URLs rather than legacy public artifact ids. */
       protected?: boolean;
       claim?: string;
+      /**
+       * A before & after run's own screens, when it worked them out
+       * (services/shots-diff.js): each side's shot and the areas that
+       * differ, in the shot's pixels, numbered by declared change (0 is a
+       * difference no change accounts for). The feed draws one, outlined.
+       */
+      screens?: {
+        viewport: string;
+        width: number;
+        before: { url: string; height: number };
+        after: { url: string; height: number };
+        regions: {
+          n: number;
+          b: number[] | null;
+          a: number[] | null;
+          bMark: number[] | null;
+          aMark: number[] | null;
+        }[];
+        /** The changes this screen shows, by number. */
+        changes: number[];
+      }[];
+      /** Every declared change, numbered as its outlines are. */
+      changes?: { n: number; text: string }[];
     } | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
@@ -479,6 +524,8 @@ export interface DevWorkshopView {
    * whatever the board is narrowed to.
    */
   mine: {
+    /** A signed-in viewer, who can have work (a guest has none to have none of). */
+    viewer?: boolean;
     count: number;
     shown: number;
     rows: ListRow[];
@@ -509,9 +556,9 @@ export interface DevWorkshopView {
     rows: ListRow[];
     /**
      * The rest of the same list — what moved BEFORE the baseline, newest
-     * first, which the reader has already seen. `Show older` walks into it
-     * and Clear moves the new rows here (#2183). `rows` is capped; `total`
-     * is the whole rest.
+     * first, which the reader has already seen. A week's `Show N more`
+     * walks into it and Clear moves the new rows here (#2183). `rows` is
+     * capped; `total` is the whole rest.
      */
     seen: { total: number; rows: ListRow[] };
   } | null;
@@ -669,6 +716,8 @@ export interface KanbanColView {
   title: string;
   count: number;
   hint?: string | null;
+  /** In review only; sorting never filters cards or changes other columns. */
+  reviewSort?: 'newest' | 'priority';
   /** A visible app-level fact under the heading (the Done deployment boundary). */
   status?: {
     text: string;

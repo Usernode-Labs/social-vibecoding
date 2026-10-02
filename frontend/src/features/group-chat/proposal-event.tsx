@@ -110,9 +110,14 @@ export function creditsSentence(c: { author: string; backers: string[]; shapers:
   return parts.length ? `${parts.join(', ')}.` : '';
 }
 
-/** The muted tail after a named merge: "PR #41 · 3/5 votes". */
+/**
+ * The muted tail after a named merge: "PR #41 · 3/5 votes". After a vote
+ * that no longer counts because the proposal changed since (#3411):
+ * "· on an earlier version, not counted", so the line agrees with the tally.
+ */
 export function eventTail(msg: TranscriptMessage): string {
   const ev = msg.event;
+  if (ev && ev.type === 'vote' && ev.earlier) return '· on an earlier version, not counted';
   if (!ev || ev.type !== 'merged' || ev.force || !ev.credits) return '';
   return [`PR #${ev.prNumber}`, ev.votes ? `${ev.votes} votes` : ''].filter(Boolean).join(' · ');
 }
@@ -220,6 +225,7 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
       {...(open ? { 'data-open': '1' } : {})}
       {...(ev.here ? { 'data-here': '1' } : {})}
       {...(ev.type === 'vote' && ev.vote ? { 'data-vote': ev.vote } : {})}
+      {...(ev.type === 'vote' && ev.earlier ? { 'data-earlier': '1' } : {})}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
           {ev.sender.charAt(0).toUpperCase()}

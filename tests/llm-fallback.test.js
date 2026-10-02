@@ -159,8 +159,11 @@ test('streamChat: fable requests use the beta path with the fallback opt-in', as
     });
     assert.equal(stub.calls.length, 1);
     assert.equal(stub.calls[0].kind, 'beta');
-    assert.deepEqual(stub.calls[0].params.betas, [llm.FALLBACK_BETA]);
-    assert.deepEqual(stub.calls[0].params.fallbacks, [{ model: llm.FALLBACK_TARGET_MODEL }]);
+    // Anthropic's `"default"` form under its own beta header: no model list
+    // to keep in step with Fable's allowed_fallback_models. A pinned
+    // claude-opus-5-5 was rejected with a 400 on every Fable request.
+    assert.deepEqual(stub.calls[0].params.betas, ['server-side-fallback-2026-07-01']);
+    assert.equal(stub.calls[0].params.fallbacks, 'default');
     assert.equal(result.servedModel, 'claude-fable-5-1');
     assert.equal(result.fallbackServed, false);
   });
@@ -324,4 +327,48 @@ test('estimateCostCents: fable priced per models.js, above sonnet and opus', () 
   assert.ok(fable > opus, `fable (${fable}) should out-price opus (${opus})`);
   assert.ok(opus > sonnet, `opus (${opus}) should out-price sonnet (${sonnet})`);
   assert.ok(sonnet > haiku, `sonnet (${sonnet}) should out-price haiku (${haiku})`);
+});
+
+// ── #3557: a request carrying a PDF the provider refuses ────────────
+
+test('#3557 streamChat: a 400 on a request with a PDF retries once with the PDF named, not sent', async () => {
+  const doc = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' }, title: 'brief.pdf' };
+  const calls = [];
+  const refusal = Object.assign(new Error('invalid pdf'), { status: 400 });
+  const stub = {
+    messages: {
+      stream: (params) => {
+        calls.push(params);
+        if (calls.length === 1) return { on() {}, finalMessage: async () => { throw refusal; } };
+        return fakeStream(baseMessage({ model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Read the note.' }] }));
+      },
+    },
+  };
+  const prev = llm._setClientForTests(stub);
+  try {
+    const result = await llm.streamChat({
+      model: 'claude-opus-5-5', systemPrompt: 'Mayor',
+      messages: [{ role: 'user', content: [doc, { type: 'text', text: 'what does it say?' }] }],
+    });
+    assert.equal(result.text, 'Read the note.');
+    assert.equal(calls.length, 2, 'exactly one retry');
+    assert.equal(calls[0].messages[0].content[0].type, 'document');
+    assert.equal(calls[1].messages[0].content[0].type, 'text');
+    assert.match(calls[1].messages[0].content[0].text, /brief\.pdf — PDF\. The model provider could not read it/);
+    assert.equal(JSON.stringify(calls[1].messages).includes('JVBERi0'), false);
+
+    // Without a PDF, or on another status, a refusal is final.
+    for (const [messages, status] of [
+      [[{ role: 'user', content: 'hi' }], 400],
+      [[{ role: 'user', content: [doc] }], 429],
+    ]) {
+      calls.length = 0;
+      const err = Object.assign(new Error('nope'), { status });
+      stub.messages.stream = (params) => { calls.push(params); return { on() {}, finalMessage: async () => { throw err; } }; };
+      await assert.rejects(llm.streamChat({ model: 'claude-opus-5-5', systemPrompt: 'Mayor', messages }), err);
+      assert.equal(calls.length, 1, `no retry (status ${status})`);
+    }
+  } finally {
+    llm._setClientForTests(prev);
+  }
 });

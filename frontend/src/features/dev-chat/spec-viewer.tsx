@@ -327,6 +327,7 @@ function UserShareButton(
     <button
       ref={pop.btnRef} id="dc-spec-viewer-share-user" className="dc-spec-action-btn"
       title="Privately share this spec version with one person"
+      aria-haspopup="dialog" aria-expanded={pop.open} aria-controls="dc-spec-share-pop"
       onClick={pop.toggle}
     >{pop.label}</button>
   );
@@ -339,10 +340,14 @@ function UserShareButton(
  */
 function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
   return (
-    <div ref={pop.popRef} id="dc-spec-share-pop" className={pop.open ? POP.on : POP.off}>
+    <div
+      ref={pop.popRef} id="dc-spec-share-pop" className={pop.open ? POP.on : POP.off}
+      role="dialog" aria-label="Share this spec with one person"
+    >
       <input
         ref={pop.inputRef} id="dc-spec-share-input" className="dc-spec-share-input"
-        type="text" placeholder="Username…" autoComplete="off" spellCheck={false}
+        type="text" placeholder="Username…" aria-label="Username to share with"
+        autoComplete="off" spellCheck={false}
         maxLength={32}
         value={pop.value}
         onChange={(e) => pop.type(e.target.value)}

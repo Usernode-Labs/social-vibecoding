@@ -32,9 +32,10 @@
  * the composer's send chord (feed-thread.tsx).
  */
 
-import { useCallback, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+import { prefixLookup, type PrefixLookup } from '../../../lib/prefix-lookup';
 import { MentionMenuView } from '../../group-chat/autocomplete';
 
 /** The character class the server's MENTION_RE recognises. */
@@ -44,12 +45,21 @@ export const MENTION_MAX_LEN = 32;
 export const MENTION_MAX_RESULTS = 50;
 /** A stale list only means a just-joined person is not suggested yet. */
 export const MENTION_CACHE_TTL_MS = 2 * 60 * 1000;
+/** The server's cap on the whole list (src/routes/chat.js); a list this long may be missing people. */
+export const MENTION_FULL_LIST = 500;
 
 // Anchored to the caret: a boundary (start or a non-mention char), `@`, then
 // up to MENTION_MAX_LEN mention chars, end of the text before the caret.
 const TRIGGER_RE = new RegExp(
   `(^|[^${MENTION_CHARS}])@([${MENTION_CHARS}]{0,${MENTION_MAX_LEN}})$`,
 );
+
+// #3361: a conversation's mention parser (services/conversations.js
+// mentionsUsername) matches the exact username, and legacy or imported
+// accounts carry hyphens and other punctuation. Where the room is a
+// conversation, a token is any run of non-space, non-@ characters, capped.
+export const WIDE_MENTION_MAX_LEN = 64;
+const WIDE_TRIGGER_RE = new RegExp(`(^|\\s)@([^\\s@]{0,${WIDE_MENTION_MAX_LEN}})$`);
 
 export interface MentionToken {
   /** Index of the `@` in the value. */
@@ -58,10 +68,14 @@ export interface MentionToken {
   query: string;
 }
 
-/** The `@token` immediately before `caret`, or null when there is none. */
-export function detectMentionToken(value: string, caret: number): MentionToken | null {
+/**
+ * The `@token` immediately before `caret`, or null when there is none.
+ * `wide` takes the conversation grammar (WIDE_TRIGGER_RE) instead of the
+ * app chat's.
+ */
+export function detectMentionToken(value: string, caret: number, wide = false): MentionToken | null {
   if (caret < 0 || caret > value.length) return null;
-  const m = value.slice(0, caret).match(TRIGGER_RE);
+  const m = value.slice(0, caret).match(wide ? WIDE_TRIGGER_RE : TRIGGER_RE);
   if (!m || m.index == null) return null;
   return { start: m.index + m[1].length, query: m[2] };
 }
@@ -115,7 +129,8 @@ export function cachedMentionCandidates(slug: string, now: number = Date.now()):
  * The list for `slug`, from the cache or the endpoint. A response the server
  * refused (a 404 for a viewer who may not post) is cached as empty — it will
  * not change within the TTL — while a failed fetch is not, so the next `@`
- * retries once the network is back.
+ * retries once the network is back. A 429 (the user-directory rate limit) is
+ * a failed fetch, not a refusal: it passes within the minute.
  */
 export function loadMentionCandidates(slug: string): Promise<string[]> {
   const fresh = cachedMentionCandidates(slug);
@@ -125,6 +140,7 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
   const p = (async () => {
     try {
       const res = await fetch(mentionSuggestionsPath(slug));
+      if (res.status === 429) return [];
       let users: string[] = [];
       if (res.ok) {
         const data = await res.json();
@@ -133,6 +149,8 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
           : [];
       }
       cache.set(slug, { users, fetchedAt: Date.now() });
+      // What prefix lookups found is as old as the list it widens.
+      prefixAskers.delete(slug);
       return users;
     } catch {
       return [];
@@ -144,10 +162,52 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
   return p;
 }
 
+// ── When the whole list is full: ask by prefix ───────────────────────
+//
+// The whole list stops at MENTION_FULL_LIST people, so in a larger community
+// a quiet member late in its order is not in it. When it is full and a prefix
+// does not fill the menu from it, the people matching that prefix are asked
+// of the same endpoint (?q=), as the hub's channel box does (#3361). One
+// lookup per app, shared by every row; lib/prefix-lookup.ts drops a stale
+// answer and does not remember a failed one (a 429 throws, so it is retried).
+
+const prefixAskers = new Map<string, PrefixLookup<string>>();
+
+function prefixAskerFor(slug: string): PrefixLookup<string> {
+  let asker = prefixAskers.get(slug);
+  if (!asker) {
+    asker = prefixLookup(async (query: string) => {
+      const res = await fetch(`${mentionSuggestionsPath(slug)}?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error(`mention lookup ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data?.users)
+        ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean)
+        : [];
+    });
+    prefixAskers.set(slug, asker);
+  }
+  return asker;
+}
+
+/** Whether `query` should also be asked by prefix, given the whole list `names`. */
+export function needsPrefixLookup(names: readonly string[], query: string): boolean {
+  return !!query && names.length >= MENTION_FULL_LIST
+    && filterMentionCandidates(names, query).length < MENTION_MAX_RESULTS;
+}
+
+/** The whole list, then anybody a prefix lookup found beyond it. */
+export function mergeMentionNames(names: readonly string[], found: readonly string[]): string[] {
+  const seen = new Set(names);
+  const out = names.slice();
+  for (const name of found) if (!seen.has(name)) { seen.add(name); out.push(name); }
+  return out;
+}
+
 /** Tests only: forget every cached list. */
 export function resetMentionCache(): void {
   cache.clear();
   inflight.clear();
+  prefixAskers.clear();
 }
 
 // ── Keys ──────────────────────────────────────────────────────────────
@@ -201,7 +261,7 @@ export interface MentionTypeahead {
   /** Replace the active `@token` with `@username ` through `onChange`. */
   accept: (username: string) => void;
   /** True when an open list owned the key (and consumed it). */
-  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => boolean;
   /** Start the app's list loading, so it is warm by the first `@`. */
   warm: () => void;
   onCompositionStart: () => void;
@@ -209,13 +269,22 @@ export interface MentionTypeahead {
 }
 
 export function useMentionTypeahead({
-  slug, inputRef, value, onChange,
+  slug, inputRef, value, onChange, lookup, wideTokens = false,
 }: {
   slug: string;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputRef: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   /** The controlled value; the caret is restored once it has been written. */
   value: string;
   onChange: (next: string) => void;
+  /**
+   * #3361: ask for the people matching what has been typed, instead of the
+   * app's whole list. Answers are remembered per prefix, a request in flight
+   * is shared, and an answer for a prefix that is no longer the one being
+   * typed is dropped (lib/prefix-lookup.ts).
+   */
+  lookup?: (query: string) => Promise<string[]>;
+  /** Tokens use the conversation grammar (hyphens and all), not the app chat's. */
+  wideTokens?: boolean;
 }): MentionTypeahead {
   const [items, setItems] = useState<string[]>([]);
   const [active, setActive] = useState(-1);
@@ -224,6 +293,7 @@ export function useMentionTypeahead({
   const tokenStart = useRef(-1);
   const composing = useRef(false);
   const pendingCaret = useRef<number | null>(null);
+  const asker = useMemo(() => (lookup ? prefixLookup(lookup) : null), [lookup]);
 
   const close = useCallback(() => {
     tokenStart.current = -1;
@@ -240,7 +310,7 @@ export function useMentionTypeahead({
       // after which the person may have moved on, or away.
       const caret = el.selectionStart;
       const token = document.activeElement === el && caret != null && caret === el.selectionEnd
-        ? detectMentionToken(el.value, caret)
+        ? detectMentionToken(el.value, caret, wideTokens)
         : null;
       const next = token ? filterMentionCandidates(names, token.query) : [];
       if (!token || !next.length) { close(); return; }
@@ -249,17 +319,36 @@ export function useMentionTypeahead({
       // The top row is highlighted whenever the set changes, as the chat's is.
       setActive(0);
     };
+    if (asker) {
+      const caret = el.selectionStart;
+      const token = caret == null ? null : detectMentionToken(el.value, caret, wideTokens);
+      if (!token) { close(); return; }
+      // null: a later prefix has been asked since, and its answer decides.
+      void asker.ask(token.query).then((found) => { if (found) apply(found); });
+      return;
+    }
+    // The whole list, and, when it is full and this prefix is short of it,
+    // the server's answer for the prefix merged in once it lands.
+    const applyWhole = (names: string[]) => {
+      apply(names);
+      const caret = el.selectionStart;
+      const token = caret == null ? null : detectMentionToken(el.value, caret, wideTokens);
+      if (!token || !needsPrefixLookup(names, token.query)) return;
+      void prefixAskerFor(slug).ask(token.query)
+        .then((found) => { if (found) apply(mergeMentionNames(names, found)); });
+    };
     const names = cachedMentionCandidates(slug);
-    if (names) { apply(names); return; }
+    if (names) { applyWhole(names); return; }
     close();
     const caret = el.selectionStart;
-    if (caret == null || !detectMentionToken(el.value, caret)) return;
-    void loadMentionCandidates(slug).then(apply);
-  }, [slug, inputRef, close]);
+    if (caret == null || !detectMentionToken(el.value, caret, wideTokens)) return;
+    void loadMentionCandidates(slug).then(applyWhole);
+  }, [slug, inputRef, close, asker, wideTokens]);
 
   const warm = useCallback(() => {
+    if (asker) return;
     if (!cachedMentionCandidates(slug)) void loadMentionCandidates(slug);
-  }, [slug]);
+  }, [slug, asker]);
 
   const accept = useCallback((username: string) => {
     const el = inputRef.current;
@@ -295,7 +384,7 @@ export function useMentionTypeahead({
     setBelow(room < host.offsetHeight + 8);
   }, [items]);
 
-  const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>): boolean => {
     if (!items.length) return false;
     const key = menuKeyFor(e.key);
     if (!key) return false;

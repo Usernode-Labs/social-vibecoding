@@ -160,28 +160,23 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
 
   assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
   assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);
-  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent chat'/);
+  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent session'/);
   const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));
-  assert.match(starter, /if \(choice === 'agent'\) openDialog\('messagesAgent'\);/,
-    'Agent asks which app first');
+  assert.match(starter, /if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
+    'Agent opens one new conversation with the Mayor, with no app to pick first (#2779)');
   assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
     'DM and group open the create flow on the matching tab');
   const create = read('frontend/src/features/messages/create-dialog.tsx');
   assert.match(create, /setMode\(tab === 'group' \? 'group' : 'direct'\)/);
 });
 
-test('Agent chat picks one of the viewer\'s apps and opens a new dev session there', () => {
-  const dialog = read('frontend/src/features/messages/agent-dialog.tsx');
-  assert.match(dialog, /id="messages-agent-dialog"/);
-  assert.match(dialog, /useDialog\('messagesAgent'/);
-  assert.match(dialog, /snap\.discussions/, 'the apps are the channels already loaded — no second list to disagree');
-  assert.match(dialog, /Improve\.startSessionFor\(slug\)/);
+test('the "+" asks no app first and opens no classic session any more (#2779)', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/messages/agent-dialog.tsx')), false,
+    'the "which app?" dialog led to a classic dev session, which is no longer created');
+  assert.doesNotMatch(SCREEN, /messagesAgent|agentSessionsEnabled/);
   const improve = read('frontend/src/features/improve/improve-controller.js');
-  const fn = improve.slice(improve.indexOf('async startSessionFor(slug)'));
-  const body = fn.slice(0, fn.indexOf('\n  },'));
-  assert.match(body, /Improve\._nextSessionOrigin = '#messages';/, 'back goes up to Messages');
-  assert.match(body, /navigateToApp\(slug, 'dev', ref, 'sessions'\)/, 'straight to /dev/sessions/new');
+  assert.doesNotMatch(improve, /startSessionFor/);
 });
 
 test('the endpoint lists yours then more, one row per app, never an app the viewer cannot open', () => {
@@ -209,6 +204,10 @@ test('the endpoint lists yours then more, one row per app, never an app the view
     'an app gone view-private drops out for a non-member, favorite or no favorite');
   assert.match(ROUTE, /NOT a\.self_hosted OR \$2::boolean/,
     'and the platform’s own app keeps its admin gate');
+  assert.match(ROUTE, /WHERE a\.moderation_suspended_at IS NULL\s+AND \(NOT a\.self_hosted/,
+    'an app suspended by moderation refuses to open, so it is no discussion either');
+  assert.match(ROUTE, /AND view_visibility = 'public' AND NOT self_hosted\s+AND moderation_suspended_at IS NULL/,
+    'nor a staging demo row');
   assert.match(ROUTE, /SELECT DISTINCT ON \(m\.app_id\)/, 'one row per app');
   assert.match(ROUTE, /ORDER BY m\.app_id, m\.created_at DESC, m\.id DESC/,
     'the id tiebreak matters: created_at defaults to NOW() and two messages '
@@ -481,7 +480,7 @@ test('bug h: the discussion context carries the app artwork, for a header with n
   const saved = { window: globalThis.window, fetch: globalThis.fetch };
   globalThis.window = { location: { search: '', hash: '' }, App: { user: { id: 7 } } };
   globalThis.fetch = async (url) => {
-    const m = /^\/api\/apps\/([^/?]+)$/.exec(url);
+    const m = /^\/api\/apps\/([^/?]+)(?:\?manifest=summary)?$/.exec(url);
     if (m && APPS[m[1]]) return { ok: true, json: async () => ({ app: APPS[m[1]] }) };
     if (String(url).startsWith('/api/messages/app-discussions')) return { ok: true, json: async () => ({ discussions: [] }) };
     return { ok: false, json: async () => null };

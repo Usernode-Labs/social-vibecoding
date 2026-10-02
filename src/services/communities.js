@@ -16,9 +16,9 @@
 //   still decides whether you may be here at all, and this decides whether
 //   you have joined.
 //
-//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Group)
-//   or 'open' (Community). Derived from the app, never stored — see
-//   audienceSql.
+//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Private
+//   community) or 'open' (Public community). Derived from the app, never
+//   stored — see audienceSql.
 //
 // The vote THRESHOLD counts active MEMBERS: services/active-users.js
 // intersects its activity rule with this table, so the people a proposal
@@ -26,6 +26,7 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const { positiveId } = require('./row-id');
 
 // The three audiences, in the order the Workshop lists them.
 const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
@@ -33,8 +34,8 @@ const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
 // What each audience is called on screen. Internal names stay internal:
 // "community" is the container, and people see it as one of these.
 const AUDIENCE_LABELS = Object.freeze({
-  open: 'Community',
-  invited: 'Group',
+  open: 'Public community',
+  invited: 'Private community',
   solo: 'Just you',
 });
 
@@ -222,7 +223,8 @@ function requireAppMembership(pool) {
 function requireIssueMembership(pool) {
   return gate(pool, async (req) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return null;
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return null;
     const { rows } = await pool.query(
       `SELECT ${GATE_COLUMNS} FROM issues i JOIN apps a ON a.id = i.app_id WHERE i.id = $1`,
       [id, req.user?.id || null]
@@ -301,8 +303,10 @@ const CHANNEL_MOVED = 'This discussion is read-only now: Homeroom\'s channel is 
 // already ran.
 function requireSessionMembership(pool) {
   return gate(pool, async (req) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return null;
+    // A malformed id falls through without a query: every mount answers it
+    // with 404 (the collab guard, or the handoff route's own id check).
+    const id = positiveId(req.params.id);
+    if (!id) return null;
     const { rows } = await pool.query(
       `SELECT ${GATE_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
       [id, req.user?.id || null]

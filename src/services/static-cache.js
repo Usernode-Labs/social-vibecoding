@@ -85,6 +85,10 @@ function shellAssetCacheControl(filePath) {
 // it does today, which is exactly right for a checkout.
 const SHELL_BUILD_HEADER = 'X-Platform-Build';
 const SHELL_BUILD_TIME_HEADER = 'X-Platform-Build-Time';
+// On a staging preview's document only: `latest` tells the release worker
+// (public/sw-release.js navigate) to wait for a new build rather than paint
+// the previous one. The header comment above says why a preview needs it.
+const SHELL_BUILD_POLICY_HEADER = 'X-Platform-Build-Policy';
 const _documentBuildTimes = new Map();
 
 /**
@@ -116,10 +120,15 @@ function applyShellBuildHeader(res, env = process.env) {
  *
  * Kept off JS/CSS responses: their build-scoped URL already pins their SHA;
  * only the fixed /index.html cache key needs an ordering value.
+ *
+ * A staging preview's document also carries the build policy: a reviewer
+ * who opens a rebuilt preview must see the rebuilt code, not the build the
+ * worker cached on their previous visit to the same hostname.
  */
 function applyShellDocumentHeaders(res, filePath, env = process.env) {
   const id = applyShellBuildHeader(res, env);
   if (!id) return null;
+  if (env.USERNODE_ENV === 'staging') res.setHeader(SHELL_BUILD_POLICY_HEADER, 'latest');
   try {
     // A deployed image never mutates its generated document. Cache the stat
     // per process so this ordering header adds no synchronous I/O to normal
@@ -190,6 +199,7 @@ module.exports = {
   applyShellDocumentHeaders,
   SHELL_BUILD_HEADER,
   SHELL_BUILD_TIME_HEADER,
+  SHELL_BUILD_POLICY_HEADER,
   REVALIDATE,
   IMMUTABLE,
 };

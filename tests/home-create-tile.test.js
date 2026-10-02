@@ -132,7 +132,8 @@ test('a load notice and the search view carry no tile', () => {
   assert.doesNotMatch(renderGrid({ ready: true, view: 'search', emptyQuery: 'zzz' }), /home-create-tile/);
   // Both load() failure publishes clear it — the store MERGES, so a notice
   // painted over a grid that had a tile would otherwise keep it.
-  const load = HOME_SRC.slice(HOME_SRC.indexOf('  async load() {'), HOME_SRC.indexOf('  render() {'));
+  // load() is the single-flight gate; the load itself is _loadOnce().
+  const load = HOME_SRC.slice(HOME_SRC.indexOf('  async _loadOnce() {'), HOME_SRC.indexOf('  render() {'));
   assert.equal((load.match(/emptyQuery: null, create: null,/g) || []).length, 2);
 });
 

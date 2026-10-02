@@ -15,6 +15,14 @@ Helm chart containing all three image digests. `main` produces the stable
 workflow; generated child apps use kpack and Paketo from exact Git revisions.
 Child-app Dockerfiles are not executed by kpack.
 
+The platform image build receives the exact `GIT_SHA` that the chart supplies
+at runtime. Before packaging a chart, CI runs the immutable platform image's
+shell-release validator with that revision and `NODE_ENV=production`, without
+network access or application startup. Missing or inconsistent generated shell
+artifacts block the release, including scheduled releases that reuse an image.
+An image built with the default `dev` stamp cannot pass this check; rebuild it
+with the intended commit SHA rather than changing the runtime revision.
+
 The daily dependency check is intentionally cheaper than a source release. It
 looks up the exact worker input key for the current npm version and exits after
 the planning job when that artifact already exists: no image jobs run and no
@@ -135,6 +143,22 @@ replacement blocked; a DELETE acknowledgement alone does not establish that
 the browser stopped. After a platform restart, a successor for a NEWER revision
 stops orphaned check Jobs before using the preview; a run for the revision the
 session is still waiting on is harvested instead (below).
+
+## Preview cleanup
+
+Merge, archive and the idle reclaim (`STAGING_IDLE_TEARDOWN_MS`) tear a preview
+down through its session row. Anything those paths leave behind is found by the
+stale-preview sweep (`services/staging-reap.js`), which lists the
+`sv-preview-<appId>-s<sessionId>` Deployments in the app namespace and joins
+them back to `chat_sessions`. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
+it tears down at most `STAGING_STALE_SWEEP_LIMIT` (10) previews whose session
+merged, was archived or no longer exists, or whose `usernode.env.fp` label is
+out of date. It never takes a preview backing a live vote (`promoted` or
+`merging`); the heal pass rebuilds those in place when they go out of date.
+Admin → Stale previews takes the same selection without the per-pass limit. A
+preview whose row no longer names it keeps its staging database until the
+orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
+connected to it.
 
 ## Harvesting check runs across platform rollouts
 

@@ -12,6 +12,18 @@ const { loadContributors, shapeContributor } = require('./contributors');
 // public directory. View-private and self-hosted rows are filtered in SQL too.
 const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
 
+// The same rule as listPublicApps' WHERE clause, for a single app row that
+// carries self_hosted, moderation_suspended_at, view_visibility and status.
+// A per-slug public read uses it so it answers for exactly the apps the
+// directory lists, and no others.
+function isPublicDirectoryApp(app) {
+  return Boolean(app)
+    && !app.self_hosted
+    && app.moderation_suspended_at == null
+    && app.view_visibility === 'public'
+    && !HIDDEN_APP_STATUSES.includes(app.status);
+}
+
 async function listPublicApps(pool, { includeWallets = true } = {}) {
   // The active-users join mirrors the authed home list's sticky 10-day rule:
   // a user counts iff they ever spent >= 60s on the app on a single day AND
@@ -35,6 +47,7 @@ async function listPublicApps(pool, { includeWallets = true } = {}) {
          GROUP BY a1.app_id
        ) au ON au.app_id = a.id
       WHERE NOT a.self_hosted
+        AND a.moderation_suspended_at IS NULL
         AND a.view_visibility = 'public'
         AND a.status <> ALL($1::text[])
       ORDER BY COALESCE(au.cnt, 0) DESC,
@@ -68,4 +81,4 @@ async function listPublicApps(pool, { includeWallets = true } = {}) {
   }));
 }
 
-module.exports = { listPublicApps, HIDDEN_APP_STATUSES };
+module.exports = { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES };

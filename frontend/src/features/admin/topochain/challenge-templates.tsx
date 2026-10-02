@@ -7,7 +7,8 @@ import { IllustrationGallery } from './illustration-gallery.tsx';
 import { BTN } from './tokens.ts';
 import {
   EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input, List,
-  Options, Pager, Panel, ScreenHeader, Select, Skeleton, Textarea, isoToLocalInput, localInputToIso,
+  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea,
+  isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
@@ -387,6 +388,7 @@ function ChallengeTemplatesScreen() {
                 />
               </Select>
             </div>
+            <ProgrammeCsvLink id="admin-topo-tpl-export" />
             {write ? (
               <button
                 id="admin-topo-tpl-new"

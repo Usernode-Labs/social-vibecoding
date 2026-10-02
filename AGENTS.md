@@ -119,7 +119,7 @@ Use the matching skill whenever its description fits:
 - `usernode-proposal` — run a locally authored native proposal through
   staging, checks, and optional promotion from an agent on the user's own
   machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
-  that worker commits on its assigned branch, records visual evidence intent
+  that worker commits on its assigned branch, declares its visible changes
   with its supplied tool, and leaves push, PR, and staging to the harness.
 - `react-shell-migration` — convert a legacy-owned shell region to React.
 - `mobile-push-testing` — verify push delivery through a real phone.
@@ -161,50 +161,45 @@ selects a skill.
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
 
-## Verify author-written visual evidence before opening a PR
+## Declare visible changes for before/after shots
 
-This section applies to an external agent authoring a PR from a local
-checkout. A Homeroom hosted dev-chat worker records semantic intent through
-its supplied tool and lets the platform create and replay the evidence plan.
+Every proposal that changes something people can see gets before/after shots.
+A hosted dev-chat worker declares its changes with its supplied tool. An
+external agent sends the same version-1 object as `visibleChanges` on
+`submit_work`. Homeroom's shots agent then follows each declared change on
+the exact before and after builds and saves what it sees: a still for each
+screen size and side, plus a short clip of each side for
+`animation: "motion"`. People look at the shots to judge the change. There
+is no replay plan to write and nothing to verify locally.
+`docs/proposal-visuals/before-after-shots.md` describes the whole flow.
 
-`impact: none` applies only when no user-visible state changes. Changed text,
-counts, loading, error, and status states need a `ui` claim even if the code
-reuses existing markup and styles. If a required fixture or failure state is
-missing, report that blocker instead of declaring `none` to skip evidence.
-For an error state caused by a failed API request, the author may declare
-`intent.controlledFailurePath` as one exact same-origin `GET /api/...` path.
-The replay must enable that failure before the triggering action on both
-revisions; it fails if the request never occurs. The reviewer sees a clear
-controlled-test label when the first `intent.steps` entry is exactly
-`Controlled test: deliberately block the declared API GET on both revisions.`
-The intent validator requires this label. Do not use this for a normal
-success-state claim.
-
-Before opening a PR for a platform UI change with `visualEvidence` impact
-`ui` or `motion`, write the semantic intent and replay plan locally, then run
-`npm run verify:visual-evidence:local -- --base <40-char-sha> --head <40-char-sha> --intent <file> --plan <file>`
-against the final committed head. The command uses the local development
-database and the production browser replay/encoder on exact base and head
-builds. Read its manifest and inspect the resulting PNGs and any WebM before
-submitting the plan. If an action, assertion, reproducibility check, or media
-generation fails, correct the plan or app and run it again. Any head commit
-change requires another run. If local data cannot represent the claim, report
-that blocker before opening the PR. Do not submit a guessed plan or claim
-local verification from schema validation or the synthetic fixture harness.
-On a successful pass, send the generated `submission.json` fields
-`visualEvidence` and `visualEvidencePlan` together in the first `submit_work`
-that imports the PR. The plan carries exact base/head SHAs and its content
-hash; the import rejects a mismatch and stores the plan before the platform
-starts the evidence run. If the steps need clarification, edit the typed
-actions, locators, and assertions and rerun locally before submitting. The
-platform executes this plan directly rather than asking a hosted agent to
-reinterpret prose.
-
-This local verifier currently supports this platform repository and its
-running local Homeroom stack. Other apps need their own local runtime and
-representative fixture before the same gate can be claimed. See
-`docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
-remaining live-proposal boundary.
+- Declare one to three changes, each as a person would say it, with the real
+  `startPath` and `steps` that reach it and the persona and screen sizes
+  it needs. Declare only a state you actually reached in the running app.
+  Changes that show on the same screen are one declared change: name
+  everything that differs there in its claim, and one screen of shots shows
+  it, outlined where it differs.
+- Add `intent.hints` when you learned something the shots agent would
+  otherwise have to rediscover. `setup` names data to create through the UI
+  first, `expectText` gives short text that shows the state was reached, and
+  `focusTarget` locates the element to point at. Hints guide; they are never
+  executed.
+- `impact: none` applies only when no user-visible state changes. Changed
+  text, counts, loading, error, and status states need a `ui` change even if
+  the code reuses existing markup and styles. If a required fixture or state
+  is missing, report that blocker instead of declaring `none`.
+- For an error state caused by a failed API request, declare
+  `intent.controlledFailurePath` as one exact same-origin `GET /api/...`
+  path, and make the first `intent.steps` entry exactly
+  `Controlled test: deliberately block the declared API GET on both revisions.`
+  The shots agent blocks that request on both builds, and people see the
+  controlled-test label. Do not use this for a normal success state.
+- A change the shots agent cannot reach is shown as skipped with its
+  reason, and the other changes still publish. A change it could only show
+  in part is published with its note ("Not in these shots: ..."). Either way,
+  better steps or hints, then "Take the shots again", is the fix. Declare
+  steps that reach the claimed state as written: a search with one match
+  that opens the result directly, for example, never shows the result list.
 
 ## Communities own projects — name them the way the screen does
 
@@ -212,20 +207,29 @@ remaining live-proposal boundary.
   audience.** Every app belongs to exactly one community (`apps.community_id`,
   the "Communities" block at the end of `src/db/schema.sql`,
   `src/services/communities.js`), and a community is what people join.
-  People see it by its audience — **Just you** (`solo`), **Group**
-  (`invited`) or **Community** (`open`) — and what it owns are **projects**.
-  Use "project" in user-facing copy where the app is the thing being built;
-  keep "app" where it is the thing being used (the App tab, Discover).
+  People see it by its audience — **Just you** (`solo`), **Private
+  community** (`invited`) or **Public community** (`open`) — and what it
+  owns are **projects**. Use "project" in user-facing copy where the app is
+  the thing being built; keep "app" where it is the thing being used (the
+  App tab, Discover).
 - **Communities is the fourth tab, beside you; Messages is in the middle.**
-  It lists every community you are in
-  (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
-  there; the tab's key and ids keep `workshop`). A project's page opens on
-  its **hub** (a hero with who is here and a 14-day trend, then its channel,
-  Needs you, and Since your last visit) beside its **Workshop** (what you are
-  working on, All items). The Communities screen's Needs you is one feed of
-  every decision owed across your projects (`GET /api/workshop/needs-feed`). A
-  project's channel lives on its hub, not in Messages, and #general is the
-  Homeroom community's channel; Messages is people and agents. **A channel
+  The tab is a community: the one you last had open (its tile in a square
+  ring, its short name, the votes it waits on you for) or All communities,
+  whose page lists every community you are in (Public communities, Private
+  communities, Just you) at `#communities` (`#workshop` still routes there;
+  the tab's key and ids keep `workshop`). Pressing it while it is lit, the
+  header's name and ⌄, or the list's All chip opens **Your communities**
+  (`features/workshop/community-switcher.tsx`, scope in
+  `community-scope.ts`). A project's page wears its community's colour
+  (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
+  icon) and has four tabs, **Hub** (who is here and who it is for, the
+  actions, a 14-day trend, since your last visit, votes owed, the chat's
+  last lines, your work), **Chat**, **Needs you** and **All items**; the
+  **Workshop** page opens from the hub's since card. The Communities
+  screen's Needs you is one feed of every decision owed across your projects
+  (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
+  not in Messages, and #general is the Homeroom community's channel;
+  Messages is people and agents. **A channel
   is what people said:** Homeroom writes no activity (a proposal put up for a
   vote, a merge, a check verdict, a setting changed) into a project's channel
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
@@ -243,8 +247,9 @@ remaining live-proposal boundary.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
-  project GROWS by the same two levers: Invite makes Just you a Group, and
-  the hero's "Open it up" / "Make it a group" opens the visibility PR
+  project GROWS by the same two levers: Invite makes Just you a Private
+  community, and the hero's "Make it public" (or, on a public community,
+  "Make it private" in the hero's ⋯) opens the visibility PR
   (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
@@ -252,9 +257,10 @@ remaining live-proposal boundary.
   purpose; a name and an audience move onto it when a community can own
   more than one project.
 - **A project is created FOR someone.** The create dialog asks who it is for
-  first (Just me, A group, A community) and `POST /api/apps` takes
-  `audience`, a group's `invitees` and the approval rule as dapp.json's own
-  `governance` block (`src/services/create-options.js`). The rule is written
+  first (Just me, A private community, A public community) and
+  `POST /api/apps` takes `audience`, a private community's `invitees` and
+  the approval rule as dapp.json's own `governance` block
+  (`src/services/create-options.js`). The rule is written
   into the new repository's dapp.json by the template, so it is votable later
   like any other line there; an import's own dapp.json decides instead. Every
   project uses an app slot whatever its audience: each one is a real
@@ -286,9 +292,13 @@ remaining live-proposal boundary.
   platform access is QUEUED and joins on release, however that happens. The
   page carries the token in an HttpOnly cookie, so signing up or in from it
   follows the link server-side (`redeemCarried` in `routes/auth.js`). The
-  invite tree (`users.admitted_by`, `invite_generation`; skips of 10, 5, 2)
-  is built and OFF behind `INVITE_TREE_ENABLED`; `grantPlatformAccess` is
-  "let in by us", generation 0.
+  invite tree (`users.admitted_by`, `invite_generation`; 10 skips for
+  generation 0, none after it, so invites do not chain) is ON unless an admin
+  switches it off in Admin → Waitlist (the `invite_tree_enabled` platform
+  setting, read through a 10-second cache). Only a release by hand
+  (`grantPlatformAccess(…, { manualRelease: true })` on an account without
+  access) makes generation 0; existing accounts, activation codes, genesis
+  wallets and an admin's link's invitees get no skips.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
@@ -445,11 +455,16 @@ carry most of them.
 
   A state that is already done gets no fill. "Joined" is grey with a check;
   a filled green pill made the settled thing the loudest thing on screen.
-- **Say it in words, and let zero say nothing.** A count on a row is a
-  phrase ("2 in progress · 3 to vote"), not a glyph and a bare number that
-  need a legend. A zero is hidden (`hidden`, kept in the DOM when a declared
-  check selects on it). Show a status dot only when something is wrong,
-  never a green dot on every running app.
+- **Say it in words or a very obvious glyph, and let zero say nothing.** A
+  count on a row is a phrase ("2 in progress · 3 to vote") or a number
+  beside a glyph so obvious that nobody needs a legend to read it, like
+  the people glyph before a community's member count on the join screen.
+  Very obvious is the bar: if a person could not say what the number counts
+  at first glance, use words. A glyph-and-number still gives a screen reader
+  the words (an `sr-only` phrase such as "1,284 members"). A zero is hidden
+  (`hidden`, kept in the DOM when a declared check selects on it). Show a
+  status dot only when something is wrong, never a green dot on every
+  running app.
 - **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
   heading's own words to a row's label so the row does not repeat them.
 
@@ -517,6 +532,16 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   a dead button is silent.
 
 ## Shell CSS is generated by the image build — do not commit it
+
+- **Cache releases are generated too.** `scripts/build-shell-release.js` runs
+  after the shell and CSS builds and writes ignored `public/shell/release.json`
+  and `public/shell/worker.js`. The fixed `/sw.js` URL serves this generated
+  worker. Its asset hashes change automatically with the built interface,
+  including lazy chunks; do not bump `SW_VERSION` for UI changes. Keep all
+  image paths and `ensure:shell` in the same shell → CSS → release order.
+  Hosted images must carry their exact `GIT_SHA` through build and runtime.
+  Test updates with an existing cache as well as a fresh browser. The stable
+  API cache and assets used by open tabs must survive a shell upgrade.
 
 - The platform shell's Tailwind is **compiled**, not loaded from a CDN:
   `tailwind.config.js` + `styles/tailwind-input.css` build to

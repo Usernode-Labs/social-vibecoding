@@ -14,8 +14,9 @@
 // existing self_hosted precedent so private apps aren't enumerable.
 
 const log = require('./logger');
+const { positiveId } = require('./row-id');
 
-const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility';
+const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at';
 
 // Credential-bearing `apps` columns that must NEVER reach an HTTP
 // response. Kept in sync with the `staging:private` tags in
@@ -39,6 +40,29 @@ function stripAppSecrets(row) {
   return out;
 }
 
+// The two blocks of `manifest_snapshot` that only the server reads, and the
+// only two that grow without bound: `tests` (every declared check, with its
+// path and expected text — the platform's own dapp.json declares 800+, about
+// 240 KB of JSON) and `platform_env` (the self-hosted app's environment
+// declarations, ~31 KB). Neither is secret; both are simply never read by a
+// client, whose one use of the snapshot is its `description` (the launcher
+// card's sentence, the About sheet's tagline). GET /api/apps carried both for
+// every app on every load and every live refresh — most of its 300-700 KB.
+const MANIFEST_SERVER_ONLY_KEYS = ['tests', 'platform_env'];
+
+// A shallow copy of a manifest snapshot without MANIFEST_SERVER_ONLY_KEYS.
+// Everything else is kept as it is; a snapshot with neither key, a null, or
+// anything that is not a plain object comes back unchanged.
+function summarizeManifestSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return snapshot;
+  if (!MANIFEST_SERVER_ONLY_KEYS.some((key) => Object.prototype.hasOwnProperty.call(snapshot, key))) {
+    return snapshot;
+  }
+  const out = { ...snapshot };
+  for (const key of MANIFEST_SERVER_ONLY_KEYS) delete out[key];
+  return out;
+}
+
 // Every current `apps` column EXCEPT the SECRET_APP_COLUMNS above —
 // the explicit allowlist client-facing SELECTs should use instead of
 // `SELECT *` / `SELECT a.*`, so secrets never leave Postgres for those
@@ -47,10 +71,10 @@ function stripAppSecrets(row) {
 const NON_SECRET_APP_COLUMNS = [
   'id', 'name', 'slug', 'repo_url', 'container_id', 'status', 'retry_count',
   'created_by', 'created_at', 'main_sha', 'main_pr_number', 'last_deploy_at',
-  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
+  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted', 'moderation_suspended_at',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
-  'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
+  'icon_image_id', 'icon_color', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
   'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
   'main_check_resumed_sha', 'main_check_paused_sha', 'release_stall',
@@ -117,7 +141,7 @@ async function isCollaborator(pool, appId, userId) {
 // so a trimmed projection that only broke for non-admins would keep
 // slipping through the paths most likely to exercise it.
 async function checkAppAccess(pool, app, user, level = 'view') {
-  if (!app) return false;
+  if (!app || app.moderation_suspended_at) return false;
   const column = level === 'collab' ? 'collab_visibility' : 'view_visibility';
   const vis = app[column];
   if (!vis) {
@@ -127,6 +151,7 @@ async function checkAppAccess(pool, app, user, level = 'view') {
       + 'ACCESS_COLUMNS) rather than trimming the projection.'
     );
   }
+  if (await require('./app-blocks').isBlocked(pool, user?.id, app.id)) return false;
   if (user?.isAdmin) return true;
   if (vis === 'public') return true;
   return isCollaborator(pool, app.id, user?.id);
@@ -185,13 +210,17 @@ async function isBotOwnSession(pool, user, sessionId) {
 // so private sessions aren't enumerable. A missing session falls
 // through to the route's own lookup (which already 404s with its
 // route-specific wording).
+//
+// A malformed id is answered here, 404 without a query, rather than let
+// through: the routes behind this guard read req.params.id in many ways,
+// and letting it pass would hand each of them an id no access check saw.
 function sessionCollabGuard(pool) {
   return async (req, res, next) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Session not found' });
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [id]
@@ -214,19 +243,30 @@ function sessionCollabGuard(pool) {
 function issueCollabGuard(pool) {
   return async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
         [id]
       );
       if (!rows.length) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
-        return res.status(404).json({ error: 'Issue not found' });
+      const level = guardLevelFor(req);
+      if (await checkAppAccess(pool, rows[0], req.user, level)) return next();
+      // #3410: a write refused only by the collab bar on a project the
+      // caller can SEE must not read "Issue not found" — the open issue
+      // they tried to vote on is on their screen, served by the same view
+      // level that just passed. Say the refusal plainly instead. A caller
+      // who fails even the view level keeps the existence-hiding 404.
+      if (level !== 'view' && await checkAppAccess(pool, rows[0], req.user, 'view')) {
+        return res.status(403).json({
+          error: 'You can view this project, but only its collaborators can take part in it.',
+          code: 'collab_required',
+        });
       }
-      return next();
+      return res.status(404).json({ error: 'Issue not found' });
     } catch (err) {
       log.error('app-access', 'issue guard failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -280,7 +320,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
   const cached = visCacheById.get(id);
   if (cached && now - cached.at < VIS_CACHE_TTL_MS) return cached;
 
-  const { rows } = await pool.query('SELECT view_visibility FROM apps WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT view_visibility, moderation_suspended_at FROM apps WHERE id = $1', [id]);
   if (!rows.length) return null;
   const viewPrivate = rows[0].view_visibility === 'private';
   let memberIds = new Set();
@@ -291,7 +331,9 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
     );
     memberIds = new Set(members.map((r) => r.user_id));
   }
-  const entry = { at: now, viewPrivate, memberIds };
+  const { rows: blocks } = await pool.query('SELECT user_id FROM user_app_blocks WHERE app_id = $1', [id]);
+  const blockedUserIds = new Set(blocks.map(row => Number(row.user_id)));
+  const entry = { at: now, viewPrivate, memberIds, blockedUserIds, suspended: !!rows[0].moderation_suspended_at };
   visCacheById.set(id, entry);
   return entry;
 }
@@ -346,7 +388,7 @@ async function getHostVisibility(pool, slug) {
     return cached.appId == null ? null : cached;
   }
   const { rows } = await pool.query(
-    'SELECT id, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   if (!rows.length) {
@@ -358,6 +400,7 @@ async function getHostVisibility(pool, slug) {
     at: now,
     appId: rows[0].id,
     viewPrivate: rows[0].view_visibility === 'private',
+    suspended: !!rows[0].moderation_suspended_at,
   };
   hostVisBySlug.set(slug, entry);
   return entry;
@@ -370,7 +413,7 @@ async function getHostVisibility(pool, slug) {
 async function isViewMember(pool, appId, userId) {
   if (!Number.isInteger(userId)) return false;
   const info = await getWsVisibility(pool, { appId });
-  if (!info) return false;          // app deleted
+  if (!info || info.suspended || info.blockedUserIds?.has(userId)) return false; // app deleted or suspended
   if (!info.viewPrivate) return true; // flipped public since lookup
   if (info.memberIds.has(userId)) return true;
   const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
@@ -382,6 +425,8 @@ module.exports = {
   SECRET_APP_COLUMNS,
   NON_SECRET_APP_COLUMNS,
   stripAppSecrets,
+  MANIFEST_SERVER_ONLY_KEYS,
+  summarizeManifestSnapshot,
   nonSecretAppColumnList,
   isCollaborator,
   checkAppAccess,

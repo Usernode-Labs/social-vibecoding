@@ -11,6 +11,7 @@ const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -620,16 +621,20 @@ function feedbackRoutes(config) {
       }
       let appRow;
       try {
-        // #964: the visibility columns ride along ONLY when a bounty was
-        // asked for — checkAppAccess throws on a row whose access columns
-        // were projected away, and the plain feedback path has no use for
-        // them. `name` / `repo_url` are not in ACCESS_COLUMNS, so both sets
-        // are selected together for that case.
-        const columns = wantsBounty
-          ? `name, repo_url, ${appAccess.ACCESS_COLUMNS}`
-          : 'id, slug, name, repo_url';
-        const { rows } = await pool.query(`SELECT ${columns} FROM apps WHERE slug = $1`, [appSlug]);
+        // The visibility columns always ride along: feedback is filed only on
+        // an app the reporter can view, and checkAppAccess throws on a row
+        // whose access columns were projected away. `name` / `repo_url` are
+        // not in ACCESS_COLUMNS, so both sets are selected together.
+        const { rows } = await pool.query(
+          `SELECT name, repo_url, ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1`,
+          [appSlug]
+        );
         appRow = rows[0];
+        // A private, suspended or blocked app answers exactly like a missing
+        // one, before anything about it (its repository included) is revealed.
+        if (appRow && !(await appAccess.checkAppAccess(pool, appRow, req.user, 'view'))) {
+          appRow = null;
+        }
       } catch (err) {
         log.error('feedback', 'App lookup failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
@@ -782,6 +787,12 @@ function feedbackRoutes(config) {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
           issueNumber: issue.number, title, description: description.trim(),
         });
+        // "Suggest an improvement" counts the report just recorded, now
+        // rather than on the rule's next pass: #3568 was this step still
+        // reading "Not started" after somebody had sent one
+        // (challengeScorer.scoreOnFeedback). After the receipt, which is
+        // what it reads; never throws, so the answer is the same either way.
+        await challengeScorer.scoreOnFeedback(pool, config);
         const firstFeedback = await firstFeedbackMoment(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
         });
@@ -849,6 +860,8 @@ function feedbackRoutes(config) {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
       });
+      // The same count for platform feedback (#3568).
+      await challengeScorer.scoreOnFeedback(pool, config);
       const firstFeedback = await firstFeedbackMoment(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
       });

@@ -611,6 +611,32 @@ test('admin-apply: accepts close_issue with force (gates bypassed); non-admin 40
   } finally { restore(); }
 });
 
+test('close / admin-apply / vote: a malformed or out-of-range id is 404 without a DB query', async () => {
+  const pool = makePool([]);
+  const { router, restore } = loadIssues(pool);
+  try {
+    for (const [route, body] of [
+      ['/api/issues/:id/close', undefined],
+      ['/api/issues/:id/admin-apply', undefined],
+      ['/api/issues/:id/vote', { vote: 'up' }],
+    ]) {
+      const handler = routeHandler(router, route);
+      for (const id of ['abc', '0', '-1', '12abc', '99999999999']) {
+        for (const user of [
+          { id: 1, username: 'pleb' },
+          { id: 2, username: 'boss', canAdminWrite: true },
+        ]) {
+          const res = mockRes();
+          await handler({ params: { id }, user, body }, res);
+          assert.equal(res.statusCode, 404, `${route} ${id} ${user.username}`);
+          assert.deepEqual(res.body, { error: 'Issue not found' }, `${route} ${id}`);
+        }
+      }
+    }
+    assert.equal(pool.calls.length, 0, 'no query reached Postgres');
+  } finally { restore(); }
+});
+
 // ── #1010: apply-progress broadcasts ─────────────────────────────────────
 //
 // The client renders a "Closing issue #N…" spinner for the window between a

@@ -5,8 +5,9 @@
 //   - INLOOP_* env: build boots the app with USERNODE_ENV=staging on a
 //     dedicated port against a throwaway DB; other modes get nothing
 //   - the prompt guidance reads OPTIONAL/encouraged (not a mandatory gate),
-//     reuses the TESTING-block paths, carries the "blank page = missing
-//     seed data" reminder, a time/cycle budget, and the graceful
+//     reuses the TESTING-block paths, reads a blank page in order (the
+//     page's own console and assets, then seed data), a time/cycle budget,
+//     and the graceful
 //     "commit anyway if it won't boot" instruction
 //   - the build prompt interpolates backend-appropriate guidance while the
 //     scout prompt does not mention a browser
@@ -80,8 +81,19 @@ test('guidance carries the usage hooks that make it likely to be used', () => {
   assert.match(g, /\$INLOOP_DATABASE_URL/);
   assert.match(g, /--changed.*zero checks/s);
   assert.match(g, /FRESH, EMPTY local database/i);
-  // "blank page = missing seed data, not a bug"
-  assert.match(g, /BLANK[\s\S]*MISSING SEED DATA, not a bug/);
+  // A blank page is read in order: the page's own console and assets
+  // first (the launch serves them as production does), and only then
+  // missing seed data. Silencing an asset with an empty/204 answer is
+  // named and forbidden — that is how an app blanked production (#38).
+  assert.match(g, /BLANK[\s\S]*is a BUG until you have ruled\s+the page itself out/);
+  assert.match(g, /browser_console_messages[\s\S]*stylesheet and script loaded/);
+  assert.match(g, /NEVER make the app answer a hosted-asset path or its own built\s+stylesheet/);
+  assert.match(g, /\/tailwind\.css/);
+  assert.match(g, /page itself is sound, suspect\s+MISSING SEED DATA, not a bug/);
+  assert.ok(g.indexOf('BUG until') < g.indexOf('MISSING SEED DATA'), 'the page before the data');
+  // The launch contract says what the launcher now does for parity.
+  assert.match(g, /runs the app's `npm run build` first/);
+  assert.match(g, /`\/usernode-bridge\/`, `\/usernode-native\/`\s+and `\/usernode-tailwind\/` from the platform/);
   // a tight verify-fix budget
   assert.match(g, /cycles?/i);
   // graceful degradation: commit anyway, never fail the turn
@@ -97,12 +109,13 @@ test('the build prompt interpolates backend guidance; the scout prompt has no br
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
     'utf8'
   );
-  // The build prompt uses the pure backend selector. Hosted Claude receives
-  // the compact system-handbook reminder; unchanged backends receive the full
-  // inline constant through the same selector.
+  // The build prompt uses the pure backend selector, per transport: a turn
+  // whose CLI takes the handbook as system context (hosted Claude, or an
+  // OpenRouter model in Claude Code) receives the compact reminder; Codex and
+  // local runs receive the full inline constant through the same selector.
   assert.match(src, /buildCodingAgentBuildGuidance\(\{/);
-  assert.match(src, /\$\{buildGuidance\.browserGuidance\}/);
-  assert.match(src, /\$\{buildGuidance\.testingGuidance\}/);
+  assert.match(src, /\$\{guidance\.browserGuidance\}/);
+  assert.match(src, /\$\{guidance\.testingGuidance\}/);
   assert.match(src, /require\('\.\.\/services\/in-loop-browser'\)/);
 
   // The scout prompt template must NOT offer a browser. Slice out the
@@ -112,4 +125,21 @@ test('the build prompt interpolates backend guidance; the scout prompt has no br
   const end = src.indexOf('`;', start);
   const scoutLiteral = src.slice(start, end);
   assert.doesNotMatch(scoutLiteral, /browser_navigate|Playwright|in-loop browser|INLOOP_/i);
+});
+
+// ── production parity is stated where hosted Claude reads it ──────────────
+
+test('the hosted reminder and the handbook carry the parity launch and the no-silencing rule', () => {
+  const hosted = inLoop.HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE;
+  assert.match(hosted, /builds the app and serves the platform's hosted\s+assets as production does/);
+  assert.match(hosted, /Never silence one with an empty response/);
+  const handbook = fs.readFileSync(path.join(__dirname, '..', 'src', 'prompts', 'app-conventions.md'), 'utf8');
+  const inLoopSection = handbook.slice(handbook.indexOf('## In-loop browser (build turns)'),
+    handbook.indexOf('## Content rules'));
+  assert.match(inLoopSection, /runs the app's\s+`npm run build` first/);
+  assert.match(inLoopSection, /front proxy answers `\/usernode-bridge\/`/);
+  assert.match(inLoopSection, /is a bug until you have ruled\s+the page itself out/);
+  assert.doesNotMatch(inLoopSection, /blank or empty page usually means missing seed data/i);
+  assert.match(handbook, /Never answer these prefixes from the app's own server\./);
+  assert.match(handbook, /Never special-case `\/tailwind\.css` in `server\.js`\./);
 });

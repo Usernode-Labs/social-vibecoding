@@ -22,7 +22,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const {
-  buildActive, buildRecents, currentAppOnScreen, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
+  buildActive, buildRecents, currentAppOnScreen, discussionHref, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS,
+  RECENTS_MIN_SHOWN,
 } = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
@@ -52,8 +53,11 @@ test('one list, newest first, across apps and every kind of conversation', () =>
     ['group', 'Team'],
     ['channel', '#chess'],
   ]);
+  // #3555: an app's channel is its project's Discussion tab, so its row is
+  // that page's address; #general keeps its Messages one here because no
+  // platform slug was passed (see the #3555 test below).
   assert.deepEqual(items.map((i) => i.href), [
-    '#messages/1', '#chat/g1', '#messages/3', '/app/notes', '#messages/2', '#messages/app/chess',
+    '#messages/1', '#chat/g1', '#messages/3', '/app/notes', '#messages/2', '/app/chess/workshop?ws=discussion',
   ]);
 });
 
@@ -385,6 +389,36 @@ test('Recents are desktop-only, and replace the Resume strip there', () => {
   assert.match(css, /THE RESUME STRIP GIVES WAY TO RECENTS[\s\S]{0,500}#platform-parked \{\s*display: none;\s*\}/);
 });
 
+test('blocking forgets only that app from Resume and persisted Recents', () => {
+  const previousWindow = global.window;
+  const storage = new Map();
+  global.window = { localStorage: {
+    getItem: key => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key),
+  } };
+  try {
+    const { parkedStore } = loadTsx('frontend/src/features/nav/mount.ts');
+    const nav = window.UsernodeReact.nav;
+    nav.setViewer('ana');
+    nav.park({ slug: 'allowed', name: 'Allowed' });
+    nav.park({ slug: 'blocked', name: 'Blocked' });
+    nav.forget('blocked');
+    assert.equal(parkedStore.get().app, null);
+    assert.equal(storage.has('usernode_parked_app_v1'), false);
+    const recents = () => JSON.parse(storage.get('usernode_recent_apps_v1'));
+    assert.equal(recents().owner, 'ana');
+    assert.deepEqual(recents().apps.map(app => app.slug), ['allowed']);
+    nav.park({ slug: 'allowed', name: 'Allowed' });
+    nav.forget('blocked');
+    assert.equal(parkedStore.get().app.slug, 'allowed', 'another app stays resumable');
+    assert.deepEqual(recents().apps.map(app => app.slug), ['allowed']);
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
 test('recent apps are remembered per account, and park(null) forgets nothing', () => {
   const storage = new Map();
   global.window = {
@@ -596,4 +630,105 @@ test('#3074: Active is drawn in the desktop block only, the app you are in lit l
   assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
   assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--lit-tint\);\s*color: var\(--lit-ink\);\s*\}/);
   assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
+});
+
+// ── #3555: a channel opens its project's Discussion tab ───────────────
+//
+// A project's channel is a tab of its page, drawn in place under the page's
+// coloured header (#3494 put #general on Homeroom's). Its Recents row still
+// went to the room's Messages address, which draws it on the Messages screen
+// with a chevron back up to the hub: the wrong header for a room that is one
+// of the community's own tabs. The row is a door to that tab now.
+
+function discussion(slug, name, at) {
+  return { slug, name, channel: name.toLowerCase(), iconUrl: null, iconEmoji: null, lastMessage: 'hi', lastAt: at, lastBy: 'bo' };
+}
+
+test('#3555: a channel row is its project\'s Discussion tab; #general is the platform\'s', () => {
+  const items = buildRecents({
+    apps: [],
+    conversations: [
+      conversation(1, 'channel', '2026-09-20T12:00:00Z', { channelKey: 'general' }),
+      conversation(2, 'direct', '2026-09-20T11:00:00Z', { peer: { id: 9, username: 'ana' } }),
+    ],
+    discussions: [
+      discussion('garden-ab12', 'Garden', '2026-09-20T10:00:00Z'),
+      // Homeroom's own app chat, which an admin can see listed: Homeroom's
+      // tab holds #general, not this room, so it keeps its Messages address.
+      discussion('homeroom', 'Homeroom', '2026-09-20T09:00:00Z'),
+    ],
+    agents: [],
+    platformSlug: 'homeroom',
+  });
+  assert.deepEqual(items.map((i) => [i.key, i.href, i.discussion ? i.discussion.slug : null]), [
+    ['conversation:1', '/app/homeroom/workshop?ws=discussion', 'homeroom'],
+    ['conversation:2', '#messages/2', null],
+    ['discussion:garden-ab12', '/app/garden-ab12/workshop?ws=discussion', 'garden-ab12'],
+    ['discussion:homeroom', '#messages/app/homeroom', null],
+  ]);
+  // Before the shell knows the platform's slug, #general keeps its Messages
+  // address rather than guessing a project.
+  const cold = buildRecents({
+    apps: [], discussions: [], agents: [],
+    conversations: [conversation(1, 'channel', '2026-09-20T12:00:00Z', { channelKey: 'general' })],
+  });
+  assert.equal(cold[0].href, '#messages/1');
+  assert.equal(cold[0].discussion, undefined);
+  assert.equal(discussionHref('recipe box'), '/app/recipe%20box/workshop?ws=discussion', 'the `?ws=` deep link, for a new tab');
+});
+
+test('#3555: pressing the row is the hub\'s door turned to the Discussion; a modified click is the browser\'s', () => {
+  const { onDiscussionClick, RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const previousWindow = global.window;
+  const calls = [];
+  const press = (location, event = {}) => {
+    let prevented = false;
+    global.window = {
+      location,
+      NavLink: { isNativeClick: (e) => !!(e.metaKey || e.ctrlKey) },
+      AppView: { _landOnTab: (slug, tab) => calls.push([slug, tab]) },
+    };
+    onDiscussionClick({ ...event, preventDefault: () => { prevented = true; } }, 'garden-ab12');
+    return prevented;
+  };
+  try {
+    const away = { pathname: '/', hash: '#messages' };
+    assert.equal(press(away), true);
+    assert.deepEqual(calls, [['garden-ab12', 'discussion']], 'the remembered tab first');
+    assert.equal(away.hash, '#app/garden-ab12/workshop', 'then the hub\'s address, which opens the page on it');
+    // On that page already: the door has turned it, and a second address for
+    // the same page would be a Back press that goes nowhere.
+    calls.length = 0;
+    const there = { pathname: '/app/garden-ab12/workshop', hash: '' };
+    assert.equal(press(there), true);
+    assert.deepEqual(calls, [['garden-ab12', 'discussion']]);
+    assert.equal(there.hash, '');
+    // Cmd-click: the browser opens the row's own address in a new tab.
+    calls.length = 0;
+    const modified = { pathname: '/', hash: '#messages' };
+    assert.equal(press(modified, { metaKey: true }), false);
+    assert.deepEqual(calls, []);
+    assert.equal(modified.hash, '#messages');
+  } finally {
+    global.window = previousWindow;
+  }
+
+  // The row keeps the channel's glyph and name; only where it goes changed.
+  const items = buildRecents({
+    apps: [], conversations: [], agents: [], discussions: [discussion('garden-ab12', 'Garden', '2026-09-20T10:00:00Z')],
+  });
+  const html = renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder: false, onToggleOlder() {}, now: Date.parse('2026-09-20T11:00:00Z'),
+  }));
+  const row = html.match(/<a class="platform-recent"[^>]*>/)[0];
+  assert.match(row, /href="\/app\/garden-ab12\/workshop\?ws=discussion"/);
+  assert.match(row, /data-recent-kind="channel"/);
+  assert.match(row, /data-recent-key="discussion:garden-ab12"/);
+  assert.match(row, /aria-label="Channel: #garden"/);
+
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /: item\.discussion \? \(event\) => onDiscussionClick\(event, item\.discussion!\.slug\) : undefined\}/,
+    'the list presses a channel row through the door');
+  assert.match(list, /const platformSlug = usePlatformSlug\(!!viewer\);/, '#general\'s project, as it becomes known');
+  assert.match(list, /active: active\.map\(\(item\) => item\.app!\.slug\),\n\s*platformSlug,\n/);
 });

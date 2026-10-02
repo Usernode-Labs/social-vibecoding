@@ -24,6 +24,17 @@ export function quotaHeadline(quota: AppCreationQuota): string {
 }
 
 /**
+ * Profile's "App slots" row (#3250): the headline, and a pending request for
+ * more when there is one. Null until the allowance is known, so the row says
+ * what it is for rather than inventing a count.
+ */
+export function appSlotsLine(quota: AppCreationQuota | null, requestedAt: string | null): string | null {
+  if (!quota) return null;
+  const headline = quotaHeadline(quota);
+  return requestedAt && quota.limit !== null ? `${headline} · more requested` : headline;
+}
+
+/**
  * Is the SERVER the limit this viewer runs into first? Only when it is does
  * the panel talk about it: a server with 40 free places says nothing to
  * someone with 2 slots of their own.

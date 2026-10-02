@@ -4,11 +4,11 @@ Agreed with evan on 2026-09-23, before implementation. This copy is the referenc
 
 ## Summary
 
-An **agent session** is one long-lived conversation per thread, per user, with a Mayor that can work on any app, including Homeroom itself. The Mayor drives one change at a time, using the existing per-change machinery underneath and the platform MCP as its toolset. It replaces the per-change sessions. The experimental Global Chat stays as it is, behind its own toggle. It ships behind a per-user experimental flag; with the flag on, new work starts in an agent session and existing sessions keep working unchanged.
+An **agent session** is one long-lived conversation per thread, per user, with a Mayor that can work on any app, including Homeroom itself. The Mayor drives one change at a time, using the existing per-change machinery underneath and the platform MCP as its toolset. It replaces the per-change sessions. The experimental Global Chat stays as it is, behind its own toggle. It shipped behind a per-user experimental flag; since stages 3 and 4 of the rollout the flag is gone, new work starts in an agent session for everyone, classic sessions are no longer created, and existing ones keep working unchanged (see *As built: stages 3 and 4*).
 
 **Goals**
 
-- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, visual evidence, promotion, votes, merge.
+- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, before & after shots, promotion, votes, merge.
 - Do everything a per-change session does through one shared platform MCP toolset, used by the Mayor and by external Claude or Codex clients.
 - Give the coding agent read-only platform MCP access. Every write goes through the Mayor, and writes that matter are confirmed with the user.
 - Take an app hint from wherever the user starts, without binding the session to that app.
@@ -42,7 +42,7 @@ Today one `chat_sessions` row is both the conversation and the change. A `chat_s
 
 | Surface | What it is | What it lacks for #2779 |
 | --- | --- | --- |
-| Per-change session | Chat, branch, PR, staging, checks, visual evidence and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visual-intent and evidence MCPs, under `--strict-mcp-config`. |
+| Per-change session | Chat, branch, PR, staging, checks, before & after shots and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visible-changes and shots MCPs, under `--strict-mcp-config`. |
 | Global Chat (experimental, opt-in) | Threads per user, not tied to an app (`global_chat_threads`). A cheap GLM model calls 525 auto-generated web routes by replaying the user's browser cookie. It confirms writes with sealed one-use tokens and has its own monthly cap. | No Mayor and no MCP. Code work creates a per-change session and navigates away (plan.md rule 5). The `activeAppSlug` hint is cleared before the chat opens (`app.js:5586`). |
 | Hosted Homeroom connector | 29 MCP tools over stateless Streamable HTTP, with OAuth tokens (`svmcp_`) issued only after browser consent. The allowlist is `CONNECTOR_ALLOWED_ROUTES`. | `prepare_work`/`submit_work` assume an external checkout and the user's own GitHub fork. Its charter assumes a human-driven client. There are no delegated or service tokens. |
 | CLI MCP (local, stdio) | Native proposal flow: `proposal_start → push_commit → submit_build → status/recheck → promote`, plus generic `api_read`/`api_write`. Uses `svcli_` device-code tokens and needs no fork. | Runs on the user's machine and uploads a local commit. It has no way to ask a platform worker to build. |
@@ -86,7 +86,7 @@ One per-user flag decides where new work starts. It never changes how existing s
 - `users.agent_sessions_enabled BOOLEAN NULL`. NULL means "follow the platform default"; TRUE or FALSE is the user's explicit choice, so an opt-out survives the later default flip.
 - `config.agentSessionsDefault` (env `AGENT_SESSIONS_DEFAULT`, default `false`). The effective value is `COALESCE(user value, platform default)`.
 - The effective value is loaded into `req.user` by `middleware/auth.js`, returned by `/api/auth/me` as `agentSessionsEnabled`, and read by the client as `App.user.agentSessionsEnabled`. The pinned auth SELECT in `sql-dynamic-baseline.json` is updated to match.
-- `POST /api/me/agent-sessions` is a clone of `/api/me/session-bridge`. The UI is a `SwitchRow`, "Agent sessions (experimental)", in Settings → Experimental.
+- `POST /api/me/agent-sessions` is a clone of `/api/me/session-bridge`. The UI is a `SwitchRow`, "Agent sessions (experimental)", in Settings → Experimental. (Both retired in stages 3 and 4.)
 - Every server route that creates an agent session also checks the flag. The client check is for routing only; the server check is the gate.
 
 **Behaviour by flag state**
@@ -108,6 +108,8 @@ One per-user flag decides where new work starts. It never changes how existing s
 2. Open opt-in for every user (\`AGENT\_SESSIONS\_OPT\_IN=all\`), with the Experimental label shown. **This is the current stage:** `src/config.js` defaults the audience to `all`, because the variable is not declared in `dapp.json`'s `platform_env` and so could not be set in production. `AGENT_SESSIONS_OPT_IN=admins` closes the switch to admins again.
 3. Flip `AGENT_SESSIONS_DEFAULT=true`. Users who opted out keep classic sessions.
 4. Remove the classic creation path in a separate, later change. Global Chat's future is decided separately. Classic sessions stay readable until their changes close.
+
+**Done.** Stages 3 and 4 shipped together, and further than planned: there is no opt-out left to keep, because the flag and its Settings switch are gone. See *As built: stages 3 and 4* under the implementation plan.
 
 ## Data model
 
@@ -140,7 +142,7 @@ The data model adds one table and two nullable columns. Every migration is addit
 
 **What stays as it is**
 
-- `pr_votes`, `check_runs`, `visual_evidence_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
+- `pr_votes`, `check_runs`, `shot_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
 - Global Chat's six `global_chat_*` tables are not touched in v1. They stay for as long as Global Chat does.
 - No existing session is migrated. Classic sessions have `agent_session_id` NULL forever.
 
@@ -156,7 +158,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
   - `transport`: `{send, sendStatus, heartbeat, done}`, for SSE plus WebSocket plus bus.
 - What moves: handler lines \~5392–6706, tool definitions and resolvers \~10596–11700, `resolveTurnPills`, `buildMayorMessages` and `getMayorSystemPrompt` (about 2.5k lines in total).
 - What stays in `POST /api/sessions/:id/chat` (\~300 lines): auth, row load, attachments, branch mint, the user-message insert and opening the SSE stream. Its conversation adapter wraps the change's own transcript, so classic behaviour is unchanged.
-- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, visual evidence and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
+- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, before & after shots and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
 - The headless auto-session keeps its own copy of the loop in v1. Folding it into the service is a follow-up.
 - Staging: proposal 1 moves the turn as it is, `runMayorTurn(ctx, deps)` taking the route's own inputs, pinned byte-for-byte by `tests/mayor-turn-golden.test.js`. Proposal 3 splits `ctx` into the `conversation`, `change` and `transport` above.
 
@@ -172,7 +174,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 
 | Tool | Source | Confirmed by user | Notes |
 | --- | --- | --- | --- |
-| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
+| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_discussion`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
 | `start_change {app, title, linkedIssues?}` | Shared MCP (new) | **Yes** | Creates a change with `agent_session_id` and makes it active. It parks the previous active change. It counts against the active-session cap. |
 | `promote_change`, `sync_change`, `recheck_change`, `withdraw_change` | Shared MCP (new) | **Yes** (except recheck) | Promotion and withdrawal are the user's decision. Sync revises the change, which clears votes, so it needs a yes. |
 | `create_request`, `claim_request`, `release_request`, `propose_close_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name. `propose_close_request` opens a group vote on closing a request; it closes nothing by itself |
@@ -352,7 +354,7 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 1. `buildTurnSecretEnv` mints a `worker_read` delegation, next to today's `mintIssuesReadJwt`. It is bound to `user_id`, `change_id` and the change's `app_id`, and lasts one turn.
 2. The worker gets it as `HOMEROOM_MCP_TOKEN`.
-3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `build-evidence-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
+3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `visible-changes-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
 4. Claude: the bridge is added to the strict `~/.usernode-mcp.json` for build and scout modes. The token is passed through the environment, never expanded into the heredoc at bootstrap.
 5. Codex: the bridge is added to the per-turn `config.toml` with `env_vars` and `enabled_tools`. The token is added to `shell_environment_policy.exclude` and to output scrubbing.
 6. The turn's `finally` revokes the delegation. Pausing or archiving the change also makes it fail on the next call.
@@ -452,7 +454,7 @@ There is one new screen, the agent session. Four existing surfaces change. Mocku
 | **Messages → Agents** | Agent-session rows (title, focus-app tile, active-change status, last activity) sit above classic session rows. Global Chat rows still appear for people who turned Global Chat on, labelled apart from agent sessions. “+” → Agent chat opens a new agent session with no app picker. |
 | **Change page** `#app/<slug>/dev/proposals/<id>` for a change started from an agent session | Status, preview, spec, checks and votes as today. For the owner, the transcript slice is read-only, and the composer is replaced by “Continue in agent session”. Other members see what they see today. |
 | **Entry points** (see Rollout) | Same buttons and labels. With the flag on they open the agent session with a hint instead of a classic session. |
-| **Settings → Experimental** | An “Agent sessions (experimental)” switch, shown to admins only until stage 2. The Global Chat section stays as it is. |
+| **Settings → Experimental** | An “Agent sessions (experimental)” switch, shown to admins only until stage 2, and retired in stages 3 and 4. The Global Chat section stays as it is. |
 
 **Implementation constraints** (from AGENTS.md)
 
@@ -482,9 +484,9 @@ The Mayor uses the normal per-user LLM budget instead of the monthly cap.
 **Side by side**
 
 - Messages → Agents shows agent-session rows for users with the agent-sessions flag on, and Global Chat rows for users with Global Chat on. A user with both sees both, each labelled.
-- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled`.
+- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled` (retired with the flag in stages 3 and 4: every viewer has them).
 - `#chat/<id>`, Global Chat's settings section and `/api/global-chat/*` do not change.
-- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1.
+- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1. (Done in stages 3 and 4: it opens an unsent agent session with the task.)
 
 **Existing Global Chat threads** stay where they are, for as long as Global Chat does.
 
@@ -576,7 +578,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 | 3b-ii | The agent-session Mayor, building | Dispatch to the active change (`dispatch_scout`, `dispatch_coding_agent`), forwarding the change's events to the conversation, the wrap-up, the follow-up turn after a confirmation, compaction, the Mayor-internal tools | None (API only, behind the flag) | High |
 | 4 | Agent sessions UI | `AgentSessionScreen`, the changes drawer, Messages rows, entry-point routing with hints, the owner view of the change page, the Settings switch, `dapp.json` checks | Only for users with the flag on | Medium |
 | 5 | Read-only MCP for the coding agent | `worker_read` minting, `homeroom-read-mcp.js`, Claude and Codex config, the prompt block | None visible | Small to medium |
-| later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision |
+| later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision. Shipped as one change: see *As built: stages 3 and 4* |
 
 **Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan. 3b was split again the same way: 3b-i is a Mayor that reads and proposes, 3b-ii is the Mayor that builds. After 3b-i merged, 3b-ii, 4 and 5 were folded into one proposal, so that the Mayor that builds ships together with the screen that shows it and the reads the coding agent gains from it.
 
@@ -771,11 +773,27 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - **A change's title reads as written on the Dev board** (#3010). The session cards' label (`AppView._sessionCardLabel`) still returned `escapeHtml` output from the innerHTML days, while every reader of it is now a React card model that escapes it again, so a title with a quote read `&quot;` (an ampersand, `&amp;`). The Mayor names changes in prose, quotes and all, which is how it surfaced. It returns plain text now, as do the proposal meta's provenance words, which had the same double escape.
 - **Phones** (#3016). At 390px the session bar's controls came to 537px, and a bar that could not wrap made the whole conversation that wide; the screen clips its overflow, so the right edge of every message and the Send button were gone. The bar wraps on both surfaces (Build starts the second row on a phone, Changes and the ⋯ end it), the panel shrinks below its content (`min-w-0`), and an empty message box is as tall as its hint instead of cutting it off mid-line.
 
+**As built: stages 3 and 4 (the flag retired, classic creation closed).** Agent sessions are no longer experimental. There is no per-user choice left, so everyone, including users who had opted out, starts new work in an agent session. Classic sessions that already exist keep their chat, builds, previews and votes exactly as before; only creating one is closed.
+
+- **The flag is gone.** `services/agent-sessions-flag.js`, `config.agentSessionsDefault` / `agentSessionsOptIn` (`AGENT_SESSIONS_DEFAULT`, `AGENT_SESSIONS_OPT_IN`), `POST /api/me/agent-sessions` and the Settings → Experimental switch (`#settings-agent-sessions-row` and its switch and status line) are removed. The auth middleware no longer reads `users.agent_sessions_enabled`. The column stays in `schema.sql`, unread, so a rolling deploy's older pods keep their `SELECT`; a later migration can drop it.
+- **`/api/auth/me` still reports `agentSessionsEnabled: true`**, for a shell cached before the deploy: its entry points read it to choose between an agent session and a classic one, and the classic one would now be refused. `agentSessionsChoosable` is gone, so such a shell hides the old switch.
+- **Creating a session needs no flag.** `GET /api/agent-sessions/draft` and `POST /api/agent-sessions` answer any signed-in user.
+- **Every entry point opens an unsent agent session** with no classic fallback: Improve's New change and the Workshop's Start here (`entry: improve`), Messages' "+" (now "Agent session", with no app picker: `messages/agent-dialog.tsx` and its two ids are removed), the change page's "Start a new change" banner (`banner`), a request's Start work and Feedback's "Try a fix yourself" (`issue`, with the title), a proposal's Explore (`proposal`, now carrying the explain-only seed as the composer's first message), and a finished auto-solve run's primary, which reads "Start work" and starts on the run's request instead of cloning the run.
+  - **The hint gains two screen-only fields**, dropped by `serverHint` like `issueTitle`: `message`, the first message the unsent conversation offers (`draftSeed` in `request-seed.ts`), and `handoff`, which opens the composer's "Build with" sheet on that agent's tab. The out-of-credits card's "Use Claude Code" / "Use Codex" (`AppView.createProposal({ flow })`) uses it, instead of creating a classic session to record a hand-off on.
+  - **The old address**, `/app/<slug>/dev/sessions/new`, resolves in the router (`App.openNewChangeAsAgentSession`): it prepares the unsent conversation with `{ slug, entry: 'app' }` and replaces itself with `#messages/agent/new` (`#agent/new` in the side panel's own document), so a bookmark or Back lands in an agent session and Back does not bounce. The dev chat's placeholder machinery behind that screen (`startPendingSession`, `_materializePendingSession`) is no longer reachable and is left for a follow-up to delete.
+- **The server closes classic creation.**
+  - `POST /api/apps/:slug/sessions` answers `403 {code: 'agent_sessions_only'}` to anything but an `agent_mayor` delegation that names a conversation (the Mayor's `start_change`): a browser, a shell cached before the deploy, a CLI token, a coding agent's `worker_read` grant, and Global Chat's cookie loopback.
+  - `POST /api/sessions/:id/clone-headless` answers the same to anything but an external connector token (not a delegation): the hosted connector's `submit_platform_build` still takes ownership of a build this way.
+  - `POST /api/sessions/:id/fork` answers `410` to everyone and writes nothing; "Fork this chat" is gone from the transcript, and the transcript read reports `can_fork: false` so an older shell does not draw it.
+  - Still creating rows, because none is a classic chat a person starts: the headless run, a CLI hand-off (`proposal_start`), a connector's share of work in progress, an imported PR, a revert, manifest PRs, maintenance campaigns, the Homeroom bot and demo mode.
+- **Global Chat's "Start development work"** creates nothing any more. It keeps its capability id and its confirmation, and on confirm hands the browser an `agent_session_handoff` action: the unsent conversation on the app (and the issue), entry `global-chat`, with the exact task in its box for the user to send. "Continue development work" still sends a turn to an existing classic session. The inventory exempts the fork and clone-headless routes, so Global Chat does not offer them.
+- **Staging:** the three declared checks that loaded the classic unsent-change screen now load its old address and assert the unsent agent session it lands on: the empty state, a live message box with the session's ⋯ disabled, and the composer's model pill.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;
 2. runs the local fast checks (`npm test`, which also builds the shell);
-3. declares visual evidence for UI changes;
+3. declares before & after shots for UI changes;
 4. is submitted with a user-facing summary and a technical description.
 
 ## Questions

@@ -30,7 +30,7 @@
 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -44,6 +44,7 @@ import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
+import { DescriptionEditor } from './description-editor';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -60,6 +61,7 @@ import type {
   LedgerRow,
   HeroView,
   StepRow,
+  StepRun,
   StepsView,
 } from './model';
 
@@ -189,11 +191,40 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   );
 }
 
+/**
+ * Passing checks that are counted but not yet named (`passesFor`): opening
+ * their fold reads them (AppView._loadCheckNames), and the verdict re-renders
+ * with the names once they land. Until then the fold says so.
+ */
+function usePassNames(passesFor: number | null | undefined) {
+  const [state, setState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const onToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
+    const av = typeof window === 'undefined' ? null : (window as any).AppView;
+    if (!e.currentTarget.open || !passesFor || state === 'loading' || !av?._loadCheckNames) return;
+    setState('loading');
+    Promise.resolve(av._loadCheckNames(passesFor)).then(
+      (ok: boolean) => setState(ok ? 'idle' : 'failed'),
+      () => setState('failed'),
+    );
+  };
+  return { state, onToggle };
+}
+
+function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
+  return (
+    <li className="dev-passes-pending opacity-70">
+      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+    </li>
+  );
+}
+
 /** The checks verdict: its rows nest, and its passes fold away. */
 export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
-  const passList = v.passes.length ? (
+  const names = usePassNames(v.passesFor);
+  const passList = v.passes.length || v.passesFor ? (
     <ul className="mt-1 ml-1 space-y-0.5">
       {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
+      {v.passesFor ? <PassNamesPending state={names.state} /> : null}
     </ul>
   ) : null;
   return (
@@ -206,8 +237,8 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
         </ul>
       ) : null}
       {v.foldPasses ? (
-        <details className="mt-1">
-          <summary className="cursor-pointer opacity-80">{`Show ${v.passes.length} passing checks`}</summary>
+        <details className="mt-1" onToggle={names.onToggle}>
+          <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
           {passList}
         </details>
       ) : passList}
@@ -406,7 +437,13 @@ function HelpLinks({ question }: { question: boolean }): ReactNode {
  * app-view.js (`_topicLedgerRows`) from the same reason, checks, roster and
  * note builders the "Where it stands" ledger drew from — this only draws.
  */
+/** How many checks passed on a ledger row — counted, even while `passes` is not yet listed. */
+function passingCount(r: LedgerRow): number {
+  return r.passCount ?? (r.passes ? r.passes.length : 0);
+}
+
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+  const names = usePassNames(r.passesFor);
   return (
     <>
       {r.text.length ? (
@@ -452,14 +489,15 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
         </ul>
       ) : null}
-      {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
+      {(r.actions && r.actions.length) || passingCount(r) ? (
         <span className="dev-ledger-ops">
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
-          {r.passes && r.passes.length ? (
-            <details className="dev-ledger-passes">
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
+          {passingCount(r) ? (
+            <details className="dev-ledger-passes" onToggle={names.onToggle}>
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
               <ul className="dev-ledger-fails">
-                {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
+                {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
+                {r.passesFor ? <PassNamesPending state={names.state} /> : null}
               </ul>
             </details>
           ) : null}
@@ -489,18 +527,8 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
 }
 
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
-  // "Fork this chat" is painted INSIDE the body, after its fetch, by
-  // `_transcriptActionsHtml` — so it cannot be a child's onClick. The
-  // section delegates, which is what `_renderTopicHead` bound here per
-  // paint before.
-  const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    const btn = (e.target as HTMLElement).closest?.('[data-fork-chat]') as HTMLButtonElement | null;
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    call('forkSharedChat', parseInt(btn.dataset.forkChat || '', 10), btn);
-  };
   return (
-    <div className="st-section" data-transcript-section={t.id} onClick={onClick}>
+    <div className="st-section" data-transcript-section={t.id}>
       <button
         type="button"
         className="st-section-head"
@@ -540,7 +568,10 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
   const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
-  const response = await fetch(`${url}${av?._demoQS?.() || ''}`, { signal });
+  // The short form: passing checks are counted, and their fold reads the
+  // names when opened (AppView._loadCheckNames, _readTopicRow).
+  const demo = av?._demoQS?.() ? '&demo=1' : '';
+  const response = await fetch(`${url}?results=failing${demo}`, { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
@@ -883,30 +914,30 @@ function IssueAssociations({
   );
 }
 
-/** The evidence run's state, as one strip: a failed or waived run explains itself. */
-function EvidenceStrip({ e }: { e: NonNullable<TopicBody['evidence']> }): ReactNode {
+/** The shots run's state, as one strip: a failed or waived run explains itself. */
+function ShotsStrip({ e }: { e: NonNullable<TopicBody['shots']> }): ReactNode {
   const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
   return (
-    <div className="dev-topic-evidence" data-evidence-state={e.state}>
+    <div className="dev-topic-shots" data-shots-state={e.state}>
       <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
-      <span className="dev-topic-evidence-text">{e.sentence}</span>
+      <span className="dev-topic-shots-text">{e.sentence}</span>
     </div>
   );
 }
 
 /**
- * The evidence states that are a run still going: the picture is coming.
- * 'planned' is in this set only while it is FRESH — `evidence.notStarted`
- * (AppView._evidenceNotStarted) marks the run that has sat there past the
+ * The shots states that are a run still going: the picture is coming.
+ * 'planned' is in this set only while it is FRESH — `shots.notStarted`
+ * (AppView._shotsNotStarted) marks the run that has sat there past the
  * idle threshold, and that one is not going anywhere on its own.
  */
-const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 
 /**
- * The before/after: the verified evidence card (or the legacy capture
+ * The before/after: the verified shots card (or the legacy capture
  * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Visual preview in
- * progress" in a box read as a verdict. A run that failed, or was waived,
+ * own spinner — no panel and no state label, because "Taking the shots"
+ * in a box read as a verdict. A run that failed, or was waived,
  * keeps its strip: that is a fact a voter weighs.
  *
  * #2601/#2558: a run that never started keeps the PANEL rather than the
@@ -915,7 +946,7 @@ const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'repl
  */
 function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
-  const ev = body.evidence || null;
+  const ev = body.shots || null;
   const notStarted = !!(ev && ev.notStarted);
   if (tiles && (!ev || ev.verified || notStarted)) {
     return (
@@ -927,15 +958,17 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     );
   }
   if (!ev || ev.verified) return null;
-  if (!notStarted && EVIDENCE_BUILDING.has(ev.state)) {
+  // An interrupted run the recovery sweep is about to start again reads as
+  // under way too: the next thing that happens needs nobody.
+  if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
     return (
-      <p className="dev-topic-hero-evidence" data-evidence-state={ev.state}>
+      <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>Building before/after photos</span>
+        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
       </p>
     );
   }
-  return <EvidenceStrip e={ev} />;
+  return <ShotsStrip e={ev} />;
 }
 
 /**
@@ -960,8 +993,9 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const noSpec = all.find((a) => isVoteSpec(a, 'no'));
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
+  const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
   // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the evidence — stay off: the steps say it.
+  // chips — checks, behind main, the shots — stay off: the steps say it.
   const badges = (card.badges || []).filter(Boolean);
   const chips = [
     ...badges.filter((b) => b.t === 'attr'),
@@ -1003,16 +1037,28 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
           {chips.map((b) => <Badge key={b.key} b={b} />)}
         </div>
       ) : null}
-      {/* The band is the card's (card/dev-card.tsx ActionBand), Vote first.
-          It wears the card's class so the band's own rules — the one-line
-          fold into ⋯, the accent pills, Preview and the hamburger at the
-          right — apply here as on the card; app.css takes the card's box
-          off it. */}
+      {/* The card's two rows, as the board card draws them: the status row —
+          the pill spanning, the Vote button at its right end — then the band
+          (card/dev-card.tsx ActionBand). The pill carries the vote's count,
+          so the Votes step below only names who voted. The rows wear the
+          card's class so the band's own rules — the one-line fold into ⋯,
+          the accent pills, Preview and the hamburger at the right — and the
+          pill's block form apply here as on the card; app.css takes the
+          card's box off it. */}
       <div className="dev-card-topic dev-topic-hero-actions">
-        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
+        {pill || vote ? (
+          <div className="dev-card-badges dev-card-status dev-topic-hero-status">
+            {pill ? <StatusPill s={pill} /> : null}
+            {vote}
+          </div>
+        ) : null}
+        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryStale && body.summaryHtml
+        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
+        : null}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
@@ -1043,6 +1089,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
       <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
 }
@@ -1069,6 +1116,169 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
   );
 }
 
+/** "?" — How voting works, on the Votes step's line. */
+function HelpQuestion(): ReactNode {
+  return (
+    <span className="dev-ledger-help voting-help-hint">
+      <button
+        type="button"
+        className="voting-help-btn un-touch-target"
+        data-voting-help=""
+        aria-label="How voting and merges work"
+        title="How voting and merges work"
+      >?</button>
+    </span>
+  );
+}
+
+/** 13214 → "13,214": a count, grouped the one way the page writes numbers. */
+function fmtCount(n: number): string {
+  return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** One bar: passed from the left, failed after it, the rest the track. */
+function RunTrack({ c, busy }: {
+  c: { ran: number; passed: number; failed: number; expected: number | null } | null; busy?: boolean;
+}): ReactNode {
+  const total = c ? (c.expected && c.expected > 0 ? c.expected : Math.max(c.ran, 1)) : 1;
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  return (
+    <span className={`dev-step-run-track${busy ? ' is-busy' : ''}`} aria-hidden="true">
+      {c ? <i className="is-pass" style={{ width: pct(c.passed) }} /> : null}
+      {c && c.failed ? <i className="is-fail" style={{ left: pct(c.passed), width: pct(c.failed) }} /> : null}
+    </span>
+  );
+}
+
+/**
+ * The Checks step, open: the build as its steps (equal segments — where the
+ * build is, not how long is left; see BuildSteps), then the app's declared
+ * checks and the unit suite as bars, the failures by name with their "Why it
+ * failed" doors, and one line of context — what the run is doing and who
+ * started it, or why it could not run. The build row keeps BuildSteps' hooks
+ * (`data-build-step`, `data-build-progress`, `data-step`) for the checks.
+ */
+function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
+  const b = run.build;
+  const now = b ? b.steps.find((st) => st.state === 'now') : null;
+  const built = b ? b.steps.filter((st) => st.state === 'done').length : 0;
+  const c = run.checks;
+  const checksValue = c && c.ran
+    ? (c.done
+      ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
+      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
+    : (run.live ? (run.phase === 'testing' ? 'Starting' : 'After the build') : 'Did not run');
+  const u = run.unit;
+  const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
+  const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
+    : u.done ? `${fmtCount(u.passed)} passed${u.failed ? ` · ${u.failed} failed` : ''}`
+      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? ` · ${u.failed} failed` : ''}`;
+  return (
+    <div className="dev-step-run" id={id}>
+      {b ? (
+        <div className="dev-step-run-row dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
+          <span className="dev-step-run-k">Build</span>
+          <span className="dev-ledger-build-bar" aria-hidden="true" data-build-progress={`${built}/${b.steps.length}`}>
+            {b.steps.map((st) => <span key={st.key} className={`dev-ledger-build-seg is-${st.state}`} data-step={st.key} />)}
+          </span>
+          <span className="dev-step-run-v">{b.value}</span>
+        </div>
+      ) : null}
+      <div className="dev-step-run-row" data-checks-progress={c ? `${c.ran}/${c.expected ?? '?'}` : undefined}>
+        <span className="dev-step-run-k">App checks</span>
+        <RunTrack c={c} />
+        <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
+      </div>
+      {u ? (
+        <div className="dev-step-run-row" data-unit-phase={u.phase}>
+          <span className="dev-step-run-k">Unit tests</span>
+          <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
+          <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
+        </div>
+      ) : null}
+      {run.fails.length ? (
+        <ul className="dev-ledger-fails">
+          {run.fails.map((f) => <CheckRowView key={f.key} r={f} />)}
+        </ul>
+      ) : null}
+      {run.note ? <p className="dev-step-run-note">{run.note}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * One merge gate's step: the mark, the label and one short line (app-view.js
+ * `_stepLine`, the same words the card's strip uses), then a button only for
+ * the person who can clear it. The Checks step is a disclosure: it opens
+ * onto its run (RunPanel) by itself while a run is going and when it failed,
+ * and a reader's own open or close sticks after that.
+ */
+function GateStepView({ r }: { r: StepRow }): ReactNode {
+  const run = r.run || null;
+  const seed = !!(run && run.open);
+  const [open, setOpen] = useState(seed);
+  // Re-seed on the flip INTO a run: a step that mounted idle and then
+  // started one opens itself, as the card's checklist re-seeds (dev-card.tsx
+  // RequirementsRow). A repaint that still says the same keeps the reader's.
+  const seedRef = useRef(seed);
+  useEffect(() => {
+    if (seed && !seedRef.current) setOpen(true);
+    seedRef.current = seed;
+  }, [seed]);
+  const panelId = `dev-step-run-${r.gate || r.key}`;
+  const main = (
+    <>
+      <span className="dev-step-label">{r.label}</span>
+      {r.line ? <span className="dev-step-line">{r.line}</span> : null}
+    </>
+  );
+  const actions = r.actions || [];
+  return (
+    <li
+      className={`dev-step dev-step-${r.state}`}
+      data-note={r.key}
+      data-req-gate={r.gate || undefined}
+      data-req-state={r.state}
+      {...(r.attrs || {})}
+    >
+      <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
+        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+      </span>
+      {run ? (
+        <button
+          type="button"
+          className="dev-step-main dev-step-toggle"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {main}
+          <ChevronRightIcon className="dev-step-chev" aria-hidden="true" />
+        </button>
+      ) : (
+        <span className="dev-step-main">
+          {main}
+          {r.votes || r.help ? (
+            <span className="dev-ledger-review-line">
+              {r.votes ? <span className="dev-ledger-roster dev-step-line">{r.votes}</span> : null}
+              {r.help ? <HelpQuestion /> : null}
+            </span>
+          ) : null}
+          {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
+        </span>
+      )}
+      {(run && open) || actions.length ? (
+        <div className="dev-step-body">
+          {run && open ? <RunPanel run={run} id={panelId} /> : null}
+          {actions.length ? (
+            <span className="dev-ledger-ops">{actions.map((a) => <ActionButton key={a.key} a={a} />)}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * The steps: the card's merge-requirements strip (card/dev-card.tsx
  * RequirementsRow) as a sheet — the same headline, detail and count across
@@ -1082,7 +1292,8 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
       <div className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
         <div className="dev-steps-head">
           <span className="dev-steps-headline">{s.headline}</span>
-          {s.detail ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
+          {/* A gate sheet has no detail: the current step's own line says it. */}
+          {s.detail && !s.simple ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
           {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
         </div>
         <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -1090,7 +1301,9 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
               ledger row it wears, and that changes as the row gains or loses
               detail (_topicStepsView's `useRow`), which remounted the step
               and redrew it from nothing mid-read. */}
-          {s.rows.map((r) => <StepRowView key={r.gate || r.key} r={r} help={help} />)}
+          {s.rows.map((r) => (s.simple
+            ? <GateStepView key={r.gate || r.key} r={r} />
+            : <StepRowView key={r.gate || r.key} r={r} help={help} />))}
         </ol>
       </div>
     </section>
@@ -1251,6 +1464,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               a body that carries one gets it whatever page it is on. */}
           {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
           {body.proposalBody && id ? <DetailsSheet id={Number(id)} html={body.proposalBody.html} /> : null}
+          {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
+            const patch = { pr_summary_md: data.description, pr_summary_input_version: data.version,
+              pr_summary_source: 'author', pr_summary_stale: data.stale, pr_body: data.prBody ?? session?.pr_body };
+            setLoaded((current: any) => ({ ...(current || session || {}), ...patch, id }));
+            av._cacheDescription(Number(id), data);
+          }} /> : null}
         </>
       ) : (
         <>
@@ -1329,7 +1548,7 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 className="dev-topic-h">About this issue</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue</h4>
         {editor.canEdit && !editing ? (
           <button
             type="button"
@@ -1347,6 +1566,7 @@ function IssueBody(
         <form className="mt-2 space-y-3" data-issue-body-editor={editor.issue} onSubmit={save}>
           <Textarea
             id="dev-issue-body-input"
+            aria-labelledby="dev-issue-body-heading"
             rows={10}
             maxLength={10000}
             width="full"

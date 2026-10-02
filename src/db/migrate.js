@@ -40,6 +40,8 @@ async function migrate(config) {
 
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
+  await require('../services/moderation-migration').importLegacyReports(pool);
+  await require('../services/moderation').purgeExpired(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -117,6 +119,7 @@ async function migrate(config) {
   await seedStagingReadonlyDevTab(pool);
   await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
+  await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
   // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
   // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
@@ -168,6 +171,8 @@ async function migrate(config) {
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
   await seedStagingTopochain(pool, config);
+  // After it: the First challenges hang off its season-type event.
+  await seedStagingFirstChallenges(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -1447,10 +1452,19 @@ async function seedStagingGeneralChannel(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     await pool.query(
-      `INSERT INTO users (id, username, password)
-       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login'),
-              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login', TRUE),
+              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login', TRUE)
        ON CONFLICT DO NOTHING`
+    );
+    // The persisted demo inbox uses these same identities. Repair profiles
+    // from older previews, preserving any moderation decision.
+    await pool.query(
+      `UPDATE users SET profile_published = TRUE
+        WHERE (id, username) IN ((902783, 'staging-demo-general-ada'),
+                                 (902784, 'staging-demo-general-lin'))
+          AND password = 'staging-demo-not-a-login'
+          AND profile_published = FALSE AND profile_disabled_at IS NULL`
     );
     const room = await pool.query(
       `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
@@ -4336,12 +4350,12 @@ async function seedStagingCcProgressRun(pool, config) {
   // ascending timestamps.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add a progress indicator for Claude Code runs.', metadata: {}, minutesAgo: 39 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 38 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5.5)...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 252000 }, minutesAgo: 34 },
     { role: 'user', content: '[staging fixture] Make sure the elapsed timer never disappears.', metadata: {}, minutesAgo: 33 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5.5)...', metadata: {}, minutesAgo: 32 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 32 },
     { role: 'system', content: 'Claude Code made no changes', metadata: { ccOutput: ccNoOpOutput, ccOutcome: 'no_changes', durationMs: 41000 }, minutesAgo: 31 },
   ];
@@ -4724,7 +4738,7 @@ async function seedStagingCcEstimateRun(pool, config) {
   // `_active` and whose `_estimate` the summary reads.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add the new route handler.', metadata: {}, minutesAgo: 3 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 2 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5.5)...', metadata: {}, minutesAgo: 2 },
     {
       role: 'system',
       content: 'Claude Code is running...',
@@ -4902,7 +4916,7 @@ async function seedStagingCcCohortRuns(pool, config) {
       },
       {
         role: 'system',
-        content: 'Spinning up coding agent (Claude Sonnet 5)...',
+        content: 'Spinning up coding agent (Claude Sonnet 5.5)...',
         metadata: {},
         minutesAgo: run.minutesAgo,
       },
@@ -10494,6 +10508,18 @@ async function seedStagingImportedPrProposal(pool, config) {
   const headSha1 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
   const branch1 = 'staging-fixture/imported-pr';
   let id1;
+  // #2722: an advisory "Content rules" flag rides on this passing proposal so
+  // the staging preview shows the row without calling the reviewer. Advisory,
+  // so check_state stays 'passing'.
+  const fixture1Results = JSON.stringify([
+    { name: 'loads with no console errors', status: 'pass' },
+    {
+      index: -5, name: 'Content rules', path: 'proposal diff', status: 'fail', advisory: true,
+      consoleErrors: [], summary: '',
+      failureReason: 'Flagged: Violence in src/staging-demo/game.js. Staging demo: the demo game shows a cartoon sword fight.',
+      reviewedSha: headSha1,
+    },
+  ]);
   {
     const { rows: have } = await pool.query(
       'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
@@ -10512,11 +10538,11 @@ async function seedStagingImportedPrProposal(pool, config) {
             '[staging fixture] Imported PR — feature from an external contributor',
             'In plain terms: an outside contributor built this on GitHub and it was imported here so the group can vote on it.',
             'promoted', 'imported', $4, 'octo-contributor',
-            'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
+            'passing', $6::jsonb,
             $4, NOW() - INTERVAL '10 minutes',
             $5, NOW() - INTERVAL '12 minutes', NOW() - INTERVAL '12 minutes')
          RETURNING id`,
-        [appId, importer.id, branch1, headSha1, votesRequired]
+        [appId, importer.id, branch1, headSha1, votesRequired, fixture1Results]
       );
       id1 = rows[0].id;
     } else {
@@ -10524,9 +10550,10 @@ async function seedStagingImportedPrProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', imported_pr_head_sha = $2,
                 imported_pr_author = 'octo-contributor', check_state = 'passing',
-                checks_commit_sha = $2, checks_checked_at = NOW()
+                checks_commit_sha = $2, checks_checked_at = NOW(),
+                test_results = $3::jsonb
           WHERE id = $1`,
-        [id1, headSha1]
+        [id1, headSha1, fixture1Results]
       );
     }
     // A yes vote or two so the tally pill fills.
@@ -12784,6 +12811,79 @@ async function seedStagingTopochain(pool, config) {
   }
 }
 
+// The staging season's First challenges (2026-10-01).
+//
+// A new account's Getting started card on Home IS the season's first four
+// ONBOARDING challenges, and until they and the tour are done the rest of
+// the season is hidden from it (src/services/topochain/challenge-onboarding.js).
+// The fixture season above has no ONBOARDING challenge, so in a preview the
+// card had only its tour row and the gate had nothing to hold anyone at.
+// These four are the list evan sets up in production (join, try, vote,
+// suggest), under obviously-staging names, on the fixture season's own
+// season-type event (EVENT_SEASON_ID, whose window seedStagingTopochain keeps
+// on "now") and with no schedule of their own, so they never close. The
+// staging mark comes AFTER the action ("Try an app (staging demo)"), not
+// before it as the fixture's other names have it: the card's row truncates
+// on a phone, and four rows reading "Staging demo challenge …" were four
+// rows nobody could tell apart.
+//
+// DATA ONLY, NO SIGNAL (platform conventions, "Seeded data must not
+// fabricate a signal your logic reads"): no credits, for anybody, and no
+// scoring rules, so nothing scores a cloned account on them behind its back.
+// A reviewer who signs up in the preview ticks them by doing them, or an
+// admin credits them from the console. Without a rule a row's button is its
+// own call-to-action (onboarding.js stepAction, `other`), so the first three
+// carry one; the fourth has none and opens its own page on the Challenges
+// tab. The buttons that know their step (Join, Try with the app's icon, Vote
+// or Look, Suggest) need the rule an admin binds, in staging as in
+// production; the card's ?shot= fixtures draw them without one.
+//
+// Its own function rather than a block in seedStagingTopochain, whose seeded
+// template and challenge counts its test pins; its own failure domain too, so
+// a clone that lacks the fixture event skips only this. Fixed ids above every
+// range the fixture uses (templates 900508-900511, challenges 900720-900723,
+// clear of the viewer window at 900520-900579), and ON CONFLICT (id) DO
+// NOTHING, so a reboot changes nothing.
+async function seedStagingFirstChallenges(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, cta_label, cta_link, created_at, updated_at)
+       VALUES
+         (900508, 'ONBOARDING', 'Join a community (staging demo)',
+          'Join any community that is not Homeroom.', '500 pts',
+          'First challenge fixture (Getting started).', 'Find a community', '#apps', NOW(), NOW()),
+         (900509, 'ONBOARDING', 'Try an app (staging demo)',
+          'Open an app somebody else made and try it.', '500 pts',
+          'First challenge fixture (Getting started).', 'Find an app', '#apps', NOW(), NOW()),
+         (900510, 'ONBOARDING', 'Vote on an app (staging demo)',
+          'Vote on a change somebody proposed.', '250 pts',
+          'First challenge fixture (Getting started).', 'See what needs you', '#communities', NOW(), NOW()),
+         (900511, 'ONBOARDING', 'Send feedback (staging demo)',
+          'Tell a community what would make it better.', '250 pts',
+          'First challenge fixture (Getting started).', NULL, NULL, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, enabled, display_order, completed,
+          created_at, updated_at)
+       VALUES
+         (900720, $1, 900508, TRUE, 1, FALSE, NOW(), NOW()),
+         (900721, $1, 900509, TRUE, 2, FALSE, NOW(), NOW()),
+         (900722, $1, 900510, TRUE, 3, FALSE, NOW(), NOW()),
+         (900723, $1, 900511, TRUE, 4, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    log.info('db', 'Staging First challenges seeded', { event: EVENT_SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Staging First challenges seed skipped', { message: err.message });
+  }
+}
+
 // Profile customization fixtures (issue #982).
 //
 // TWO of the three "missing in staging" categories apply here:
@@ -13390,11 +13490,12 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
-  migrate, seedStagingTopochain, seedStagingProfileCustomization,
+  migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
+  seedStagingGeneralChannel,
 };

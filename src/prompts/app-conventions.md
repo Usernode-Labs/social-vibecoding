@@ -87,9 +87,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    renders against an empty staging database, so seed what it needs.
    Demo routes are fine for regression tests, but never add a
    screenshot-only query parameter. After a visible change, call
-   `record_visual_evidence_intent` with the claim, real user flow, focus,
-   persona, viewports, and optional animation. Homeroom performs it against
-   exact base/head revisions and replays it twice. For a non-visual change,
+   `declare_visible_changes` with the change, real steps, focus,
+   persona, viewports, and animation (`motion` gets clips). Homeroom takes
+   before/after shots of it on the exact builds. For a non-visual change,
    record `impact: "none"` with a specific rationale.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
@@ -121,6 +121,12 @@ Ordered by how badly an agent working offline gets each one wrong.
 10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
     `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
     app paths. Keep npm scripts/lockfile for kpack.
+11. **Content rules: every app rates "None".** Build nothing sexual,
+    suggestive or mature-themed, no nudity, no violence or weapons, and no
+    gambling, simulated gambling or loot boxes. That includes seed data and
+    AI-generated text: prompts for app AI features must tell the model to
+    decline these topics. Decline such a request and offer a compliant
+    version. Full text: "Content rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -552,13 +558,13 @@ the closest thing to production the gate can reach.
 
 Legacy proposals could only navigate to a URL, so this section historically
 required a query/hash parameter that forced an interaction-only state open.
-Agent-authored visual evidence removes that requirement: the evidence agent
-can perform the real clicks, typing, keyboard input, selection, hover,
-scrolling, and bounded pointer gestures, then ordinary platform code replays
-the accepted plan twice. It never falls back to the home screen.
+Before/after shots remove that requirement: the shots agent performs the
+real clicks, typing, keyboard input, selection, hover, scrolling, and pointer
+gestures on both builds, then takes the shots itself. It never falls back to
+the home screen.
 
 Do **not** add a screenshot-only route for a modal, bottom sheet, wizard, game
-state, or menu. Call `record_visual_evidence_intent` instead and describe how a
+state, or menu. Call `declare_visible_changes` instead and describe how a
 person reaches the state. A deterministic demo/deep route is still useful when
 it is part of the product, seeds a durable `dapp.json` regression check, or
 gives reviewers a stable "Test this change" entry point; in those cases keep
@@ -648,6 +654,15 @@ console-error check is the built-in baseline: every proposal gets a
 "loads with no console errors" test on its routes for free, even with no
 tests declared.
 
+The platform also reads **every checked page** for its own row, **"Pages
+render with their stylesheets (platform check)"**, which no `dapp.json`
+setting can opt out of (`allowConsoleErrors` included). It fails when one
+of the page's own stylesheets fails, answers `204`, or comes back empty, or
+when a page renders nothing visible at all. A page that lost its stylesheet
+keeps all of its markup, so element and text checks alone never notice. Like
+the repo unit-suite row, it is advisory until the app has passed it once,
+and merge-blocking after that.
+
 Declare tests in a top-level `tests` array in `dapp.json`. They live in
 the repo and **accumulate across proposals** — once a proposal merges, its
 tests run on every future proposal, exactly like CI tests in a GitHub
@@ -693,12 +708,13 @@ Per-test fields:
   `dapp.json`, not in source functions.
 
 Visual scenario metadata remains useful executable documentation and durable
-regression coverage. Reviewer-facing visual evidence is proposal-specific:
-the authoring agent declares up to three claims and can submit the typed UI
-flow it used during implementation. A purpose-bound evidence agent can also
-explore the exact base/head previews to produce a plan. The platform replays
-either plan twice and verifies the generated media. No matching scenario and no
-submitted legacy route is ever permission to publish `/` as a fallback.
+regression coverage. Before/after shots are proposal-specific: the authoring
+agent declares up to three changes (changes that show on the same screen are
+one), with the steps and optional hints it used during implementation, and a
+purpose-bound shots agent follows them on the
+exact before and after builds and saves what it sees. People look at the
+shots to judge the change. No matching scenario and no submitted legacy route
+is ever permission to publish `/` as a fallback.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the
@@ -866,6 +882,18 @@ rename takes effect when that PR is voted in, merged, and redeployed —
 not before. Don't add code that mutates the display name through any
 other channel; edit `dapp.json`'s `name` and let the deploy apply it.
 
+### Top-level `description` — one line about what the app is
+
+`dapp.json` may carry an optional top-level `"description"` string: one
+plain sentence saying what the app is ("A shared shopping list for the
+house"). The project's page, Discover, the join screen and the About
+pane show it. Keep it to **90 characters or fewer**, which is two lines
+on a phone; the create screen enforces that limit. A longer line still
+deploys, but each surface cuts it off with an ellipsis (two lines on the
+project's page, Discover and the join screen, three in the About pane), so
+the rest is never read. Change it like the name: edit this field in a
+proposal.
+
 ### Top-level `visibility` — who can build / see & use the app
 
 `dapp.json` may carry an optional top-level `visibility` block — the
@@ -1029,7 +1057,7 @@ set instead of a mix of emoji, letters and one-off logos.
   Keep it out of `public/`, `assets/` and other served folders: the
   platform reads the file at deploy time and the app never serves it,
   and a file under those folders counts as a browser UI change, so an
-  icon-only proposal there cannot declare `visualEvidence` impact
+  icon-only proposal there cannot declare `shots` impact
   `none`.
 - **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
   tile rounds and crops it), no text or letters. A render in this style
@@ -1992,6 +2020,13 @@ Rules:
   redeploy SV. All dapps recover on the next page load — no per-dapp
   redeploy needed. This is the single biggest payoff of centralization
   vs. the old vendored-fan-out model.
+- **Never answer these prefixes from the app's own server.** The
+  production edge routes `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` to the platform before the app sees the request,
+  and the in-loop launch (`usernode-run-inloop`) does the same. A route,
+  proxy, stub or `204` for them in `server.js` is dead code in production
+  that only hides a sandbox symptom, and one that also catches a built
+  asset such as `/tailwind.css` deletes the app's styling for real users.
 - **Local-dev tradeoff.** `npm run dev` for any dapp now requires SV
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
@@ -2826,6 +2861,13 @@ The one rule this path asks of you:
 - Need a Tailwind plugin (`forms`, `typography`)? Add it to
   `tailwind.config.js` `plugins` — strictly better than the CDN's
   `?plugins=` query, which this path does not use.
+- **Never special-case `/tailwind.css` in `server.js`.** It is served from
+  `public/`, where the image build wrote it. A checkout that has not run
+  `npm run build` has no such file; that is a missing build, not a missing
+  route. Answering the path with an empty or `204` response silences the
+  local error and removes every layout utility the page has in production.
+  The platform's render-health check fails a stylesheet that comes back
+  empty.
 
 ### 2. The centrally-hosted runtime — the escape hatch and migration target
 
@@ -3134,9 +3176,10 @@ catching a blank page, a JS crash on load, a broken layout, or a failing
 API call that source-reading alone would miss — and fix it before
 committing.
 
-Use it before declaring a `ui` or `motion` visual evidence story. A story
-must describe a checkpoint you actually reached in the local app, including
-the state the evidence runner will need to reproduce. For backend-only,
+Use it before declaring a `ui` or `motion` change for before/after shots.
+A declared change must describe a checkpoint you actually reached in the
+local app, including the state the shots agent will need to reach it
+again (put that in `hints.setup`). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
 sync turns have no browser at all.
@@ -3155,31 +3198,97 @@ locally inside the worker the same way a staging container does:
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
   secret or invent a credential just to make the local check run.
+- It also serves the app **the way production does**. It runs the app's
+  `npm run build` first, as every staging and production image does (that
+  is what writes `public/tailwind.css`); a failing build stops the launch,
+  because the image would fail the same way. And on `$INLOOP_PORT` a small
+  front proxy answers `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` from the platform, as the production edge does, and
+  passes everything else to the app on an internal port. Browse
+  `$INLOOP_PORT`, never the internal one.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
   the flow you will declare. Self-app app screens stay under
   `/app/<slug>/...`; put its other SPA routes after the `#`.
-- Exercise the real interaction and make the evidence intent concrete. For a
+- Exercise the real interaction and make the declared change concrete. For a
   mobile-only change, resize to the viewport you will declare (for example
-  390×844). This local check helps you fix the head revision; the later paired
-  evidence run independently explores and replays both revisions.
-- A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Check the app's existing staging fixtures or
+  390×844). This local check helps you fix the after build; the later shots
+  agent independently follows your steps on both builds.
+- A **blank, unstyled or broken-looking page is a bug until you have ruled
+  the page itself out**: read the console and confirm every stylesheet and
+  script loaded. This launch builds and serves the app as production does,
+  so a failed or empty asset here fails for users too. **Never make the app
+  answer a hosted-asset path or its own built stylesheet with an empty or
+  `204` response to quiet a console error** — an app that did exactly that
+  to `/tailwind.css` shipped a blank production page for days. Only once
+  the page itself is sound, suspect missing seed data — the local DB starts
+  empty. Check the app's existing staging fixtures or
   `?demo=1` route first. A sign-in screen means this browser is signed out;
   use an existing documented fake staging account through the normal UI if
   possible. Do not change auth code or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish
-  non-visual work, but do not submit an unverified visible story. If the
-  claim needs data or a fault that the local app cannot reproduce, add a
+  non-visual work, but do not declare a visible change you did not see. If
+  the change needs data or a fault that the local app cannot reproduce, add a
   representative fixture exercised by the normal test route. Do not add a
-  screenshot-only route or invent a state just to get a capture.
+  screenshot-only route or invent a state just to get a shot.
 
-This is an agent-facing quality gate for the claimed head state. Before
-finishing a user-visible build, call `record_visual_evidence_intent` only for
-a flow you actually reached. The exact-revision paired replay still verifies
-both sides independently, and the "Test this change" action remains a
-separate manual aid.
+This is an agent-facing quality check on the after build. Before finishing a
+user-visible build, call `declare_visible_changes` only for a flow you
+actually reached. The shots agent still takes both sides itself, and the
+"Test this change" action remains a separate manual aid.
+
+## Content rules — what no app may show
+
+Every app on Homeroom, the platform shell included, must answer **None** or
+**No** to each of the App Store age-rating questions below. This is a
+platform rule. A repo `CLAUDE.md`, a spec or a user request cannot override
+it.
+
+**Never build, generate, seed or ship:**
+
+- **Mature or suggestive themes.** Content that implies or indirectly
+  references sexual or adult topics, or is built around topics for older
+  audiences: dating or hookup features, flirting or "spicy" games, drinking
+  or drug games, or real-world tragedy, self-harm or crime presented as
+  entertainment.
+- **Sexual content or nudity.** Non-explicit sexual behaviour, and brief or
+  partial nudity, including suggestive images, avatars, emoji-art and
+  placeholder or seed content.
+- **Graphic sexual content and nudity.** Anything explicit.
+- **Violence.** Cartoon or fantasy violence (combat, attacking characters),
+  realistic violence, and prolonged or graphic violence. No guns or other
+  weapons as depicted objects, icons or game mechanics.
+- **Gambling.** Real-money gambling, simulated gambling (betting or wagering
+  pretend or in-app currency, casino-style games), and loot boxes (paid
+  randomized rewards). Contests, leaderboards and rankings are allowed.
+
+**This covers everything the app shows:** copy, images and icons you add,
+staging seed data, demo and placeholder content, test fixtures that render,
+and text the app's AI features produce.
+
+**AI features.** When an app calls the LLM proxy to generate content people
+will see, its system prompt must tell the model to decline these topics and
+return a neutral message instead. Never write a prompt that invites them.
+
+**User-posted content.** An app where people post text or images must not be
+built for sharing this content. It must keep a way to report a post, and it
+must not display content the platform's moderation has hidden.
+
+**When a request asks for it:** the Mayor and scouts say plainly that it goes
+against Homeroom's content rules, name the category, and offer the closest
+compliant version. The Mayor does not dispatch a build for the non-compliant
+version. A coding agent that meets it mid-build builds the compliant part,
+leaves the rest out, and says so in its final message. Do not quietly soften
+the content and present that as the requested feature.
+
+When unsure whether something counts, treat it as not allowed and ask.
+
+**Merge-time review.** Proposals may also carry a **Content rules** check: an
+automated reviewer reads the proposal's diff against this section and flags
+what breaks it. It starts advisory (shown, not blocking); an admin can make
+it blocking. It reads text and code only, so these rules still apply to
+images you add.
 
 ## Writing user-facing copy: no em dashes
 

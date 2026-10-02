@@ -34,6 +34,7 @@
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const github = require('./github');
 const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
@@ -129,7 +130,11 @@ async function syncImportedProposal({ config, pool, session }) {
     const freshBody = typeof pr.body === 'string' ? pr.body : null;
     if (freshBody !== (session.pr_body == null ? null : session.pr_body)) {
       try {
-        await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [freshBody, session.id]);
+        await pool.query(
+          `UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`,
+          [freshBody, session.id]
+        );
+        session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
         session.pr_body = freshBody;
       } catch (err) {
         log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
@@ -268,12 +273,13 @@ async function applyHeadChange({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET imported_pr_head_sha = $1,
+            ${summaryFreshness.invalidateHeadMoveSql('$1')},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
             checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
       WHERE id = $2
         AND imported_pr_head_sha IS NOT DISTINCT FROM $5::varchar
-      RETURNING approval_epoch`,
+      RETURNING approval_epoch, pr_summary_stale`,
     [newHead, session.id, bumpEpoch, checksCarry, oldHead]
   );
   if (!claimed.length) {
@@ -293,15 +299,20 @@ async function applyHeadChange({
   }
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
+  // #3344: read back, because an author summary recorded for this very head
+  // stays fresh (summaryFreshness.invalidateHeadMoveSql).
+  session.pr_summary_stale = typeof claimed[0].pr_summary_stale === 'boolean'
+    ? claimed[0].pr_summary_stale
+    : (session.pr_summary_stale || !!session.pr_summary_md);
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
-  if (session.visual_evidence_state || session.visual_evidence_detail) {
+  if (session.shots_state || session.shots_detail) {
     // Revision fencing is synchronous with the imported head advance. Even
-    // when execution is disabled, reviewers must stop seeing evidence from
+    // when execution is disabled, reviewers must stop seeing shots from
     // the commit that just ceased to be current.
-    await require('./visual-evidence-state').markStaleForHead(
+    await require('./shots-state').markStaleForHead(
       pool, session.id, String(newHead).toLowerCase()
-    ).catch((err) => log.warn('pr-import-sync', 'Visual evidence invalidation failed', {
+    ).catch((err) => log.warn('pr-import-sync', 'Before & after shots invalidation failed', {
       sessionId: session.id, oldHead, newHead, err: err.message,
     }));
   }
@@ -394,12 +405,21 @@ async function applyHeadChange({
 // commit (a pin still on the pre-sync head is a guaranteed 409 — the
 // "wasn't merged, because the PR was updated on GitHub" loop of #2100); and
 // the 409 handler itself, which would otherwise release the claim and leave
-// the row waiting for the next sweep.
+// the row waiting for the next sweep. A third is submit_work's app-repo
+// revision (services/proposal-update.js), when GitHub's pull request still
+// reads the commit before the one it just pushed.
+//
+// `fresh` is the native reconcile's #2619 option, for the same reason: the
+// mirror coalesces one fetch per repository, and a caller reading back its
+// own push must not join a fetch that started before it. Pass it when the
+// push and this call are in the same request.
 //
 // Only answers for a head the mirror can see: a branch in the app's own
 // repository. A head on the author's fork is left to the poller, exactly as
 // before. Never throws.
-async function reconcileImportedHead({ config, pool, session, checks = 'defer', notify = true }) {
+async function reconcileImportedHead({
+  config, pool, session, checks = 'defer', notify = true, fresh = false,
+}) {
   try {
     if (!session || session.source !== 'imported' || !session.pr_number) {
       return { reconciled: false, reason: 'not_imported' };
@@ -417,7 +437,7 @@ async function reconcileImportedHead({ config, pool, session, checks = 'defer', 
 
     let dir; let mainSha; let liveHead;
     try {
-      dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: [oldHead] });
+      dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: [oldHead], fresh });
       mainSha = await mirror.defaultBranchSha(dir);
       liveHead = await mirror.resolveBranch(dir, session.branch_name);
     } catch (err) {
@@ -693,15 +713,15 @@ function notifyStagingFailed({ session, app }) {
   }
 }
 
-// #2601/#2558: the connector-submission path reaches the evidence
+// #2601/#2558: the connector-submission path reaches the shots
 // orchestrator through `visuals.captureForSession`, which schedules a run in
 // its own `finally` — so an import whose preview builds does call
 // `scheduleForSession`. The gap was the paths BELOW that never get that far:
 // a preview environment that runs no builds, and a staging build that fails.
 // Neither produced a run and neither wrote anything down, so the proposal
 // kept the 'planned' its submission wrote, with nothing to explain it.
-function noteEvidenceNotStarted(pool, sessionId, reason) {
-  require('./visual-evidence-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
+function noteShotsNotStarted(pool, sessionId, reason) {
+  require('./shots-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
     .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
       sessionId, reason, err: err.message,
     }));
@@ -744,7 +764,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
           sessionId: session.id, err: err.message,
         }));
       if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 
@@ -771,7 +791,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
         sessionId: session.id, err: e.message,
       }));
       notifyStagingFailed({ session, app });
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       throw err;
     }
 
@@ -783,7 +803,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // vote is over.
     if (!(await stillOpenForPreview(pool, session))) {
       await discardStagingResult({ staging, session, app, result });
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 

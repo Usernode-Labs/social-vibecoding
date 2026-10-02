@@ -36,6 +36,14 @@ function makeHome(user) {
   return makeHomeEnv(user).Home;
 }
 
+test('app listing report action follows server eligibility and stays hidden until loaded', () => {
+  const Home = makeHome({id:3});
+  for (const can_report of [undefined,false,true]) {
+    const items = Home.menuItemsFor({id:928,slug:'watchnest-0bd214',name:'WatchNest',created_by:3,can_report});
+    assert.equal(items.some(item=>item.key==='report'),can_report===true);
+  }
+});
+
 // Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
 // DOM. It draws a rounded-rect tile (face + hairline) before the glyph,
 // so the stub has to answer the path/stroke calls too, not just
@@ -135,6 +143,7 @@ const baseApp = (over) => ({
   name: 'Demo App',
   status: 'running',
   created_by: OTHER,
+  can_report: over?.created_by !== ME && !over?.demo,
   created_at: '2026-06-01T00:00:00Z',
   last_deploy_at: null,
   repo_url: 'https://github.com/o/r',
@@ -432,9 +441,9 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Your apps');
+  assert.equal(items[2].label, 'Add to Shortcuts');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -457,7 +466,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from Your apps');
+  assert.equal(fav.label, 'Remove from Shortcuts');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -470,7 +479,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from Your apps');
+  assert.equal(fav.label, 'Remove from Shortcuts');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -478,7 +487,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to Your apps');
+  assert.equal(fav.label, 'Add to Shortcuts');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -594,7 +603,7 @@ test('menu: full admin on a running repo app gets check-updates, lock and safe a
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings']);
+    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings', 'report']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
@@ -653,7 +662,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'no retry/check/lock/delete');
 });
 
@@ -728,7 +737,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen']);
+    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen', 'report']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
@@ -898,7 +907,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Your apps here/);
+  assert.match(empty, /Drag a card from Shortcuts here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

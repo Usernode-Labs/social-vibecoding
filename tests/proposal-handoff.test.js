@@ -849,6 +849,31 @@ test('an update may re-aim the screenshots, and still refuses what it does not k
   } finally { restore(); }
 });
 
+// #3344. The summary rides an update too, held to the import's own cap and
+// normalization, and a wrong TYPE is a 400 rather than a silent drop.
+test('an update may carry a summary, capped exactly as the import caps it', () => {
+  const { subject, restore } = makeHarness();
+  try {
+    assert.equal(subject.parseUpdateFromForkBody({
+      branch: 'dev/x', summary: '  Cards now snap to the grid.\r\nNothing else moves.  ',
+    }).summary, 'Cards now snap to the grid.\nNothing else moves.');
+    assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x' }).summary, null);
+    assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x', summary: '   ' }).summary, null,
+      'blank is "said nothing", never "blank it"');
+    const { MAX_IMPORT_SUMMARY } = require('../src/routes/votes');
+    assert.equal(MAX_IMPORT_SUMMARY, 600);
+    assert.equal(subject.parseUpdateFromForkBody({
+      branch: 'dev/x', summary: 'y'.repeat(2000),
+    }).summary.length, MAX_IMPORT_SUMMARY);
+    assert.throws(() => subject.parseUpdateFromForkBody({ branch: 'dev/x', summary: 42 }), /summary/);
+  } finally { restore(); }
+  // And the route hands it to the service that applies the ownership rules.
+  const routeSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
+  const route = routeSrc.slice(routeSrc.indexOf("'/api/apps/:slug/proposals/:id/update-from-fork'"));
+  assert.match(route.slice(0, 3000), /summary: input\.summary/);
+});
+
 test('build adoption is serialized per handoff session', async () => {
   const { subject, restore } = makeHarness();
   try {

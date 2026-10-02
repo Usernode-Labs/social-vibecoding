@@ -427,7 +427,7 @@
       if (mode === 'blocked' && v.id === 'usernode-claude') {
         out.unavailable = true;
         out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset at midnight UTC.';
+          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
       }
       return out;
     });
@@ -507,6 +507,13 @@
     model_unavailable: 'Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.',
     no_credential: 'Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.',
   };
+
+  // #3230: the daily reset in the viewer's own clock ("at 8:00 PM"), from
+  // the bundle's window.ResetTime, or the UTC boundary where it is absent.
+  function dailyResetWhen() {
+    var RT = typeof window !== 'undefined' && window.ResetTime;
+    return RT ? RT.resetWhen('daily') : 'at midnight UTC';
+  }
 
   // hasOwnProperty, not a bare lookup: `reason` arrives on the 201 body, so
   // it is server data, and a bare lookup would answer `fallbackNote` with
@@ -653,7 +660,7 @@
       if (mode === 'blocked' && c.id === 'on-platform') {
         out.unavailable = true;
         out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset at midnight UTC.';
+          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
       }
       return out;
     });
