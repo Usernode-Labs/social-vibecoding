@@ -14,19 +14,56 @@
 //     are counted, never graded;
 //   * cost includes every attempt, failed ones too, so "$ per successful
 //     build" is what a passing build really cost.
+//   * a DM task's answer is the requester's real one or one written for them
+//     (services/bench/core.js resolveDm): the `answer_source` slice keeps
+//     the two apart as "real" and "scripted".
 
 const graders = require('./graders');
 const stats = require('./stats');
 
-const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome']);
+const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source']);
 const REPEATED_STAGES = Object.freeze(['triage', 'dm', 'followup', 'checks_fix']);
+
+/**
+ * Whose answer a DM trial's simulated requester gave: 'scripted' when it was
+ * written for them, 'real' otherwise (a DM task made from a run has its
+ * requester's own answer); null for any other stage. Pure.
+ */
+function answerSource(t) {
+  if (t.stage !== 'dm') return null;
+  return t.dm_answer_source === 'scripted' || t.tags?.answer_source === 'scripted' ? 'scripted' : 'real';
+}
+
+/**
+ * Accuracy per stage, model and value of one slice key. Pure over trials
+ * (runTrials' rows). `answer_source` reads real or scripted off the task,
+ * not the raw tag, so a DM task made before the tag existed still counts.
+ */
+function sliceGroups(trials, key) {
+  const groups = new Map();
+  for (const t of trials) {
+    let value;
+    if (key === 'app_slug') value = t.appSlug;
+    else if (key === 'answer_source') value = t.answerSource ?? 'none';
+    else value = t.tags?.[key] ?? 'none';
+    const id = `${t.stage}|${t.model}|${value}`;
+    if (!groups.has(id)) groups.set(id, { stage: t.stage, model: t.model, value: String(value), pass: 0, fail: 0 });
+    const g = groups.get(id);
+    if (t.final === 'pass') g.pass += 1;
+    if (t.final === 'fail') g.fail += 1;
+  }
+  const slices = [...groups.values()].map((g) => ({ ...g, n: g.pass + g.fail, accuracy: g.pass + g.fail ? g.pass / (g.pass + g.fail) : null }));
+  slices.sort((a, b) => a.stage.localeCompare(b.stage) || a.value.localeCompare(b.value) || a.model.localeCompare(b.model));
+  return slices;
+}
 
 async function runTrials(pool, runId) {
   const { rows } = await pool.query(
     `SELECT tr.id, tr.task_id, tr.model, tr.attempt, tr.status, tr.cost_usd::float8 AS cost_usd,
             tr.input_tokens, tr.output_tokens, tr.duration_ms, tr.deterministic, tr.error,
             tr.build_branch, tr.build_sha, tr.build_commits, tr.created_at, tr.finished_at,
-            tk.stage, tk.tags, tk.issue_number, a.slug AS app_slug
+            tk.stage, tk.tags, tk.issue_number, a.slug AS app_slug,
+            tk.reference->'dm_script'->>'source' AS dm_answer_source
        FROM bench_trials tr
        JOIN bench_tasks tk ON tk.id = tr.task_id
        LEFT JOIN apps a ON a.id = tk.app_id
@@ -53,6 +90,7 @@ async function runTrials(pool, runId) {
       ...t,
       appSlug: t.app_slug || '?',
       tags: t.tags || {},
+      answerSource: answerSource(t),
       final: graders.finalVerdict({ status: t.status, deterministic: t.deterministic, grades: gs }),
       opus: latest('opus')?.verdict || null,
       human: latest('human')?.verdict || null,
@@ -161,20 +199,7 @@ async function runReport(pool, runId, { slice = 'verdict' } = {}) {
     for (const key of stats.paretoFrontier(points.filter((p) => p.stage === stage))) frontier.add(key);
   }
   const key = SLICE_KEYS.includes(slice) ? slice : 'verdict';
-  const slices = [];
-  const groups = new Map();
-  for (const t of trials) {
-    const value = key === 'app_slug' ? t.appSlug : (t.tags?.[key] ?? 'none');
-    const id = `${t.stage}|${t.model}|${value}`;
-    if (!groups.has(id)) groups.set(id, { stage: t.stage, model: t.model, value: String(value), pass: 0, fail: 0 });
-    const g = groups.get(id);
-    if (t.final === 'pass') g.pass += 1;
-    if (t.final === 'fail') g.fail += 1;
-  }
-  for (const g of groups.values()) {
-    slices.push({ ...g, n: g.pass + g.fail, accuracy: g.pass + g.fail ? g.pass / (g.pass + g.fail) : null });
-  }
-  slices.sort((a, b) => a.stage.localeCompare(b.stage) || a.value.localeCompare(b.value) || a.model.localeCompare(b.model));
+  const slices = sliceGroups(trials, key);
   return {
     run: {
       id: run.id, suiteId: run.suite_id, suiteName: run.suite_name, suiteVersion: run.suite_version,
@@ -193,7 +218,7 @@ const CSV_COLUMNS = Object.freeze([
   'trial_id', 'run_id', 'task_id', 'stage', 'app_slug', 'issue_number', 'model', 'attempt', 'status', 'final_verdict',
   'deterministic_pass', 'opus_verdict', 'human_verdict', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
   'build_branch', 'build_sha', 'build_commits', 'tag_verdict', 'tag_repo_size', 'tag_request_type', 'tag_difficulty',
-  'error', 'created_at', 'finished_at',
+  'answer_source', 'error', 'created_at', 'finished_at',
 ]);
 
 /** A run's trials as CSV rows, in CSV_COLUMNS order. */
@@ -207,7 +232,7 @@ async function csvRows(pool, runId) {
       cost_usd: t.cost_usd, input_tokens: t.input_tokens, output_tokens: t.output_tokens, duration_ms: t.duration_ms,
       build_branch: t.build_branch, build_sha: t.build_sha, build_commits: t.build_commits,
       tag_verdict: t.tags.verdict, tag_repo_size: t.tags.repo_size, tag_request_type: t.tags.request_type,
-      tag_difficulty: t.tags.difficulty, error: t.error, created_at: t.created_at, finished_at: t.finished_at,
+      tag_difficulty: t.tags.difficulty, answer_source: t.answerSource, error: t.error, created_at: t.created_at, finished_at: t.finished_at,
     };
     return CSV_COLUMNS.map((c) => {
       const v = flat[c];
@@ -223,6 +248,8 @@ module.exports = {
   CSV_COLUMNS,
   runTrials,
   summarize,
+  answerSource,
+  sliceGroups,
   taskScores,
   runReport,
   csvRows,

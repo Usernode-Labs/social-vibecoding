@@ -36,6 +36,7 @@ const crypto = require('crypto');
 const log = require('../logger');
 const catalog = require('./catalog');
 const runner = require('./runner');
+const dmSim = require('./dm-sim');
 const snapshots = require('../homeroom-bot-snapshots');
 
 const MAX_CONCURRENCY = 2;
@@ -177,7 +178,7 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
   const { rows: [suite] } = await pool.query('SELECT id, frozen_at FROM bench_suites WHERE id = $1', [v.suiteId]);
   if (!suite) return httpError(404, 'Suite not found');
   const { rows: tasks } = await pool.query(
-    'SELECT id, stage, tags FROM bench_tasks WHERE suite_id = $1 AND stage = ANY($2::text[]) ORDER BY id',
+    'SELECT id, stage, tags, reference FROM bench_tasks WHERE suite_id = $1 AND stage = ANY($2::text[]) ORDER BY id',
     [v.suiteId, v.stages],
   );
   if (!tasks.length) return httpError(409, 'The suite has no tasks at those stages');
@@ -190,7 +191,7 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
     const attempts = attemptsFor(task.stage, v);
     for (const id of v.models) {
       const info = catalog.modelInfo(models, id);
-      const reason = catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
+      const reason = dmSim.noAnswerReason(task) || catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
       const est = catalog.estimateTrialCost(info, task.stage, history.get(`${id}|${task.stage}`) || []);
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         plan.task.push(task.id);

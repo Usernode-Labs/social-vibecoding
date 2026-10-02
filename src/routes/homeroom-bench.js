@@ -306,6 +306,7 @@ function homeroomBenchRoutes(config) {
       expectedFiles: b.expectedFiles ?? null,
       allowedTestEdits: b.allowedTestEdits ?? null,
       specPoints: b.specPoints ?? null,
+      dmAnswer: b.dmAnswer ?? null,
       tags: b.tags && typeof b.tags === 'object' ? b.tags : {},
       source: graderOf(req) === 'opus' ? 'opus' : 'human',
       user: req.user,

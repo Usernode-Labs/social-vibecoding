@@ -131,6 +131,11 @@ function done(r: Run): number {
 function total(r: Run): number {
   return Object.values(r.counts || {}).reduce((s, n) => s + n, 0);
 }
+/** A DM task whose requester never answered: its answer is written for them when it is labelled. */
+export function scriptedAnswer(t: Pick<Task, 'stage' | 'tags' | 'reference'>): boolean {
+  const script = t.reference?.dm_script as { source?: string } | undefined;
+  return t.stage === 'dm' && (script?.source === 'scripted' || t.tags?.answer_source === 'scripted');
+}
 
 async function send(url: string, method: string, body?: unknown) {
   const res = await fetch(url, {
@@ -406,10 +411,10 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   {tasks.map((t) => (
                     <tr className={AdminUI.trHover} key={t.id} data-bench-task={t.id}>
                       <td className={AdminUI.td}>{STAGE_LABEL[t.stage]}</td>
-                      <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}</td>
+                      <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}{scriptedAnswer(t) ? <span className={`${AdminUI.badge.outline} ml-1`} data-bench-scripted={t.id}>scripted answer</span> : null}</td>
                       <td className={`${AdminUI.td} text-sm`}>{['verdict', 'repo_size', 'request_type', 'difficulty'].map((k) => t.tags?.[k]).filter(Boolean).join(' · ')}</td>
                       <td className={`${AdminUI.td} text-sm`}>
-                        {t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : t.reference_source === 'authored' ? 'the suite\'s author' : 'a person'})` : 'Waiting for its label'}
+                        {!t.reference_source && scriptedAnswer(t) ? 'Waiting for its label and the answer written for the requester' : t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : t.reference_source === 'authored' ? 'the suite\'s author' : 'a person'})` : 'Waiting for its label'}
                         {canWrite && !suite.frozen_at ? (
                           <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`}
                             onClick={() => act(() => send(`${BASE}/tasks/${t.id}`, 'DELETE'), 'Task removed.')}>remove</button>
