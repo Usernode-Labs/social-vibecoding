@@ -147,7 +147,7 @@ function mayorFor(model) {
 
 async function runTurn({
   steps, shim = fakeShim(), pool = recordingPool({ 'RETURNING id': () => ({ rows: [{ id: 99 }] }) }),
-  agentSessions, actionsDeps, message = 'What is on the board?', followUp = null, extra = {},
+  agentSessions, actionsDeps, message = 'What is on the board?', followUp = null, extra = {}, mayor = mayorFor,
 }) {
   const model = scriptedModel(steps);
   const opened = [];
@@ -155,7 +155,7 @@ async function runTurn({
   const res = fakeRes();
   await agentTurn.runAgentTurn({
     pool, config: CONFIG, user: USER, agentSessionId: 5, turnId: 'turn-0001-aaaa',
-    messageText: message, followUp, mayor: mayorFor(model), res, deps,
+    messageText: message, followUp, mayor: mayor(model), res, deps,
   });
   return { model, shim, pool, res, spend, events, opened };
 }
@@ -700,8 +700,81 @@ test('the shim serves the Mayor\'s tools in-process, audits each call and revoke
 test('a refused bucket stops the call before it is audited', async () => {
   const { normalizeResult, toModelTools } = require('../src/services/mayor/mcp-shim');
   assert.deepEqual(normalizeResult({ isError: true, content: [{ type: 'text', text: 'x' }] }),
-    { isError: true, structured: null, text: 'x' });
+    { isError: true, structured: null, text: 'x', images: [] });
   assert.deepEqual(toModelTools([{ name: 'a', description: 'd' }])[0].input_schema, { type: 'object', properties: {} });
+});
+
+// ── A request's screenshots ────────────────────────────────────────────
+//
+// get_request returns a request's screenshots as MCP image blocks, each after
+// a Homeroom line naming it. The Mayor sees them when its model can: a Claude
+// model always, an OpenRouter model when the catalog lists image input.
+
+const PICTURE = { label: '[Homeroom: screenshot 1 of 1 embedded in request #5\'s description.]', mimeType: 'image/png', data: 'iVBORw0KGgo=' };
+
+test('the shim keeps each picture with its line, out of the text', () => {
+  const { normalizeResult, toolResultContent, turnImageBudget } = require('../src/services/mayor/mcp-shim');
+  const answer = normalizeResult({
+    content: [
+      { type: 'text', text: '{"number":5}' },
+      { type: 'text', text: PICTURE.label },
+      { type: 'image', data: PICTURE.data, mimeType: 'image/png' },
+      { type: 'text', text: 'a setup tip' },
+    ],
+  });
+  assert.equal(answer.text, '{"number":5}\na setup tip', 'the label travels with its picture, not in the text');
+  assert.deepEqual(answer.images, [PICTURE]);
+
+  assert.equal(toolResultContent({ text: 'plain', images: [] }), 'plain', 'no pictures: the text, as before');
+  assert.deepEqual(toolResultContent(answer), [
+    { type: 'text', text: '{"number":5}\na setup tip' },
+    { type: 'text', text: PICTURE.label },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PICTURE.data } },
+  ]);
+
+  // One turn's allowance, across calls.
+  const take = turnImageBudget(3);
+  const first = take({ text: 'a', images: [PICTURE, PICTURE] });
+  const second = take({ text: 'b', images: [PICTURE, PICTURE] });
+  assert.deepEqual([first.images.length, first.omitted, second.images.length, second.omitted], [2, 0, 1, 1]);
+  const content = toolResultContent(second);
+  assert.match(content[0].text, /^b\n\[Homeroom: 1 more screenshot left out/);
+  assert.equal(content.filter((b) => b.type === 'image').length, 1);
+  assert.equal(toolResultContent(take({ text: 'c', images: [PICTURE] })).includes('1 more screenshot'), true,
+    'past the allowance: text only, saying what was left out');
+});
+
+test('a Mayor that can look gets a request\'s screenshots inside the tool result', async () => {
+  const shim = fakeShim({
+    get_request: () => ({ isError: false, structured: {}, text: '{"number":5}', images: [PICTURE] }),
+  });
+  const { model, opened } = await runTurn({
+    shim,
+    steps: [
+      { text: 'Looking.', toolUses: [{ id: 't1', name: 'get_request', input: { slug: 'recipe-box', number: 5 } }] },
+      { text: 'The save button is under the keyboard.' },
+    ],
+  });
+  assert.equal(opened[0].imageInput, true, 'a Claude model can look, so the shim fetches for it');
+  assert.deepEqual(model.requests[1].messages.at(-1).content[0], {
+    type: 'tool_result',
+    tool_use_id: 't1',
+    content: [
+      { type: 'text', text: '{"number":5}' },
+      { type: 'text', text: PICTURE.label },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PICTURE.data } },
+    ],
+  });
+});
+
+test('an OpenRouter Mayor gets pictures fetched only when its model takes them', async () => {
+  const openrouter = (imageInput) => (model) => ({
+    ...mayorFor(model), provider: 'openrouter', client: Object.assign(model, { imageInput }),
+  });
+  const textOnly = await runTurn({ mayor: openrouter(false), steps: [{ text: 'Hi.' }] });
+  assert.equal(textOnly.opened[0].imageInput, false);
+  const seeing = await runTurn({ mayor: openrouter(true), steps: [{ text: 'Hi.' }] });
+  assert.equal(seeing.opened[0].imageInput, true);
 });
 
 test('the prompt says where the conversation stands, and wraps what users wrote', () => {

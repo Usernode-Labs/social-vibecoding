@@ -125,6 +125,13 @@ const SET_FOCUS_APP_TOOL = Object.freeze({
 // Stop handles for the turns this process is running, by agent session id.
 const stopRegistry = new Map();
 
+// Whether this turn's model can look at pictures: a Claude model always can,
+// an OpenRouter one when the catalog lists image input (openrouter-mayor.js).
+// Only then does the platform shim fetch a request's screenshots for it.
+function seesImages(mayor) {
+  return !!mayor && (mayor.provider === 'anthropic' || !!(mayor.client && mayor.client.imageInput === true));
+}
+
 function busKey(agentSessionId) {
   return `agent:${agentSessionId}`;
 }
@@ -136,6 +143,8 @@ function defaults(deps = {}) {
     limits: deps.limits || require('../limits'),
     openrouterMayor: deps.openrouterMayor || require('../openrouter-mayor'),
     openMayorMcp: deps.openMayorMcp || require('./mcp-shim').openMayorMcp,
+    turnImageBudget: deps.turnImageBudget || require('./mcp-shim').turnImageBudget,
+    toolResultContent: deps.toolResultContent || require('./mcp-shim').toolResultContent,
     agentSessions: deps.agentSessions || require('../agent-sessions'),
     actions: deps.actions || require('../agent-session-actions'),
     sessionBus: deps.sessionBus || require('../session-bus'),
@@ -624,7 +633,7 @@ async function runAgentTurn({
       }
       if (shim && shim.toolNames.includes(use.name)) {
         const result = await shim.call(use.name, input);
-        return { ok: !result.isError, text: result.text };
+        return { ok: !result.isError, text: result.text, images: result.images || [] };
       }
       return { ok: false, text: `unknown_tool: ${use.name} is not available in this conversation.` };
     } catch (err) {
@@ -814,7 +823,8 @@ async function runAgentTurn({
     if (retry) convo = withTrailingUserText(convo, RETRY_NOTE);
     else if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
     const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
-    shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
+    shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId, imageInput: seesImages(mayor) });
+    const takeImages = d.turnImageBudget();
 
     let dispatchUse = null;
     let pendingResults = null;
@@ -910,7 +920,8 @@ async function runAgentTurn({
         toolResults.push({
           type: 'tool_result',
           tool_use_id: use.id,
-          content: answer.text,
+          // A request's screenshots ride as image blocks after the text.
+          content: d.toolResultContent(takeImages(answer)),
           ...(answer.ok ? {} : { is_error: true }),
         });
       }

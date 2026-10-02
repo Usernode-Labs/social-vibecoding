@@ -391,3 +391,94 @@ test('#3557: a 400 on a request with a PDF file part retries once with the PDF n
   }));
   assert.equal(plain.calls.length, 1);
 });
+
+// ── Pictures ───────────────────────────────────────────────────────────
+//
+// A model the catalog lists as taking images gets them as image parts: a
+// user's attachment in their message, and a request's screenshots from a
+// tool result in a user message after the results, since a `tool` message
+// carries text only. Any other model gets a line, as before.
+
+const SHOT = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } };
+const SHOT_PART = { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } };
+const SHOT_LINE = '[Homeroom: screenshot 1 of 1 embedded in request #5\'s description.]';
+
+function screenshotHistory() {
+  return [
+    { role: 'user', content: 'What is wrong in request 5?' },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'toolu_1', name: 'get_request', input: { slug: 'recipe-box', number: 5 } }],
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_1',
+          content: [{ type: 'text', text: '{"number":5}' }, { type: 'text', text: SHOT_LINE }, SHOT],
+        },
+        { type: 'text', text: 'and this one is mine' },
+        SHOT,
+      ],
+    },
+  ];
+}
+
+test('a model that takes images gets a tool result\'s screenshots after the results, each after its line', () => {
+  const messages = mayor.toChatMessages('Mayor', screenshotHistory(), { imageInput: true });
+  assert.deepEqual(messages[3], {
+    role: 'tool',
+    tool_call_id: 'toolu_1',
+    content: '{"number":5}\n\n[Homeroom: 1 picture from this result follows after the tool results.]',
+  });
+  assert.deepEqual(messages[4], {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'and this one is mine' },
+      SHOT_PART,
+      { type: 'text', text: SHOT_LINE },
+      SHOT_PART,
+    ],
+  }, 'their own picture, then the screenshot after the line naming it');
+  assert.equal(messages.length, 5);
+});
+
+test('a text-only model gets every picture as a line, and no bytes', () => {
+  const messages = mayor.toChatMessages('Mayor', screenshotHistory());
+  assert.match(messages[3].content, /\{"number":5\}/);
+  assert.match(messages[3].content, /image attachment omitted: this model reads text only/);
+  assert.equal(typeof messages[4].content, 'string');
+  assert.equal(JSON.stringify(messages).includes('iVBORw0KGgo='), false);
+});
+
+test('the catalog decides: image parts for a model listed as taking images, and one retry without them on a 400', async () => {
+  const calls = [];
+  let refuse = true;
+  const fetchImpl = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    const ok = !refuse || calls.length > 1;
+    return {
+      ok, status: ok ? 200 : 400,
+      text: async () => JSON.stringify(ok ? completion({ content: 'Seen.' }) : { error: { code: 400 } }),
+    };
+  };
+  const seeing = mayor.createClient({
+    apiKey: 'sk-or-v1-session', model: 'vendor/vision', catalogModel: { supportsImages: true }, fetchImpl,
+  });
+  assert.equal(seeing.imageInput, true, 'the agent-session Mayor reads this to decide what the shim fetches');
+  assert.equal(mayor.createClient({ apiKey: 'sk-or-v1-session', model: 'vendor/text', fetchImpl }).imageInput, false);
+
+  const result = await seeing.streamChat({ messages: screenshotHistory(), systemPrompt: 'Mayor' });
+  assert.equal(result.text, 'Seen.');
+  assert.equal(calls.length, 2, 'exactly one retry');
+  assert.ok(JSON.stringify(calls[0]).includes('"image_url"'), 'the first request carried the pictures');
+  assert.equal(JSON.stringify(calls[1]).includes('iVBORw0KGgo='), false, 'the retry carries none');
+  assert.match(JSON.stringify(calls[1]), /image omitted: the model provider could not read it/,
+    'and says why, rather than that the model reads text only');
+
+  refuse = false;
+  calls.length = 0;
+  await seeing.streamChat({ messages: screenshotHistory(), systemPrompt: 'Mayor' });
+  assert.equal(calls.length, 1, 'a request the provider takes is sent once');
+});
