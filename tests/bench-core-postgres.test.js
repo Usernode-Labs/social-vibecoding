@@ -94,7 +94,7 @@ function stubGithub({ calls }) {
       calls.push(['pr', repo, pr]);
       if (pr === 3634) { const err = new Error('Not Found'); err.status = 404; throw err; }
       return {
-        number: pr, merged_at: '2026-10-01T10:00:00Z', merge_commit_sha: sha(`merge${pr}`), base: { sha: 'b'.repeat(40) },
+        number: pr, merged_at: '2026-10-01T10:00:00Z', merge_commit_sha: sha(`merge${pr}`), base: { sha: 'b'.repeat(40) }, head: { sha: sha(`head${pr}`) },
         created_at: '2026-10-01T00:00:00Z', title: `Change ${pr}`, body: `What PR ${pr} does, as its description.`, user: { login: 'homeroom-bot[bot]' },
       };
     },
@@ -103,6 +103,11 @@ function stubGithub({ calls }) {
         ? '{"tests":[]}' : '{"tests":[{"name":"new check","path":"/"}]}';
     },
     async listChangedFiles() { return ['public/app.js']; },
+    // The pull request's own diff: from its merge base to its head.
+    async compareRefs(owner, repo, basehead) {
+      calls.push(['compare', repo, basehead]);
+      return { mergeBaseSha: 'b'.repeat(40), files: ['public/app.js'], filesComplete: true };
+    },
     // A write the materializer must never make: the guard refuses it anyway.
     async createIssueComment() { calls.push(['WRITE']); },
   };
@@ -300,6 +305,9 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(task.reference_source, 'merged_pr');
     assert.equal(task.reference.base_sha, 'ac67fac30de91d0dd969f72b2cd73633d4719dd9', 'the work order\'s base, not GitHub\'s base.sha');
     assert.deepEqual(task.reference.hidden_checks, [{ name: 'new check', path: '/' }]);
+    assert.deepEqual(task.reference.expected_files, ['public/app.js']);
+    assert.equal(task.reference.reference_diff.base, 'b'.repeat(40), 'read from the pull request\'s own diff, not from the task\'s base');
+    assert.ok(calls.some((c) => c[0] === 'compare' && c[2] === `${'b'.repeat(40)}...${task.reference.reference_diff.head}`));
     const pr = await taskByRef('build:usernode-2d5619:pr3647');
     const snap = await snapshots.readSnapshot(pool, pr.snapshot_id);
     assert.equal(snap.texts.seed, 'Please work on this request: "Change 3647".\n\nWhat PR 3647 does, as its description.');
@@ -413,6 +421,43 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(snapsAfter, snapsBefore + 1, 'no task already made is backfilled again');
     const { rows: [m] } = await pool.query("SELECT attempts FROM bench_materializations WHERE definition = 'core-v1'");
     assert.equal(m.attempts, 2);
+    // The retry re-read every build task's reference from its pull
+    // request's own diff; each was imported from it already, so none moved.
+    const builds = (await pool.query(
+      "SELECT COUNT(*)::int AS n FROM bench_tasks WHERE suite_id = $1 AND stage = 'build' AND reference ? 'reference_pr'", [first.suiteId],
+    )).rows[0].n;
+    assert.ok(builds > 0);
+    assert.deepEqual([retry.summary.references.checked, retry.summary.references.updated, retry.summary.references.unchanged],
+      [builds, 0, builds]);
+  });
+
+  await t.test('a build task imported before references came from the PR\'s own diff is repaired by the next pass, once', async () => {
+    const task = await taskByRef('build:usernode-2d5619#3138:pr3625');
+    const good = task.reference;
+    const stale = { ...good, expected_files: ['src/services/mayor.js', 'public/app.js'], hidden_checks: [{ name: 'rail', path: '/' }, { name: 'new check', path: '/' }] };
+    delete stale.reference_diff;
+    const write = (ref) => pool.query('UPDATE bench_tasks SET reference = $2::jsonb WHERE id = $1', [task.id, JSON.stringify(ref)]);
+    const suiteId = first.suiteId;
+
+    // Frozen: the pass changes nothing.
+    await write(stale);
+    await pool.query('UPDATE bench_suites SET frozen_at = NOW() WHERE id = $1', [suiteId]);
+    const frozen = await core.materialize(pool, {}, opts);
+    assert.equal(frozen.noop, true);
+    assert.equal(frozen.references, undefined);
+    assert.deepEqual((await taskByRef('build:usernode-2d5619#3138:pr3625')).reference, stale);
+    await pool.query('UPDATE bench_suites SET frozen_at = NULL WHERE id = $1', [suiteId]);
+
+    // Unfrozen: repaired, and only that task is read.
+    const before = calls.filter((c) => c[0] === 'compare').length;
+    const pass = await core.materialize(pool, {}, opts);
+    assert.equal(pass.noop, true, 'nothing else is materialized');
+    assert.deepEqual([pass.references.checked, pass.references.updated], [1, 1]);
+    assert.equal(calls.filter((c) => c[0] === 'compare').length, before + 1);
+    assert.deepEqual((await taskByRef('build:usernode-2d5619#3138:pr3625')).reference, good);
+    const quiet = await core.materialize(pool, {}, opts);
+    assert.equal(quiet.references, undefined, 'once repaired, a pass reads nothing');
+    assert.equal(calls.filter((c) => c[0] === 'compare').length, before + 1);
   });
 
   await t.test('the label queue hands out Core\'s unlabelled tasks; it freezes only once every one is labelled', async () => {

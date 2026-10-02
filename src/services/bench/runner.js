@@ -30,7 +30,15 @@
 //   * read anything newer than the task. Every turn starts on a branch of
 //     its own, `bench/r<run>-t<trial>`, cut at the snapshot's base commit;
 //     nothing pushes anywhere but that branch, and the branch is deleted
-//     once nothing needs it (services/bench/lane.js).
+//     once nothing needs it (services/bench/lane.js). The branch alone was
+//     not enough: the worker cloned today's main beside it, so a model could
+//     read the later fix in `git log origin/main`. Every worker a trial
+//     starts is now SEALED at that base (sealedWorker): its checkout holds
+//     the session branch alone, main and origin/main are the base, and
+//     origin has no fetch URL (worker/session-branch.sh). Its turns get no
+//     read-only Homeroom tools and an empty usernode-issues, which read the
+//     platform and GitHub as they are now (worker.js mintHomeroomReadGrant,
+//     routes/internal.js).
 //
 // A trial's session is the bench user's and is archived when the trial
 // ends. A restart in the middle is never recovered into the dev-chat tail
@@ -66,7 +74,7 @@ class BenchSideEffectError extends Error {
 
 const GITHUB_READS = Object.freeze([
   'isEnabled', 'getBotUsername', 'getBranchSha', 'getFileContent', 'compareFiles', 'listChangedFiles',
-  'getProposalDiff', 'fetchPublicIssue', 'fetchIssueComments', 'getPR', 'getCommitAt',
+  'compareRefs', 'getProposalDiff', 'fetchPublicIssue', 'fetchIssueComments', 'getPR', 'getCommitAt',
 ]);
 
 function assertBenchBranch(branch) {
@@ -142,6 +150,30 @@ function isBenchSession(session) {
 }
 
 // ── Sessions, branches and turns ────────────────────────────────────────
+
+/**
+ * The worker a trial is handed: the real one, except that every worker it
+ * starts is sealed at the trial's base commit (worker.ensureWorker's
+ * pinnedBase; worker/session-branch.sh), so the checkout reaches nothing
+ * later. `getBase` is the base the stage put on the trial before starting a
+ * worker (runStage reads it from onSession); with none, the worker is
+ * refused rather than started unsealed.
+ */
+function sealedWorker(worker, getBase) {
+  return new Proxy(worker, {
+    get(target, prop) {
+      if (prop === 'ensureWorker') {
+        return async (sessionId, opts = {}) => {
+          const base = getBase();
+          if (!base) throw new BenchSideEffectError('start a worker before its base commit is pinned');
+          return target.ensureWorker(sessionId, { ...opts, pinnedBase: base });
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
 
 function branchFor(trial) {
   return `bench/r${Number(trial.run_id)}-t${Number(trial.id)}`;
@@ -669,9 +701,20 @@ async function runStage(ctx) {
   const runner = STAGE_RUNNERS[ctx.stage];
   if (!runner) return { status: 'not_applicable', error: `no runner for ${ctx.stage}` };
   const startedMs = Date.now();
+  // Every stage puts its base on the trial (onSession) before it starts a
+  // worker; the worker it is handed is sealed at that base.
+  let pinned = null;
+  const sealed = {
+    ...ctx,
+    onSession: async (id, info = {}) => {
+      if (info?.baseSha) pinned = info.baseSha;
+      return ctx.onSession?.(id, info);
+    },
+    deps: ctx.deps?.worker ? { ...ctx.deps, worker: sealedWorker(ctx.deps.worker, () => pinned) } : ctx.deps,
+  };
   let out;
   try {
-    out = await runner(ctx);
+    out = await runner(sealed);
   } catch (err) {
     log.warn('bench', 'A trial threw', { trialId: ctx.trial?.id, stage: ctx.stage, err: err.message });
     out = { status: 'infra_fail', error: `${err.code === 'bench_side_effect' ? 'refused: ' : 'threw: '}${err.message}` };
@@ -697,6 +740,7 @@ module.exports = {
   GITHUB_READS,
   BenchSideEffectError,
   guardedGithub,
+  sealedWorker,
   assertBenchBranch,
   ensureBenchUser,
   isBenchSession,

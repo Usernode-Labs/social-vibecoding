@@ -310,11 +310,16 @@ async function mintHomeroomReadGrant(sessionId, mode) {
   if (!pool) return null;
   try {
     const { rows } = await pool.query(
-      `SELECT user_id, app_id FROM chat_sessions
-        WHERE id = $1 AND status IN ('active', 'promoted')`,
+      `SELECT cs.user_id, cs.app_id, u.username, u.is_synthetic AS user_is_synthetic
+         FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.status IN ('active', 'promoted')`,
       [sessionId]
     );
     if (!rows.length) return null;
+    // A benchmark trial replays a request as it stood at a past commit, and
+    // these tools read the platform as it is now (later discussion, later
+    // proposals): they would hand it the answer.
+    if (require('./bench/runner').isBenchSession(rows[0])) return null;
     const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
       userId: rows[0].user_id,
       kind: 'worker_read',
@@ -2323,7 +2328,7 @@ async function _harvestBootstrapLog(containerName) {
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
 async function _bootstrapWarmContainer(sessionId, {
-  repoOwner, repoName, branchName, onProgress, temporary = false,
+  repoOwner, repoName, branchName, onProgress, temporary = false, pinnedBase = null,
 }) {
   let containerName = workerContainerName(sessionId);
 
@@ -2376,6 +2381,10 @@ async function _bootstrapWarmContainer(sessionId, {
     // session and reach the platform's internal API.
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    // A benchmark trial's checkout is sealed at this commit: its session
+    // branch alone, nothing later, and no fetch URL (worker/session-branch.sh,
+    // "Benchmark trials"). Set only for one; every other worker is unchanged.
+    ...(pinnedBase ? { USERNODE_PINNED_BASE: pinnedBase } : {}),
   };
   if (usesKubernetesWorkers()) {
     // Same bounded retry as the Docker path below: same attempts, same
@@ -2625,7 +2634,13 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
   onProgress, temporary = false,
+  // A benchmark trial's base commit (services/bench/runner.js sealedWorker):
+  // the checkout reaches nothing past it. Null for every other session.
+  pinnedBase = null,
 } = {}) {
+  if (pinnedBase != null && !/^[0-9a-f]{40}$/.test(String(pinnedBase))) {
+    throw new Error(`ensureWorker: the pinned base must be a full commit id, got ${pinnedBase}`);
+  }
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
 
@@ -2711,7 +2726,7 @@ async function ensureWorker(sessionId, {
   const bootstrap = (async () => {
     try {
       const runtimeName = await _bootstrapWarmContainer(sessionId, {
-        repoOwner, repoName, branchName, onProgress, temporary,
+        repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
       });
       await accountDeletionGuard(sessionId);
       _registryUpsert(sessionId, {
@@ -4659,6 +4674,7 @@ module.exports = {
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
   _registryUpsertForTests: _registryUpsert,
+  _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
   newWatchdogCounters,
   recordWatchdogProbe,

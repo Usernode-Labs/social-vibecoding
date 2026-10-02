@@ -48,6 +48,7 @@ function installPool({
   threadRows = [],
   threadThrows = false,
   sessionMissing = false,
+  owner = { username: 'evan', user_is_synthetic: false },
 } = {}) {
   const calls = [];
   poolQueryHandler = async (sql, params) => {
@@ -58,7 +59,7 @@ function installPool({
       return { rows: threadRows };
     }
     if (/FROM chat_sessions/i.test(s)) {
-      return { rows: sessionMissing ? [] : [{ repo_url: repoUrl, app_id: appId }] };
+      return { rows: sessionMissing ? [] : [{ repo_url: repoUrl, app_id: appId, ...owner }] };
     }
     return { rows: [] };
   };
@@ -222,4 +223,49 @@ test('a missing session 404s before any thread read', async (t) => {
   assert.equal(status, 404);
   assert.equal(body.code, 'session_not_found');
   assert.ok(!calls.some((c) => /FROM chat_messages/i.test(c.sql)));
+});
+
+// A benchmark trial replays a request as it stood at a past commit; GitHub
+// and the platform answer as they are now (the fix merged, the request
+// closed), so its usernode-issues gets nothing, and reads nothing.
+test('a benchmark trial\'s session reads no issue, no comments and no thread', async (t) => {
+  let githubCalls = 0;
+  const origIssue = github.fetchPublicIssue;
+  const origComments = github.fetchIssueComments;
+  const origList = github.fetchPublicIssues;
+  github.fetchPublicIssue = async () => { githubCalls += 1; return { issue: { number: 945, title: 'Shipped in #3534' } }; };
+  github.fetchIssueComments = async () => { githubCalls += 1; return { comments: [], truncated: false }; };
+  github.fetchPublicIssues = async () => { githubCalls += 1; return { issues: [], truncatedList: false }; };
+  t.after(() => {
+    github.fetchPublicIssue = origIssue;
+    github.fetchIssueComments = origComments;
+    github.fetchPublicIssues = origList;
+  });
+  const calls = installPool({
+    owner: { username: 'homeroom_bench', user_is_synthetic: true },
+    threadRows: [threadRow('evan', 'Merged in #3534', '2026-06-02T00:00:00Z')],
+  });
+  const baseUrl = await startServer(t);
+
+  const one = await getIssue(baseUrl, 945, workerToken(SESSION_ID));
+  assert.equal(one.status, 200);
+  assert.deepEqual(one.body, {
+    ok: true, issue: null, comments: [], commentsTruncated: false,
+    note: 'Issues are not available in a benchmark trial: the request is in your prompt as it stood.',
+  });
+  const res = await fetch(`${baseUrl}/api/internal/sessions/${SESSION_ID}/issues`, {
+    headers: { Authorization: `Bearer ${workerToken(SESSION_ID)}` },
+  });
+  const list = await res.json();
+  assert.deepEqual([res.status, list.ok, list.issues], [200, true, []]);
+  assert.match(list.note, /not available in a benchmark trial/);
+  assert.equal(githubCalls, 0);
+  assert.ok(!calls.some((c) => /FROM chat_messages/i.test(c.sql)), 'no thread read');
+
+  // A person's session named like it, but not the synthetic bench user, is
+  // served as before.
+  stubGithub(t, { issue: { number: 945, title: 'T', body: 'b' } });
+  installPool({ owner: { username: 'homeroom_bench', user_is_synthetic: false } });
+  const person = await getIssue(baseUrl, 945, workerToken(SESSION_ID));
+  assert.equal(person.body.issue.number, 945);
 });

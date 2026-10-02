@@ -23,6 +23,7 @@ const appAccess = require('../services/app-access');
 // needs now lives inside that service.
 const issueDraft = require('../services/issue-draft');
 const platformJwt = require('../services/platform-jwt');
+const benchRunner = require('../services/bench/runner');
 const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
 
@@ -133,6 +134,12 @@ const ACCESS_COOKIE_TTL_S = platformJwt.EDGE_COOKIE_TTL_S;
 // serve the page anyway rather than redirect-looping — the app itself
 // still auths via the token, only same-host asset caching degrades.
 const RETRY_MARKER = '__ua';
+
+// A benchmark trial (services/bench/runner.js) replays a request as it stood
+// at a past commit; GitHub and the platform answer as they are now (later
+// comments, the request closed by its fix). Its prompt already carries the
+// request's thread as it stood, so usernode-issues answers with nothing.
+const BENCH_ISSUES_NOTE = 'Issues are not available in a benchmark trial: the request is in your prompt as it stood.';
 
 function authorizeUrl(host, next) {
   return `https://${USERNODE_DOMAIN}/__access/authorize`
@@ -528,14 +535,18 @@ function internalRoutes(_config) {
       let repoUrl = '';
       try {
         const { rows } = await pool.query(
-          `SELECT a.repo_url
+          `SELECT a.repo_url, u.username, u.is_synthetic AS user_is_synthetic
              FROM chat_sessions cs
              JOIN apps a ON a.id = cs.app_id
+             LEFT JOIN users u ON u.id = cs.user_id
             WHERE cs.id = $1`,
           [sessionId]
         );
         if (!rows.length) {
           return res.status(404).json({ ok: false, code: 'session_not_found' });
+        }
+        if (benchRunner.isBenchSession(rows[0])) {
+          return res.json({ ok: true, issues: [], truncatedList: false, note: BENCH_ISSUES_NOTE });
         }
         repoUrl = rows[0].repo_url || '';
       } catch (err) {
@@ -594,14 +605,18 @@ function internalRoutes(_config) {
       let appId = null;
       try {
         const { rows } = await pool.query(
-          `SELECT a.repo_url, cs.app_id
+          `SELECT a.repo_url, cs.app_id, u.username, u.is_synthetic AS user_is_synthetic
              FROM chat_sessions cs
              JOIN apps a ON a.id = cs.app_id
+             LEFT JOIN users u ON u.id = cs.user_id
             WHERE cs.id = $1`,
           [sessionId]
         );
         if (!rows.length) {
           return res.status(404).json({ ok: false, code: 'session_not_found' });
+        }
+        if (benchRunner.isBenchSession(rows[0])) {
+          return res.json({ ok: true, issue: null, comments: [], commentsTruncated: false, note: BENCH_ISSUES_NOTE });
         }
         repoUrl = rows[0].repo_url || '';
         appId = rows[0].app_id;

@@ -22,7 +22,11 @@
 //   * keyed by the definition's key and version (bench_materializations);
 //     once `done` it is a no-op, unless an admin asks to retry, which only
 //     tries the tasks that are still missing (each task is keyed by its ref,
-//     stored as tags.core_ref);
+//     stored as tags.core_ref), and re-reads the build tasks' expected files
+//     and hidden checks from their pull requests' own diffs
+//     (suites.refreshPrReferences; never on a frozen suite). A task imported
+//     before that fix is also repaired by the next pass that is otherwise a
+//     no-op (the boot pass after a deploy), once;
 //   * each task resolves to a snapshot: the one its run recorded when there
 //     is one, otherwise rebuilt as of `as_of` (services/bench/backfill.js),
 //     or, for a build, imported from its merged pull request
@@ -800,8 +804,33 @@ async function ensureSuite(pool, definition, row, actorId) {
 }
 
 /**
+ * A done suite's build tasks whose references were never re-read from their
+ * pull requests' own diffs (imported before that fix), repaired on the next
+ * pass (the boot pass) with nobody pressing anything. Once each has been,
+ * this reads nothing. Never on a frozen suite; never throws.
+ */
+async function repairUnrepaired(pool, suiteId, deps, rateMs) {
+  if (!suiteId) return null;
+  try {
+    const suite = await suites.suiteRow(pool, suiteId);
+    if (!suite || suite.frozen_at) return null;
+    const github = deps.github || require('./runner').guardedGithub(require('../github'));
+    if (!github.isEnabled()) return null;
+    const out = await suites.refreshPrReferences(pool, {
+      suiteId, github, onlyUnrepaired: true, pause: () => sleep(Number(rateMs) || 0),
+    });
+    return out.checked ? out : null;
+  } catch (err) {
+    log.warn('bench', 'Repairing the build references failed', { suiteId, err: err.message });
+    return null;
+  }
+}
+
+/**
  * Materialize a definition: its suite and every task it can resolve. A
- * no-op once done (unless `force`, which retries only what is missing).
+ * no-op once done (unless `force`, which retries only what is missing),
+ * except that build tasks imported before their references were read from
+ * their pull requests' own diffs are repaired (repairUnrepaired).
  * Resolves { ok, noop?, suiteId, summary }. Never throws.
  */
 async function materialize(pool, config = {}, {
@@ -815,7 +844,11 @@ async function materialize(pool, config = {}, {
   const row = await claim(pool, definition, force);
   if (!row) {
     const current = await statusRow(pool, definition);
-    return { ok: true, noop: true, status: current?.status || null, suiteId: current?.suite_id || null, summary: current?.summary || null };
+    const references = current?.status === 'done' ? await repairUnrepaired(pool, current.suite_id, deps, rateMs) : null;
+    return {
+      ok: true, noop: true, status: current?.status || null, suiteId: current?.suite_id || null, summary: current?.summary || null,
+      ...(references ? { references } : {}),
+    };
   }
   const startedMs = Date.now();
   try {
@@ -824,9 +857,20 @@ async function materialize(pool, config = {}, {
     const suite = await ensureSuite(pool, definition, row, actorId);
     const ctx = { pool, config, github, deps, definition, suite, skipped: [], rateMs: Number(rateMs) || 0 };
     const rules = [];
+    let references = null;
     if (suite.frozen_at) {
       ctx.skipped.push({ ref: definition.key, stage: null, app: null, reason: 'the suite is frozen: nothing more can be added to it' });
     } else {
+      // A retry also re-reads the build tasks' references from their pull
+      // requests' own diffs (suites.refreshPrReferences): the repair for
+      // tasks imported when their files and checks were read from the task's
+      // base to the merge, which swept in everything merged in between.
+      // Before the missing tasks, which are imported right already.
+      if (force) {
+        references = await suites.refreshPrReferences(pool, {
+          suiteId: suite.id, github, pause: () => sleep(ctx.rateMs),
+        });
+      }
       for (const spec of definition.tasks) {
         // eslint-disable-next-line no-await-in-loop
         await materializeOne(ctx, spec);
@@ -836,7 +880,11 @@ async function materialize(pool, config = {}, {
         rules.push(await materializeRule(ctx, rule));
       }
     }
-    const summary = { ...(await summarize(pool, suite.id, definition, ctx.skipped)), rules, durationMs: Date.now() - startedMs };
+    const summary = {
+      ...(await summarize(pool, suite.id, definition, ctx.skipped)), rules,
+      ...(references ? { references } : {}),
+      durationMs: Date.now() - startedMs,
+    };
     await pool.query(
       `UPDATE bench_materializations SET status = 'done', summary = $3::jsonb, finished_at = NOW()
         WHERE definition = $1 AND version = $2`,
