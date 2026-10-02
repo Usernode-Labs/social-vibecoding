@@ -17877,10 +17877,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     .dev-ws-tabs.dev-ws-band { top: calc(var(--ws-pin-top, 0px) - 15px); }
   }
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
-     back bar) and the head under it, with the grouping, the search and the
+  /* EVERYTHING PINS UP HERE, as one band: the project's tabs and, on All
+     items, the head under them, with the grouping, the search and the
      filters. The controls belong WITH the list you are
      narrowing, so they stay reachable however far down it you are.
+
+     ALL ITEMS' BACK BAR IS NOT PART OF IT (#3651). It is a second
+     `.dev-ws-tabs` box, and the strip's rule below made it sticky at the
+     tabs' own offset, so two bars pinned in one place: a little way down
+     the page "Workshop / All items" rode up across Hub and Discussion, and
+     further down its band covered the tabs altogether. It scrolls away now,
+     under the tabs, as it always has on a phone (#3522); the lit Workshop
+     tab is the way back from anywhere down the list. The tabs are the bar
+     the head and its band are measured against on every page (workshop.tsx,
+     `setBar`).
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
@@ -17899,6 +17909,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
+  /* Under 768px the tabs are the coloured band: opaque, and with no band of
+     sheet behind them (that is the row's, from 768px), so the column gap the
+     measured offset leaves under them would have nothing in it but the cards
+     going by. The head rests on the band's foot instead, as a phone's does:
+     where the band pins, plus its 58px (the 18px tuck and the 40px row). */
+  @media (max-width: 767.98px) {
+    #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-pin-top, 0px) - 15px + 58px); }
+  }
+  /* The back bar scrolls (above), in the flow and under the tabs, with no
+     band of its own. `top: auto` because the strip's offset would SHIFT a
+     relative box rather than pin it, and `z-index: auto` so it passes under
+     the pinned tabs rather than over them. */
+  .dev-ws-tabs.dev-ws-pagebar { position: relative; top: auto; z-index: auto; }
+  .dev-ws-tabs.dev-ws-pagebar::before { content: none; }
   .dev-ws-tabs {
     order: 0;
     /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
@@ -18006,16 +18030,23 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      a backdrop-filter nested inside another one. What was left was 50%
      white, which is exactly the "cards showing through" this fixes (and
      why the search row looked washed rather than frosted over the list).
-     So while pinned the band, and the head under it, take the sheet's
-     opaque colour, which is what the fallback below the frost rules already
-     uses where there is no backdrop-filter at all.
+     So while pinned the band takes the pane's own opaque colour, the one
+     its head and body already wear (`--dc-sheet-solid`, the fallback below
+     the frost rules).
+
+     THE PANE'S COLOUR, NOT `--dc-sheet` (#3651). The band and the pinned
+     head used to switch to `--dc-sheet`, which is white where the pane is
+     the warm `--dc-sheet-solid`: the head changed colour the moment it
+     pinned, and a white slab sat over a cream pane, its edge reading as a
+     gap down both sides and along the foot. The head keeps its colour now
+     and the band matches it, so pinned and at rest are one material.
 
      ONLY WHILE PINNED. At rest the bar sits on the page, and a band there
      would draw a slab of sheet colour around it for nothing.
 
      Behind the nav's own content (`z-index: -1` inside the strip's stacking
-     context), so the bar draws over it. The pinned head's rounded top-left
-     corner is squared: a curve there left a notch the cards showed through. */
+     context), so the bar draws over it. The pinned head squares its top
+     corners (`data-ws-head-pinned`, below the pane's base rule). */
   .dev-ws-tabs::before {
     content: '';
     position: absolute;
@@ -18024,15 +18055,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     height: var(--dev-ws-head-top, calc(100% + 10px));
     left: var(--dev-ws-band-left, 0px);
     right: var(--dev-ws-band-right, 0px);
-    background-color: var(--dc-sheet);
+    background-color: var(--dc-sheet-solid);
     pointer-events: none;
     visibility: hidden;
   }
   .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
-  .dev-ws[data-ws-pinned] .dev-ws-pane-head {
-    background-color: var(--dc-sheet);
-    border-top-left-radius: 0;
-  }
   /* THE TRACK HOLDS THE PILL AND THE "+", 6px apart, and draws neither
      (#2934): it hugs the two. The surface is the phone rule's two items at
      this width's metrics — a 2px ring in the raised sheet, no hairline — so
@@ -18471,6 +18498,15 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   padding: 8px 10px;
   border-radius: 22px 22px 0 0;
 }
+/* PINNED, THE HEAD IS SQUARE ON TOP, at every width (#3651). Its rounded
+   corners are the pane's at rest; pinned, it meets the flat foot of the tabs
+   above it, and each curve left a notch between the two that the cards
+   scrolling by showed through. Only the top-left was squared, and only from
+   700px; the top-right kept its notch, and a phone kept both.
+   `data-ws-head-pinned` is workshop.tsx's usePinnedStrip: set once the head
+   has left the top of its pane, which is the moment it sticks, so the pane
+   keeps its rounded top all the while it is still scrolling up. */
+.dev-ws[data-ws-head-pinned] .dev-ws-pane-head { border-top-left-radius: 0; border-top-right-radius: 0; }
 .dev-ws-pane-body {
   display: flex; flex-direction: column; gap: 8px;
   padding: 8px 10px 12px;

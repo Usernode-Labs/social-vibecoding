@@ -326,7 +326,7 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   assert.doesNotMatch(CSS, /> \.un-ptr-layer \{/, 'the kit\'s layer paints only its spinner again');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(ws, /function usePullGap|usePullGap\(hostRef\)|setProperty\('--ptr-gap'/, 'nor reads the kit\'s transform back');
-  assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*\/\/ NO PULL HOOK HERE ANY MORE/);
+  assert.match(ws, /usePinnedStrip\(bar, hostRef, tab\);\s*\/\/ NO PULL HOOK HERE ANY MORE/);
 });
 
 test('#3520: a short growing tab keeps one pixel to scroll, so the installed app bounces it', () => {
