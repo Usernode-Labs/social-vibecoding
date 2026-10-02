@@ -19,6 +19,8 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2, today: new Date('2026-10-02T00:00:00Z') });
   assert.match(prompt, /talking with @ada in a direct message on Homeroom/);
   assert.match(prompt, /call my_work\n  first and answer only from what it returns/);
+  assert.match(prompt, /progress question \("how far along are you\?"\)/);
+  assert.match(prompt, /say the step,\n  never a percentage/);
   assert.match(prompt, /Nothing is filed until they tap File it/);
   assert.match(prompt, /Finish every turn by calling reply exactly once/);
   assert.match(prompt, /Decline, in one friendly sentence, anything sexual, violent, about gambling/);
@@ -66,6 +68,9 @@ test('the tools: five lookups and actions and a reply, every one closed to extra
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
     assert.doesNotMatch(t.function.description, /—/);
   }
+  const myWork = mayor.TOOLS.find((t) => t.function.name === 'my_work').function;
+  assert.match(myWork.description, /first version still waiting for its project to finish setting up/);
+  assert.match(myWork.description, /forMinutes/);
   const reply = mayor.TOOLS.find((t) => t.function.name === 'reply').function.parameters;
   assert.deepEqual(reply.required, ['text']);
   assert.equal(reply.properties.cards.maxItems, mayor.MAX_CARDS);

@@ -83,6 +83,13 @@ function dollars(cents) {
   return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
 }
 
+/** How long a step has been going, in whole minutes. */
+function forMinutes(since) {
+  const started = new Date(since);
+  if (Number.isNaN(started.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - started.getTime()) / 60000));
+}
+
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
 function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
@@ -130,7 +137,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '',
     'In this chat you can:',
     '- Say what you are working on for them and how it is going. For ANY question about their work, call my_work',
-    '  first and answer only from what it returns. Use request_detail for the whole story of one request.',
+    '  first and answer only from what it returns. A progress question ("how far along are you?") is answered',
+    '  with the step you are on and how long it has been going, from the ages my_work returns; say the step,',
+    '  never a percentage. Use request_detail for the whole story of one request.',
     '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
     '  word for word on the request\'s public discussion, where the group can see it; say so.',
     '- Offer to file a new request on one of their projects when they ask you to build or change something',
@@ -175,7 +184,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'my_work',
-      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute; and their weekly allowance, used and left.',
+      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute, including any first version still waiting for its project to finish setting up, each step carrying how long it has been going in forMinutes; and their weekly allowance, used and left.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -410,7 +419,7 @@ async function myWork(pool, { userId, settings, deps = {} }) {
     requests.push(item);
   }
   const { rows: firsts } = await pool.query(
-    `SELECT a.slug, a.name, f.status FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+    `SELECT a.slug, a.name, f.status, f.created_at FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
       WHERE f.user_id = $1 AND f.status IN ('waiting', 'filing', 'failed')
       ORDER BY f.created_at DESC LIMIT 10`,
     [userId],
@@ -419,11 +428,22 @@ async function myWork(pool, { userId, settings, deps = {} }) {
   const cap = Number(settings?.userWeeklyCents) || 0;
   const spent = await dmModule(deps).weeklySpentCents(pool, userId);
   return {
-    workingOnNow: now.map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since })),
+    workingOnNow: now.map((w) => ({
+      project: w.appSlug,
+      projectName: w.appName,
+      number: w.issueNumber,
+      since: w.since,
+      forMinutes: forMinutes(w.since),
+    })),
     requests,
+    // A first version still waiting covers a project the bot is still setting
+    // up: it is the current step the bot reports when asked how far along it
+    // is, so it carries how long the setup has been running.
     firstVersionsNotFiledYet: firsts.map((f) => ({
       project: f.slug,
       projectName: f.name || f.slug,
+      since: new Date(f.created_at).toISOString(),
+      forMinutes: forMinutes(f.created_at),
       status: f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
     })),
     atOnce: `You work on up to ${settings?.perPerson || 2} of their projects at a time, one request per project.`,

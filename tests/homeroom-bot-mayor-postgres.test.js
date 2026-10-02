@@ -265,6 +265,28 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(projects.projects.map((p) => `${p.project}:${p.botBuildsHere}`).sort(), ['note-board:false', 'seed-swap:true']);
   });
 
+  await t.test('my_work: a project still being set up is the current step, with how long it has been going', async () => {
+    const { rows: [creating] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       VALUES ('Ear Trainer', 'ear-trainer', 'creating', $1, 'private', 'private') RETURNING id`,
+      [ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, bot_builds)
+       VALUES ($1, $2, 'Train the ear', 'waiting', TRUE)`,
+      [creating.id, ada.id],
+    );
+    const work = await mayor.myWork(pool, { userId: ada.id, settings });
+    const setup = work.firstVersionsNotFiledYet.find((f) => f.project === 'ear-trainer');
+    assert.ok(setup, 'the setup step is in what it reports');
+    assert.equal(setup.status, 'waiting for the project to finish setting up');
+    assert.match(setup.since, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(typeof setup.forMinutes, 'number');
+    assert.ok(Number.isInteger(setup.forMinutes) && setup.forMinutes >= 0, 'the age in whole minutes');
+    assert.ok(!work.workingOnNow.some((w) => w.project === 'ear-trainer'),
+      'not in workingOnNow: there is no queue row until the first request is filed');
+  });
+
   await t.test('it reads the platform through the Mayor\'s connector: reads only, on its own grant, closed after', async () => {
     platformCalls.length = 0;
     const closedBefore = platformClosed;
