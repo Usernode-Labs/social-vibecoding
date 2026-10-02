@@ -4,6 +4,8 @@ import type {
   ConversationMessage,
   ConversationSummary,
   ConversationUser,
+  HomeroomBotActivity,
+  HomeroomBotActivityOutcome,
   HomeroomBotJob,
   HomeroomBotMeta,
   HomeroomBotOutcome,
@@ -664,4 +666,56 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
 /** #3692: what the Homeroom bot is doing for the signed-in person, and did before. */
 export async function getHomeroomBotWork(): Promise<HomeroomBotWork> {
   return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work'));
+}
+
+const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
+  'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
+  'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+]);
+
+/** An in-app address (`#app/…`), or null: a card's link never leaves the shell. */
+function inAppHref(value: unknown): string | null {
+  const href = text(value);
+  return href.startsWith('#app/') ? href : null;
+}
+
+/**
+ * #3736: the state of the activity cards in the bot's DM, field by field.
+ * A card without a message id is dropped; a step is kept only as a whole
+ * "N of M"; an unknown state or outcome reads as a piece of work that
+ * stopped, never as one still going.
+ */
+export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
+  return array(pick(record(input), 'cards')).map((entry): HomeroomBotActivity | null => {
+    const row = record(entry);
+    const messageId = strictId(pick(row, 'messageId'));
+    if (!messageId) return null;
+    const links = record(pick(row, 'links'));
+    const step = strictId(pick(row, 'step'));
+    const of = strictId(pick(row, 'of'));
+    const whole = !!step && !!of && step <= of && of <= 12;
+    const working = text(pick(row, 'state')) === 'working';
+    const outcome = text(pick(row, 'outcome')) as HomeroomBotActivityOutcome;
+    return {
+      messageId,
+      state: working ? 'working' : 'done',
+      startedAt: text(pick(row, 'startedAt')) || null,
+      links: { request: inAppHref(pick(links, 'request')), proposal: inAppHref(pick(links, 'proposal')) },
+      step: working && whole ? step : null,
+      of: working && whole ? of : null,
+      stepName: working ? text(pick(row, 'stepName')) || null : null,
+      doing: working ? text(pick(row, 'doing')) || null : null,
+      outcome: working ? null : (ACTIVITY_OUTCOMES.has(outcome) ? outcome : 'stopped'),
+      endedAt: working ? null : text(pick(row, 'endedAt')) || null,
+    };
+  }).filter((card): card is HomeroomBotActivity => !!card);
+}
+
+/**
+ * #3736: how far along each activity card in the signed-in person's bot DM
+ * is. A re-read after news passes `fresh`, so the worker's offline copy of
+ * an older state never stands in for it (see ReadOptions).
+ */
+export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivity[]> {
+  return normalizeBotActivity(await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options)));
 }
