@@ -17957,9 +17957,13 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      a backdrop-filter nested inside another one. What was left was 50%
      white, which is exactly the "cards showing through" this fixes (and
      why the search row looked washed rather than frosted over the list).
-     So while pinned the band, and the head under it, take the sheet's
-     opaque colour, which is what the fallback below the frost rules already
-     uses where there is no backdrop-filter at all.
+     So while pinned the band, and the head under it, take the pane's own
+     opaque colour, --dc-sheet-solid — what the fallback below the frost
+     rules already uses where there is no backdrop-filter at all. (The
+     sheet's --dc-sheet is a different colour from the pane's solid fill:
+     white over cream in light, #1c1c1e over #17181d in dark, so the band
+     and the head pinned over the pane read as a different material from
+     the pane they are attached to.)
 
      ONLY WHILE PINNED. At rest the bar sits on the page, and a band there
      would draw a slab of sheet colour around it for nothing.
@@ -17975,13 +17979,13 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     height: var(--dev-ws-head-top, calc(100% + 10px));
     left: var(--dev-ws-band-left, 0px);
     right: var(--dev-ws-band-right, 0px);
-    background-color: var(--dc-sheet);
+    background-color: var(--dc-sheet-solid);
     pointer-events: none;
     visibility: hidden;
   }
   .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
   .dev-ws[data-ws-pinned] .dev-ws-pane-head {
-    background-color: var(--dc-sheet);
+    background-color: var(--dc-sheet-solid);
     border-top-left-radius: 0;
   }
   /* THE TRACK HOLDS THE PILL AND THE "+", 6px apart, and draws neither

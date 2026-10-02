@@ -5232,10 +5232,10 @@ test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)'
   assert.match(band[1], /height: var\(--dev-ws-head-top, calc\(100% \+ 10px\)\);/);
   assert.match(band[1], /left: var\(--dev-ws-band-left, 0px\);/);
   assert.match(band[1], /right: var\(--dev-ws-band-right, 0px\);/);
-  assert.match(band[1], /background-color: var\(--dc-sheet\);/, 'solid: a nested frost cannot blur here');
+  assert.match(band[1], /background-color: var\(--dc-sheet-solid\);/, "the pane's own opaque colour: a nested frost cannot blur here");
   assert.match(band[1], /visibility: hidden;/, 'and not at rest, where it would be a slab for nothing');
   assert.match(decls, /\.dev-ws\[data-ws-pinned\] > \.dev-ws-tabs::before \{ visibility: visible; \}/);
-  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\);/);
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet-solid\);/);
   // The measurement and the flag.
   assert.match(WORKSHOP, /const STRIP_PROPS = \['--dev-ws-head-top', '--dev-ws-band-left', '--dev-ws-band-right'\];/);
   assert.match(WORKSHOP, /setProperty\('--dev-ws-band-left', `\$\{Math\.round\(p\.left - n\.left\)\}px`\)/);
