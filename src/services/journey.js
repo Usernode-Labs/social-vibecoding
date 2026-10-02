@@ -1306,6 +1306,45 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
   };
 }
 
+// ── Summary ────────────────────────────────────────────────────────────
+//
+// What the page leads with, in one request: active groups for the last
+// finished week (with this week so far as a count only), one stuck list for
+// newcomers across their cohorts, the open turns, the trust checks and the
+// coverage line.
+async function summary(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+  const current = parseWeek(isoDay(weekStart(now)), now);
+  const nowMs = new Date(now).getTime();
+  const [groups, soFar, list, loop, trust, cover] = await Promise.all([
+    activeGroups(pool, { week, now, leftOutIds }),
+    activeGroups(pool, { week: current, now, leftOutIds }),
+    cohorts(pool, { now, leftOutIds }),
+    changeLoop(pool, { week, now, leftOutIds }),
+    trustChecks(pool, { week, leftOutIds }),
+    coverage(pool, { week, leftOutIds }),
+  ]);
+  const recentDays = list.cohorts
+    .filter((c) => nowMs - new Date(`${c.day}T00:00:00Z`).getTime() <= NEWCOMER_DAYS * DAY_MS)
+    .map((c) => c.day);
+  const miles = await Promise.all([
+    ...recentDays.map((day) => firstMile(pool, { day, now, leftOutIds })),
+    firstMile(pool, { day: 'other_way', now, leftOutIds }),
+  ]);
+  const stuck = miles.flatMap((m) => m.people.filter((p) => p.stuckAt).map((p) => ({
+    userId: p.userId, name: p.name, cohort: m.cohort, stuckAt: p.stuckAt, reason: p.stuckReason,
+    days: p.daysSince, failedAttempts: p.failedAttempts,
+  }))).sort((a, b) => (b.days || 0) - (a.days || 0));
+  return {
+    week: week.label,
+    thisWeekSoFar: { week: current.label, count: soFar.count },
+    groups,
+    stuck,
+    openTurns: loop.open,
+    trust,
+    coverage: cover,
+  };
+}
+
 module.exports = {
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
@@ -1360,6 +1399,7 @@ module.exports = {
   previousWeek,
   splitVisits,
   stages,
+  summary,
   trustChecks,
   visitsFor,
   weekStart,

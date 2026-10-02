@@ -30,6 +30,8 @@ const shotsExport = require('../services/shots-export');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
 const journeyLeftOut = require('../services/journey-left-out');
+const journey = require('../services/journey');
+const journeyDemoData = require('../services/journey-demo');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
@@ -801,7 +803,83 @@ function adminRoutes(config) {
     return res.status(500).json({ error: 'Internal server error' });
   };
 
+  // ── Journey readings (#3369) ───────────────────────────────
+  //
+  // Read-only, any admin. Under staging with ?demo=1 each one answers a
+  // whole, labelled demo payload (services/journey-demo.js): a staging
+  // clone mixes emptied private tables with reseeded fixtures, and half-real
+  // numbers would be worse than invented ones that say so.
+  const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
+  const journeyRead = (what, demo, handler) => async (req, res) => {
+    try {
+      if (journeyDemo(req)) return res.json(demo(req));
+      const leftOutIds = await journeyLeftOut.leftOutIds(pool);
+      const result = await handler(req, { leftOutIds, now: new Date() });
+      if (result && result.status) return res.status(result.status).json({ error: result.error });
+      return res.json(result);
+    } catch (err) {
+      log.error('admin', `Journey ${what} failed`, { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+  const journeyWeek = (req, now) => {
+    const week = journey.parseWeek(req.query.week, now);
+    return week || null;
+  };
+  const badWeek = { status: 400, error: 'week must be a Monday in YYYY-MM-DD, not in the future.' };
+
+  router.get('/api/admin/journey/summary', journeyRead('summary', () => journeyDemoData.summary(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      return week ? journey.summary(pool, { week, ...ctx }) : badWeek;
+    }));
+
+  router.get('/api/admin/journey/cohorts', journeyRead('cohorts', () => journeyDemoData.cohorts(),
+    async (req, ctx) => journey.cohorts(pool, ctx)));
+
+  router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
+    async (req, ctx) => {
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      return journey.firstMile(pool, { day, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/stages', journeyRead('stages', () => journeyDemoData.stages(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      return week ? journey.stages(pool, { week, ...ctx }) : badWeek;
+    }));
+
+  router.get('/api/admin/journey/loops', journeyRead('loops', () => journeyDemoData.loops(),
+    async (req, ctx) => {
+      const week = journeyWeek(req, ctx.now);
+      if (!week) return badWeek;
+      const [change, invite] = await Promise.all([
+        journey.changeLoop(pool, { week, ...ctx }),
+        journey.inviteLoop(pool, { week, ...ctx }),
+      ]);
+      return { change, invite };
+    }));
+
+  router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
+    async (req, ctx) => {
+      if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      const mile = await journey.firstMile(pool, { day, ...ctx });
+      const to = ctx.now;
+      const from = new Date(to.getTime() - journey.NEWCOMER_DAYS * journey.DAY_MS);
+      return journey.nextStepCounts(pool, { from, to, userIds: mile.people.filter((p) => p.userId).map((p) => p.userId) });
+    }));
+
+  router.get('/api/admin/journey/people/:id', journeyRead('person', (req) => journeyDemoData.person(req.params.id),
+    async (req, ctx) => {
+      const found = await journey.person(pool, { userId: req.params.id, now: ctx.now });
+      return found || { status: 404, error: 'There is no such person.' };
+    }));
+
   router.get('/api/admin/journey/left-out', async (req, res) => {
+    if (journeyDemo(req)) return res.json(journeyDemoData.leftOut());
     try {
       res.json({ people: await journeyLeftOut.list(pool) });
     } catch (err) {
