@@ -30,8 +30,11 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
     'tests/recoverable-preview-runtime.test.js',
     'tests/cli-preview-handoff-postgres.test.js',
     'tests/cli-preview-checks.test.js',
+    'tests/cli-check-settlement-postgres.test.js',
     'tests/check-retirement.test.js',
     'tests/check-harvest.test.js',
+    'tests/check-history.test.js',
+    'tests/merge-queue.test.js',
   ]) assert.ok(SUITES.includes(file), file);
 });
 
@@ -46,6 +49,8 @@ test('focused CI triggers for its suites, shared owners and operation contracts'
     'src/services/cli-preview-handoff/checks.js',
     'src/services/proposal-review/store.js',
     'src/services/check-retirement.js',
+    'src/services/check-history.js',
+    'src/services/merge-queue.js',
     'src/services/visuals.js',
     'src/services/kubernetes.js',
     'src/db/schema.sql',

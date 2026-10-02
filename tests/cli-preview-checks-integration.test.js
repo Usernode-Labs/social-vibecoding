@@ -8,7 +8,7 @@ const { actualChecksWorker, addChecksTables } = require('./lib/cli-checks-fixtur
 const kubernetes = require('../src/services/kubernetes');
 const visuals = require('../src/services/visuals');
 const lifecycle = require('../src/services/preview-lifecycle');
-const { interrupt, tick, wake, orphan, snapshot } = require('./lib/cli-checks-control');
+const { interrupt, tick, wake, orphan, snapshot, deliverGates } = require('./lib/cli-checks-control');
 const NEXT = 'c'.repeat(40);
 
 test('C9 actual Chromium Job survives worker loss, verdict loss and rejects superseded output', {
@@ -70,6 +70,7 @@ test('C9 actual Chromium Job survives worker loss, verdict loss and rejects supe
     labelSelector: `social.usernode.io/session-id=${f.sessionId}` });
   assert.equal(allJobs.items.filter(job => job.metadata.name.startsWith('sv-capture-')).length, 1);
 
+  await deliverGates(f, work);
   await work.recover(f.sessionId, { force: true });
   await interrupt(t, f, 'verdict_persisted');
   record = (await f.pool.query('SELECT * FROM check_runs')).rows[0];
@@ -77,6 +78,13 @@ test('C9 actual Chromium Job survives worker loss, verdict loss and rejects supe
     'Adopt the actual verdict, including the sample browser’s optional favicon error');
   assert.equal((await work.owner.read(f.sessionId)).checksOutstanding, true,
     'Verdict does not discard lifecycle/manifest release');
+  const settlementBeforeRestart = await snapshot(f);
+  const receipt = (await f.pool.query(`SELECT decision FROM cli_check_settlement_receipts
+    WHERE session_id = $1 AND run_id = $2`, [f.sessionId, record.run_id])).rows[0];
+  assert.ok(receipt?.decision.accepted, 'Verdict commit also committed its immutable settlement receipt');
+  const gateBeforeRestart = (await f.pool.query(`SELECT id, status FROM execution_work_requests
+    WHERE input->>'runId' = $1::text AND workflow = 'native-cli-check-gate'`, [record.run_id])).rows;
+  assert.equal(gateBeforeRestart.length, 1, 'Gate delivery survives death before the COMMIT reply');
   const verdictJob = (await kubernetes.findCheckJobs(f.config, { sessionId: f.sessionId, previewRunId: record.run_id })).capture;
   await orphan(f);
   await tick(work);
@@ -88,6 +96,12 @@ test('C9 actual Chromium Job survives worker loss, verdict loss and rejects supe
   await assert.rejects(f.clients.core.readNamespacedSecret({
     namespace: f.fixture.isolation.namespace.name, name: `${verdictJob.name}-input`,
   }), error => Number(error.code) === 404);
+
+  assert.deepEqual((await snapshot(f)).history, settlementBeforeRestart.history,
+    'Recovery after verdict commit cannot double-count shared app history');
+  assert.equal((await session()).check_state, settlementBeforeRestart.session.check_state,
+    'Lost reply cannot replace a committed verdict with an error');
+  await deliverGates(f, work);
 
   // Inject a manifest write failure, using real admission/lifecycle/worker SQL.
   // No Job may be created when its required recovery locator did not persist.

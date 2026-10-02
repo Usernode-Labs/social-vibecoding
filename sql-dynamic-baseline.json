@@ -894,7 +894,7 @@
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "1dfaa6c9adb884fed818",
+      "fingerprint": "737d3ac10582510601c5",
       "count": 1,
       "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },

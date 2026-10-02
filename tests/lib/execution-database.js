@@ -34,7 +34,7 @@ async function createExecutionDatabase(databaseUrl) {
   for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
     'preview_action_receipts', 'preview_flow_decisions', 'execution_work_requests', 'execution_work_attempts',
     'execution_work_events', 'proposal_review_receipts', 'proposal_review_decisions',
-    'cli_preview_handoffs', 'cli_preview_receipts', 'cli_preview_decisions', 'preview_operations', 'check_runs']) {
+    'cli_check_settlement_receipts', 'cli_check_settlement_decisions', 'cli_preview_handoffs', 'cli_preview_receipts', 'cli_preview_decisions', 'preview_operations', 'check_runs']) {
     await pool.query(source.match(new RegExp(String.raw`CREATE TABLE IF NOT EXISTS ${table} \([\s\S]*?\n\);`))[0]);
   }
   return {

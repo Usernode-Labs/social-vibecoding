@@ -176,88 +176,107 @@ async function bootstrapIfEmpty(pool, appId, declaredTests) {
 // no-demotion rule expressed in SQL.
 //
 // Called only after storeChecks() reports it actually wrote — a run whose
-// snapshot was discarded as stale must not move history either.
-async function recordRun(pool, appId, rows) {
+// snapshot was discarded as stale must not move history either. Durable callers
+// use the strict mapping inside their decision transaction; legacy callers below
+// retain best-effort recording and optional pruning.
+async function writeRun(pool, appId, rows) {
   if (!pool || !appId || !Array.isArray(rows) || !rows.length) return 0;
   const capped = rows.slice(0, MAX_ROWS_PER_RUN);
-  try {
-    const values = [];
-    const params = [appId];
-    for (const r of capped) {
-      if (!r || !r.checkKey) continue;
-      const base = params.length;
-      // Counts, not a boolean: a check on its first appearance runs
-      // NEW_CHECK_RUNS times and lands here as one row carrying all of
-      // them. A single observation is just passes=1 or fails=1, which is
-      // what every caller but that one sends.
-      const passes = Number.isInteger(r.passes) ? r.passes : (r.passed ? 1 : 0);
-      const fails = Number.isInteger(r.fails) ? r.fails : (r.passed ? 0 : 1);
-      if (passes <= 0 && fails <= 0) continue;
-      params.push(r.checkKey, String(r.name || ''), String(r.path || ''), passes, fails);
-      // EVERY column carries an explicit cast, not just `passed`.
-      //
-      // A bind parameter inside a sub-SELECT's VALUES list has nothing to
-      // infer a type from, so postgres resolves it to `text`. `passed` was
-      // already cast because `CASE WHEN v.passed` on a text column throws
-      // outright — a loud failure. `app_id` failed the quieter way: the
-      // VALUES column came out `text`, the INSERT target is `integer`, and
-      // postgres refused the statement with "column app_id is of type
-      // integer but expression is of type text". recordRun swallows its
-      // errors as non-fatal, so every run logged one warning and wrote
-      // nothing — leaving app_check_history empty, which the earned-gating
-      // rule reads as "no check has ever passed", i.e. nothing blocking.
-      // The check_* columns are varchar; text coerces there, but they are
-      // cast too so the next reader doesn't have to work out which of the
-      // five were load-bearing.
-      values.push(
-        `($1::int, $${base + 1}::text, $${base + 2}::text, `
-        + `$${base + 3}::text, $${base + 4}::int, $${base + 5}::int)`
-      );
-    }
-    if (!values.length) return 0;
-    await pool.query(
-      `INSERT INTO app_check_history AS h
-         (app_id, check_key, check_name, check_path,
-          first_passed_at, last_passed_at, last_failed_at, last_seen_at,
-          pass_count, fail_count, consecutive_passes)
-       SELECT v.app_id, v.check_key, v.check_name, v.check_path,
-              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
-              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
-              CASE WHEN v.fails > 0 THEN NOW() ELSE NULL END,
-              NOW(),
-              v.passes,
-              v.fails,
-              -- One failure anywhere in the run ends the streak, however
-              -- many passes came with it.
-              CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END
-         FROM (VALUES ${values.join(', ')})
-              AS v(app_id, check_key, check_name, check_path, passes, fails)
-       ON CONFLICT (app_id, check_key) DO UPDATE SET
-         check_name = EXCLUDED.check_name,
-         check_path = EXCLUDED.check_path,
-         -- COALESCE, so the first observed pass is the one that sticks and
-         -- a later failure can never un-graduate the check.
-         first_passed_at = COALESCE(h.first_passed_at, EXCLUDED.first_passed_at),
-         last_passed_at = COALESCE(EXCLUDED.last_passed_at, h.last_passed_at),
-         last_failed_at = COALESCE(EXCLUDED.last_failed_at, h.last_failed_at),
-         last_seen_at = NOW(),
-         pass_count = h.pass_count + EXCLUDED.pass_count,
-         fail_count = h.fail_count + EXCLUDED.fail_count,
-         -- The one counter that goes DOWN. EXCLUDED's value is 1 on a pass
-         -- and 0 on a failure, so this reads as "extend the run, or start
-         -- it again from nothing". It is the only reason a check that
-         -- passes nine times and fails once does not gate.
-         consecutive_passes = CASE WHEN EXCLUDED.consecutive_passes > 0
-           THEN COALESCE(h.consecutive_passes, 0) + EXCLUDED.consecutive_passes
-           ELSE 0 END`,
-      params
+
+  const values = [];
+  const params = [appId];
+  for (const r of capped) {
+    if (!r || !r.checkKey) continue;
+    const base = params.length;
+    // Counts, not a boolean: a check on its first appearance runs
+    // NEW_CHECK_RUNS times and lands here as one row carrying all of
+    // them. A single observation is just passes=1 or fails=1, which is
+    // what every caller but that one sends.
+    const passes = Number.isInteger(r.passes) ? r.passes : (r.passed ? 1 : 0);
+    const fails = Number.isInteger(r.fails) ? r.fails : (r.passed ? 0 : 1);
+    if (passes <= 0 && fails <= 0) continue;
+    params.push(r.checkKey, String(r.name || ''), String(r.path || ''), passes, fails);
+    // EVERY column carries an explicit cast, not just `passed`.
+    //
+    // A bind parameter inside a sub-SELECT's VALUES list has nothing to
+    // infer a type from, so postgres resolves it to `text`. `passed` was
+    // already cast because `CASE WHEN v.passed` on a text column throws
+    // outright — a loud failure. `app_id` failed the quieter way: the
+    // VALUES column came out `text`, the INSERT target is `integer`, and
+    // postgres refused the statement with "column app_id is of type
+    // integer but expression is of type text". recordRun swallows its
+    // errors as non-fatal, so every run logged one warning and wrote
+    // nothing — leaving app_check_history empty, which the earned-gating
+    // rule reads as "no check has ever passed", i.e. nothing blocking.
+    // The check_* columns are varchar; text coerces there, but they are
+    // cast too so the next reader doesn't have to work out which of the
+    // five were load-bearing.
+    values.push(
+      `($1::int, $${base + 1}::text, $${base + 2}::text, `
+      + `$${base + 3}::text, $${base + 4}::int, $${base + 5}::int)`
     );
-    await pool.query(
-      `DELETE FROM app_check_history
-        WHERE app_id = $1 AND last_seen_at < NOW() - make_interval(days => $2)`,
-      [appId, PRUNE_AFTER_DAYS]
-    ).catch(() => {});
-    return capped.length;
+  }
+  if (!values.length) return 0;
+
+  await pool.query(
+    `INSERT INTO app_check_history AS h
+       (app_id, check_key, check_name, check_path,
+        first_passed_at, last_passed_at, last_failed_at, last_seen_at,
+        pass_count, fail_count, consecutive_passes)
+     SELECT v.app_id, v.check_key, v.check_name, v.check_path,
+            CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
+            CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
+            CASE WHEN v.fails > 0 THEN NOW() ELSE NULL END,
+            NOW(),
+            v.passes,
+            v.fails,
+            -- One failure anywhere in the run ends the streak, however
+            -- many passes came with it.
+            CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END
+       FROM (VALUES ${values.join(', ')})
+            AS v(app_id, check_key, check_name, check_path, passes, fails)
+     ON CONFLICT (app_id, check_key) DO UPDATE SET
+       check_name = EXCLUDED.check_name,
+       check_path = EXCLUDED.check_path,
+       -- COALESCE, so the first observed pass is the one that sticks and
+       -- a later failure can never un-graduate the check.
+       first_passed_at = COALESCE(h.first_passed_at, EXCLUDED.first_passed_at),
+       last_passed_at = COALESCE(EXCLUDED.last_passed_at, h.last_passed_at),
+       last_failed_at = COALESCE(EXCLUDED.last_failed_at, h.last_failed_at),
+       last_seen_at = NOW(),
+       pass_count = h.pass_count + EXCLUDED.pass_count,
+       fail_count = h.fail_count + EXCLUDED.fail_count,
+       -- The one counter that goes DOWN. EXCLUDED's value is 1 on a pass
+       -- and 0 on a failure, so this reads as "extend the run, or start
+       -- it again from nothing". It is the only reason a check that
+       -- passes nine times and fails once does not gate.
+       consecutive_passes = CASE WHEN EXCLUDED.consecutive_passes > 0
+         THEN COALESCE(h.consecutive_passes, 0) + EXCLUDED.consecutive_passes
+         ELSE 0 END`,
+    params
+  );
+  return capped.length;
+}
+
+async function pruneHistory(pool, appId) {
+  await pool.query(
+    `DELETE FROM app_check_history
+      WHERE app_id = $1 AND last_seen_at < NOW() - make_interval(days => $2)`,
+    [appId, PRUNE_AFTER_DAYS]
+  );
+}
+
+async function recordRunStrict(pool, appId, rows) {
+  const count = await writeRun(pool, appId, rows);
+  if (count) await pruneHistory(pool, appId);
+  return count;
+}
+
+async function recordRun(pool, appId, rows) {
+  try {
+    const count = await writeRun(pool, appId, rows);
+    if (count) await pruneHistory(pool, appId).catch(() => {});
+    return count;
   } catch (err) {
     log.warn('check-history', 'Run record failed (non-fatal)', { appId, err: err.message });
     return 0;
@@ -334,6 +353,7 @@ module.exports = {
   hasHistory,
   bootstrapIfEmpty,
   recordRun,
+  recordRunStrict,
   PRUNE_AFTER_DAYS,
   MAX_ROWS_PER_RUN,
 };

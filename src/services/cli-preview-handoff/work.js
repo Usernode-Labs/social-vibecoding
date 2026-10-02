@@ -213,6 +213,7 @@ function createCliHandoffWork(pool, config, {
         trigger: input.force ? 'manual' : 'commit-push',
         force: input.force,
         recoverExisting: true,
+        cliFlowId: input.flowId,
       });
     }
     state = await owner.read(attempt.session_id);
@@ -287,6 +288,7 @@ function createCliHandoffWork(pool, config, {
     store,
     handlers: {
       ...preview.handlers,
+      ...require('./settlement').createChecksSettlement(pool, config, { store }).handlers,
       [CONTINUE]: { version: 1, run: runContinuation, commit: commitContinuation },
     },
   };

@@ -3540,9 +3540,10 @@ async function checksToFix(pool, sessionId) {
  * fix is due on its current head, its issue is queued for a checks
  * follow-up and the loop woken. A run that looks like the platform's fault
  * (followup.checksLookLikeInfra) is left for the platform's own re-run.
- * Never throws; resolves whether it queued.
+ * Legacy kicks resolve whether it queued. Durable delivery opts into errors
+ * so its existing execution owner can retry rather than acknowledge failure.
  */
-async function noteProposalChecks(pool, { sessionId } = {}) {
+async function noteProposalChecks(pool, { sessionId, propagateErrors = false } = {}) {
   try {
     const { rows } = await pool.query(CHECKS_ROW_SQL, [Number(sessionId), BOT_USERNAME]);
     const row = rows[0];
@@ -3575,6 +3576,7 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
     noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
     return true;
   } catch (err) {
+    if (propagateErrors) throw err;
     log.warn('homeroom-bot', 'Could not look at a failing check verdict', { sessionId, err: err.message });
     return false;
   }

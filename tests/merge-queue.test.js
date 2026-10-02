@@ -749,3 +749,12 @@ test('no GitHub mergeability polling happens anywhere in a pass', async () => {
     await queue.enqueue({}, 7);
   } finally { teardown(); }
 });
+
+test('durable queue delivery observes a failed pass while legacy kicks remain non-fatal', async () => {
+  const { queue, pool } = setup({ candidates: [] });
+  pool.query = async () => { throw new Error('Injected queue database outage'); };
+  try {
+    await assert.rejects(queue.enqueue({}, 7, { propagateErrors: true }), /queue database outage/);
+    await assert.doesNotReject(queue.enqueue({}, 7));
+  } finally { teardown(); }
+});

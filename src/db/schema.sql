@@ -11456,6 +11456,31 @@ CREATE TABLE IF NOT EXISTS cli_preview_decisions (
 COMMENT ON TABLE cli_preview_handoffs IS 'staging:private';
 COMMENT ON TABLE cli_preview_receipts IS 'staging:private';
 COMMENT ON TABLE cli_preview_decisions IS 'staging:private';
+-- Enrolled checks: accepted run identity is distinct from rejected report IDs.
+CREATE TABLE IF NOT EXISTS cli_check_settlement_receipts (
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  action_id UUID NOT NULL,
+  run_id UUID,
+  action_hash TEXT NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, action_id),
+  UNIQUE (session_id, run_id)
+);
+CREATE TABLE IF NOT EXISTS cli_check_settlement_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  action_id UUID NOT NULL,
+  reducer_version INTEGER NOT NULL,
+  pre_state JSONB NOT NULL,
+  action JSONB NOT NULL,
+  facts JSONB NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, action_id)
+);
+COMMENT ON TABLE cli_check_settlement_receipts IS 'staging:private';
+COMMENT ON TABLE cli_check_settlement_decisions IS 'staging:private';
 -- The starter template a project was created from (#3521;
 -- services/app-templates.js TEMPLATE_IDS, validated by POST /api/apps).
 -- Written only for a non-default starter: NULL is `empty`, which is also

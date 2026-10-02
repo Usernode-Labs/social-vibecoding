@@ -253,6 +253,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     if (lifecycle.enabled(config)) {
       operation = await lifecycle.adopt(config, { sessionId, runId, revision: commitSha });
       if (!operation) return await moot('lifecycle names another run');
+      operation.durableChecks = !!manifest.durableCli;
       operation.signal.addEventListener('abort', () => {
         if (!controller.signal.aborted) controller.abort(operation.signal.reason);
       }, { once: true });
@@ -360,8 +361,12 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       log.warn('check-harvest', 'Orphaned run produced nothing to judge — recording an error verdict', { ...base, why });
       const writePool = operation ? operation.pool : pool;
       await visuals.storeCaptureOutcome(writePool, sessionId, 'failed', { reason: why.slice(0, 300) }).catch(() => {});
-      const stored = await visuals.storeChecks(writePool, sessionId, commitSha, { state: 'error', results: [] }, why);
-      if (stored) visuals.notifyChecks(sessionId, { state: 'error', results: [] }, commitSha, null);
+      if (operation?.durableChecks) {
+        await visuals.publishCaptureError(writePool, sessionId, commitSha, new Error(why), null, operation);
+      } else {
+        const stored = await visuals.storeChecks(writePool, sessionId, commitSha, { state: 'error', results: [] }, why);
+        if (stored) visuals.notifyChecks(sessionId, { state: 'error', results: [] }, commitSha, null);
+      }
       // A live capture schedules shots from its finally block. This run's
       // launcher is gone, so the harvester must perform that hand-off itself.
       // The shots use their own exact-revision pair and can still succeed when
@@ -417,8 +422,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       await lifecycle.settleAdopted(config, operation, { result: settled.result });
       // The lifecycle wrapper fires this for a live run once its operation
       // completes (captureForSession skips it while one is in scope).
-      visuals.maybeAutoMergeAfterChecks(config, pool, session, settled.result.state);
-      visuals.noteBotChecksAfterChecks?.(pool, session, settled.result.state);
+      if (!operation.durableChecks) {
+        visuals.maybeAutoMergeAfterChecks(config, pool, session, settled.result.state);
+        visuals.noteBotChecksAfterChecks?.(pool, session, settled.result.state);
+      }
     }
     await checkRuns.finish(pool, runId);
     log.info('check-harvest', 'Orphaned run settled from its Jobs', {

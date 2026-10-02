@@ -13,7 +13,7 @@ documents canonical reconciliation and current validation. No rollout or product
 Only enrolled native CLI Kubernetes/kpack uses the complete durable preparation
 and continuation. Its former synchronous preparation/local queue/inline activation,
 alternate rebuild dispatch, restart cancellation/recapture, adapter-owned input
-release and settlement-time manifest deletion are replaced. The same functions
+release, settlement-time manifest deletion, best-effort verdict/history composition and detached required gate kicks are replaced. The same functions
 or policies may still serve unenrolled callers; removing their selected dispatch
 is not permission to delete their global protection.
 
@@ -31,6 +31,7 @@ is not permission to delete their global protection.
 | Session staging/lifecycle locks, build-retention guard/fail-stop, staging process queue | Legacy/shared resource and check-consumer boundaries remain; complete candidate isolation does not fence all stable binding/legacy mutations or build retention. | Keep. Narrow/remove only through demonstrated replacement tests and writer/consumer audit, not as part of pruning checkpoint variants. |
 | Web cleanup/activation recovery, build retention and global check harvest/recovery timers | Preview cleanup excludes `preparation_owner = bounded`; activation recovery excludes the enrolled desired flow. Worker census/continuation owns this cohort; global owners still cover other work. | Keep these exclusions and legacy owners. No global timer can be removed by this cohort consolidation. Legacy oldest-50 harvest fairness remains a separate limit. |
 | Attempt/Build/runtime/role tombstones, manifests and recurring retirement | Preserve unknown late creation and dependency fences. Database release is distinct from creator closure. | No age/absence-based expiry. Retain locators until creator termination/reconciliation is proven. Do not delete resource records because preparation work says `succeeded`. |
+| Enrolled verdict/history and detached merge/bot kicks | Replaced by `cli-checks-settlement` actions/receipts and `native-cli-check-gate` delivery using the existing shared decision/execution runtime. Live and harvested runs share one mapping. Optional artifacts retain separate best-effort ownership. | No new scheduler, timer or external merge owner. Keep legacy wrappers and existing merge/bot policies for other callers. Old terminal verdicts without receipts require retained-store reconciliation; never backfill by recounting unknown history. |
 
 Sources: [admission/handlers](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),

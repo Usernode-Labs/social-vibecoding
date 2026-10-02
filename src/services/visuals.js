@@ -1858,7 +1858,27 @@ async function checksAlreadyDecided(pool, sessionId, commitHash) {
 // exact commit. The callers that set it are the ones where a fresh verdict is
 // the whole point of the request — a human pressing "Re-run checks", and the
 // promote-time kick that must not merge on a verdict it did not just take.
-async function publishCaptureError(pool, sessionId, revision, err, send) {
+async function publishCaptureError(pool, sessionId, revision, err, send, operation = null) {
+  if (operation?.durableChecks) {
+    const settlement = require('./cli-preview-handoff/settlement').createChecksSettlement(operation.cleanupPool, {});
+    const applied = await settlement.settle({
+      sessionId, runId: operation.runId, headSha: revision,
+      result: { state: 'error', results: [] }, errorDetail: err.message,
+    });
+    if (applied.decision.accepted && !applied.replayed) {
+      // Optional capture diagnostics keep their lifecycle guard. They cannot
+      // roll back settlement or relabel a verdict adopted after a lost reply.
+      await storeCaptureOutcome(pool, sessionId, 'failed', {
+        reason: String(err.message).slice(0, 300),
+      }).catch(error => {
+        log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
+          sessionId, err: error.message,
+        });
+      });
+      notifyChecks(sessionId, applied.decision.result, revision, send);
+    }
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1961,9 +1981,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           })
           : null,
         onError: (err, pool, operation) => publishCaptureError(
-          pool, session.id, operation.revision, err, opts.send),
+          pool, session.id, operation.revision, err, opts.send, operation),
       });
-      if (completed?.state) {
+      if (completed?.state && !opts.recoverExisting) {
         maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
         noteBotChecksAfterChecks(getPool(config), session, completed.state);
       }
@@ -2169,6 +2189,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: {
           launched: false,
           durableCli: !!opts.recoverExisting,
+          ...(opts.cliFlowId ? { cliFlowId: opts.cliFlowId } : {}),
           trigger: trigger || null,
           debugRunId,
           startedAt: runStartedAt,
@@ -2611,6 +2632,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: {
           launched: true,
           durableCli: !!opts.recoverExisting,
+          ...(opts.cliFlowId ? { cliFlowId: opts.cliFlowId } : {}),
           ...(unitRequirement ? { unitSuite: unitRequirement } : {}),
           trigger: trigger || null,
           debugRunId,
@@ -2949,6 +2971,16 @@ async function settleCaptureRun(config, pool, run) {
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
   } = run;
+  const durableSettlement = operation?.durableChecks
+    ? require('./cli-preview-handoff/settlement').createChecksSettlement(operation.cleanupPool, config)
+    : null;
+  const previous = durableSettlement && await durableSettlement.settled(session.id, operation.runId);
+  if (previous) {
+    return {
+      traceStatus: previous.result.state,
+      result: previous.result.state === 'deferred' ? { state: 'pending', deferred: true } : previous.result,
+    };
+  }
   const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   let traceStatus = 'error';
   const { shots, failures } = parseShots(stdout);
@@ -3008,8 +3040,13 @@ async function settleCaptureRun(config, pool, run) {
       state: 'deferred', reason: admissionReason, durationMs: Date.now() - runStartedAt,
     });
     try {
-      const stamped = await storeChecksDeferred(pool, session.id, commitHash,
-        'Checks wait until this proposal merges cleanly with main');
+      const detail = 'Checks wait until this proposal merges cleanly with main';
+      const stamped = durableSettlement
+        ? (await durableSettlement.settle({
+          sessionId: session.id, runId: operation.runId, headSha: commitHash,
+          result: { state: 'deferred', results: [] }, errorDetail: detail,
+        })).decision.accepted
+        : await storeChecksDeferred(pool, session.id, commitHash, detail);
       if (stamped) {
         notifyChecksPending(session.id, commitHash, 'deferred', trigger);
       } else {
@@ -3018,6 +3055,7 @@ async function settleCaptureRun(config, pool, run) {
         });
       }
     } catch (err) {
+      if (durableSettlement) throw err;
       log.warn('visuals', 'Deferral stamp failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       });
@@ -3148,54 +3186,62 @@ async function settleCaptureRun(config, pool, run) {
     // this is the whole run's wall clock rather than a tests-only slice.
     durationMs: Date.now() - runStartedAt,
   });
+  // History moves only when the snapshot actually landed: a run whose
+  // result was discarded as stale must not graduate anything either.
+  // Rows the container never produced are absent here, so a check that
+  // did not run neither graduates nor records a failure.
+  // An 'error' verdict is "we could not find out", not "this check
+  // failed". Recording it would stamp fail_count on checks that never
+  // executed — which is how seven of WorkQuest's rows reached
+  // pass_count 0 / fail_count 2 for a container that logged zero
+  // inbound requests — and, worse, could graduate nothing while
+  // permanently colouring the app's history with a platform outage.
+  const historyRows = [];
+  if ((dispatched || unitOutcome || assetOutcome || renderOutcome) && checksResult.state !== 'error') {
+    if (dispatched) {
+      const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+      for (const r of checksResult.results) {
+        const d = byIndex.get(r.index);
+        if (!d) continue;
+        // Counts, because a check on its first appearance was observed
+        // NEW_CHECK_RUNS times and all of them are evidence. classify
+        // folded the repeats into this one row, so they arrive here as
+        // `passes` / `fails` rather than as separate rows — which also
+        // keeps one conflict target per check in the upsert.
+        historyRows.push({
+          checkKey: d.checkKey,
+          name: d.name,
+          path: d.path,
+          passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
+          fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
+        });
+      }
+    }
+    // The unit-suite row graduates through the same history: its
+    // first observed pass flips it from advisory to merge-blocking,
+    // and (recordRun's COALESCE) no later failure demotes it.
+    if (unitOutcome) historyRows.push(unitOutcome.history);
+    // The asset-route row graduates the same way (#2315).
+    if (assetOutcome) historyRows.push(assetOutcome.history);
+    // And the render-health row: advisory until this app's pages have
+    // been seen rendering with their stylesheets once.
+    if (renderOutcome) historyRows.push(renderOutcome.history);
+  }
   try {
-    const stored = await storeChecks(
+    const settlement = durableSettlement && await durableSettlement.settle({
+      sessionId: session.id, runId: operation.runId, headSha: commitHash,
+      result: { state: checksResult.state, results: checksResult.results },
+      history: historyRows, errorDetail: checksResult.errorDetail || null,
+    });
+    if (settlement?.replayed && settlement.decision.accepted) {
+      return { traceStatus: settlement.decision.result.state, result: settlement.decision.result };
+    }
+    const stored = settlement ? settlement.decision.accepted : await storeChecks(
       pool, session.id, commitHash, checksResult, checksResult.errorDetail || null
     );
     if (stored) {
-      await storeConsoleCheck(
-        pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
-      );
-      // History moves only when the snapshot actually landed: a run whose
-      // result was discarded as stale must not graduate anything either.
-      // Rows the container never produced are absent here, so a check that
-      // did not run neither graduates nor records a failure.
-      // An 'error' verdict is "we could not find out", not "this check
-      // failed". Recording it would stamp fail_count on checks that never
-      // executed — which is how seven of WorkQuest's rows reached
-      // pass_count 0 / fail_count 2 for a container that logged zero
-      // inbound requests — and, worse, could graduate nothing while
-      // permanently colouring the app's history with a platform outage.
-      if ((dispatched || unitOutcome || assetOutcome || renderOutcome) && checksResult.state !== 'error') {
-        const historyRows = [];
-        if (dispatched) {
-          const byIndex = new Map(dispatched.map((d) => [d.index, d]));
-          for (const r of checksResult.results) {
-            const d = byIndex.get(r.index);
-            if (!d) continue;
-            // Counts, because a check on its first appearance was observed
-            // NEW_CHECK_RUNS times and all of them are evidence. classify
-            // folded the repeats into this one row, so they arrive here as
-            // `passes` / `fails` rather than as separate rows — which also
-            // keeps one conflict target per check in the upsert.
-            historyRows.push({
-              checkKey: d.checkKey,
-              name: d.name,
-              path: d.path,
-              passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
-              fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
-            });
-          }
-        }
-        // The unit-suite row graduates through the same history: its
-        // first observed pass flips it from advisory to merge-blocking,
-        // and (recordRun's COALESCE) no later failure demotes it.
-        if (unitOutcome) historyRows.push(unitOutcome.history);
-        // The asset-route row graduates the same way (#2315).
-        if (assetOutcome) historyRows.push(assetOutcome.history);
-        // And the render-health row: advisory until this app's pages have
-        // been seen rendering with their stylesheets once.
-        if (renderOutcome) historyRows.push(renderOutcome.history);
+      if (!durableSettlement) {
+        await storeConsoleCheck(pool, session.id, consoleSnapshotFromTests(checksResult), commitHash);
         await checkHistory.recordRun(pool, app.id, historyRows);
       }
       log.info('visuals', 'Checks stored', {
@@ -3212,6 +3258,7 @@ async function settleCaptureRun(config, pool, run) {
       });
     }
   } catch (err) {
+    if (durableSettlement) throw err;
     log.warn('visuals', 'Checks store failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     });
@@ -3850,6 +3897,7 @@ module.exports = {
   serializeTestResults,
   overCeilingCheckRow,
   storeChecks,
+  publishCaptureError,
   storeChecksSkipped,
   DEFAULT_CHECKS_SKIPPED_REASON,
   setChecksPending,

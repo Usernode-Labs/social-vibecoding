@@ -109,8 +109,10 @@ test('the override runs against container rows only, before the result is stored
   // page, so counting them would veto the override for free.
   assert.match(src.slice(override - 400, override),
     /checksResult\.results\.filter\(\(r\) => !extraRows\.includes\(r\)\)/);
-  assert.ok(override < src.indexOf('const stored = await storeChecks('),
-    'storeChecks is what persists the backoff and check_error_detail — override first');
+  assert.ok(override < src.indexOf('const settlement = durableSettlement'),
+    'The override must precede durable settlement');
+  assert.ok(override < src.indexOf('await storeChecks('),
+    'The override must also precede legacy verdict persistence');
 });
 
 test('an error verdict records no check history', () => {
@@ -119,7 +121,7 @@ test('an error verdict records no check history', () => {
   const src = visualsSource();
   // The asset-route row (#2315) and the render-health row record through the
   // same guarded block.
-  const gate = src.match(/if \(\(dispatched \|\| unitOutcome \|\| assetOutcome \|\| renderOutcome\)([^)]*)\) \{\n\s+const historyRows/);
+  const gate = src.match(/if \(\(dispatched \|\| unitOutcome \|\| assetOutcome \|\| renderOutcome\)([^)]*)\) \{/);
   assert.ok(gate, 'the recordRun block must still be guarded here');
   assert.match(gate[1], /checksResult\.state !== 'error'/);
 });

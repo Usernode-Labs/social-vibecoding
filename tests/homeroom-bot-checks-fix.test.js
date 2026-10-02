@@ -375,3 +375,9 @@ test('a failing verdict hook costs a passing verdict nothing', async () => {
   for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
   assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');
 });
+
+test('durable checks delivery observes a bot queue error instead of acknowledging it', async () => {
+  const pool = { async query() { throw new Error('Injected checks queue outage'); } };
+  await assert.rejects(bot.noteProposalChecks(pool, { sessionId: 1, propagateErrors: true }), /checks queue outage/);
+  assert.equal(await bot.noteProposalChecks(pool, { sessionId: 1 }), false, 'legacy notification remains non-fatal');
+});

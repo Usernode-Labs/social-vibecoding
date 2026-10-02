@@ -94,13 +94,11 @@ function isIntegrating(appId) {
  */
 function enqueue(config, appId, options = {}) {
   if (appId == null) return Promise.resolve();
-  if (_running.has(appId)) {
+  let run = _running.get(appId);
+  if (run) {
     _rekick.add(appId);
-    return _running.get(appId);
-  }
-  const run = runQueue(config, appId, options)
-    .catch((err) => log.error('merge-queue', 'queue pass threw', { appId, err: err.message }))
-    .finally(() => {
+  } else {
+    run = runQueue(config, appId, options).finally(() => {
       _running.delete(appId);
       if (_rekick.delete(appId)) {
         enqueue(config, appId).catch((err) => log.error('merge-queue', 're-kick failed', {
@@ -108,8 +106,13 @@ function enqueue(config, appId, options = {}) {
         }));
       }
     });
-  _running.set(appId, run);
-  return run;
+    _running.set(appId, run);
+  }
+  // Durable callers must observe delivery failure. Legacy callers retain
+  // their non-fatal kick; all callers still share the same queue pass.
+  return options.propagateErrors ? run : run.catch((err) => {
+    log.error('merge-queue', 'queue pass threw', { appId, err: err.message });
+  });
 }
 
 // ── The line ─────────────────────────────────────────────────────────────
