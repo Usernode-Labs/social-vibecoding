@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { UserFieldRow, userHandle } from './admin-user-field';
+import { BenchmarkArea } from './admin-homeroom-bench';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, slice 1.
 //
@@ -762,6 +763,15 @@ function HomeroomBotSection() {
   // #3624: the per-person weekly cap in dollars; null until edited. The DM
   // list keeps its own draft, in DmPeople.
   const [userCapDraft, setUserCapDraft] = useState<string | null>(null);
+  // #3654: the bot itself, or its Benchmark. The address carries it
+  // (#admin/homeroom-bot/benchmark), read once on mount; the tabs replace
+  // the address rather than push it, so they never re-route the console.
+  const [tab, setTab] = useState<'bot' | 'benchmark'>(() => (
+    typeof location !== 'undefined' && /^#admin\/homeroom-bot\/benchmark\b/.test(location.hash) ? 'benchmark' : 'bot'));
+  const showTab = (next: 'bot' | 'benchmark') => {
+    setTab(next);
+    try { history.replaceState(null, '', next === 'benchmark' ? '#admin/homeroom-bot/benchmark' : '#admin/homeroom-bot'); } catch { /* non-fatal */ }
+  };
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -981,8 +991,31 @@ function HomeroomBotSection() {
     </div>
   );
 
+  const tabs = (
+    <div className="flex gap-1" role="tablist" aria-label="Homeroom bot" id="admin-homeroom-bot-tabs">
+      {(['bot', 'benchmark'] as const).map((key) => (
+        <button
+          key={key} type="button" role="tab" id={`admin-homeroom-bot-tab-${key}`}
+          aria-selected={tab === key}
+          className={tab === key ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm}
+          onClick={() => showTab(key)}
+        >{key === 'bot' ? 'The bot' : 'Benchmark'}</button>
+      ))}
+    </div>
+  );
+
+  if (tab === 'benchmark') {
+    return (
+      <div className="space-y-4" id="admin-homeroom-bot">
+        {tabs}
+        <BenchmarkArea canWrite={canWrite} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4" id="admin-homeroom-bot">
+      {tabs}
       <div className={`${AdminUI.card} p-4`}>
         <div className={AdminUI.cardHeader}>
           <h2 className={AdminUI.cardTitle}>Homeroom bot</h2>

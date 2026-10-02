@@ -17,6 +17,10 @@ const lane = require('../services/bench/lane');
 const runner = require('../services/bench/runner');
 const grading = require('../services/bench/grading');
 const { benchGradingLimiter } = require('../middleware/rate-limits');
+const report = require('../services/bench/report');
+// The CSV writer the other admin exports share: quoting plus the
+// spreadsheet formula-injection guard (model-written text is exactly why).
+const { csvField } = require('./topochain/helpers');
 
 const BASE = '/api/admin/homeroom-bot/bench';
 
@@ -47,6 +51,16 @@ function homeroomBenchRoutes(config) {
   const pool = getPool(config);
 
   router.use(BASE, adminMiddleware);
+
+  // The Benchmark area's overview: what exists, and the lane's state.
+  router.get('/api/admin/homeroom-bot/bench', handler('Bench overview', async () => {
+    const { rows: [c] } = await pool.query(
+      `SELECT (SELECT COUNT(*)::int FROM bench_suites) AS suites,
+              (SELECT COUNT(*)::int FROM bench_runs) AS runs,
+              (SELECT COUNT(*)::int FROM bench_runs WHERE status IN ('queued', 'running')) AS open_runs`,
+    );
+    return { suites: c.suites, runs: c.runs, openRuns: c.open_runs, lane: lane.laneStatus(), hiddenChecks: runner.HIDDEN_CHECKS_GAP };
+  }));
 
   // ── Suites and tasks (#3654 B) ──────────────────────────────────────
   router.get('/api/admin/homeroom-bot/bench/suites', handler('List bench suites', async () => ({
@@ -169,6 +183,36 @@ function homeroomBenchRoutes(config) {
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, runId: id });
     return out;
   }));
+
+  // ── Results (#3654 F) ───────────────────────────────────────────────
+  router.get('/api/admin/homeroom-bot/bench/runs/:id/report', handler('Bench run report', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    const out = await report.runReport(pool, id, { slice: String(req.query?.slice || 'verdict') });
+    if (!out) return { ok: false, status: 404, error: 'Run not found' };
+    return { ...out, agreement: await grading.agreement(pool, { runId: id }) };
+  }));
+
+  // Every trial of a run, as CSV. A bulk download sits behind the write gate,
+  // like the bot's own verdict export beside it (routes/admin.js says why).
+  router.get('/api/admin/homeroom-bot/bench/runs/:id/trials.csv', requireAdminWrite, async (req, res) => {
+    const id = idParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid run id' });
+    try {
+      const rows = await report.csvRows(pool, id);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="homeroom-bot-benchmark-run-${id}.csv"`);
+      res.write(`${report.CSV_COLUMNS.join(',')}\n`);
+      for (const row of rows) res.write(`${row.map(csvField).join(',')}\n`);
+      log.info('bench', 'Trials exported', { by: req.user.username, runId: id, rows: rows.length });
+      return res.end();
+    } catch (err) {
+      log.error('bench', 'Trials export failed', { message: err.message });
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      return res.end();
+    }
+  });
 
   // ── Grading (#3654 D) ───────────────────────────────────────────────
 
