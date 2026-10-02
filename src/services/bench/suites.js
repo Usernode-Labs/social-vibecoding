@@ -95,14 +95,20 @@ async function createSuite(pool, { name, kind = 'frozen', notes = null, actorId 
   return { ok: true, suite: rows[0] };
 }
 
+// Each row also says what deleteSuite would decide (`runs`, `is_default`,
+// `deletable`), so the console offers Delete only where it would succeed.
 async function listSuites(pool) {
   const { rows } = await pool.query(
     `SELECT s.id, s.name, s.version, s.kind, s.notes, s.parent_id, s.created_at, s.frozen_at,
             u.username AS created_by,
             COALESCE(c.counts, '{}'::jsonb) AS counts,
             COALESCE(c.labelled, 0) AS labelled,
-            COALESCE(c.total, 0) AS total
+            COALESCE(c.total, 0) AS total,
+            r.runs, d.is_default,
+            (s.frozen_at IS NULL AND r.runs = 0 AND NOT d.is_default) AS deletable
        FROM bench_suites s
+       CROSS JOIN LATERAL (SELECT COUNT(*)::int AS runs FROM bench_runs WHERE suite_id = s.id) r
+       CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM bench_materializations WHERE suite_id = s.id) AS is_default) d
        LEFT JOIN users u ON u.id = s.created_by
        LEFT JOIN LATERAL (
          SELECT jsonb_object_agg(stage, n) AS counts, SUM(n)::int AS total, SUM(l)::int AS labelled
@@ -183,6 +189,50 @@ async function newVersion(pool, id, { actorId = null } = {}) {
     }
     await client.query('COMMIT');
     return { ok: true, suite: next, copied: tasks.length };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Delete a suite and its tasks, for a suite made by mistake. Refused for a
+ * frozen suite (the answer key past runs were graded against), for one with
+ * runs (bench_runs would cascade away with it), and for the default suite a
+ * checked-in definition was materialized into (Core). The checks run under
+ * a lock on the suite row, which a run being launched against it must share
+ * to insert, so no run can slip in between the check and the delete.
+ */
+async function deleteSuite(pool, { suiteId, actorId = null } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [suite] } = await client.query(
+      'SELECT id, name, version, frozen_at FROM bench_suites WHERE id = $1 FOR UPDATE', [Number(suiteId)],
+    );
+    let refusal = null;
+    if (!suite) refusal = httpError(404, 'Suite not found');
+    else if (suite.frozen_at) refusal = httpError(409, 'The suite is frozen: a frozen suite is the answer key past runs were graded against');
+    else {
+      const { rows: [f] } = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM bench_runs WHERE suite_id = $1) AS has_runs,
+                EXISTS (SELECT 1 FROM bench_materializations WHERE suite_id = $1) AS is_default`,
+        [suite.id],
+      );
+      if (f.has_runs) refusal = httpError(409, 'The suite cannot be deleted: it has runs');
+      else if (f.is_default) refusal = httpError(409, 'The suite cannot be deleted: it is the default suite; make a new version instead');
+    }
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return refusal;
+    }
+    const { rowCount: tasks } = await client.query('DELETE FROM bench_tasks WHERE suite_id = $1', [suite.id]);
+    await client.query('DELETE FROM bench_suites WHERE id = $1', [suite.id]);
+    await client.query('COMMIT');
+    log.info('bench', 'Suite deleted', { actorId, suiteId: suite.id, name: suite.name, version: suite.version, tasks });
+    return { ok: true, deleted: { suiteId: suite.id, tasks } };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -665,6 +715,7 @@ module.exports = {
   suiteRow,
   freezeSuite,
   newVersion,
+  deleteSuite,
   listTasks,
   taskRow,
   startingTask,

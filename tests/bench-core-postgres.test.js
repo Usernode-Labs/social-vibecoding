@@ -420,3 +420,37 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.deepEqual([runs.body.launcher.capUsd, runs.body.launcher.repeatStages], [50, ['triage']]);
   });
 });
+
+// A pass that died mid-way (a redeploy) leaves its row 'running'. Its last
+// heartbeat says so: once it is older than STALE_RUNNING_MINUTES the status
+// stops saying "being made" and the next pass may claim the row; a row that
+// beat lately is still a pass at work and is left alone.
+test('Core v1: a running row with an old heartbeat is stale and may be claimed again', async (t) => {
+  const pool = await freshDb(t, 'bench_core_stale');
+  if (!pool) return;
+  const def = core.loadDefinition();
+  const offline = { github: { isEnabled: () => false } };
+  const setRow = (minutesAgo) => pool.query(
+    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at, heartbeat_at)
+     VALUES ($1, $2, 'running', 1, NOW() - INTERVAL '3 hours', NOW() - make_interval(mins => $3))
+     ON CONFLICT (definition, version) DO UPDATE
+       SET status = 'running', attempts = 1, heartbeat_at = EXCLUDED.heartbeat_at, finished_at = NULL`,
+    [def.key, def.version, minutesAgo],
+  );
+
+  await setRow(1);
+  const live = await core.coreStatus(pool, { definition: def });
+  assert.equal(live.running, true, 'a row that beat a minute ago is a pass at work');
+  assert.equal(live.materialization.stale, false);
+  const noop = await core.materialize(pool, {}, { definition: def, deps: offline, force: true, rateMs: 0 });
+  assert.equal(noop.noop, true, 'not claimed from under a live pass, even though it started hours ago');
+
+  await setRow(core.STALE_RUNNING_MINUTES + 1);
+  const dead = await core.coreStatus(pool, { definition: def });
+  assert.equal(dead.running, false);
+  assert.equal(dead.materialization.stale, true);
+  const retried = await core.materialize(pool, {}, { definition: def, deps: offline, rateMs: 0 });
+  assert.equal(retried.ok, false, 'claimed, then stopped by the offline stub');
+  const { rows: [m] } = await pool.query('SELECT status, attempts FROM bench_materializations WHERE definition = $1', [def.key]);
+  assert.deepEqual([m.status, m.attempts], ['failed', 2], 'the stale row was claimed without force');
+});

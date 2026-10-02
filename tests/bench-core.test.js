@@ -255,6 +255,11 @@ test('the Core card says where the suite stands, and offers Freeze only when eve
   const frozen = render({ ...done, suite: { ...done.suite, labelled: 60, frozen_at: '2026-10-02' } });
   assert.doesNotMatch(frozen, /core-freeze|core-materialize/);
   assert.match(render({ ...done, running: true }), /Being made now/);
+  // A pass that died mid-way: the row still says running, the server says it is not.
+  const stopped = render({ ...done, materialization: { ...done.materialization, status: 'running', stale: true }, running: false });
+  assert.match(stopped, /stopped partway/);
+  assert.match(stopped, /id="admin-homeroom-bench-core-materialize"[^>]*>Try again</);
+  assert.doesNotMatch(render({ ...done, materialization: { ...done.materialization, status: 'running' }, running: true }), /core-materialize/, 'no button while a pass works');
   assert.match(render({ ...done, materialization: { status: 'failed', summary: { error: 'GitHub is not configured' }, finishedAt: null } }), /The last attempt failed: GitHub is not configured/);
 
   // The launcher, from its defaults: Core picked, every model ticked.

@@ -17,7 +17,8 @@ import { AdminUI } from './admin-console.js';
 //            automatic.
 //   Suites   the versioned task sets (frozen core, rotating set), how full
 //            each is against the first version's targets, freeze / new
-//            version, the tasks of the one selected, the stratified
+//            version, delete (only an unfrozen suite with no runs that
+//            is not the default), the tasks of the one selected, the stratified
 //            sampler, and importing a merged pull request as a build task.
 //   Run      the launcher: suite, models (with what the catalog says of
 //            each: context window, price, the stages it is entered for),
@@ -48,6 +49,8 @@ const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'd
 interface Suite {
   id: number; name: string; version: number; kind: 'frozen' | 'rotating'; notes: string | null;
   frozen_at: string | null; counts: Record<string, number>; total: number; labelled: number; created_by: string | null;
+  // What the server would decide on Delete: unfrozen, no runs, not the default.
+  runs?: number; is_default?: boolean; deletable?: boolean;
 }
 interface Task {
   id: number; stage: Stage; issue_number: number | null; app_slug: string | null; tags: Record<string, unknown>;
@@ -86,6 +89,7 @@ interface CoreStatus {
       skipped?: { ref: string; stage: string | null; app: string | null; reason: string; transient?: boolean }[];
     };
     finishedAt: string | null;
+    stale?: boolean;
   } | null;
   suite: { id: number; name: string; version: number; frozen_at: string | null; total: number; labelled: number } | null;
   running: boolean;
@@ -197,7 +201,10 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   const name = status ? `${status.definition.name} v${status.definition.version}` : 'Core v1';
   const m = status?.materialization || null;
   const suite = status?.suite || null;
-  const running = !!status && (status.running || m?.status === 'running');
+  // The server decides: a row left 'running' by a pass that died mid-way
+  // (a redeploy) is stale, so it is not running and may be tried again.
+  const running = !!status?.running;
+  const interrupted = !running && m?.status === 'running';
   const skipped = m?.summary?.skipped || [];
   const stages = m?.summary?.stages || {};
   const allLabelled = !!suite && suite.total > 0 && suite.labelled === suite.total;
@@ -207,6 +214,7 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   else if (!m) state = status.githubEnabled === false
     ? 'Not made: GitHub is not configured here, so its requests cannot be read.'
     : 'Not made yet. It is made from its checked-in definition a little after the platform starts.';
+  else if (interrupted) state = 'The last pass stopped partway (the server restarted while it worked). Try again to finish it.';
   else if (m.status === 'failed') state = `The last attempt failed: ${m.summary?.error || 'unknown error'}.`;
   else state = `${m.summary?.ready ?? suite?.total ?? 0} tasks ready, ${skipped.length} skipped.`;
   return (
@@ -248,9 +256,9 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
           {suite && !suite.frozen_at && allLabelled ? (
             <button type="button" className={AdminUI.btn.primarySm} id="admin-homeroom-bench-core-freeze" onClick={() => onFreeze(suite.id)}>{`Freeze ${name}`}</button>
           ) : null}
-          {status && status.githubEnabled !== false && !running && !suite?.frozen_at && (!m || m.status === 'failed' || skipped.length) ? (
+          {status && status.githubEnabled !== false && !running && !suite?.frozen_at && (!m || m.status === 'failed' || interrupted || skipped.length) ? (
             <button type="button" className={AdminUI.btn.outlineSm} id="admin-homeroom-bench-core-materialize" onClick={onMaterialize}>
-              {m?.status === 'done' ? 'Try the skipped tasks again' : `Materialize ${name} now`}
+              {interrupted ? 'Try again' : m?.status === 'done' ? 'Try the skipped tasks again' : `Materialize ${name} now`}
             </button>
           ) : null}
         </div>
@@ -259,7 +267,7 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   );
 }
 
-function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
+export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
   canWrite: boolean; suites: Suite[]; coreSuiteId: number | null; onChanged: () => void; say: (text: string, tone?: Tone) => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
@@ -283,6 +291,24 @@ function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
 
   const act = async (fn: () => Promise<unknown>, ok: string) => {
     try { await fn(); say(ok); onChanged(); if (selected) loadTasks(selected); } catch (err: any) { say(err.message, 'err'); }
+  };
+  // Delete a suite made by mistake, after the console's own confirm. The
+  // server re-checks every rule; its refusal is shown as it gave it.
+  const remove = async (s: Suite) => {
+    const label = `${s.name} v${s.version}`;
+    const ok = await (window as any).AdminConsole?._confirm({
+      title: `Delete ${label}?`,
+      message: `This deletes the suite and its ${s.total === 1 ? '1 task' : `${s.total} tasks`}. It cannot be undone.`,
+      confirmLabel: 'Delete suite',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await send(`${BASE}/suites/${s.id}`, 'DELETE');
+      if (selected === s.id) setSelected(null);
+      say(`${label} is deleted.`);
+      onChanged();
+    } catch (err: any) { say(err.message, 'err'); }
   };
   const target = (s: Suite, stage: string, want: number) => `${STAGE_LABEL[stage as Stage] || stage} ${s.counts?.[stage] || 0} of ${want}`;
 
@@ -327,6 +353,10 @@ function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                       ) : null}
                       <button type="button" className={AdminUI.btn.outlineSm}
                         onClick={() => act(() => send(`${BASE}/suites/${s.id}/version`, 'POST', {}), `A new version of ${s.name}, open for edits.`)}>New version</button>
+                      {s.deletable ? (
+                        <button type="button" className={AdminUI.btn.destructiveSm} data-bench-suite-delete={s.id}
+                          onClick={() => remove(s)}>Delete</button>
+                      ) : null}
                     </span>
                   ) : null}
                 </td>

@@ -9737,6 +9737,9 @@ CREATE TABLE IF NOT EXISTS bench_materializations (
 );
 CREATE INDEX IF NOT EXISTS idx_bench_materializations_suite ON bench_materializations(suite_id);
 COMMENT ON TABLE bench_materializations IS 'staging:private';
+-- A pass beats while it works, so a row left 'running' by a process that died
+-- mid-pass (a redeploy) can be told apart from one still working.
+ALTER TABLE bench_materializations ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 
 -- #3654: a benchmark RUN puts a suite's tasks for some stages through some
 -- models, `repeats` times each (a build once), within a dollar cap. Its
