@@ -1455,6 +1455,50 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
   return { diff: out, fileCount: files.length, truncated };
 }
 
+// #3654: the files a compare touched, with their status and patch, for the
+// Homeroom bot benchmark's diff-scope grader and its judge. One call gives
+// both the list and the diff text (capped like getProposalDiff's), and
+// `complete` says whether GitHub's 300-file page held everything.
+async function compareFiles(owner, repo, basehead, charBudget = 60000) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = (data.files || []).map((f) => ({
+    filename: f.filename,
+    status: f.status,
+    additions: f.additions || 0,
+    deletions: f.deletions || 0,
+    previous: f.previous_filename || null,
+  }));
+  let diff = '';
+  let truncated = false;
+  for (const f of data.files || []) {
+    const block = `diff --git a/${f.filename} b/${f.filename}\n${f.patch ? `${f.patch}\n` : `(no textual diff: ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`}`;
+    if (diff.length + block.length > charBudget) { truncated = true; break; }
+    diff += block;
+  }
+  return { files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null };
+}
+
+// #3654: delete a branch the Homeroom bot benchmark made. Refuses any name
+// outside the benchmark's own `bench/` prefix, so a bug in the caller can
+// never take a person's or a proposal's branch with it. A branch already
+// gone is not an error.
+async function deleteBenchBranch(owner, repo, branchName) {
+  if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
+    throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
+  }
+  const octokit = await getOctokit(owner);
+  try {
+    await octokit.rest.git.deleteRef({ owner, repo, ref: `heads/${branchName}` });
+    return true;
+  } catch (err) {
+    if (err.status === 404 || err.status === 422) return false;
+    throw err;
+  }
+}
+
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
 // real @octokit/rest instance with `.rest.issues.update`. Used by the
 // rename-issue → rename-PR migration to retire the legacy issue once its
@@ -2393,6 +2437,8 @@ module.exports = {
   listChangedFiles,
   compareRefs,
   getProposalDiff,
+  compareFiles,
+  deleteBenchBranch,
   getIssue,
   createIssue,
   createIssueComment,

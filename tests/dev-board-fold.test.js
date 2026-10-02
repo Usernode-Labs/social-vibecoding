@@ -1421,9 +1421,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // (the row was a dimmed Soon). Reached by ?shot=create-template. 835
   // leaves 25 slots against MAX_DECLARED_TESTS (860).
   //
+  // 835 → 836: +1 (#3654): the Homeroom bot console's Benchmark area. It
+  // has a route of its own (#admin/homeroom-bot/benchmark, a tab the section
+  // reads from the address), so it could not fold into the bot console's two
+  // checks on #admin/homeroom-bot; one check with :has() covers its suites,
+  // its runs, the results table and the cost-vs-quality chart on the
+  // staging demo run. 836 leaves 24 slots against MAX_DECLARED_TESTS (860).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 835);
+  checkCap.assertPinned(DAPP.tests.length, 836);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

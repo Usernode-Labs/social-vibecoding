@@ -9599,6 +9599,206 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
   ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
 
+-- #3654: what a run can be replayed from. Every triage, follow-up,
+-- checks fix and build stores the text its model read (the seed, the frozen
+-- request thread as JSON, the whole prompt, and a stage's own inputs such as
+-- the spec or the failing checks), the commit the stage ran against and a
+-- hash of the prompt, so the benchmark (services/bench/) can run the same
+-- input through another model. Text is gzip-compressed and stored once per
+-- distinct content (homeroom_bot_snapshot_blobs, keyed by its sha256), and
+-- each text is capped (services/homeroom-bot-snapshots.js). Private: it is
+-- request and DM text, private apps' included.
+CREATE TABLE IF NOT EXISTS homeroom_bot_snapshot_blobs (
+  hash        TEXT PRIMARY KEY,
+  content     BYTEA NOT NULL,
+  chars       INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE homeroom_bot_snapshot_blobs IS 'staging:private';
+CREATE TABLE IF NOT EXISTS homeroom_bot_run_snapshots (
+  id            SERIAL PRIMARY KEY,
+  -- NULL for a snapshot imported from a merged pull request rather than
+  -- recorded by a run; kept when its run is deleted.
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  stage         TEXT NOT NULL,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  base_sha      TEXT,
+  prompt_hash   TEXT,
+  -- name to blob hash: seed, thread, prompt, and a stage's own inputs.
+  texts         JSONB NOT NULL DEFAULT '{}',
+  -- Small, structured inputs (a flag, a count, a model id).
+  extra         JSONB NOT NULL DEFAULT '{}',
+  truncated     BOOLEAN NOT NULL DEFAULT FALSE,
+  source        TEXT NOT NULL DEFAULT 'run',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_run_snapshots_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT homeroom_bot_run_snapshots_source_check
+    CHECK (source IN ('run', 'import'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_run_stage
+  ON homeroom_bot_run_snapshots(run_id, stage) WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_stage
+  ON homeroom_bot_run_snapshots(stage, created_at DESC);
+COMMENT ON TABLE homeroom_bot_run_snapshots IS 'staging:private';
+
+-- #3654: the verdict a labeller says was right, beside the yes/no rating
+-- (rating_note is no longer erased by a rating), and the model a run's
+-- build ran on (per-stage models: it may differ from the triage's).
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS label_verdict TEXT;
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_label_verdict_check;
+  ALTER TABLE homeroom_bot_runs ADD CONSTRAINT homeroom_bot_runs_label_verdict_check
+    CHECK (label_verdict IS NULL OR label_verdict IN ('question', 'ready', 'person', 'empty', 'answer', 'revise'));
+END $$;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
+
+-- #3654: the Homeroom bot's benchmark (services/bench/). A SUITE is a set of
+-- tasks drawn from real runs; it is a version (name + version), and freezing
+-- it makes its tasks immutable (services/bench/suites.js refuses every write
+-- to a frozen suite's tasks; "edit" makes the next version). `frozen` is the
+-- versioned core, `rotating` the set refreshed from recent runs.
+CREATE TABLE IF NOT EXISTS bench_suites (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  kind        TEXT NOT NULL DEFAULT 'frozen',
+  parent_id   INTEGER REFERENCES bench_suites(id) ON DELETE SET NULL,
+  notes       TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  frozen_at   TIMESTAMPTZ,
+  CONSTRAINT bench_suites_kind_check CHECK (kind IN ('frozen', 'rotating')),
+  UNIQUE (name, version)
+);
+COMMENT ON TABLE bench_suites IS 'staging:private';
+
+-- One task: a stage of one recorded run (or a merged pull request), the
+-- snapshot it replays, tags to slice results by, and the reference a
+-- candidate is graded against. `label_token` is the opaque id a labelling
+-- session sees instead of the task's own id. Private: tasks come from any
+-- app, private ones included, and the reference is written from them.
+CREATE TABLE IF NOT EXISTS bench_tasks (
+  id                SERIAL PRIMARY KEY,
+  suite_id          INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  stage             TEXT NOT NULL,
+  source_run_id     INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  snapshot_id       INTEGER NOT NULL REFERENCES homeroom_bot_run_snapshots(id) ON DELETE CASCADE,
+  app_id            INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number      INTEGER,
+  tags              JSONB NOT NULL DEFAULT '{}',
+  reference         JSONB NOT NULL DEFAULT '{}',
+  reference_source  TEXT,
+  labeled_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  labeled_at        TIMESTAMPTZ,
+  label_token       TEXT NOT NULL UNIQUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_tasks_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT bench_tasks_reference_source_check
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_tasks_suite ON bench_tasks(suite_id, stage);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_tasks_suite_run_stage
+  ON bench_tasks(suite_id, source_run_id, stage) WHERE source_run_id IS NOT NULL;
+COMMENT ON TABLE bench_tasks IS 'staging:private';
+
+-- #3654: a benchmark RUN puts a suite's tasks for some stages through some
+-- models, `repeats` times each (a build once), within a dollar cap. Its
+-- TRIALS are one task on one model, one attempt: pending, running, then how
+-- it ended. `ok` means the stage produced an answer to grade; a model that
+-- produced nothing usable is `model_fail`; a platform fault is `infra_fail`
+-- and is kept out of quality; `not_applicable` is a task the model cannot
+-- take (its stage or its context window); `skipped_cap` is what the cap left
+-- unrun. `item_token` is the opaque id a grading session sees: never the
+-- trial id, never the model.
+CREATE TABLE IF NOT EXISTS bench_runs (
+  id              SERIAL PRIMARY KEY,
+  suite_id        INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  models          TEXT[] NOT NULL,
+  baseline_model  TEXT,
+  stages          TEXT[] NOT NULL,
+  repeats         INTEGER NOT NULL DEFAULT 3,
+  cap_usd         NUMERIC(12,4) NOT NULL DEFAULT 50,
+  concurrency     INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'queued',
+  spent_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
+  note            TEXT,
+  started_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_runs_status_check
+    CHECK (status IN ('queued', 'running', 'done', 'cancelled', 'capped'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_runs_open ON bench_runs(id) WHERE status IN ('queued', 'running');
+COMMENT ON TABLE bench_runs IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS bench_trials (
+  id              SERIAL PRIMARY KEY,
+  run_id          INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id         INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  model           TEXT NOT NULL,
+  attempt         INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  item_token      TEXT NOT NULL UNIQUE,
+  claims          INTEGER NOT NULL DEFAULT 0,
+  est_cost_usd    NUMERIC(12,4),
+  raw_output      TEXT,
+  parsed          JSONB,
+  cost_usd        NUMERIC(18,8),
+  input_tokens    BIGINT,
+  output_tokens   BIGINT,
+  duration_ms     INTEGER,
+  session_id      INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  base_sha        TEXT,
+  build_branch    TEXT,
+  build_sha       TEXT,
+  build_commits   INTEGER,
+  diff            TEXT,
+  changed_files   JSONB,
+  checks          JSONB,
+  deterministic   JSONB,
+  error           TEXT,
+  branch_deleted_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_trials_status_check
+    CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
+                      'not_applicable', 'skipped_cap', 'cancelled')),
+  UNIQUE (run_id, task_id, model, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_run ON bench_trials(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_pending ON bench_trials(run_id, attempt, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_bench_trials_branches
+  ON bench_trials(finished_at) WHERE build_branch IS NOT NULL AND branch_deleted_at IS NULL;
+COMMENT ON TABLE bench_trials IS 'staging:private';
+
+-- #3654: a grade of a benchmark trial, by the judge (`opus`: a Claude Opus
+-- session on a person's own plan, through the admin-only connector tools) or
+-- by a person (`human`: an admin in the console, which overrides the judge).
+-- Binary, with the critique the judge wrote first. The deterministic grade
+-- lives on the trial itself (bench_trials.deterministic). Several grades of
+-- one trial are kept; the latest of each grader counts.
+CREATE TABLE IF NOT EXISTS bench_grades (
+  id              SERIAL PRIMARY KEY,
+  trial_id        INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  grader          TEXT NOT NULL,
+  grader_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  grader_label    TEXT NOT NULL,
+  verdict         TEXT NOT NULL,
+  critique        TEXT,
+  criteria        JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_grades_grader_check CHECK (grader IN ('opus', 'human')),
+  CONSTRAINT bench_grades_verdict_check CHECK (verdict = 'pass' OR verdict = 'fail')
+);
+CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
+COMMENT ON TABLE bench_grades IS 'staging:private';
+
 -- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
 -- One row per answer it wrote: what it cost (counted in the person's weekly
 -- allowance with their requests' runs), how many model calls and which

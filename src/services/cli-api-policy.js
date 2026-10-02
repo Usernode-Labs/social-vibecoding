@@ -194,6 +194,19 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/apps/:slug/demo/promote' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/vote' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/reset' },
+  // #3654: grading the Homeroom bot's benchmark, by an admin's own Claude
+  // session through the connector (services/bench/grading.js). The second
+  // deliberate exception to the note above, for the opposite reason to demo
+  // mode's: these change nothing in any app, but they READ tasks from every
+  // app, private ones included. What earns them their place is the handler's
+  // gate, which the policy tests pin: every one refuses anybody who is not a
+  // full platform admin (requireAdminWrite) before it reads anything. They
+  // live outside /api/admin only because a connector can never reach that
+  // prefix, and they write nothing but a grade or a label.
+  { method: 'GET', pattern: '/api/bot-bench/queue' },
+  { method: 'GET', pattern: '/api/bot-bench/items/:token' },
+  { method: 'POST', pattern: '/api/bot-bench/items/:token/grade' },
+  { method: 'POST', pattern: '/api/bot-bench/tasks/:token/label' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

@@ -621,6 +621,8 @@ app.use(waitlistConnectRoutes(config));
 app.use(issueRoutes(config));
 app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
+// #3654: the Homeroom bot's benchmark (services/bench/), beside its console.
+app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
@@ -1247,6 +1249,9 @@ async function becomeLeader() {
   // same reason the digests are — a pass runs container turns that cost
   // money — and inert until an admin switches homeroom_bot_mode on.
   require('./src/services/homeroom-bot').start(config);
+  // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
+  // container turn that costs money) and inert until an admin launches a run.
+  require('./src/services/bench/lane').start(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
@@ -2184,7 +2189,9 @@ async function recoverSessions(config) {
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      WHERE cs.status IN ('active', 'promoted', 'merging')
-       AND cs.branch_name IS NOT NULL`
+       AND cs.branch_name IS NOT NULL
+       -- #3654: a benchmark trial's session never gets a staging preview.
+       AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
   );
 
   for (const session of rows) {
@@ -2632,6 +2639,42 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
+// #3654: a benchmark trial's worker that outlived a restart. The same
+// abandonment as a shots turn's (above), then the session is archived: no
+// trial is ever resumed, the lane runs it again from the start.
+async function abandonOrphanBenchTurn({
+  pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
+}) {
+  const activeTurn = session.active_turn || null;
+  if (activeTurn) {
+    const args = turnCleanupArgs(activeTurn);
+    if (containerRunning) {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await worker.stopTurn(sessionId);
+      worker.clearPendingStop(sessionId);
+      if (await worker.isWorkerExecuting(containerName) !== false) {
+        throw retryRuntimeRecovery('Orphaned benchmark turn is not confirmed stopped');
+      }
+    }
+    await abandonCodexAttempt(pool, sessionId, activeTurn, {
+      label: 'Orphaned benchmark',
+      errorDetail: 'A benchmark trial was abandoned after the platform process that dispatched it exited.',
+    });
+    recoveryRetry.requireDurableTurnCleanup(
+      containerRunning
+        ? await worker.finishTurn(sessionId, args)
+        : await worker.clearActiveTurn(sessionId, args),
+      args,
+    );
+  }
+  await pool.query(
+    "UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1 AND status IN ('active', 'paused')",
+    [sessionId],
+  ).catch(() => {});
+  await worker.destroyWorker(containerName).catch(() => {});
+  log.warn('server', 'Abandoned a benchmark trial\'s worker after restart', { containerName, sessionId });
+}
+
 function homeroomBotRecovery() {
   return require('./src/services/homeroom-bot');
 }
@@ -2729,6 +2772,19 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   if (!['active', 'promoted'].includes(session.status)) {
     // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
+    return;
+  }
+
+  // #3654: a Homeroom bot benchmark trial is never recovered into anything:
+  // the dev-chat tail below would open a PR, build staging and notify, none
+  // of which a trial may do. Its turn is stopped and abandoned; the lane
+  // puts the trial back in its queue once it is stale (services/bench/lane.js).
+  if (require('./src/services/bench/runner').isBenchSession(session)) {
+    await abandonOrphanBenchTurn({
+      pool, session, sessionId, containerName,
+      containerRunning: containerState === 'running',
+      retryRuntimeRecovery,
+    });
     return;
   }
 

@@ -1163,6 +1163,27 @@ function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
 }
 
 /**
+ * #3654: make a session run `model`. A turn runs whatever model its session
+ * carries (agent-turn resolveCodexRuntimeContext reads session.agent_model),
+ * and the bot's sessions were stamped once, when they were created: the
+ * triage session per app kept the model it was born with however the setting
+ * changed, while the run ledger recorded the new one. Writes the row and the
+ * object the runtime is resolved from. Best-effort; a no-op when they agree
+ * or there is no model to stamp.
+ */
+async function stampSessionModel(pool, session, model) {
+  if (!session || !model || session.agent_model === model) return false;
+  try {
+    await pool.query('UPDATE chat_sessions SET agent_model = $2 WHERE id = $1', [session.id, model]);
+    session.agent_model = model;
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not set the session\'s model', { sessionId: session.id, err: err.message });
+    return false;
+  }
+}
+
+/**
  * Build the change in a dev session of the bot's own and put it up for a
  * vote. Resolves { ok, sessionId, prNumber, costUsd, error }; never throws.
  */
@@ -1192,7 +1213,7 @@ function readSpec(text) {
 
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
-  specBudgetMs = SPEC_TURN_MAX_MS,
+  specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec',
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1211,7 +1232,7 @@ async function draftSpec({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
-      telemetryComponent: 'homeroom_bot_spec',
+      telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -1223,7 +1244,7 @@ async function draftSpec({
         resumeSessionId: null,
         branchName: session.branch_name,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_spec',
+        telemetryComponent,
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
@@ -1266,6 +1287,9 @@ async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
   onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
+  // #3654: the spec turn's own model, when it differs from the build's;
+  // and, for a benchmark trial, its own session title and telemetry.
+  specModel = null, sessionTitle = null, telemetry = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1285,7 +1309,7 @@ async function buildAndPropose({
                'codex_openrouter', 'openrouter', $5, $6)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
-        `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
+        sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low'],
     );
     session = rows[0];
@@ -1362,11 +1386,16 @@ async function buildAndPropose({
 
   // A spec already written, by a spec turn a restart interrupted and
   // recovery finished (#3401), is built from as it is, not written again.
+  if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   spec = presetSpec
     ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
     : await draftSpec({
-      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
+      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
+      model: specModel || model, deps, specBudgetMs,
+      ...(telemetry ? { telemetryComponent: telemetry } : {}),
     });
+  // The build turn runs the build's model again.
+  await stampSessionModel(pool, session, model);
   if (spec.blocked) {
     // Impossible as written: nothing is built, and the caller says why.
     log.info('homeroom-bot', 'The spec found the request impossible; not building', {
@@ -1424,7 +1453,7 @@ async function buildAndPropose({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'build',
-      telemetryComponent: 'homeroom_bot_build',
+      telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -1436,7 +1465,7 @@ async function buildAndPropose({
         resumeSessionId: null,
         branchName,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
@@ -1547,6 +1576,7 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  stampSessionModel,
   draftSpec,
   specPrompt,
   specTitle,

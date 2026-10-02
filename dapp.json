@@ -4101,6 +4101,12 @@
       "expectText": "It posts nothing and claims nothing, and builds nothing unless shadow builds are on below"
     },
     {
+      "name": "Homeroom bot Benchmark area shows its suites, a run's results per stage and model, and the cost-vs-quality chart (#3654)",
+      "path": "/#admin/homeroom-bot/benchmark",
+      "expectSelector": "#admin-homeroom-bench:has(#admin-homeroom-bench-suites):has(#admin-homeroom-bench-runs):has(#admin-homeroom-bench-pareto) #admin-homeroom-bench-results-table",
+      "expectText": "Staging demo core v1"
+    },
+    {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
       "path": "/#admin/welcome-dm",
       "expectSelector": "#admin-welcome-dm:has(#admin-welcome-dm-members):has(#admin-welcome-dm-recent) #admin-welcome-dm-intro",
