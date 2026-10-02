@@ -47,7 +47,8 @@ interface TopPanel {
 
 type Win = Window & {
   App?: { _routeFromHash?: () => void; _currentRoute?: string | null };
-  AppView?: { _proposalHint?: boolean };
+  AppView?: { _proposalHint?: boolean; _overrideWorkshopTab?: (tab: string) => void };
+  GroupChat?: { revealMessage?: (slug: string, id: number) => void };
   UsernodeReact?: Record<string, unknown>;
   navigation?: { addEventListener?: (type: string, fn: (e: NavigateLike) => void) => void };
 };
@@ -240,6 +241,14 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     if (!hint) return;
     if (hint.proposalHint && win.AppView) win.AppView._proposalHint = true;
     if (hint.agentHint !== undefined) prepareAgentDraft(hint.agentHint);
+    // A discussion opened beside the app (#3653): the page lands on its
+    // Discussion tab (a one-off, like the boot hint itself) and a named
+    // message is brought into view — the panel document's own GroupChat,
+    // which a reveal in the top document never reaches.
+    if (hint.discussionHint?.slug) {
+      win.AppView?._overrideWorkshopTab?.('discussion');
+      if (hint.discussionHint.messageId) win.GroupChat?.revealMessage?.(hint.discussionHint.slug, hint.discussionHint.messageId);
+    }
   }
 
   // ── 2. Boot ────────────────────────────────────────────────────────────

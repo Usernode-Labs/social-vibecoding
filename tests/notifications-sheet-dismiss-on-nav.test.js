@@ -39,7 +39,7 @@ const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/times
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-).replace(/^import \{ agoStamp \}.*$/m, '');
+).replace(/^import \{.*?\n/gm, '');
 
 function makeClassList(initial) {
   const classes = new Set(initial);
@@ -126,17 +126,23 @@ function load({ touch = true, fetchImpl } = {}) {
       openAppTab: (slug, tab) => calls.push(['nav', slug, tab]),
       _isScreenVisible: () => false,
     },
-    // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763): the
-    // rows about a message in it, a saved message and an accepted invite all
-    // open it there, through the Messages controller.
+    // A ROW ABOUT A PROJECT'S DISCUSSION OPENS THE PROJECT PAGE (#3653), on
+    // its Discussion tab, through the door Recents presses (#3555). The
+    // stub records the door and the address the page's own router follows.
     UsernodeReact: {
-      messages: { openDiscussion: (slug) => calls.push(['nav', slug, 'discussion']) },
+      sidePanel: {
+        take: (route, hint) => { calls.push(['panel', route, hint || null]); return false; },
+      },
     },
   };
+  sandbox.AppView = { _landOnTab: (slug, tab) => calls.push(['land', slug, tab]) };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   sandbox.agoStamp = agoStamp;
+  // The import stood in for: the platform project's slug (no stub here —
+  // the rows in this contract are an ordinary project's).
+  sandbox.platformSlug = () => null;
   vm.runInContext(SRC, sandbox);
   const N = sandbox.Notifications;
   // Display/network plumbing outside this contract: the badge writes DOM the
@@ -154,7 +160,7 @@ const acceptOk = (appSlug) => async (url) => (String(url).includes('/accept')
   : { ok: true, json: async () => ({ ok: true }) });
 
 const navAndDismiss = (calls) => calls
-  .filter((c) => c[0] === 'dismiss' || c[0] === 'nav')
+  .filter((c) => c[0] === 'dismiss' || c[0] === 'nav' || c[0] === 'land')
   .map((c) => c[0]);
 
 // ── the reported bug: accept on touch ───────────────────────────────────
@@ -168,11 +174,11 @@ test('touch: accepting an invite dismisses the sheet, then navigates to the app'
 
   await N._acceptInvite(5, 'demo-app', 'approver');
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav'],
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'land'],
     'the sheet is dismissed BEFORE navigation');
-  const nav = calls.find((c) => c[0] === 'nav');
-  assert.deepEqual(nav, ['nav', 'demo-app', 'discussion'],
-    'the people just joined are in the app\'s discussion, in Messages');
+  const land = calls.find((c) => c[0] === 'land');
+  assert.deepEqual(land, ['land', 'demo-app', 'discussion'],
+    'the people just joined are on the project page, on its Discussion tab');
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'), 'the panel is hidden again');
   assert.ok(!panel.classList.contains('platform-panel-adopted'),
@@ -184,7 +190,7 @@ test('touch: the accept response appSlug wins over the row slug', async () => {
   N.invites = [{ appId: 5, appSlug: 'stale-slug', kind: 'collab' }];
   N.show();
   await N._acceptInvite(5, 'stale-slug', 'collab');
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'canonical-slug', 'discussion']);
+  assert.deepEqual(calls.find((c) => c[0] === 'land'), ['land', 'canonical-slug', 'discussion']);
 });
 
 test('touch: a failed accept keeps the sheet up (toast + re-sync, no navigation)', async () => {
@@ -234,9 +240,9 @@ test('desktop: accepting navigates and the drawer closes behind it', async () =>
 
   await N._acceptInvite(5, 'demo-app', 'approver');
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav'],
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'land'],
     'the drawer closes BEFORE navigation, at every width');
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
+  assert.deepEqual(calls.find((c) => c[0] === 'land'), ['land', 'demo-app', 'discussion']);
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'), 'the panel is hidden again');
 });
@@ -247,8 +253,8 @@ test('desktop: clicking a notification row closes the drawer before routing', ()
   N.show();
   N._onItemClick(9);
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'land']);
+  assert.deepEqual(calls.find((c) => c[0] === 'land'), ['land', 'demo-app', 'discussion']);
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'));
 });
@@ -261,8 +267,8 @@ test('touch: clicking a notification row dismisses the sheet before routing', ()
   N.show();
   N._onItemClick(9);
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'land']);
+  assert.deepEqual(calls.find((c) => c[0] === 'land'), ['land', 'demo-app', 'discussion']);
   assert.equal(N.open, false);
 });
 
@@ -285,8 +291,8 @@ test('touch: clicking a saved message dismisses the sheet before routing', () =>
   N.show();
   N._onSavedClick(3);
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'land']);
+  assert.deepEqual(calls.find((c) => c[0] === 'land'), ['land', 'demo-app', 'discussion']);
 });
 
 test('touch: a saved row without an appSlug routes nowhere and keeps the drawer', () => {

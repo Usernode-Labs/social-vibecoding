@@ -33,7 +33,7 @@ const DEV_ALERTS_SRC = read('js', 'dev-alerts.js');
 const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const NOTIF_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8')
-  .replace(/^import \{ agoStamp \}.*$/m, '');
+  .replace(/^import \{.*?\n/gm, '');
 
 // Minimal fake DOM element tracking class list, text and attributes for the
 // badge tests.

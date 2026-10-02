@@ -52,6 +52,7 @@
 // the shared helper prints a real date past a week. Bundled, not imported by
 // Node, in tests/notification-row-lines.test.js — see the note there.
 import { agoStamp } from '../../lib/timestamp';
+import { platformSlug } from '../messages/channel-hub';
 
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
@@ -1074,12 +1075,13 @@ const Notifications = {
     }
   },
 
-  // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763), so a
-  // row about a message in it opens it THERE: `#messages/app/<slug>`, two
-  // panes on a desktop, with the side panel taking it beside a running app
-  // (#2854). These rows opened the old full-screen `#app/<slug>/dev/chat`,
-  // whose back arrow climbed to the app's Workshop — a screen the reader
-  // had not come from.
+  // A ROW ABOUT AN APP'S DISCUSSION OPENS THE DISCUSSION WHERE IT LIVES
+  // NOW: the project page's Discussion tab (#3555), reached through the
+  // same door Recents uses — the side panel when an app is running beside
+  // it (the hint carries the landing and the message), then the door that
+  // lands the page on the tab, then the workshop address as the fallback
+  // for a shell still starting. The window's query rides along (recents-
+  // list.tsx), so a `?ws=` deep link is not dropped by the fragment.
   //
   // When the row names ONE message, the discussion opens on it rather than
   // at the newest: GroupChat scrolls it into view and flashes it, the same
@@ -1093,9 +1095,32 @@ const Notifications = {
     if (messageId && typeof GroupChat !== 'undefined' && GroupChat.revealMessage) {
       GroupChat.revealMessage(slug, messageId);
     }
-    const messages = window.UsernodeReact?.messages;
-    if (messages?.openDiscussion) messages.openDiscussion(slug);
-    else window.location.hash = `#messages/app/${encodeURIComponent(slug)}`;
+    // #general is the Homeroom community's channel, NOT the platform
+    // project's app-chat room: its Discussion tab embeds #general, while
+    // this room is kept read-only as history (AppView.renderGroupChatTab).
+    // It stays on the Messages screen, exactly like its Recents row.
+    if (slug === platformSlug()) {
+      const messages = window.UsernodeReact?.messages;
+      if (messages?.openDiscussion) messages.openDiscussion(slug);
+      else window.location.hash = `#messages/app/${encodeURIComponent(slug)}`;
+      return;
+    }
+    const panel = window.UsernodeReact?.sidePanel;
+    if (panel?.take?.(`app/${encodeURIComponent(slug)}/workshop`, {
+      discussionHint: { slug, messageId: messageId || null },
+    })) return;
+    if (window.AppView && typeof window.AppView._landOnTab === 'function') {
+      window.AppView._landOnTab(slug, 'discussion');
+      // Already on that page (the router keeps it at its clean path, with
+      // no fragment): the door has turned it, and a second address for the
+      // same page would only be a Back press that goes nowhere.
+      const page = `/app/${encodeURIComponent(slug)}/workshop`;
+      if (window.location.pathname === page && !window.location.hash) return;
+      window.location.hash = `#app/${encodeURIComponent(slug)}/workshop`;
+      return;
+    }
+    if (window.AppView?._overrideWorkshopTab) window.AppView._overrideWorkshopTab('discussion');
+    window.location.hash = `#app/${encodeURIComponent(slug)}/workshop`;
   },
 
   // --- rendering -------------------------------------------------------

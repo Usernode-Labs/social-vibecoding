@@ -18,7 +18,7 @@ const notificationsSource = fs.readFileSync(
   // #1079 chunk B: same module, now inside the React bundle.
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-).replace(/^import \{ agoStamp \}.*$/m, '');
+).replace(/^import \{.*?\n/gm, '');
 
 // Evaluate that source with the helper in scope, standing in for the bundle's
 // module graph.

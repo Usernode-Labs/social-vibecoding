@@ -89,6 +89,13 @@ export interface PanelHint {
     slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string;
     message?: string; handoff?: 'claude-code' | 'codex';
   } | null;
+  /**
+   * What a notification about a discussion opened beside the app (#3653):
+   * the app's project page lands on its Discussion tab, and a named message
+   * is brought into view there — the panel document's own GroupChat
+   * (embedded.ts applyHint), which the top document's reveal never reaches.
+   */
+  discussionHint?: { slug: string; messageId?: number | null } | null;
 }
 
 interface AppLike {
@@ -644,6 +651,7 @@ export const SidePanel = {
   isOpen,
   pend,
   clearPending,
+  /** The top document's door to a panel page, for the callers without one. */
   embedded: embeddedApi,
 };
 

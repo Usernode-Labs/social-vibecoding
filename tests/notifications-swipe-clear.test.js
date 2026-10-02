@@ -50,7 +50,7 @@ const dapp = JSON.parse(read('dapp.json'));
 const { agoStamp } = loadTsx('frontend/src/lib/timestamp.ts');
 const { createStore } = loadTsx('frontend/src/lib/plain-store.js');
 const CONTROLLER_SRC = read('frontend/src/features/notifications/notifications.js')
-  .replace(/^import \{ agoStamp \}.*$/m, '');
+  .replace(/^import \{.*?\n/gm, '');
 
 const MIN = 60 * 1000;
 const at = (minutesAgo) => new Date(Date.now() - minutesAgo * MIN).toISOString();

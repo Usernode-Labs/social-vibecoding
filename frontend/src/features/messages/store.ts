@@ -5,6 +5,7 @@ import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
+import type { PanelHint as PanelHintLike } from '../side-panel/controller';
 import type {
   ConversationDetail,
   DiscussionContext,
@@ -960,12 +961,12 @@ function chromeTitle(active: ConversationDetail | null): string {
  * (frontend/src/features/side-panel/). False whenever that is not the moment,
  * and the caller navigates as it always has.
  */
-function sidePanelTakes(target: string): boolean {
+function sidePanelTakes(target: string, hint?: PanelHintLike | null): boolean {
   const panel = (window as unknown as {
-    UsernodeReact?: { sidePanel?: { take?: (route: string) => boolean } };
+    UsernodeReact?: { sidePanel?: { take?: (route: string, hint?: PanelHintLike | null) => boolean } };
   }).UsernodeReact?.sidePanel;
   try {
-    return !!panel?.take?.(target.replace(/^#/, ''));
+    return !!panel?.take?.(target.replace(/^#/, ''), hint ?? null);
   } catch {
     return false;
   }
@@ -1020,10 +1021,29 @@ export function openDiscussion(slug: string): void {
   if (typeof window === 'undefined') return;
   const safe = validSlug(slug);
   if (!safe) return;
-  const target = `#messages/app/${encodeURIComponent(safe)}`;
-  if (sidePanelTakes(target)) return;
-  if (window.location.hash === target) route(null, safe);
-  else window.location.hash = target;
+  const page = `/app/${encodeURIComponent(safe)}/workshop`;
+  if (sidePanelTakes(`app/${encodeURIComponent(safe)}/workshop`, { discussionHint: { slug: safe } })) return;
+  // THE DOOR, as Recents presses it (#3555): remember the tab and tell a
+  // page already open for this project to turn to Discussion, then the
+  // page's own address. The panel's route was asked first, so this is only
+  // a normal document now — and the router re-reads the page it lands on.
+  const AppView = (window as unknown as {
+    AppView?: { _landOnTab?: (slug: string, tab: string) => void };
+  }).AppView;
+  if (AppView && typeof AppView._landOnTab === 'function') {
+    AppView._landOnTab(safe, 'discussion');
+    if (window.location.pathname === page && !window.location.hash) return;
+    window.location.hash = `#app/${encodeURIComponent(safe)}/workshop`;
+    return;
+  }
+  // Nothing has published the door (an island still starting, a test
+  // harness): the `?ws=` deep link still selects the tab on a fresh open,
+  // and the remembered-tab write it stands for is what the door would have
+  // done. This is the fallback address today's rows carry.
+  (window as unknown as {
+    AppView?: { _overrideWorkshopTab?: (tab: string) => void };
+  }).AppView?._overrideWorkshopTab?.('discussion');
+  window.location.hash = `#app/${encodeURIComponent(safe)}/workshop`;
 }
 
 /**

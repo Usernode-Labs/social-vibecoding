@@ -708,7 +708,7 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
       },
     },
     App: { _currentRoute: null, _routeFromHash: () => routed.push(url.href) },
-    AppView: { _proposalHint: false },
+    AppView: { _proposalHint: false, _overrideWorkshopTab: null },
   };
   if (navigation) {
     win.navigation = { addEventListener: (type, fn) => { if (type === 'navigate') navListeners.push(fn); } };
@@ -734,6 +734,9 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
   }
   const runtime = api.installEmbeddedRuntime(win);
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
+  // The one-off tab override the hint applies, recorded so a test can see
+  // the Discussion landing the panel document was asked for.
+  win.AppView._overrideWorkshopTab = (tab) => { win.AppView._workshopTabUrlOverride = tab; };
   return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -813,6 +816,32 @@ test('the top document sends the panel somewhere by replacing its address and ro
   assert.equal(p.win.AppView._proposalHint, true, 'the hint is in place before the router runs');
   await tick();
   assert.equal(p.url(), 'https://homeroom.test/app/notes-ab12/dev/sessions/new?panel=1');
+  delete globalThis.document;
+});
+
+test('a notification opened beside the app lands the panel on Discussion, on its message (#3653)', async () => {
+  const p = panelWindow();
+  p.boot();
+  await tick();
+  const reveals = [];
+  p.win.GroupChat = { revealMessage: (slug, id) => reveals.push([slug, id]) };
+  // The hint carries the Discussion landing and the message: the panel
+  // document's own GroupChat applies what the top's never reaches.
+  p.runtime.go('app/garden-ab12/workshop', { discussionHint: { slug: 'garden-ab12', messageId: 5552 } });
+  assert.equal(p.win.AppView._workshopTabUrlOverride, 'discussion',
+    'the page opens on the Discussion tab');
+  await tick();
+  assert.equal(p.url(), 'https://homeroom.test/app/garden-ab12/workshop?panel=1');
+  assert.deepEqual(reveals, [['garden-ab12', 5552]], 'and the named message is brought into view');
+  // A no-message notification still lands the tab, and asks no reveal.
+  const q = panelWindow();
+  q.boot();
+  await tick();
+  const qReveals = [];
+  q.win.GroupChat = { revealMessage: (slug, id) => qReveals.push([slug, id]) };
+  q.runtime.go('app/garden-ab12/workshop', { discussionHint: { slug: 'garden-ab12' } });
+  assert.equal(q.win.AppView._workshopTabUrlOverride, 'discussion');
+  assert.deepEqual(qReveals, [], 'no message, nothing revealed');
   delete globalThis.document;
 });
 
@@ -1200,9 +1229,9 @@ test('the JS entry points ask the panel before they navigate', () => {
   for (const fn of ['open', 'openDiscussion']) {
     const body = STORE.slice(STORE.indexOf(`export function ${fn}(`));
     const upTo = body.slice(0, body.indexOf('\n}'));
-    assert.ok(upTo.indexOf('if (sidePanelTakes(target)) return;') > 0, `${fn} asks the panel`);
-    assert.ok(upTo.indexOf('if (sidePanelTakes(target)) return;') < upTo.indexOf('window.location.hash = target'),
-      `${fn} asks before it moves the address`);
+    const asks = upTo.indexOf('if (sidePanelTakes(');
+    assert.ok(asks > 0, `${fn} asks the panel`);
+    assert.ok(asks < upTo.indexOf('window.location.hash'), `${fn} asks before it moves the address`);
   }
   // New change is an agent session now (#2779): the agent store's own start
   // asks the panel (sidePanelTakes) before it moves the address, hint and all.
