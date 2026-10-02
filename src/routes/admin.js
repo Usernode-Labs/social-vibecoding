@@ -15,6 +15,7 @@ const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
@@ -231,24 +232,27 @@ function adminRoutes(config) {
   //
   // #851: staleness is now detected automatically (an env-fingerprint label,
   // services/staging-env.js) and swept on a background pass, so this button
-  // is no longer the only remedy — it is the BIGGER HAMMER: it tears down
-  // every preview it can enumerate, stale or not, without waiting out the
-  // pass's interval. The GET reports the automatic pass's last run so an
-  // admin can tell whether pressing it is even necessary.
+  // is no longer the only remedy. It takes what that pass would take (out of
+  // date, or abandoned by a merged, archived or deleted session; never a
+  // preview backing a live vote), all at once instead of a few per interval.
+  // The GET reports the automatic pass's last run so an admin can tell
+  // whether pressing it is even necessary.
 
   router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
     try {
-      // This fleet-wide inventory sweep is Docker-specific. Kubernetes
-      // previews are managed through their runtime records instead of a
-      // Docker socket, so do not report a misleading successful no-op.
-      if (stagingReap.isStagingEnv() || applicationRuntime.mode(config) !== 'docker') {
+      // A staging preview cannot see the fleet it would sweep, so refuse
+      // rather than report an empty inventory as a successful sweep. Both
+      // production runtimes enumerate their previews (Docker containers,
+      // Kubernetes Deployments).
+      if (stagingReap.isStagingEnv()) {
         return res.status(400).json({
-          error: 'Stale-preview administration is not implemented for this runtime.',
+          error: 'The stale-preview sweep is unavailable in staging previews.',
         });
       }
       const { started, job } = stagingReap.start(config, {
         userId: req.user.id,
         username: req.user.username,
+        isInFlight: isSessionBusy,
       });
       if (!started) {
         return res.status(409).json({ error: 'Sweep already in progress', job });
@@ -289,21 +293,23 @@ function adminRoutes(config) {
           concurrency: stagingReap.concurrency(),
         });
       }
-      // `open` is every preview the manual button would shut down; `stale` is
-      // the subset the automatic pass (#851) considers out of date. Both come
-      // from one docker call. `stale` is kept as the legacy field name the
-      // console's confirm dialog already reads — see the note below.
-      const counts = await stagingReap.previewCounts(config).catch(() => ({ open: null, stale: null }));
+      // `open` is every preview; `stale` is the out-of-date subset and
+      // `abandoned` the further ones whose session finished. The button (and
+      // the automatic pass) takes `stale` + `abandoned`. All come from one
+      // inventory call.
+      const counts = await stagingReap.previewCounts(config)
+        .catch(() => ({ open: null, stale: null, abandoned: null }));
       res.json({
         job: stagingReap.read(),
         open: counts.open,
         stale: counts.stale,
+        abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: stagingReap.readAutomatic(),
         staging,
         runtimeKind,
-        available: !staging && runtimeKind === 'docker',
-        unavailableReason: staging ? 'staging' : (runtimeKind === 'kubernetes' ? 'kubernetes' : null),
+        available: !staging,
+        unavailableReason: staging ? 'staging' : null,
         concurrency: stagingReap.concurrency(),
       });
     } catch (err) {

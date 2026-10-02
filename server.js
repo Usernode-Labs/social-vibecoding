@@ -5228,11 +5228,14 @@ function startSessionAutoPauseSweeper(config) {
     // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
     // the stale rest (merged / abandoned / paused / session-gone), so the next
     // Preview click rebuilds with current env behind the existing loader.
-    // Together they replace #850's one-off admin sweep.
+    // Together they replace #850's one-off admin sweep. It also takes any
+    // preview whose session merged, was archived or is gone, current env or
+    // not: a failed merge-time teardown has no other retry.
     //
     // Throttled to its own long interval rather than given a timer of its
-    // own — this sweeper already ticks, and a `docker ps` + teardown of a few
-    // containers every 15 minutes has no business running every 60 seconds.
+    // own — this sweeper already ticks, and listing the previews (Docker
+    // containers or Kubernetes Deployments) + tearing down a few every 15
+    // minutes has no business running every 60 seconds.
     // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
     try {
       // The interval + "is it due" bookkeeping lives in the service, so this
