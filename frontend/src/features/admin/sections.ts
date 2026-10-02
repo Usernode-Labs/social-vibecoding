@@ -37,6 +37,7 @@ import './admin-rollover.tsx';
 import './admin-staging-reap.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
+import './admin-journey.tsx';
 import './admin-analytics.tsx';
 import './admin-estimator.tsx';
 import './admin-merges.tsx';

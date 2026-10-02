@@ -1421,9 +1421,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // (the row was a dimmed Soon). Reached by ?shot=create-template. 835
   // leaves 25 slots against MAX_DECLARED_TESTS (860).
   //
+  // 835 → 836: +1 (#3369): Admin › Journey, the user journey and North
+  // Star page, on its demo route (/?demo=1#admin/journey). A new section
+  // has a route of its own, so it could not share another check's. 836
+  // leaves 24 slots against MAX_DECLARED_TESTS (860).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 835);
+  checkCap.assertPinned(DAPP.tests.length, 836);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

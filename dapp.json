@@ -4140,6 +4140,12 @@
       "expectSelector": "#admin-support-points"
     },
     {
+      "name": "Admin Journey leads with the week's active groups (#3369)",
+      "path": "/?demo=1#admin/journey",
+      "expectSelector": "#admin-journey-north-star",
+      "expectText": "Active groups"
+    },
+    {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
       "path": "/?demo=1#admin/analytics",
       "expectText": "LLM spend this week"
