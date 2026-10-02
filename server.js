@@ -1252,6 +1252,10 @@ async function becomeLeader() {
   // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
   // container turn that costs money) and inert until an admin launches a run.
   require('./src/services/bench/lane').start(config);
+  // #3654 Core v1: the default suite, made from its checked-in definition in
+  // the background a little after boot (reads GitHub only; a no-op once it
+  // is done). Production and staging, when GitHub is configured.
+  require('./src/services/bench/core').startOnBoot(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.

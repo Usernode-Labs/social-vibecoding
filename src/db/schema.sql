@@ -9698,12 +9698,45 @@ CREATE TABLE IF NOT EXISTS bench_tasks (
   CONSTRAINT bench_tasks_stage_check
     CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
   CONSTRAINT bench_tasks_reference_source_check
-    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr'))
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr', 'authored'))
 );
 CREATE INDEX IF NOT EXISTS idx_bench_tasks_suite ON bench_tasks(suite_id, stage);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_tasks_suite_run_stage
   ON bench_tasks(suite_id, source_run_id, stage) WHERE source_run_id IS NOT NULL;
 COMMENT ON TABLE bench_tasks IS 'staging:private';
+
+-- #3654 Core v1: a reference written into a suite's checked-in definition by
+-- its author (the adversarial triage tasks) is 'authored'. Widening a CHECK
+-- never rejects a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_tasks DROP CONSTRAINT IF EXISTS bench_tasks_reference_source_check;
+  ALTER TABLE bench_tasks ADD CONSTRAINT bench_tasks_reference_source_check
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr', 'authored'));
+END $$;
+
+-- #3654 Core v1: a suite materialized from a checked-in definition
+-- (src/services/bench/suites/*.json, services/bench/core.js), one row per
+-- definition and version. It is what makes materializing idempotent (a
+-- `done` row is never redone unless an admin asks to retry what was
+-- skipped), what the Benchmark area reads its status from (`summary`:
+-- counts per stage and every skipped task with its reason), and what marks
+-- a suite as definition-backed (such a suite freezes only once every task
+-- has its reference). Private like the suites themselves.
+CREATE TABLE IF NOT EXISTS bench_materializations (
+  definition   TEXT NOT NULL,
+  version      INTEGER NOT NULL,
+  suite_id     INTEGER REFERENCES bench_suites(id) ON DELETE SET NULL,
+  status       TEXT NOT NULL DEFAULT 'running',
+  summary      JSONB NOT NULL DEFAULT '{}',
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  PRIMARY KEY (definition, version),
+  CONSTRAINT bench_materializations_status_check CHECK (status IN ('running', 'done', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_materializations_suite ON bench_materializations(suite_id);
+COMMENT ON TABLE bench_materializations IS 'staging:private';
 
 -- #3654: a benchmark RUN puts a suite's tasks for some stages through some
 -- models, `repeats` times each (a build once), within a dollar cap. Its

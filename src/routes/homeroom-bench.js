@@ -19,6 +19,7 @@ const grading = require('../services/bench/grading');
 const { benchGradingLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const report = require('../services/bench/report');
+const core = require('../services/bench/core');
 // The CSV writer the other admin exports share: quoting plus the
 // spreadsheet formula-injection guard (model-written text is exactly why).
 const { csvField } = require('./topochain/helpers');
@@ -154,6 +155,23 @@ function homeroomBenchRoutes(config) {
     });
   }));
 
+  // ── Core v1, the default suite (services/bench/core.js) ─────────────
+  router.get('/api/admin/homeroom-bot/bench/core', handler('Core suite status', async () => ({
+    ...(await core.coreStatus(pool)),
+    githubEnabled: require('../services/github').isEnabled(),
+  })));
+
+  // "Materialize Core v1 now": in the background (it reads GitHub one task
+  // at a time), so this answers at once; the status above says how it went.
+  // Once done, it retries only the tasks that were skipped.
+  router.post('/api/admin/homeroom-bot/bench/core/materialize', requireAdminWrite, handler('Materialize Core suite', async (req) => {
+    if (!require('../services/github').isEnabled()) return { ok: false, status: 503, error: 'GitHub is not configured, so Core cannot be read' };
+    const out = core.materializeInBackground(pool, config, { force: true, actorId: req.user.id });
+    if (!out.ok) return out;
+    log.info('bench', 'Core suite materialization started', { by: req.user.username });
+    return { ok: true, started: true };
+  }));
+
   // ── Runs (#3654 C) ──────────────────────────────────────────────────
   router.get('/api/admin/homeroom-bot/bench/models', handler('List bench models', async () => {
     const { rows } = await pool.query('SELECT DISTINCT UNNEST(models) AS id FROM bench_runs');
@@ -164,6 +182,9 @@ function homeroomBenchRoutes(config) {
     runs: await lane.listRuns(pool),
     lane: lane.laneStatus(),
     defaults: { capUsd: lane.DEFAULT_CAP_USD, repeats: lane.DEFAULT_REPEATS, maxConcurrency: lane.MAX_CONCURRENCY },
+    // What the launcher starts from: Core v1 with the candidate models
+    // (services/bench/lane.js launcherDefaults).
+    launcher: lane.launcherDefaults({ suites: await suites.listSuites(pool), coreSuiteId: await core.coreSuiteId(pool) }),
     hiddenChecks: runner.HIDDEN_CHECKS_GAP,
   })));
 

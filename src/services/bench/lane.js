@@ -96,10 +96,48 @@ function validateLaunch(body) {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
     return httpError(400, `concurrency must be 1 or ${MAX_CONCURRENCY}`);
   }
+  // Core v1's launcher: which stages take `repeats` (the rest run once).
+  // Left out, every stage but a build or a spec repeats, as before.
+  let repeatStages = null;
+  if (body.repeatStages != null) {
+    if (!Array.isArray(body.repeatStages) || body.repeatStages.some((s) => !suites.TASK_STAGES.includes(s))) {
+      return httpError(400, `repeatStages must be some of ${suites.TASK_STAGES.join(', ')}`);
+    }
+    repeatStages = [...new Set(body.repeatStages)].filter((s) => !SINGLE_ATTEMPT_STAGES.includes(s));
+  }
   const baseline = models.includes(catalog.BASELINE) ? catalog.BASELINE : models[0];
   return {
-    ok: true, suiteId, models, stages, repeats, capUsd: Math.round(capUsd * 100) / 100, concurrency, baseline,
+    ok: true, suiteId, models, stages, repeats, capUsd: Math.round(capUsd * 100) / 100, concurrency, baseline, repeatStages,
     note: body.note ? String(body.note).slice(0, 500) : null,
+  };
+}
+
+/** How many attempts a task at `stage` gets in a run. Pure. */
+function attemptsFor(stage, { repeats, repeatStages = null }) {
+  if (SINGLE_ATTEMPT_STAGES.includes(stage)) return 1;
+  if (Array.isArray(repeatStages) && !repeatStages.includes(stage)) return 1;
+  return repeats;
+}
+
+/**
+ * The launcher's defaults (#3654 Core v1). Pure. The Core suite when it
+ * exists (else the first frozen suite, else the newest), every catalog
+ * candidate (the baseline first; a model entered for some stages only is
+ * not applicable to the rest, which the run says per trial), every stage the
+ * suite has tasks at, three repeats for triage and one for everything else,
+ * and the $50 cap.
+ */
+function launcherDefaults({ suites: list = [], coreSuiteId = null } = {}) {
+  const pick = list.find((s) => s.id === coreSuiteId) || list.find((s) => s.frozen_at) || list[0] || null;
+  const stages = pick ? Object.keys(pick.counts || {}).filter((st) => (pick.counts[st] || 0) > 0) : [];
+  const models = [catalog.BASELINE, ...catalog.CANDIDATES.map((c) => c.id).filter((id) => id !== catalog.BASELINE)];
+  return {
+    suiteId: pick ? pick.id : null,
+    models,
+    stages: stages.length ? stages : ['triage'],
+    repeats: DEFAULT_REPEATS,
+    repeatStages: ['triage'],
+    capUsd: DEFAULT_CAP_USD,
   };
 }
 
@@ -141,7 +179,7 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
   const plan = { task: [], model: [], attempt: [], status: [], error: [], est: [], token: [] };
   let estimate = 0;
   for (const task of tasks) {
-    const attempts = SINGLE_ATTEMPT_STAGES.includes(task.stage) ? 1 : v.repeats;
+    const attempts = attemptsFor(task.stage, v);
     for (const id of v.models) {
       const info = catalog.modelInfo(models, id);
       const reason = catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
@@ -611,6 +649,8 @@ module.exports = {
   MAX_CLAIMS,
   BRANCH_KEEP_DAYS,
   validateLaunch,
+  attemptsFor,
+  launcherDefaults,
   launchRun,
   cancelRun,
   executeTrial,

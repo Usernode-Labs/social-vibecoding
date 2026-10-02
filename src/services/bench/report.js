@@ -135,8 +135,11 @@ async function runReport(pool, runId, { slice = 'verdict' } = {}) {
   const paired = [];
   const points = [];
   for (const stage of run.stages) {
-    const k = REPEATED_STAGES.includes(stage) ? run.repeats : 1;
     const ofStage = trials.filter((t) => t.stage === stage);
+    // pass^k counts the attempts a stage was actually given: a launch can
+    // repeat triage and run the other stages once (lane.attemptsFor).
+    const given = Math.max(1, ...ofStage.map((t) => Number(t.attempt) || 1));
+    const k = REPEATED_STAGES.includes(stage) ? Math.min(run.repeats, given) : 1;
     if (!ofStage.length) continue;
     const baseline = taskScores(ofStage.filter((t) => t.model === run.baseline_model));
     for (const model of run.models) {
