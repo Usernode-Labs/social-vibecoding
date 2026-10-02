@@ -816,9 +816,27 @@ function adminRoutes(config) {
   // clone mixes emptied private tables with reseeded fixtures, and half-real
   // numbers would be worse than invented ones that say so.
   const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
+  // `cohort` narrows a reading to one admit cohort: an admit day, or
+  // other_way. Absent means everyone; anything else is refused.
+  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, or other_way.' };
+  const journeyCohort = (req) => {
+    const raw = req.query.cohort;
+    if (raw == null || raw === '') return { day: null };
+    const day = raw === 'other_way' ? 'other_way' : journey.parseDay(raw);
+    return day ? { day } : null;
+  };
+  const journeyMembers = async (day, ctx) => {
+    if (!day) return null;
+    const mile = await journey.firstMile(pool, { day, ...ctx });
+    return new Set(mile.people.filter((p) => p.userId).map((p) => Number(p.userId)));
+  };
   const journeyRead = (what, demo, handler) => async (req, res) => {
     try {
-      if (journeyDemo(req)) return res.json(demo(req));
+      if (journeyDemo(req)) {
+        const scope = journeyCohort(req);
+        if (!scope) return res.status(400).json({ error: badCohort.error });
+        return res.json(demo(req, scope.day));
+      }
       const leftOutIds = await journeyLeftOut.leftOutIds(pool);
       const result = await handler(req, { leftOutIds, now: new Date() });
       if (result && result.status) return res.status(result.status).json({ error: result.error });
@@ -828,16 +846,30 @@ function adminRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   };
-  const journeyWeek = (req, now) => {
+  // `week=all` is the page's "all time" for the readings that have one.
+  const journeyWeek = (req, now, { all = false } = {}) => {
+    if (all && req.query.week === 'all') return journey.allTime(now);
     const week = journey.parseWeek(req.query.week, now);
     return week || null;
   };
-  const badWeek = { status: 400, error: 'week must be a Monday in YYYY-MM-DD, not in the future.' };
+  const badWeek = { status: 400, error: 'week must be a Monday in YYYY-MM-DD, not in the future, or all.' };
+  // The window and the cohort of a reading, or the 400 to answer.
+  const journeyScope = async (req, ctx, opts) => {
+    const week = journeyWeek(req, ctx.now, opts);
+    if (!week) return { error: badWeek };
+    const scope = journeyCohort(req);
+    if (!scope) return { error: badCohort };
+    return { week, memberIds: await journeyMembers(scope.day, ctx) };
+  };
 
-  router.get('/api/admin/journey/summary', journeyRead('summary', () => journeyDemoData.summary(),
+  // The North Star is a weekly number, so "all time" keeps the last finished
+  // week as the headline and returns every week as its trend.
+  router.get('/api/admin/journey/summary', journeyRead('summary', (req, day) => journeyDemoData.summary(day, req.query.week === 'all'),
     async (req, ctx) => {
-      const week = journeyWeek(req, ctx.now);
-      return week ? journey.summary(pool, { week, ...ctx }) : badWeek;
+      const allTime = req.query.week === 'all';
+      const scope = await journeyScope(allTime ? { ...req, query: { ...req.query, week: undefined } } : req, ctx);
+      if (scope.error) return scope.error;
+      return journey.summary(pool, { week: scope.week, memberIds: scope.memberIds, trendAll: allTime, ...ctx });
     }));
 
   router.get('/api/admin/journey/cohorts', journeyRead('cohorts', () => journeyDemoData.cohorts(),
@@ -850,20 +882,19 @@ function adminRoutes(config) {
       return journey.firstMile(pool, { day, ...ctx });
     }));
 
-  router.get('/api/admin/journey/stages', journeyRead('stages', () => journeyDemoData.stages(),
+  router.get('/api/admin/journey/stages', journeyRead('stages', (req, day) => journeyDemoData.stages(day, req.query.week === 'all'),
     async (req, ctx) => {
-      const week = journeyWeek(req, ctx.now);
-      return week ? journey.stages(pool, { week, ...ctx }) : badWeek;
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.stages(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
     }));
 
-  router.get('/api/admin/journey/loops', journeyRead('loops', () => journeyDemoData.loops(),
+  router.get('/api/admin/journey/loops', journeyRead('loops', (req, day) => journeyDemoData.loops(day, req.query.week === 'all'),
     async (req, ctx) => {
-      const week = journeyWeek(req, ctx.now);
-      if (!week) return badWeek;
-      const [change, invite] = await Promise.all([
-        journey.changeLoop(pool, { week, ...ctx }),
-        journey.inviteLoop(pool, { week, ...ctx }),
-      ]);
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      const opts = { week: scope.week, memberIds: scope.memberIds, ...ctx };
+      const [change, invite] = await Promise.all([journey.changeLoop(pool, opts), journey.inviteLoop(pool, opts)]);
       return { change, invite };
     }));
 

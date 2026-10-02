@@ -1,5 +1,6 @@
 {
   "summary": {
+    "allTime": "boolean",
     "coverage": {
       "activePeople": "number",
       "byDay": [],
@@ -12,6 +13,7 @@
       "groups": [],
       "homeroom": "object",
       "oneShort": [],
+      "trend": [],
       "week": "string",
       "wentQuiet": []
     },

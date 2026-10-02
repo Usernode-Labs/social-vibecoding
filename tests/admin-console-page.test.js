@@ -130,6 +130,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
+    // #3369: Journey, the user journey and the North Star.
+    'admin-journey',
     'admin-limits', 'admin-mail', 'admin-merges',
     // #2570: Model costs, where the picker's per-model notes and cost
     // estimates are kept honest against what changes actually cost.
@@ -185,7 +187,7 @@ test('the menu carries every section, grouped, with no external tools left', () 
     'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
     'seasons', 'season-events', 'challenge-templates',
     'users', 'codes', 'limits', 'waitlist', 'onchain-accounts', 'user-activities',
-    'analytics', 'estimator', 'gallery', 'features',
+    'journey', 'analytics', 'estimator', 'gallery', 'features',
     'campaigns', 'db-export', 'mail',
     'settings', 'app-version', 'sql-console', 'api-tester',
   ];
