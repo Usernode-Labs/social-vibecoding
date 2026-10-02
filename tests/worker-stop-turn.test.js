@@ -633,6 +633,8 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
     // Text only unless the catalog said images, on both OpenRouter runtimes.
     const workerSrc = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
     assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/g) || []).length, 2);
+    // #3557: PDFs only on the Claude Code runtime, whose Read tool sends them.
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata\?\.supportsFiles === true \? '1' : '';/g) || []).length, 1);
     assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
       'Docker copies the secret from the host environment by name');
     assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),
