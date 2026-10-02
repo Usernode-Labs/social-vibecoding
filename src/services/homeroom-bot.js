@@ -4979,19 +4979,48 @@ async function builtForList(pool, settings) {
   }
 }
 
-/** The bot's answers in DMs this week: how many, what they cost, how many failed. */
+/**
+ * The bot's answers in DMs this week: how many, what they cost, how many
+ * failed, and how many only answered after a failed request was asked again.
+ * #3733: and the last week's failures themselves, with their codes and what
+ * answered instead (homeroom-bot-mayor.js recordTurn), so an admin can read
+ * why a DM said "I couldn't answer" instead of guessing. Never the words.
+ */
 async function dmChatSummary(pool) {
   try {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS turns, COUNT(*) FILTER (WHERE error IS NOT NULL)::int AS failed,
+              COUNT(*) FILTER (WHERE error IS NULL AND cardinality(failures) > 0)::int AS recovered,
               COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd, COUNT(DISTINCT user_id)::int AS people
          FROM homeroom_bot_dm_turns WHERE created_at >= date_trunc('week', NOW())`,
     );
+    const { rows: recent } = await pool.query(
+      `SELECT t.created_at, u.username, t.error, t.failures, t.fallback, t.rounds
+         FROM homeroom_bot_dm_turns t JOIN users u ON u.id = t.user_id
+        WHERE t.created_at >= NOW() - INTERVAL '7 days'
+          AND (t.error IS NOT NULL OR cardinality(t.failures) > 0)
+        ORDER BY t.id DESC
+        LIMIT 20`,
+    );
     const r = rows[0] || {};
-    return { turns: r.turns || 0, failed: r.failed || 0, people: r.people || 0, costUsd: Number(r.cost_usd) || 0 };
+    return {
+      turns: r.turns || 0,
+      failed: r.failed || 0,
+      recovered: r.recovered || 0,
+      people: r.people || 0,
+      costUsd: Number(r.cost_usd) || 0,
+      recentFailures: recent.map((f) => ({
+        at: new Date(f.created_at).toISOString(),
+        username: f.username,
+        error: f.error,
+        failures: f.failures || [],
+        fallback: f.fallback,
+        rounds: f.rounds,
+      })),
+    };
   } catch (err) {
     log.warn('homeroom-bot', 'DM chat summary failed', { err: err.message });
-    return { turns: 0, failed: 0, people: 0, costUsd: 0 };
+    return { turns: 0, failed: 0, recovered: 0, people: 0, costUsd: 0, recentFailures: [] };
   }
 }
 
@@ -5393,6 +5422,7 @@ module.exports = {
   enqueueFront,
   liveCandidates,
   workingNow,
+  dmChatSummary,
   dispatch,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
