@@ -2230,6 +2230,31 @@ Notes:
 - An app that offers its own light/dark picker may keep it. Treat the
   platform theme as the default until the viewer picks something in your app.
 
+### New apps: a light and a dark look, following the platform
+
+Every new app is built with both a light and a dark look. It opens in the
+viewer's Homeroom theme (`usernode.theme`), switches live on
+`usernode:theme-changed` without a reload, and falls back to
+`prefers-color-scheme` only when opened outside Homeroom. That is the wiring
+above, and every starter template (Empty included) already ships it in its
+`<head>`, right after the bridge tag.
+
+- **Keep the template's theme `<script>`** when you replace the starter
+  screen, and give everything you build both looks: Tailwind's `dark:`
+  variants (the scaffold's `tailwind.config.js` sets `darkMode: 'class'`),
+  or `.dark` overrides of your own tokens. Check both looks before you
+  finish.
+- **No theme picker by default.** The viewer's Homeroom setting is the
+  control. Add one only when a request asks for it, and then treat the
+  platform theme as the default until the viewer picks something.
+- **Only where it is relevant.** An app whose one fixed look is the point
+  (a game drawn as its own scene, a photo or camera viewer on black) may
+  keep that look. Say so under "App-specific conventions" in the app's
+  `CLAUDE.md`, so a later change does not "fix" it.
+- **Existing apps keep what they have.** An app built with one look before
+  this rule stays that way until a request asks for light and dark. Do not
+  convert it as a drive-by.
+
 ## Staying loaded in the background
 
 The shell keeps the last few apps a viewer opened **loaded but hidden**, so
@@ -3026,7 +3051,10 @@ screen rather than building alongside it — remove the sentinel block
 "Try the example" card and its demo endpoints (`/api/press`,
 `/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
 scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML.
+forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
+with the theme `<script>` right after it: the first real version keeps the
+template's light and dark looks and follows the viewer's Homeroom theme
+(see "New apps: a light and a dark look, following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 

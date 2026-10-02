@@ -76,6 +76,23 @@ const DEV_CONSOLE_FORWARDER = `
   })();
   </script>`;
 
+// #3688: new apps come with a light and a dark look that follow the viewer's
+// Homeroom theme (#3257), not the OS: inside the platform's frame
+// `prefers-color-scheme` sees only the OS. The scaffold's screen already does
+// (the theme <script> after the bridge tag in public/index.html, the same one
+// every starter in app-templates/ ships); this is what its CLAUDE.md tells the
+// agent that replaces that screen, so the first real version keeps both.
+// Shared by the Empty scaffold's notes and every starter's.
+const THEME_CLAUDE_NOTE = `The screen has a light and a dark look and follows the viewer's Homeroom
+theme, switching live when they change it: the theme \`<script>\` right after
+the bridge tag sets a \`dark\` class on \`<html>\`. Keep that script, and give
+everything you build both looks (Tailwind's \`dark:\` variants), unless one
+fixed look is the point of this app, like a game's own scene; then say so
+under "App-specific conventions" below. Unless a request asks for one, add
+no theme picker: the viewer's Homeroom setting is the control. "The
+platform's light/dark theme inside the app frame" in the platform
+conventions has the details.`;
+
 // Resolved at module-load: which Homeroom platform domain do we
 // inject into scaffolded apps? Apps need to point users back to the
 // platform that hosts them (the "Open in Homeroom" landing page) and
@@ -509,7 +526,10 @@ screen rather than building alongside it:
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
-HTML — that block is platform infrastructure, not template content.
+HTML — that block is platform infrastructure, not template content. So is
+the bridge \`<script>\`.
+
+${THEME_CLAUDE_NOTE}
 
 `}If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
@@ -559,7 +579,8 @@ The scaffold is a small working demo that proves the plumbing works:
 - **Live API** — two example routes (\`/api/press\`,
   \`/api/leaderboard\`) read and write through a real Express server.
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
-  image creation with either Kubernetes/Paketo or standalone Docker.
+  image creation with either Kubernetes/Paketo or standalone Docker, in a
+  light and a dark look that follow the viewer's Homeroom theme.
 
 ## Replacing the template
 
@@ -652,8 +673,10 @@ module.exports = {
   // extractor cannot see them. Prefer whole literals in the markup instead.
   safelist: [],
 
-  // Matches the <html class="dark"> in public/index.html: dark: variants key
-  // off that class rather than the OS colour-scheme preference.
+  // dark: variants key off a "dark" class on <html>, which public/index.html
+  // sets from the viewer's Homeroom theme (the platform bridge reports it),
+  // rather than off the OS colour-scheme preference: inside the platform's
+  // frame that media query sees only the operating system.
   darkMode: 'class',
 
   // Stops hover: styles sticking after a tap on touch screens. Required by
@@ -921,7 +944,7 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
     {
       path: 'public/index.html',
       content: `<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -950,63 +973,78 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
        anything that asks the frame a question. Offline launch is one of those.
        Another is the page's colour: the bridge reports this document's opaque
        ground to the shell (#1581), which is what makes the platform bar above
-       the app take the app's tone instead of the viewer's theme (#1945). This
-       scaffold paints a dark page (bg-zinc-950 on the body element), so
-       without this tag a brand-new app sits under a light bar. -->
+       the app take the app's tone instead of the viewer's theme (#1945).
+       The bridge is also where the app learns the viewer's light/dark theme:
+       the script below reads it. -->
   <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen">
   <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
 
     <!-- usernode-starter-notice@1 — starter-template messaging. When building
          the user's real app, replace this whole screen and delete this block,
          both sentinel comments included. -->
-    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
-      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
+    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/10 dark:from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
+      <span class="inline-block rounded-full bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
       <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
-      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-700 dark:text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-700 dark:text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
 
     <section>
       <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
-      <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 divide-y divide-zinc-800">
+      <div class="rounded-xl border border-zinc-200 bg-white divide-y divide-zinc-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:divide-zinc-800">
         <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
-            <p class="text-sm text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
+            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Sign-in</p>
+            <p class="text-sm text-zinc-600 dark:text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
           </div>
         </div>
         <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-100">Database</p>
-            <p class="text-sm text-zinc-400">Your app has its own private database, ready to store things.</p>
+            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Database</p>
+            <p class="text-sm text-zinc-600 dark:text-zinc-400">Your app has its own private database, ready to store things.</p>
           </div>
         </div>
         <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-100">Live API</p>
-            <p class="text-sm text-zinc-400">The example below talks to a real server — try it.</p>
+            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Live API</p>
+            <p class="text-sm text-zinc-600 dark:text-zinc-400">The example below talks to a real server — try it.</p>
           </div>
         </div>
       </div>
     </section>
     <!-- /usernode-starter-notice@1 -->
 
-    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
+    <section class="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
       <div class="w-full flex items-baseline justify-between gap-2">
         <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-600">This example will be replaced</span>
+        <span class="text-xs text-zinc-500 dark:text-zinc-600">This example will be replaced</span>
       </div>
 
       <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
         Press!
       </button>
 
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+      <div id="count" class="text-lg text-zinc-600 dark:text-zinc-400">0 total presses</div>
 
       <div class="w-full max-w-sm">
         <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
@@ -1014,7 +1052,7 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
       </div>
     </section>
 
-    <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
+    <p class="text-center text-xs text-zinc-500 dark:text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
 
   <script>
@@ -1028,11 +1066,11 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
       const { leaderboard } = await res.json();
       const el = document.getElementById('leaderboard');
       if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
+        el.innerHTML = '<p class="text-center text-zinc-500 dark:text-zinc-600 text-sm">No presses yet</p>';
         return;
       }
       el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300' : 'text-zinc-600 dark:text-zinc-400') + '">' +
         '<span>' + (i + 1) + '. ' + r.username + '</span>' +
         '<span class="font-mono">' + r.presses + '</span></div>'
       ).join('');
@@ -1095,6 +1133,8 @@ describe the actual app once it has one.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
+
+${THEME_CLAUDE_NOTE}
 
 `;
 }

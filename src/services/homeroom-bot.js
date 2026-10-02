@@ -285,12 +285,22 @@ const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-t
 // described when they made it (homeroom-bot-dm.js). The repository is the
 // starter template, so "a small, bounded change" cannot hold: the whole
 // app is the change. Everything else in the ready criteria still does.
+//
+// #3688: a new app gets a light and a dark look that follow the viewer's
+// Homeroom theme. The template already has both; said here so the plan the
+// spec and the build work from says so too, rather than leaving a rewrite
+// of the template's screen to drop the dark half (or the light one).
 const FIRST_VERSION_NOTE = [
   'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
   'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
   'criteria as "a first version a person can try": the app the description asks for, kept to its core, built on the',
   'template. Every other `ready` criterion still holds. Ask a `question` only for a real blocker, as above, with',
   'suggested answers; otherwise decide, list your choices under `assumptions`, and answer `ready`.',
+  'Plan it with a light and a dark look that follow the viewer\'s Homeroom theme and switch live when it changes, as',
+  'the template already does: keep the template\'s theme script and give every screen both looks (the platform',
+  'conventions\' "New apps: a light and a dark look, following the platform"). Only an app whose one fixed look is the',
+  'point, such as a game drawn as its own scene, keeps a single look. Say which in `build_note`, list a single look',
+  'under `assumptions` when you choose one, and never ask about it.',
 ].join('\n');
 
 let timer = null;
