@@ -12,6 +12,9 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const suites = require('../services/bench/suites');
+const catalog = require('../services/bench/catalog');
+const lane = require('../services/bench/lane');
+const runner = require('../services/bench/runner');
 
 const BASE = '/api/admin/homeroom-bot/bench';
 
@@ -129,6 +132,37 @@ function homeroomBenchRoutes(config) {
       seed: Number.isInteger(Number(q.seed)) ? Number(q.seed) : 1,
       config,
     });
+  }));
+
+  // ── Runs (#3654 C) ──────────────────────────────────────────────────
+  router.get('/api/admin/homeroom-bot/bench/models', handler('List bench models', async () => {
+    const { rows } = await pool.query('SELECT DISTINCT UNNEST(models) AS id FROM bench_runs');
+    return { models: await catalog.listModels(pool, rows.map((r) => r.id)), baseline: catalog.BASELINE };
+  }));
+
+  router.get('/api/admin/homeroom-bot/bench/runs', handler('List bench runs', async () => ({
+    runs: await lane.listRuns(pool),
+    lane: lane.laneStatus(),
+    defaults: { capUsd: lane.DEFAULT_CAP_USD, repeats: lane.DEFAULT_REPEATS, maxConcurrency: lane.MAX_CONCURRENCY },
+    hiddenChecks: runner.HIDDEN_CHECKS_GAP,
+  })));
+
+  router.post('/api/admin/homeroom-bot/bench/runs', requireAdminWrite, handler('Launch bench run', async (req) => {
+    const out = await lane.launchRun(pool, req.body || {}, { actorId: req.user.id });
+    if (out.ok) {
+      log.info('bench', 'Run launched', {
+        by: req.user.username, runId: out.run.id, trials: out.trials, estimateUsd: out.estimateUsd, capUsd: out.run.cap_usd,
+      });
+    }
+    return out;
+  }));
+
+  router.post('/api/admin/homeroom-bot/bench/runs/:id/cancel', requireAdminWrite, handler('Cancel bench run', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    const out = await lane.cancelRun(pool, id);
+    if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, runId: id });
+    return out;
   }));
 
   return router;

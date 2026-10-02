@@ -9683,6 +9683,78 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_tasks_suite_run_stage
   ON bench_tasks(suite_id, source_run_id, stage) WHERE source_run_id IS NOT NULL;
 COMMENT ON TABLE bench_tasks IS 'staging:private';
 
+-- #3654: a benchmark RUN puts a suite's tasks for some stages through some
+-- models, `repeats` times each (a build once), within a dollar cap. Its
+-- TRIALS are one task on one model, one attempt: pending, running, then how
+-- it ended. `ok` means the stage produced an answer to grade; a model that
+-- produced nothing usable is `model_fail`; a platform fault is `infra_fail`
+-- and is kept out of quality; `not_applicable` is a task the model cannot
+-- take (its stage or its context window); `skipped_cap` is what the cap left
+-- unrun. `item_token` is the opaque id a grading session sees: never the
+-- trial id, never the model.
+CREATE TABLE IF NOT EXISTS bench_runs (
+  id              SERIAL PRIMARY KEY,
+  suite_id        INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  models          TEXT[] NOT NULL,
+  baseline_model  TEXT,
+  stages          TEXT[] NOT NULL,
+  repeats         INTEGER NOT NULL DEFAULT 3,
+  cap_usd         NUMERIC(12,4) NOT NULL DEFAULT 50,
+  concurrency     INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'queued',
+  spent_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
+  note            TEXT,
+  started_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_runs_status_check
+    CHECK (status IN ('queued', 'running', 'done', 'cancelled', 'capped'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_runs_open ON bench_runs(id) WHERE status IN ('queued', 'running');
+COMMENT ON TABLE bench_runs IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS bench_trials (
+  id              SERIAL PRIMARY KEY,
+  run_id          INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id         INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  model           TEXT NOT NULL,
+  attempt         INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  item_token      TEXT NOT NULL UNIQUE,
+  claims          INTEGER NOT NULL DEFAULT 0,
+  est_cost_usd    NUMERIC(12,4),
+  raw_output      TEXT,
+  parsed          JSONB,
+  cost_usd        NUMERIC(18,8),
+  input_tokens    BIGINT,
+  output_tokens   BIGINT,
+  duration_ms     INTEGER,
+  session_id      INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  base_sha        TEXT,
+  build_branch    TEXT,
+  build_sha       TEXT,
+  build_commits   INTEGER,
+  diff            TEXT,
+  changed_files   JSONB,
+  checks          JSONB,
+  deterministic   JSONB,
+  error           TEXT,
+  branch_deleted_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_trials_status_check
+    CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
+                      'not_applicable', 'skipped_cap', 'cancelled')),
+  UNIQUE (run_id, task_id, model, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_run ON bench_trials(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_pending ON bench_trials(run_id, attempt, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_bench_trials_branches
+  ON bench_trials(finished_at) WHERE build_branch IS NOT NULL AND branch_deleted_at IS NULL;
+COMMENT ON TABLE bench_trials IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app

@@ -1213,7 +1213,7 @@ function readSpec(text) {
 
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
-  specBudgetMs = SPEC_TURN_MAX_MS,
+  specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec',
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1232,7 +1232,7 @@ async function draftSpec({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
-      telemetryComponent: 'homeroom_bot_spec',
+      telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -1244,7 +1244,7 @@ async function draftSpec({
         resumeSessionId: null,
         branchName: session.branch_name,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_spec',
+        telemetryComponent,
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
@@ -1287,8 +1287,9 @@ async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
   onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
-  // #3654: the spec turn's own model, when it differs from the build's.
-  specModel = null, sessionTitle = null,
+  // #3654: the spec turn's own model, when it differs from the build's;
+  // and, for a benchmark trial, its own session title and telemetry.
+  specModel = null, sessionTitle = null, telemetry = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1391,6 +1392,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs,
+      ...(telemetry ? { telemetryComponent: telemetry } : {}),
     });
   // The build turn runs the build's model again.
   await stampSessionModel(pool, session, model);
@@ -1451,7 +1453,7 @@ async function buildAndPropose({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'build',
-      telemetryComponent: 'homeroom_bot_build',
+      telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -1463,7 +1465,7 @@ async function buildAndPropose({
         resumeSessionId: null,
         branchName,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
