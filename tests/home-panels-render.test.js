@@ -2077,11 +2077,17 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(card, /\bgap-1\.5\b/, 'app tile gap feeds the 0.375rem term');
   assert.match(HOME, /class="app-icon-tile w-14 h-14/, 'icon feeds the 3.5rem term');
   assert.match(HOME, /class="app-card-title"/, 'name feeds the 1.625rem term');
-  // …and the two label lanes are FIXED heights in app.css, so a one-line
-  // and a two-line title produce identically sized tiles.
+  // …and the two label lanes measure their design size in app.css, so a
+  // one-line and a two-line title produce identically sized tiles. The
+  // title lane is a MIN-height since #3661, not a fixed height: a device
+  // that renders the font larger (Android text scaling / font boosting)
+  // must grow the box with its text instead of clipping the second line
+  // mid-glyph, so the line-height is unitless and the height is a floor.
   const titleRule = CSS.match(/\.app-card-title \{[^}]*\}/)[0];
-  assert.match(titleRule, /height:\s*1\.625rem/, 'the title lane is exactly two lines');
-  assert.match(titleRule, /line-height:\s*0\.8125rem/);
+  assert.match(titleRule, /min-height:\s*1\.625rem/, 'the title lane is two lines at the design size, and a floor when the font renders larger');
+  assert.doesNotMatch(titleRule, /(?<!min-)height:\s*1\.625rem/, 'the title lane is not a fixed height — that clipped inflated text (#3661)');
+  assert.match(titleRule, /line-height:\s*1\.18\s*;/, 'the line height is unitless so it tracks the font');
+  assert.doesNotMatch(titleRule, /line-height:\s*0\.8125rem/);
   assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
   assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
