@@ -207,6 +207,38 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     assert.equal((await credits(as.id, TRY)).length, 1, 'six yesterday and six today is twelve');
   });
 
+  await t.test('receipt-backed usage scores a multi-day crossing before answering and skips retries', async () => {
+    as = await user();
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const batch = (entries) => ({ version: 1, batchId: crypto.randomUUID(), entries });
+    const send = (body, slug = arena.slug) => call('POST', `/api/apps/${slug}/activity`, body);
+    const before = await lastScored(tryRule);
+    assert.equal((await send(batch([{ date: today, seconds: 6 }]))).status, 200);
+    assert.deepEqual(await credits(as.id, TRY), []);
+    assert.equal((await lastScored(tryRule)).getTime(), before.getTime(), 'below the floor runs no pass');
+
+    const crossing = batch([{ date: yesterday, seconds: 4 }, { date: today, seconds: 2 }]);
+    assert.equal((await send(crossing)).status, 200);
+    const paid = await credits(as.id, TRY);
+    assert.equal(paid.length, 1, 'the combined batch crosses ten seconds, not either day increment alone');
+    assert.equal(Number(paid[0].points), 500);
+    assert.equal(await done(as.id, TRY), true, 'reward is visible before the response returns');
+    const stamped = await lastScored(tryRule);
+    const repeated = await send(crossing);
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.duplicate, true);
+    assert.equal((await lastScored(tryRule)).getTime(), stamped.getTime(), 'a receipt retry does not score again');
+    assert.equal(Number((await pool.query(
+      'SELECT SUM(seconds_spent) AS n FROM app_activity WHERE app_id = $1 AND user_id = $2',
+      [arena.id, as.id])).rows[0].n), 12, 'the retry also leaves usage unchanged');
+    await send(batch([{ date: today, seconds: 30 }]));
+    assert.equal((await lastScored(tryRule)).getTime(), stamped.getTime(), 'later batches do not score again');
+    const own = await app({ createdBy: as.id });
+    await send(batch([{ date: today, seconds: 12 }]), own.slug);
+    assert.equal((await lastScored(tryRule)).getTime(), stamped.getTime(), 'using your own app does not run scoring');
+  });
+
   await t.test('while the scorer\'s lock is held the crossing waits for the schedule, and is paid once', async () => {
     as = await user();
     const holder = await pool.connect();

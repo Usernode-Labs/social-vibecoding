@@ -41,6 +41,7 @@ import { memo, useEffect, useRef, type ReactNode } from 'react';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { appActivity } from './app-activity.js';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
@@ -164,6 +165,8 @@ const AppFrame = memo(function AppFrame({ slug }: { slug: string }): ReactNode {
         inert={!active}
         aria-hidden={active ? undefined : 'true'}
         tabIndex={active ? undefined : -1}
+        onLoad={(event) => appActivity.frameLoaded(event.currentTarget)}
+        onError={(event) => appActivity.frameFailed(event.currentTarget)}
       >
       </iframe>
       {cover ? (
