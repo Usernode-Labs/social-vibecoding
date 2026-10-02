@@ -479,15 +479,42 @@ function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>
   );
 }
 
+// The card in three blocks, each holding one kind of thing:
+//   the number (count, change, trend, and what it leaves out);
+//   the groups, under one heading per status, so the status is said once;
+//   the votes behind it, in an inset, since both readings ask one question.
+const STATUS_ORDER: Array<[string, string]> = [
+  ['new', 'New'], ['back', 'Back'], ['still_active', 'Still active'], ['went_quiet', 'Went quiet'],
+];
+
+function GroupRow({ grp, onOpen, note }: { grp: Group; onOpen: OpenPerson; note?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 pl-4" data-journey-group={grp.slug}>
+      <span className="text-sm font-medium truncate w-28 shrink-0">{grp.name}</span>
+      <Chips people={grp.people} onOpen={onOpen} />
+      {note ? <span className={JUI.fine}>{note}</span> : null}
+    </div>
+  );
+}
+
+function StatusHeading({ dot, label, count }: { dot: string; label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+      <Dot cls={dot} />{label}<span className="tabular-nums text-zinc-500 dark:text-zinc-400">{count}</span>
+    </div>
+  );
+}
+
 function NorthStarCard({ s, scope, onOpen, onDetails }: { s: Summary; scope: Scope; onOpen: OpenPerson; onDetails: () => void }) {
   const g = s.groups;
   const trend = g.trend || [];
   const prev = trend.length > 1 ? trend[trend.length - 2].count : null;
   const delta = prev == null ? null : g.count - prev;
-  const by = (k: string) => g.groups.filter((x) => x.lifecycle === k).length;
-  const right: Array<[string, number]> = [['still_active', by('still_active')], ['back', by('back')], ['new', by('new')]];
   const vote = s.trust.withoutGroupVote;
   const lockstep = s.trust.lockstep.possible || [];
+  const statuses = STATUS_ORDER.map(([key, label]) => ({
+    key, label, groups: key === 'went_quiet' ? g.wentQuiet : g.groups.filter((x) => x.lifecycle === key),
+  })).filter((x) => x.groups.length);
   return (
     <Card id="admin-journey-groups" title="Active groups"
       note={`week of ${weekLabel(g.week)}${g.finished ? '' : ', so far'}`}
@@ -498,64 +525,50 @@ function NorthStarCard({ s, scope, onOpen, onDetails }: { s: Summary; scope: Sco
           <div className={`${JUI.fine} mt-1`}>
             {delta == null ? '' : delta === 0 ? 'same as the week before' : `${delta > 0 ? '+' : '−'}${Math.abs(delta)} on the week before`}
           </div>
+          {g.homeroom && !scope.cohort ? (
+            <div className={JUI.fine}>Homeroom itself not counted ({g.homeroom.changes} live, {g.homeroom.people} people)</div>
+          ) : null}
         </div>
         <Trend trend={trend} shown={g.week} />
       </div>
-      <div className="flex items-center gap-1.5 mt-4" aria-label="Groups that went quiet, against groups active">
-        <div className="flex flex-1 justify-end gap-1">
-          {g.wentQuiet.map((x) => <span key={x.slug} className={`h-4 w-4 rounded-sm ${LIFECYCLE_FILL.went_quiet}`} />)}
-        </div>
-        <span className="h-6 w-px bg-zinc-300 dark:bg-zinc-600" />
-        <div className="flex flex-1 gap-1">
-          {right.flatMap(([k, n]) => Array.from({ length: n }, (_, i) => <span key={`${k}${i}`} className={`h-4 w-4 rounded-sm ${LIFECYCLE_FILL[k]}`} />))}
-        </div>
-      </div>
-      <Legend items={[
-        [LIFECYCLE_FILL.went_quiet, `went quiet ${g.wentQuiet.length}`],
-        [LIFECYCLE_FILL.still_active, `still active ${by('still_active')}`],
-        [LIFECYCLE_FILL.back, `back ${by('back')}`],
-        [LIFECYCLE_FILL.new, `new ${by('new')}`],
-      ]} />
-      <div className="mt-3 space-y-1.5">
-        {[...g.groups, ...g.wentQuiet].map((grp) => (
-          <div key={grp.slug} className="flex items-center gap-2 min-w-0" data-journey-group={grp.slug}>
-            <Dot cls={LIFECYCLE_FILL[grp.lifecycle] || LIFECYCLE_FILL.still_active} />
-            <span className="text-sm font-medium truncate w-28 shrink-0">{grp.name}</span>
-            <Chips people={grp.people} onOpen={onOpen} />
+
+      <div className="mt-5 space-y-3" id="admin-journey-statuses">
+        {statuses.map((st) => (
+          <div key={st.key} className="space-y-1.5" data-journey-status={st.key}>
+            <StatusHeading dot={LIFECYCLE_FILL[st.key]} label={st.label} count={st.groups.length} />
+            {st.groups.map((grp) => <GroupRow key={grp.slug} grp={grp} onOpen={onOpen} />)}
           </div>
         ))}
-        {g.oneShort.map((grp, i) => (
-          <div key={`${grp.slug}-${i}`} className="flex items-center gap-2 min-w-0" data-journey-short={grp.slug}>
-            <Dot cls="border border-dashed border-zinc-400 dark:border-zinc-500" />
-            <span className="text-sm truncate w-28 shrink-0 text-zinc-500 dark:text-zinc-400">{grp.name}</span>
-            <Chips people={grp.people} onOpen={onOpen} />
-            <span className={`${JUI.chip} ${JUI.chipDashed}`} title={grp.why}>one short</span>
+        {g.oneShort.length ? (
+          <div className="space-y-1.5" data-journey-status="one_short">
+            <StatusHeading dot="border border-dashed border-zinc-400 dark:border-zinc-500" label="One short" count={g.oneShort.length} />
+            {g.oneShort.map((grp, i) => <GroupRow key={`${grp.slug}-${i}`} grp={grp} onOpen={onOpen} note={grp.why} />)}
           </div>
-        ))}
-        {!g.groups.length && !g.wentQuiet.length && !g.oneShort.length ? <Empty>No project had a group this week.</Empty> : null}
+        ) : null}
+        {!statuses.length && !g.oneShort.length ? <Empty>No project had a group this week.</Empty> : null}
       </div>
-      {/* The votes behind the number: a group is real only when its yes
-          votes are. Both qualify this count, so they sit under it. */}
-      {/* The checks read the whole platform, so a cohort view leaves them out. */}
-      {scope.cohort ? null : <div id="admin-journey-checks" className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
-        <div>
-          <div className="flex justify-between text-sm mb-1">
-            <span>Live changes with a yes from someone else</span>
-            <span className="tabular-nums">{vote.of - vote.count} / {vote.of}</span>
+
+      {/* The votes behind the number, read for the whole platform, so a
+          cohort view leaves them out rather than show them as the cohort's. */}
+      {scope.cohort ? null : (
+        <div id="admin-journey-checks" className="mt-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 p-3 space-y-2.5">
+          <div className={JUI.label}>The votes behind it</div>
+          <div>
+            <div className="flex justify-between gap-2 text-sm mb-1">
+              <span>Live changes with a yes from someone else</span>
+              <span className="tabular-nums shrink-0">{vote.of - vote.count} / {vote.of}</span>
+            </div>
+            <UnitBar n={vote.of - vote.count} of={vote.of} fill="bg-violet-500" rest="bg-amber-400" />
           </div>
-          <UnitBar n={vote.of - vote.count} of={vote.of} fill="bg-violet-500" rest="bg-amber-400" />
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span aria-hidden="true" className={lockstep.length ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
+              {lockstep.length ? '!' : '✓'}
+            </span>
+            <span>{lockstep.length ? 'Voting in lockstep' : 'Nobody voting in lockstep'}</span>
+            {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : null}
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <span aria-hidden="true" className={lockstep.length ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
-            {lockstep.length ? '!' : '✓'}
-          </span>
-          <span>{lockstep.length ? 'Voting in lockstep' : 'Nobody voting in lockstep'}</span>
-          {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : null}
-        </div>
-      </div>}
-      {g.homeroom && !scope.cohort ? (
-        <p className={`${JUI.fine} mt-3`}>Homeroom itself, not counted: {g.homeroom.changes} live, {g.homeroom.people} people.</p>
-      ) : null}
+      )}
     </Card>
   );
 }

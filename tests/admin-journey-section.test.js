@@ -85,6 +85,7 @@ test('six chart cards, every mark counted, no percentage printed, no links from 
     assert.match(line, /(width|height): `\$\{[^`]*\}%`/, `a percentage only sizes a mark: ${line.trim()}`);
   }
   assert.match(src, /<Trend trend=\{trend\} shown=\{g\.week\} \/>/, 'the North Star carries its eight weeks');
+  assert.match(src, /const STATUS_ORDER: Array<\[string, string\]> = \[/, 'groups sit under one heading per status');
   assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
   assert.match(src, /<Ring label="The change loop, turns at each step"/, 'the change loop is drawn as a ring');
   assert.match(src, /<Ring label="The invite loop, people at each step"/, 'and so is the invite loop, on a card of its own');
@@ -121,7 +122,7 @@ test('filters: all time or a week, everyone or one cohort; a person gets a view 
     assert.ok(src.includes(`scoped('/api/admin/journey/${read}', scope)`), `${read} follows the filters`);
   }
   assert.match(src, /\{person != null \? <PersonView userId=\{person\}/, 'one person replaces the cards');
-  assert.match(src, /\{scope\.cohort \? null : <div id="admin-journey-checks"/,
+  assert.match(src, /\{scope\.cohort \? null : \(?\s*<div id="admin-journey-checks"/,
     'the platform-wide checks leave a cohort view instead of reading as the cohort\'s');
   assert.match(src, /\{scope\.cohort \? null : <div className="mt-1 mb-4" id="admin-journey-team">/);
 });
