@@ -96,6 +96,26 @@ Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
 
+For immediate imported proposal head updates, set `secrets.githubWebhookSecret`
+in the same SOPS-encrypted values file. It maps to `GITHUB_WEBHOOK_SECRET` in
+the chart-created Secret; its empty default leaves the webhook disabled.
+With `secrets.create: false`, supply that environment-variable key in
+`secrets.existingSecret` and roll out the platform after changing it.
+
+Publish the updated chart and sync the encrypted values first. The secrets
+checksum rolls out chart-managed changes. Configure the GitHub App webhook,
+or a webhook on each relevant repository, with the same secret, JSON payloads,
+TLS verification enabled, and `pull_request` events sent to
+`https://<config.domain>/api/github/webhook`. Repository webhooks cover only
+their own repository; an App webhook covers its subscribed installations.
+
+An unsigned `ping` must return 401 `Bad signature`; 503 means the running
+process still lacks the secret. A correctly signed ping returns 200 with
+`pong: true`. Check GitHub's Recent deliveries, then verify a real proposal
+head update or the `github-webhook` log entry `Pull request event applied`.
+Delivery HTTP 200 only acknowledges receipt; synchronization runs afterward.
+The periodic sweep remains the fallback for missed deliveries.
+
 For GitHub and X account linking, add both OAuth credential pairs to the same
 encrypted file's existing `secrets` block using the SOPS editor:
 
