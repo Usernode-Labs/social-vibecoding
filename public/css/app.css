@@ -375,8 +375,12 @@ html.un-kb .platform-safe-sheet {
    Messages and Android Messages both shrink the content area by the keyboard's
    height and pin the composer above it rather than covering or panning.
    The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   stays visible and the composer sits above the keys. The settled pin is not
+   left inert — it is REQUIRED here: iOS pans the page on the tap, before this
+   padding exists, and the pin puts that pan back once the burst of viewport
+   events settles. A React-owned column that reserves the inset must attach
+   the pin too (frontend/src/lib/composer-keyboard.ts, #3571); without it the
+   column lifts the composer inside a page already panned by the keyboard.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
