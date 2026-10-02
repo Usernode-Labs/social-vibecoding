@@ -43,7 +43,7 @@ interface Settings {
   // cost the platform in a week (cents; 0 for no limit).
   dmUsers: string[];
   userWeeklyCents: number;
-  // The projects it is building for them, live like liveApps.
+  // The projects they made, live like liveApps (builtFor says whose).
   firstVersionApps: string[];
   // #3654: the model each stage runs on; blank is the platform default.
   models?: Record<ModelStage, string>;
@@ -89,6 +89,15 @@ interface DmUser {
   username: string;
   exists: boolean;
   weeklySpentCents: number | null;
+}
+
+// #3624: a project it acts on for real because somebody on the DM list made
+// it: built from its description, or imported, forked or made without one.
+interface BuiltFor {
+  slug: string;
+  name: string;
+  username: string;
+  origin: 'description' | 'import' | 'fork' | 'blank';
 }
 
 // One row of the DM list as edited. The key outlives the row's position, so
@@ -238,6 +247,7 @@ interface Payload {
   builds: BuildLane;
   mentionOptOuts: { total: number; items: MentionOptOut[] };
   dmUsers?: DmUser[];
+  builtFor?: BuiltFor[];
   workingNow?: Working[];
   dmChat?: DmChat;
 }
@@ -817,6 +827,41 @@ function WorkingNow({ items }: { items: Working[] }) {
   );
 }
 
+/**
+ * #3624: the live list's rows for projects somebody on the DM list made.
+ * Read-only: they come and go with that person's place on the list.
+ */
+function BuiltForRows({ items, pausedApps, canWrite, onRetriage }: {
+  items: BuiltFor[];
+  pausedApps: string[];
+  canWrite: boolean;
+  onRetriage: (slug: string) => void;
+}) {
+  return (
+    <>
+      {items.map((p) => (
+        <div key={p.slug} className="flex items-center gap-2" data-live-app-built-for={p.slug}>
+          <select aria-label={`${p.name}, live for @${p.username}`} className={AdminUI.select} value={p.slug} disabled>
+            <option value={p.slug}>{p.name}</option>
+          </select>
+          <span className={`${AdminUI.muted} shrink-0`}>{`for @${p.username}`}</span>
+          {canWrite && !pausedApps.includes(p.slug) ? (
+            <button
+              type="button"
+              className={AdminUI.btn.outlineSm}
+              data-live-app-retriage={p.slug}
+              title="Every open issue on this app, as if just posted: the bot takes them one at a time, oldest first."
+              onClick={() => onRetriage(p.slug)}
+            >
+              Triage again
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function HomeroomBotSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -1009,6 +1054,8 @@ function HomeroomBotSection() {
   const liveDirty = liveChosen.join(',') !== savedLive.join(',');
   const appName = (slug: string) => payload?.apps.find((a) => a.slug === slug)?.name || slug;
   const editLive = (rows: string[]) => setLiveDraft(rows);
+  // Live because somebody on the DM list made it; a row above wins.
+  const builtFor = (payload?.builtFor || []).filter((p) => !liveRows.includes(p.slug));
 
   const saveLive = async () => {
     if (!liveDirty) return;
@@ -1319,7 +1366,7 @@ function HomeroomBotSection() {
           <div>
             <p className={AdminUI.label} id="admin-homeroom-bot-live-apps-label">Apps it acts on for real</p>
             <div id="admin-homeroom-bot-live-apps" role="group" aria-labelledby="admin-homeroom-bot-live-apps-label" className="mt-1 space-y-2">
-              {liveRows.length ? liveRows.map((slug, i) => (
+              {liveRows.map((slug, i) => (
                 <div key={i} className="flex items-center gap-2" data-live-app-row={slug || 'new'}>
                   <select
                     id={`admin-homeroom-bot-live-app-${i}`}
@@ -1359,9 +1406,16 @@ function HomeroomBotSection() {
                     </button>
                   ) : null}
                 </div>
-              )) : (
+              ))}
+              <BuiltForRows
+                items={builtFor}
+                pausedApps={settings?.pausedApps || []}
+                canWrite={canWrite}
+                onRetriage={retriageApp}
+              />
+              {!liveRows.length && !builtFor.length ? (
                 <p className={AdminUI.muted} id="admin-homeroom-bot-live-apps-none">None: it only records verdicts, on every app.</p>
-              )}
+              ) : null}
             </div>
             {canWrite ? (
               <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -1397,7 +1451,9 @@ function HomeroomBotSection() {
                     ? 'Not saved yet.'
                     : savedLive.length
                       ? `Saved: acts for real on ${savedLive.map(appName).join(', ')}${settings?.mode === 'off' ? ', once the bot is turned on' : ''}.`
-                      : 'Saved: shadow on every app.'}
+                      : builtFor.length
+                        ? 'Saved: only the projects people on the DM list made.'
+                        : 'Saved: shadow on every app.'}
                 </span>
               </div>
             ) : null}
@@ -1406,6 +1462,9 @@ function HomeroomBotSection() {
               there, and builds the clear requests into proposals for the group to
               vote on. Everywhere else it only records verdicts. The mode above has
               to be on, and a staging copy never acts.
+              {builtFor.length
+                ? ' Projects people on the DM list below made are listed too, marked with whose they are, for as long as those people stay on that list. The issues an imported one came with wait until something new happens on them, or until Triage again.'
+                : ''}
             </p>
           </div>
 
@@ -1494,8 +1553,8 @@ function HomeroomBotSection() {
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-dm-note">
               For these people the bot brings each request&apos;s questions (with answers to tap), and the news that it is
               building it, ready to vote on, or live, to their DM with it, and posts their answers on the request. A
-              project they create with a description is built by the bot, and acted on for real while they stay on
-              this list{settings?.firstVersionApps?.length ? ` (now: ${settings.firstVersionApps.map(appName).join(', ')})` : ''}.
+              project they create with a description is built by the bot; every project they make, imported or forked
+              too, is acted on for real while they stay on this list, and shows in Apps it acts on for real.
               What their requests cost the platform is capped per person per week, apart from their own agent
               allowance. Being on the list turns these on; the bot only does the work while the mode above is on.
             </p>
@@ -1817,4 +1876,4 @@ const AdminHomeroomBot = {
 if (typeof window !== 'undefined') (window as any).AdminHomeroomBot = AdminHomeroomBot;
 
 // DmPeople is exported for tests/admin-homeroom-bot.test.js, which renders it.
-export { AdminHomeroomBot, DmPeople, WorkingNow };
+export { AdminHomeroomBot, DmPeople, WorkingNow, BuiltForRows };

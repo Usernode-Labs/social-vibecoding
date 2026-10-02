@@ -9587,6 +9587,23 @@ COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- A project somebody on the bot's DM list made with no description to
+-- build from: imported from GitHub, forked, or created without one (a
+-- connector or the API). The bot acts on it for real while its maker stays
+-- on the list, as it does on a project it builds from a description
+-- (homeroom_bot_first_versions). Nothing is filed for it. An import's
+-- created_at is also where its backlog ends: the issues it arrived with
+-- wait until something happens on them (homeroom-bot.js refreshApp).
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_projects (
+  app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  origin      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_dm_projects_origin_check
+    CHECK (origin IN ('import', 'fork', 'blank'))
+);
+COMMENT ON TABLE homeroom_bot_dm_projects IS 'staging:private';
+
 -- The bot fixing its own failing checks: the head commit a checks
 -- follow-up looked at, on the run that recorded it (a revision, a hand-off
 -- to a person, or a turn that failed), so each failing head gets one look.

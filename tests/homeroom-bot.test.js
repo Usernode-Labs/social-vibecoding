@@ -1128,6 +1128,50 @@ test('refreshApp leaves held issues alone on a shadow app', async () => {
   assert.equal(out.queued, 0, 'no capRoom, no retries: in shadow a hold is only a number on the dashboard');
 });
 
+test('#3624: on a live import, the issues it came with wait until something happens on them', async () => {
+  const IMPORTED = '2026-09-05T00:00:00Z';
+  const inserts = [];
+  const reads = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM homeroom_bot_runs/.test(s)) return { rows: [] };
+      if (/FROM chat_messages/.test(s)) return { rows: [{ n: 4, last_at: '2026-09-07T00:00:00Z' }] };
+      if (/FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/.test(s)) {
+        reads.push(params[0]);
+        return { rows: [{ created_at: IMPORTED }] };
+      }
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
+      throw new Error(`unexpected query: ${s.slice(0, 60)}`);
+    },
+  };
+  const github = {
+    async fetchPublicIssues() {
+      return {
+        issues: [
+          { number: 1, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z' }, // came with it, quiet since
+          { number: 2, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-06T00:00:00Z' }, // came with it, commented on since
+          { number: 3, state: 'open', createdAt: '2026-09-06T00:00:00Z', updatedAt: '2026-09-06T00:00:00Z' }, // filed after the import
+          { number: 4, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' }, // came with it, discussed on Homeroom since
+        ],
+      };
+    },
+  };
+  const app = { id: 9, slug: 'imported', repo_url: 'https://github.com/usernode-bot/imported' };
+  await bot.refreshApp(pool, app, { github, capRoom: { proposals_per_app: 5, proposals_total: 5, question_tripwire: 3 } });
+  assert.deepEqual(reads, [9]);
+  assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[2, 2, 'changed'], [3, 1, 'new'], [4, 2, 'changed']],
+    'the backlog is judged as if seen at the import; what is filed after it is new');
+
+  // In shadow nothing is held back, and the import is not even read.
+  inserts.length = 0;
+  reads.length = 0;
+  await bot.refreshApp(pool, app, { github });
+  assert.deepEqual(reads, []);
+  assert.deepEqual(inserts.map((p) => p[1]), [1, 2, 3, 4]);
+});
+
 test('capRoomFor counts the same two things the live check does', async () => {
   const pool = {
     async query(sql) {
