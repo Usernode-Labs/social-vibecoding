@@ -85,7 +85,7 @@ function onboardingRoutes(config) {
   // Read back as `tourDone` on /api/auth/me.
   router.post('/api/me/tour-done', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
-      res.json(await onboarding.markTourDone(pool, req.user.id));
+      res.json(await onboarding.markTourDone(pool, req.user.id, req.body || {}));
     } catch (err) {
       log.error('onboarding', 'tour done failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

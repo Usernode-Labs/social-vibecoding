@@ -277,6 +277,8 @@
       if (CommunitiesFirstRun._presented) return;
       CommunitiesFirstRun._presented = true;
       if (!(opts && opts.demo)) CommunitiesFirstRun._shownHere = true;
+      // A step of the newcomer's path (#3369); never the screenshot state.
+      if (!(opts && opts.demo)) window.UITelemetry?.navigate?.('join_sheet');
 
       const el = (tag, cls, text) => {
         const node = document.createElement(tag);
@@ -421,6 +423,7 @@
         if (sheet && sheet.dismiss) sheet.dismiss();
         CommunitiesFirstRun._presented = false;
         CommunitiesFirstRun._resolve();
+        window.App?._renotifyNavigation?.();
       };
 
       // Both buttons answer through here: Join with what is ticked, Skip

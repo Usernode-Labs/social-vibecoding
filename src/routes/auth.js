@@ -785,7 +785,8 @@ function authRoutes(config) {
         // Browser-check accounts authenticate normally to exercise protected
         // screens, but their scripted journeys must not enter product UI
         // analytics. The client waits for this server-owned decision.
-        uiTelemetryEligible: uiTelemetry.isEligibleUser(req.user),
+        // People who objected to being recorded answer false too (#3369).
+        uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating

@@ -17,7 +17,9 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
     // Capture and paired-shots sessions are real authenticated users so they
     // can exercise protected UI, but their scripted traffic is not product
     // experience data. Answer successfully so old clients drop their queue.
-    if (!telemetry.isEligibleUser(req.user)) {
+    // …and so are people who objected to being recorded (#3369), dropped here
+    // as well as told not to send.
+    if (!(await telemetry.isRecordable(pool, req.user))) {
       return res.status(202).json({ ok: true, accepted: 0, submitted: 0, discarded: true });
     }
     let batch;

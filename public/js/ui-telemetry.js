@@ -12,10 +12,18 @@
 }(typeof window !== 'undefined' ? window : null, function () {
   'use strict';
 
+  // Navigation codes (#3369) are the server's NAV_SCREENS: one per screen
+  // root the shell reveals. Keep the two lists identical.
+  const NAV_SCREENS = new Set([
+    'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
+    'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+    'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
+  ]);
   const SCREENS = new Set([
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
-    'report_dialog', 'change_workspace', 'preview',
+    'report_dialog', 'change_workspace', 'preview', ...NAV_SCREENS,
   ]);
+  const VIAS = new Set(['own', 'nudged', 'handed', 'address', 'back', 'returned']);
   const ACTIONS = new Set([
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
@@ -36,6 +44,14 @@
   const ABANDON_MIN_MS = 1000;
   const DELIVERY_TIMEOUT_MS = 10_000;
   const STORE_PREFIX = 'ui-telemetry-v1:';
+  const SCHEMA_VERSION = 2;
+  // A page hidden this long and shown again is a new visit: the current
+  // screen is reported again, marked `returned`. Same 30 minutes the
+  // Journey queries use to end a visit.
+  const RETURN_AFTER_MS = 30 * 60 * 1000;
+  // A mark from markNextVia explains the navigation that follows it at once;
+  // one that no navigation used goes stale rather than mislabel a later step.
+  const NEXT_VIA_MS = 5000;
 
   function createUITelemetry(env) {
     env = env || {};
@@ -75,6 +91,12 @@
     const attempts = new Map();
     const lastAttempts = new Map();
     const troubledActions = new Set();
+    // The navigation screen showing now, so a repeat report of the same root
+    // is dropped and "hidden" knows which screen it ends.
+    let currentNav = null;
+    let hiddenAt = null;
+    let nextVia = null;
+    let nextViaAt = 0;
 
     function adminRoute() {
       try { return String(env.location?.hash || '').startsWith('#admin'); } catch (_) { return false; }
@@ -120,6 +142,9 @@
     function resetObservations() {
       queue = [];
       pendingBatch = null;
+      currentNav = null;
+      hiddenAt = null;
+      nextVia = null;
       attempts.forEach((record) => { if (record.timer) clearTimer(record.timer); });
       attempts.clear();
       lastAttempts.clear();
@@ -177,6 +202,9 @@
       }
       const appSlug = safeAppSlug(detail.appSlug);
       if (appSlug) item.appSlug = appSlug;
+      if (kind === 'screen_visit' && NAV_SCREENS.has(screen) && VIAS.has(detail.via)) {
+        item.via = detail.via;
+      }
       const build = platformBuild();
       if (build) item.build = build;
       queue.push(item);
@@ -188,6 +216,41 @@
 
     function screen(screenCode, context) {
       return emit('screen_visit', screenCode, context);
+    }
+
+    // One navigation step (#3369). Reported only when the screen root (or the
+    // app it is about) actually changes, so a redraw is never read as a step.
+    // `via` defaults to the person's own navigation; a caller that knows
+    // better (a notification, an invite link, Back) says so, either directly
+    // or through markNextVia just before it navigates.
+    function navigate(screenCode, context) {
+      if (!NAV_SCREENS.has(screenCode)) return null;
+      context = context || {};
+      const appSlug = safeAppSlug(context.appSlug);
+      if (currentNav && currentNav.screen === screenCode && currentNav.appSlug === appSlug) return null;
+      const marked = nextVia && clock() - nextViaAt <= NEXT_VIA_MS ? nextVia : null;
+      const via = VIAS.has(context.via) ? context.via : (marked || 'own');
+      nextVia = null;
+      currentNav = { screen: screenCode, appSlug };
+      return emit('screen_visit', screenCode, { appSlug, via });
+    }
+
+    function markNextVia(via) {
+      nextVia = VIAS.has(via) ? via : null;
+      nextViaAt = clock();
+    }
+
+    function navHidden() {
+      if (!currentNav) return;
+      hiddenAt = clock();
+      emit('screen_hidden', currentNav.screen, { appSlug: currentNav.appSlug });
+    }
+
+    function navShown() {
+      const since = hiddenAt;
+      hiddenAt = null;
+      if (!currentNav || since == null || clock() - since < RETURN_AFTER_MS) return;
+      emit('screen_visit', currentNav.screen, { appSlug: currentNav.appSlug, via: 'returned' });
     }
 
     function attempt(action, context) {
@@ -418,7 +481,7 @@
           keepalive: keepalive === true,
           ...(controller ? { signal: controller.signal } : {}),
           body: JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: SCHEMA_VERSION,
             batchId: pendingBatch.id,
             events: batchEvents,
             delivery: { failedBatches, droppedEvents },
@@ -510,11 +573,24 @@
       doc.addEventListener('visibilitychange', () => {
         // A hidden document may only be a tab switch. Flush while the browser
         // gives us time, but reserve navigation_abandonment for pagehide.
-        if (doc.visibilityState === 'hidden') void flush(true);
+        // The navigation mark goes first so it rides in that same flush.
+        if (doc.visibilityState === 'hidden') {
+          navHidden();
+          void flush(true);
+        } else if (doc.visibilityState === 'visible') {
+          navShown();
+        }
       });
       if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', recordBoot, { once: true });
       else setTimer(recordBoot, 0);
     }
+    // Back and Forward, where the browser says so (the Navigation API); a
+    // browser without it reports those steps as the person's own.
+    try {
+      env?.navigation?.addEventListener?.('navigate', (event) => {
+        if (event && event.navigationType === 'traverse') markNextVia('back');
+      });
+    } catch (_) { /* optional */ }
     if (env && typeof env.addEventListener === 'function') {
       env.addEventListener('pagehide', () => { abandonPending(); void flush(true); });
       env.addEventListener('online', () => schedule(0));
@@ -522,7 +598,7 @@
     }
 
     return {
-      screen, attempt, outcome, cancel, setUser, clearUser, flush,
+      screen, navigate, markNextVia, attempt, outcome, cancel, setUser, clearUser, flush,
       contextHeaders, errorCodeFor,
       // Content-free diagnostics for tests and an attached inspector. No
       // queued record body is exposed through the product API.

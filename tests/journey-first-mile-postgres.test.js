@@ -1,0 +1,149 @@
+'use strict';
+
+// The Journey page's first mile (#3369), against the real schema in a
+// throwaway database: required when TEST_DATABASE_URL is set, skipped when no
+// server is reachable. The step rules themselves are pure and also pinned in
+// tests/journey-definitions.test.js.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { Pool } = require('pg');
+
+const journey = require('../src/services/journey');
+
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+
+test('a cohort by admit date: one row per person, the furthest step, and where each is stuck',
+  { timeout: 120000 }, async (t) => {
+    const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+    try { await admin.query('SELECT 1'); } catch (err) {
+      await admin.end();
+      if (process.env.TEST_DATABASE_URL) throw err;
+      t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+    }
+    const name = 'journey_mile_' + crypto.randomBytes(6).toString('hex');
+    await admin.query(`CREATE DATABASE ${name}`);
+    const url = new URL(DSN); url.pathname = '/' + name;
+    const pool = new Pool({ connectionString: String(url), max: 4 });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+      await admin.end();
+    });
+    await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+    const D = '2026-09-24';
+    const admitAt = `${D}T09:00:00Z`;
+    const now = new Date('2026-09-27T12:00:00Z');
+    const user = async (username, cols = {}) => {
+      const base = { has_platform_access: true, platform_access_granted_at: admitAt, password_set: true,
+        needs_username_choice: false, needs_communities_choice: false, ...cols };
+      const keys = Object.keys(base);
+      const { rows } = await pool.query(
+        `INSERT INTO users (username, password, ${keys.join(', ')})
+         VALUES ($1, 'x', ${keys.map((_, i) => `$${i + 2}`).join(', ')}) RETURNING id`,
+        [username, ...keys.map((k) => base[k])]
+      );
+      return rows[0].id;
+    };
+    const signup = (email, userId, releasedAt = admitAt) => pool.query(
+      'INSERT INTO waitlist_signups (email, released_at, linked_user_id) VALUES ($1, $2, $3)',
+      [email, releasedAt, userId]
+    );
+    const mail = (kind, recipient, status, at) => pool.query(
+      'INSERT INTO mail_deliveries (kind, recipient, status, created_at) VALUES ($1, $2, $3, $4)',
+      [kind, recipient, status, at]
+    );
+    const boot = (userId, at, screen = 'shell_boot') => pool.query(
+      `INSERT INTO events (user_id, event_type, metadata, created_at)
+       VALUES ($1, 'ui_experience', jsonb_build_object('kind', 'screen_visit', 'screen', $2::text), $3)`,
+      [userId, screen, at]
+    );
+
+    // ana: every step, then a first act (feedback).
+    const ana = await user('ana', { communities_onboarded_at: `${D}T10:05:00Z`,
+      getting_started_seen: JSON.stringify({ join_answer: 'joined' }) });
+    await signup('ana@example.test', ana);
+    await mail('waitlist_released', 'ana@example.test', 'sent', `${D}T09:00:05Z`);
+    await mail('otp', 'ana@example.test', 'sent', `${D}T10:00:00Z`);
+    await boot(ana, `${D}T10:02:00Z`);
+    await pool.query(
+      "INSERT INTO feedback_reports (user_id, target, description, created_at) VALUES ($1, 'platform', 'hi', $2)",
+      [ana, `${D}T10:20:00Z`]
+    );
+    // ben: admitted, mail sent, never asked for a code, no account.
+    await signup('ben@example.test', null);
+    await mail('waitlist_released', 'ben@example.test', 'sent', `${D}T09:00:06Z`);
+    // cy: asked for a code, the account exists, the password was never set.
+    const cy = await user('cy', { password_set: false, has_platform_access: true });
+    await signup('cy@example.test', cy);
+    await mail('waitlist_released', 'cy@example.test', 'failed', `${D}T09:00:07Z`);
+    await mail('otp', 'cy@example.test', 'sent', `${D}T11:00:00Z`);
+    // dee: inside, the join screen was shown and not answered.
+    const dee = await user('dee', { needs_communities_choice: true });
+    await signup('dee@example.test', dee);
+    await mail('waitlist_released', 'dee@example.test', 'sent', `${D}T09:00:08Z`);
+    await mail('otp', 'dee@example.test', 'sent', `${D}T12:00:00Z`);
+    await boot(dee, `${D}T12:03:00Z`);
+    await boot(dee, `${D}T12:03:05Z`, 'join_sheet');
+    await pool.query(
+      `INSERT INTO events (user_id, event_type, metadata, created_at) VALUES
+       ($1, 'ui_experience', '{"kind":"action_outcome","outcome":"failure","errorCode":"network"}', $2),
+       ($1, 'ui_experience', '{"kind":"repeated_action"}', $2)`,
+      [dee, `${D}T12:04:00Z`]
+    );
+    // Left out of the cohort: an old member admitted again, an admin, a test
+    // account on the left-out list.
+    const old = await user('old_hand', { platform_access_granted_at: '2026-03-01T00:00:00Z' });
+    await signup('old@example.test', old);
+    const boss = await user('boss', { is_admin: true });
+    await signup('boss@example.test', boss);
+    const qa = await user('qa_phone');
+    await signup('qa@example.test', qa);
+    // Another cohort, and someone who came in by a member's invite link.
+    await signup('later@example.test', null, '2026-09-26T08:00:00Z');
+    const host = await user('host', { platform_access_granted_at: '2026-06-01T00:00:00Z' });
+    const guest = await user('guest', { admitted_by: host, platform_access_granted_at: '2026-09-25T08:00:00Z' });
+
+    const leftOutIds = [qa];
+    const list = await journey.cohorts(pool, { now, leftOutIds });
+    assert.deepEqual(list.cohorts, [
+      { day: '2026-09-26', admitted: 1, withAccount: 0 },
+      { day: D, admitted: 4, withAccount: 3 },
+    ], 'old members, admins and left-out accounts are not newcomers');
+    assert.deepEqual(list.otherWay, { people: 1 });
+
+    const mile = await journey.firstMile(pool, { day: D, now, leftOutIds });
+    const by = Object.fromEntries(mile.people.map((p) => [p.name, p]));
+    assert.deepEqual(Object.keys(by).sort(), ['ana', 'ben@example.test', 'cy', 'dee']);
+    assert.equal(by.ana.stuckAt, null);
+    assert.equal(by.ana.furthest, 'first_act');
+    assert.equal(by.ana.steps.find((s) => s.key === 'first_act').note, 'feedback');
+    assert.equal(by.ana.steps.find((s) => s.key === 'join').note, 'joined');
+    assert.equal(by['ben@example.test'].hasAccount, false);
+    assert.equal(by['ben@example.test'].stuckAt, 'code_asked');
+    assert.equal(by['ben@example.test'].daysSince, 3);
+    assert.equal(by.cy.stuckAt, 'account');
+    assert.equal(by.cy.stuckReason, 'Account started, not finished');
+    assert.equal(by.cy.steps.find((s) => s.key === 'mail_sent').state, 'skipped',
+      'a failed mail before a code that did arrive is behind them, not where they are stuck');
+    assert.equal(by.dee.stuckAt, 'join');
+    assert.equal(by.dee.stuckReason, 'Join screen shown, not answered');
+    assert.equal(by.dee.failedAttempts, 1);
+    assert.equal(by.dee.repeatedTaps, 1);
+
+    const passed = Object.fromEntries(mile.steps.map((s) => [s.key, s.passed]));
+    assert.deepEqual(passed, {
+      admitted: 4, mail_sent: 4, code_asked: 3, account: 2, access: 2, opened: 2, username: 2, join: 1, first_act: 1,
+    });
+    const stuckOn = Object.fromEntries(mile.steps.map((s) => [s.key, s.stuck.map((p) => p.name)]));
+    assert.deepEqual(stuckOn.code_asked, ['ben@example.test']);
+    assert.deepEqual(stuckOn.join, ['dee']);
+    assert.deepEqual(mile.notRecorded.followedLink.recorded, false);
+
+    const other = await journey.firstMile(pool, { day: 'other_way', now, leftOutIds });
+    assert.deepEqual(other.people.map((p) => [p.name, p.door]), [['guest', 'invite_link']]);
+    assert.equal(other.people[0].steps[0].key, 'account', 'their first mile starts at the account');
+  });

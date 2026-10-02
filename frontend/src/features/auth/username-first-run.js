@@ -173,6 +173,8 @@
     _present(opts) {
       if (UsernameFirstRun._presented) return;
       UsernameFirstRun._presented = true;
+      // A step of the newcomer's path (#3369); never the screenshot state.
+      if (!(opts && opts.demo)) window.UITelemetry?.navigate?.('username_sheet');
 
       const el = (tag, cls, text) => {
         const node = document.createElement(tag);
@@ -249,6 +251,7 @@
         if (sheet && sheet.dismiss) sheet.dismiss();
         UsernameFirstRun._presented = false;
         UsernameFirstRun._resolve();
+        window.App?._renotifyNavigation?.();
       };
 
       const submit = async () => {

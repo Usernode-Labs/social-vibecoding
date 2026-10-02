@@ -1475,16 +1475,23 @@
     {
       "source": "src/services/ui-telemetry.js",
       "kind": "structural-template",
-      "fingerprint": "2b5c5a4747c0e3700097",
+      "fingerprint": "3607eb5193fde3ec30c1",
       "count": 1,
-      "preview": "`WITH ui AS ( SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), attempts AS ( SELE"
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.app_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${u"
     },
     {
       "source": "src/services/ui-telemetry.js",
       "kind": "structural-template",
-      "fingerprint": "4acb3539b5bd10b13659",
+      "fingerprint": "761676035dcde88d90e1",
       "count": 1,
-      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), at"
+      "preview": "`WITH ui AS ( SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${uiBase} ), attempts AS ( SE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "b0c31ae93a5099d0fd6a",
+      "count": 1,
+      "preview": "`SELECT e.metadata->>'screen' AS screen, COUNT(*)::int AS visits, COUNT(DISTINCT e.user_id)::int AS users FROM events e JOIN users u ON u.id = e.user_id WHERE e"
     },
     {
       "source": "src/services/ui-telemetry.js",
@@ -1496,23 +1503,16 @@
     {
       "source": "src/services/ui-telemetry.js",
       "kind": "structural-template",
-      "fingerprint": "b35c0cd5a84f6769816b",
+      "fingerprint": "c054dcf8356ea424aba6",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${uiBase} ), "
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "fc1a26462b083453e1f5",
       "count": 1,
       "preview": "`WITH coded AS ( SELECT e.id, e.user_id, e.metadata, e.created_at, CASE WHEN e.metadata->>'kind' IN ('action_outcome','server_failure') AND e.metadata ? 'attemp"
-    },
-    {
-      "source": "src/services/ui-telemetry.js",
-      "kind": "structural-template",
-      "fingerprint": "e64aea5725fe67bcbf0d",
-      "count": 1,
-      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.app_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${b"
-    },
-    {
-      "source": "src/services/ui-telemetry.js",
-      "kind": "structural-template",
-      "fingerprint": "f016cfeaacc400db8ba3",
-      "count": 1,
-      "preview": "`SELECT e.metadata->>'screen' AS screen, COUNT(*)::int AS visits, COUNT(DISTINCT e.user_id)::int AS users FROM events e JOIN users u ON u.id = e.user_id WHERE e"
     },
     {
       "source": "src/services/user-merge.js",

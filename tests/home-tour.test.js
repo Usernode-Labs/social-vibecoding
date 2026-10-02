@@ -151,7 +151,7 @@ test('the Improve step waits for the menu, and its Next opens the menu rather th
   // so step 4 can only ever arrive with the menu it points into.
   const goNext = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const goNext = useCallback('));
   const body = goNext.slice(0, goNext.indexOf('}, [finish]);'));
-  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\(\);/);
+  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\('finish'\);/);
   // The click on the mark is watched, never intercepted: the overlay
   // subscribes to the store and advances on the EDGE into open.
   assert.match(OVERLAY_SRC, /appContextStore\.subscribe\(/);
@@ -710,7 +710,7 @@ test('the overlay keeps its step while it is up, resumes there, and clears it on
   // Finish and Skip both go through finish(): done is written, here and on
   // the account, the place is cleared, and neither can bring the tour back on
   // the next reload.
-  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*(?:\/\/[^\n]*\n\s*)*void markDoneOnServer\(userId\);\s*clearStep\(userId\);/);
+  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*(?:\/\/[^\n]*\n\s*)*void markDoneOnServer\(userId, \{ ended, step: indexRef\.current \}\);\s*clearStep\(userId\);/);
 });
 
 test("the shell's automatic reload waits for a tour in progress", () => {
@@ -801,7 +801,7 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
   const effect = open.slice(0, open.indexOf('}, [start]);'));
   assert.match(effect, /started\.current = true;[\s\S]*await whenHomeVisible\(\);[\s\S]*start\(\);/);
   // Finish and Skip on that route write no "done", here or on the account.
-  const finish = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const finish = useCallback(() => {'));
+  const finish = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const finish = useCallback(('));
   const fbody = finish.slice(0, finish.indexOf('}, [userId]);'));
   assert.ok(fbody.indexOf('if (isTourShot()) {') < fbody.indexOf('writeDone(userId);'),
     'the shot returns before anything is written');
@@ -1228,7 +1228,7 @@ test('the overlay backfills the account once, and forgets this browser\'s "done"
     'never on a capture route, where no POST may land');
   assert.match(effect, /if \(backfilledFor\.current === userId \|\| !sessionVerified\(userId\)\) return;/);
   assert.match(effect, /joinShownHere: firstRunShownHere\(\),\s*joinPending: firstRunPending\(\),/);
-  assert.match(effect, /backfilledFor\.current = userId;\s*void markDoneOnServer\(userId\);/);
+  assert.match(effect, /backfilledFor\.current = userId;\s*void markDoneOnServer\(userId, \{ ended: 'backfill' \}\);/);
   assert.match(effect, /document\.addEventListener\('sv:session', check\);/);
   assert.match(effect, /return \(\) => document\.removeEventListener\('sv:session', check\);/);
 });
