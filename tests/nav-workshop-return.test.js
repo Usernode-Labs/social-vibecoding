@@ -172,14 +172,17 @@ test('on the selector the tab stays put', async () => {
   assert.equal(r.App.resumeWorkshopView(), false);
 });
 
-test('the running app, its discussion and a change are not Workshop views', async () => {
+test('the running app and a change are not Workshop views; the discussion is its project page', async () => {
   const r = router();
   await r.App.navigateToApp(WHITEBOARD.slug, 'app');
   assert.equal(r.storage.has(KEY), false, 'the running app is the parked strip\'s');
-  await r.App.switchTab('dev', null, 'chat');
-  assert.equal(r.storage.has(KEY), false, 'the discussion is a Messages thread');
   await r.App.switchTab('dev', 42, 'sessions');
-  assert.equal(r.storage.has(KEY), false, 'and so is a change');
+  assert.equal(r.storage.has(KEY), false, 'a change is a Messages thread');
+  // #3653: the app's discussion is its project page's Discussion tab, so
+  // asking for it is the project page, which the Workshop tab reopens.
+  await r.App.switchTab('dev', null, 'chat');
+  assert.deepEqual(JSON.parse(r.storage.get(KEY)),
+    { slug: WHITEBOARD.slug, path: '/app/whiteboard-ab12cd/workshop' });
 });
 
 test('the view is persisted, so it survives a reload', async () => {

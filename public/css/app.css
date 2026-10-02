@@ -442,7 +442,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    The same construction at both widths: on a phone the list screen IS the
    strip and a thread is the strip's shoulder showing above the sheet; from
    768px up both panes sit on one strip with the sheet beside the list. */
-.messages-layout {
+/* The tokens are the project page's Discussion tab's too (#3653): an app
+   channel's reply thread opens there, in the same pane as here, with no
+   `.messages-layout` around it (project-discussion.tsx). */
+.messages-layout,
+.dev-ws-discussion {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
      light sheet. In dark it is the ladder's own raised step (--dc-raised),
@@ -456,12 +460,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      A translucent white so it reads as the row the sheet came out of. */
   --messages-selected: rgba(255, 255, 255, 0.55);
   --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.messages-layout {
   display: flex;
   width: 100%;
   height: 100%;
   min-height: 0;
 }
-.dark .messages-layout {
+.dark .messages-layout,
+.dark .dev-ws-discussion {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
   --messages-hair: rgba(255, 255, 255, 0.08);
@@ -17720,6 +17727,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 .messages-layout-embedded > .messages-reply-pane { margin: 0; }
 @media (min-width: 768px) {
   .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
+}
+/* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
+   Messages opens beside an app channel (AppReplyThreadPane) opens beside the
+   group chat's pane here: to its right on a desktop, over it on a phone,
+   where its ✕ brings the room back. The host itself is never restyled from
+   outside: only the section's class says a thread is open. */
+.dev-ws-discussion-threaded > .messages-reply-pane { margin: 0; }
+@media (max-width: 767.98px) {
+  .dev-ws-discussion-threaded > .dev-ws-discussion-host { display: none; }
+}
+@media (min-width: 768px) {
+  .dev-ws-discussion-threaded { flex-direction: row; }
+  .dev-ws-discussion-threaded > .dev-ws-discussion-host { min-width: 0; }
+  .dev-ws-discussion-threaded > .messages-reply-pane { margin-left: 8px; }
 }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {

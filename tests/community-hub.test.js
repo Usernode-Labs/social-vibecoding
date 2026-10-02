@@ -247,7 +247,7 @@ test('#852 review: a project\'s own Discussion is a fitted pane, and Homeroom\'s
   // project's own channel (tests/homeroom-discussion-in-place.test.js).
   const PD = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
   assert.doesNotMatch(LANDER, /discussionElsewhere|openDiscussionElsewhere/, 'the tab turns the page for Homeroom too');
-  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} \/>/);
+  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} at=\{roomAt\} \/>/);
   assert.doesNotMatch(PD, /location\.replace/);
   // A project's own channel fills the reading area like Needs you: no guessed
   // height, the chain may shrink it, and the composer's tab-bar reserve is not

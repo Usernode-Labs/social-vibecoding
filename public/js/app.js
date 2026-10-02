@@ -4283,6 +4283,7 @@ const App = {
           // below: the store validates it and the server is the authority on
           // whether it names anything. #2387: `/thread/<id>` opens a reply
           // thread beside the channel, `/m/<id>` a message link into it.
+          if (App._appChatToHub(parts[2], parts.slice(3), hash)) return;
           App.navigateToMessages(null, parts[2], null, App._messagesExtras(parts.slice(3)));
           return;
         }
@@ -4321,6 +4322,7 @@ const App = {
         // channel's own (#general's conversation, or an app's discussion)
         // once it knows which one the handle means.
         if (parts[1] === 'channel') {
+          if (App._followKnownChannel(parts[2])) return;
           App.navigateToMessages(null);
           window.UsernodeReact?.messages?.openChannel?.(parts[2] || '');
           return;
@@ -4329,6 +4331,18 @@ const App = {
         // local to this route.
         const conversationId = App._numericSegment(parts[1]);
         const validConversation = conversationId != null && conversationId <= 2147483647;
+        // #3653: #general is a channel too — the Homeroom community's, and
+        // Homeroom's Discussion tab. When the store already knows the
+        // conversation is one and whose page it is on, the address is taken
+        // straight to that tab with what it named in the room. Otherwise the
+        // conversation opens here, and the store takes it to the tab as soon
+        // as it learns the same (store.ts channelToHub).
+        const channelHub = validConversation
+          ? window.UsernodeReact?.messages?.channelHubSlug?.(conversationId) : null;
+        if (channelHub) {
+          App.openDiscussionInHub(channelHub, { conversationId, ...App._messagesExtras(parts.slice(2)) });
+          return;
+        }
         App.navigateToMessages(
           validConversation ? conversationId : null,
           null,
@@ -5413,6 +5427,178 @@ const App = {
   // #back-btn listener below); `#app/<slug>/workshop` is the same route.
   _hubHref(slug) {
     return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
+  },
+
+  // ── A discussion is its project page's Discussion tab (#3653) ─────────
+  //
+  // A project's channel was a page of its own twice over: `/app/<slug>/dev/
+  // chat`, full screen, and `#messages/app/<slug>`, on the Messages screen —
+  // each with a header and a back button of its own, a level BELOW the
+  // community whose room it is. The room is the page's Discussion tab now
+  // (#3491, #3494), so every way into it ends there: under the page's
+  // coloured header and its tabs, with the page's own Back.
+
+  // Take the reader to `slug`'s Discussion tab, at `target`'s place in the
+  // room (AppView._stashDiscussionTarget), REPLACING the address on screen:
+  // the router's redirects call it with the old address in the bar, and the
+  // Messages store with #general's. The page's address is the hub's.
+  openDiscussionInHub(slug, target) {
+    if (!slug) return;
+    AppView._landOnDiscussion(slug, target || null);
+    try {
+      history.replaceState(null, '', App._appUrl(slug, 'dev', null, 'forum', { boardView: 'workshop' }));
+    } catch (_) { return; }
+    App._currentRoute = location.hash || '';
+    App.restoreFromHash();
+    // The entry names the tab it opened on, as the router's arrivals do
+    // (#3620), so Forward back onto it shows the Discussion.
+    AppView._stampArrivedWorkshopTab?.();
+  },
+
+  // `#messages/app/<slug>[/thread/<id>|/m/<id>]`, the app chat's address in
+  // the inbox, is its project page's Discussion tab now (#3653); only
+  // Homeroom's archived app chat stays in the inbox. Any other is taken to
+  // the app's own chat address, whose switchTab turns it into the Discussion
+  // tab once the app's record is in (App._chatToDiscussionTab), with what
+  // the address named in the room waiting for the tab
+  // (AppView._stashDiscussionTarget). Replaced, not pushed: the old address
+  // is not a page to come Back to. `from` is that address, should the record
+  // say it was the archive after all. True when it went.
+  _appChatToHub(rawSlug, rest, from) {
+    let slug = rawSlug;
+    try { slug = decodeURIComponent(rawSlug); } catch (_) { /* the raw segment */ }
+    if (!slug || App._appChatIsArchive(slug)) return false;
+    // Known not to be the archive: straight to the page, no step between.
+    if (App._appChatIsNotArchive(slug)) {
+      App.openDiscussionInHub(slug, App._messagesExtras(rest || []));
+      return true;
+    }
+    AppView._stashDiscussionTarget(slug, { ...App._messagesExtras(rest || []), from: from || null });
+    try {
+      history.replaceState(null, '', App._appUrl(slug, 'dev', null, 'chat'));
+    } catch (_) { return false; }
+    App._currentRoute = location.hash || '';
+    App.restoreFromHash();
+    return true;
+  },
+
+  // `#messages/channel/<handle>` for a channel the Messages store already
+  // knows: followed at once (#3653), so the inbox is never drawn on the way
+  // to the channel's tab. False leaves openChannel to wait for the lists.
+  _followKnownChannel(handle) {
+    const known = window.UsernodeReact?.messages?.channelTarget?.(handle || '');
+    if (!known) return false;
+    try { history.replaceState(null, '', App._rootUrl(known)); } catch (_) { return false; }
+    App._currentRoute = location.hash || '';
+    App.restoreFromHash();
+    return true;
+  },
+
+  // A discussion's address followed while its project's page is already the
+  // page on screen — a notification, a saved message, a thread from the
+  // bell: the page turns to its Discussion tab at the place the address
+  // names, and no address is written, because a second entry for the page
+  // the reader is on would only be a Back press that goes nowhere (the same
+  // rule as Recents' door, nav/recents-list.tsx). True when it turned. The
+  // Messages controller asks this before it navigates (store.ts openAddress).
+  _discussionInPlace(href) {
+    const parts = String(href || '').replace(/^#/, '').split('?')[0].split('/');
+    if (parts[0] !== 'messages' || !parts[1]) return false;
+    let slug = null;
+    let target = null;
+    if (parts[1] === 'app' && parts[2]) {
+      try { slug = decodeURIComponent(parts[2]); } catch (_) { return false; }
+      if (App._appChatIsArchive(slug)) return false;
+      target = App._messagesExtras(parts.slice(3));
+    } else {
+      const conversationId = App._numericSegment(parts[1]);
+      if (conversationId == null || conversationId > 2147483647) return false;
+      slug = window.UsernodeReact?.messages?.channelHubSlug?.(conversationId) || null;
+      target = { conversationId, ...App._messagesExtras(parts.slice(2)) };
+    }
+    if (!slug || typeof AppView === 'undefined' || !AppView._onProjectPage?.(slug)) return false;
+    if (!App._isScreenVisible?.('app-view')) return false;
+    AppView._landOnDiscussion(slug, target);
+    return true;
+  },
+
+  // Is `slug`'s app chat Homeroom's own — the old project discussion, kept
+  // read-only since #general became the Homeroom community's channel? That
+  // room is not its project's Discussion tab (the tab holds #general), so it
+  // keeps its old addresses. Known from the app's own record once it has
+  // loaded, from the platform's slug once anything has said it, or from a
+  // launcher's cached record; a cold link before any of those is taken to the
+  // tab, and _chatToDiscussionTab sends it back once the record says so.
+  _archivedAppChats: new Set(),
+  _appChatIsArchive(slug) {
+    if (!slug) return false;
+    if (App._archivedAppChats.has(slug)) return true;
+    if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
+      return !!AppView.appData.self_hosted;
+    }
+    try { if (window.PlatformTarget?.slug?.() === slug) return true; } catch (_) { /* not known yet */ }
+    try {
+      if (typeof AppView !== 'undefined' && AppView.launchRecordFor?.(slug)?.self_hosted) return true;
+    } catch (_) { /* no launcher record */ }
+    return false;
+  },
+
+  // ...and is it KNOWN not to be: the app's own record says so, or the
+  // platform's slug is known and is another, or a launcher's record says so.
+  _appChatIsNotArchive(slug) {
+    if (!slug) return false;
+    if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
+      return !AppView.appData.self_hosted;
+    }
+    try {
+      const platform = window.PlatformTarget?.slug?.();
+      if (platform) return platform !== slug;
+    } catch (_) { /* not known yet */ }
+    try {
+      const rec = typeof AppView !== 'undefined' ? AppView.launchRecordFor?.(slug) : null;
+      if (rec) return !rec.self_hosted;
+    } catch (_) { /* no launcher record */ }
+    return false;
+  },
+
+  // Is the address on screen `slug`'s app chat — `/app/<slug>/dev/chat`, or
+  // a hash spelling of it the router has not canonicalised yet?
+  _onChatAddress(slug) {
+    const hash = String(location.hash || '').replace(/^#/, '').split('?')[0];
+    const segs = (hash || App._appRouteFromPath(location.pathname)).split('/');
+    if (segs[0] !== 'app' || !segs[1]) return false;
+    let at = segs[1];
+    try { at = decodeURIComponent(segs[1]); } catch (_) { /* the raw segment */ }
+    return at === slug && ((segs[2] === 'dev' && segs[3] === 'chat') || segs[2] === 'group-chat');
+  },
+
+  // switchTab's answer to the app chat (`dev` / `chat`), every caller's:
+  // the router's `/app/<slug>/dev/chat` and its legacy spellings, the
+  // redirect above, a shared spec's notification, the board's discussion
+  // row. Null leaves the chat where it is (Homeroom's archive). 'bounced'
+  // means the reader has been sent back to the archive's Messages address
+  // they came from, before the record could say it was one. Otherwise the
+  // page is told to open on Discussion and switchTab shows the page instead,
+  // replacing the address when it was the chat's own.
+  _chatToDiscussionTab(slug) {
+    if (!slug) return null;
+    if (App._appChatIsArchive(slug)) {
+      if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
+        App._archivedAppChats.add(slug);
+      }
+      const target = AppView._peekDiscussionTarget?.(slug);
+      if (target && target.from && /^messages\/app\//.test(target.from)) {
+        AppView._takeDiscussionTarget(slug);
+        try { history.replaceState(null, '', App._rootUrl(`#${target.from}`)); } catch (_) { return null; }
+        App._currentRoute = location.hash || '';
+        App.restoreFromHash();
+        return 'bounced';
+      }
+      return null;
+    }
+    const replace = App._onChatAddress(slug);
+    AppView._landOnTab(slug, 'discussion');
+    return { replace };
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -7537,6 +7723,18 @@ const App = {
     tab = norm.tab;
     subTab = norm.subTab;
     ref = norm.ref;
+    // #3653: the app's chat is its project page's Discussion tab, so asking
+    // for it — by its address or by any caller — shows the page on that tab.
+    let toDiscussion = false;
+    if (tab === 'dev' && subTab === 'chat') {
+      const door = App._chatToDiscussionTab(App.currentApp);
+      if (door === 'bounced') return false;
+      if (door) {
+        toDiscussion = true;
+        subTab = 'forum';
+        options = { ...(options || {}), replaceRoute: !!(options && options.replaceRoute) || door.replace };
+      }
+    }
     // The App tab is hidden for self-hosted apps (its iframe target doesn't
     // resolve — see app-view.js renderAppTab). Coerce any incoming request
     // for it (URL hash, browser back/forward, programmatic) to the Dev
@@ -7652,6 +7850,9 @@ const App = {
 
     App.updateHash({ replace: !!options?.replaceRoute, ref });
     if (tab === 'app') App._pinAppReturn();
+    // The entry the page now stands on names the tab it opened on, as the
+    // router's own arrivals do (#3620), so Forward back onto it shows it.
+    if (toDiscussion) AppView._stampArrivedWorkshopTab?.();
   },
 
   // The side-panel route for an app-tab request, or null for the App tab
