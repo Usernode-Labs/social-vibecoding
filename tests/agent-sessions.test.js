@@ -149,6 +149,26 @@ test('the conversation\'s model choice is stored, read back and shaped', async (
   );
 });
 
+test('a conversation saved on Sonnet 5 reads, and runs, as Sonnet 5.5 (#3579)', async () => {
+  assert.deepEqual(
+    agentSessions.shapeSession({ id: 5, status: 'open', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5' }).agent,
+    { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null },
+    'the picker ticks the model the conversation now runs on',
+  );
+  const pool = recordingPool({
+    'SELECT agent_backend, agent_model, agent_reasoning_effort': () => ({
+      rows: [{ agent_backend: 'claude_code', agent_model: 'claude-sonnet-5', agent_reasoning_effort: null }],
+    }),
+  });
+  assert.deepEqual(await agentSessions.getAgentChoice(pool, 5),
+    { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
+  // An OpenRouter id is the catalog's, not the platform's: never remapped.
+  assert.deepEqual(
+    agentSessions.shapeSession({ id: 5, status: 'open', agent_backend: 'codex_openrouter', agent_model: 'claude-sonnet-5' }).agent,
+    { backend: 'codex_openrouter', model: 'claude-sonnet-5', reasoningEffort: null },
+  );
+});
+
 // ── Reads are the owner's ──────────────────────────────────────────────
 
 test('every read and write names the owner', () => {
@@ -436,15 +456,18 @@ test('the model can be changed at any time, mid-turn included, on an open sessio
   const handlers = {
     'UPDATE agent_sessions': () => ({ rows: [{ id: 5 }], rowCount: 1 }),
     'FROM agent_sessions s': () => ({
-      rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5' }],
+      rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5-5' }],
     }),
   };
   await withRoutes({ id: 7 }, handlers, async (call, pool) => {
-    const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
+    const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5-5' });
     assert.equal(changed.status, 200, 'a running turn does not lock the picker');
-    assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
     const update = pool.calls.find((c) => /UPDATE agent_sessions/.test(c.sql));
-    assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5', null]);
+    assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5-5', null]);
+    // #3579: the retired Sonnet 5 is no longer a pick the picker offers.
+    const retired = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
+    assert.equal(retired.status, 400);
     const defaulted = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code' });
     assert.equal(defaulted.status, 200);
     assert.equal(pool.calls.filter((c) => /UPDATE agent_sessions/.test(c.sql))[1].params[3], 'claude-opus-5-5',

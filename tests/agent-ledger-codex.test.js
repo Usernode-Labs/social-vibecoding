@@ -141,6 +141,7 @@ test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities
     reasoningEfforts: ['low', 'high'],
     supportsTools: true,
     supportsImages: false,
+    supportsFiles: false,
   });
   assert.deepEqual(runtimeModelMetadataForModel(null, 'vendor/model'), {
     name: 'vendor/model',
@@ -150,6 +151,7 @@ test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities
     reasoningEfforts: null,
     supportsTools: null,
     supportsImages: null,
+    supportsFiles: null,
   });
 });
 
@@ -207,6 +209,7 @@ test('resolveCodexRuntimeContext carries the selected OpenRouter model metadata 
     reasoningEfforts: null,
     supportsTools: true,
     supportsImages: false,
+    supportsFiles: false,
   });
   assert.equal(ctx.pricingSnapshot.available, true);
 });
@@ -1498,4 +1501,22 @@ test('#3426: image input comes from OpenRouter\'s own model listing, and reaches
     'the development catalog JSON the model picker reads is unchanged');
   assert.equal(runtimeModelMetadataForModel(sees, sees.id).supportsImages, true);
   assert.equal(runtimeModelMetadataForModel(blind, blind.id).supportsImages, false);
+});
+
+test('#3557: PDF input comes from the same listing\'s file entry, and reaches the runtime metadata', () => {
+  const agentModels = require('../src/services/agent-models');
+  const reads = agentModels.sanitizeModel({
+    id: 'vendor/reader', architecture: { input_modalities: ['text', 'image', 'file'] },
+  }, { status: 'verified', note: null });
+  const imagesOnly = agentModels.sanitizeModel({
+    id: 'vendor/sees', architecture: { input_modalities: ['text', 'image'] },
+  }, { status: 'verified', note: null });
+  const unlisted = agentModels.sanitizeModel({ id: 'vendor/old' }, { status: 'verified', note: null });
+  assert.equal(reads.supportsFiles, true);
+  assert.equal(imagesOnly.supportsFiles, false, 'image input says nothing about PDFs');
+  assert.equal(unlisted.supportsFiles, false);
+  assert.equal(Object.keys(reads).includes('supportsFiles'), false,
+    'the development catalog JSON the model picker reads is unchanged');
+  assert.equal(runtimeModelMetadataForModel(reads, reads.id).supportsFiles, true);
+  assert.equal(runtimeModelMetadataForModel(imagesOnly, imagesOnly.id).supportsFiles, false);
 });
