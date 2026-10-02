@@ -2617,6 +2617,13 @@ const App = {
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);
             break;
+          case 'homeroom_bot_work_changed':
+            // #3692: the Homeroom bot started or finished work for this
+            // person. The activity tray in its DM (React, features/messages/
+            // bot-work.tsx) re-reads its own endpoint; the event carries
+            // nothing, and nothing here writes the DOM.
+            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
+            break;
           case 'app_version_changed':
             // #21: a PR just merged and prod was rebuilt. Re-pull the home
             // list so the app card's commit pill picks up the new SHA.
@@ -2695,6 +2702,9 @@ const App = {
     // and the conversation open on it (#3705): a message that arrived while
     // the socket was down never drew there until the reader reloaded.
     window.UsernodeReact?.messages?.resync?.();
+    // …and the Homeroom bot's activity tray, if its DM is open (#3692).
+    // Guarded: unit tests run this sweep in bare vm sandboxes.
+    if (typeof CustomEvent === 'function') window.dispatchEvent?.(new CustomEvent('homeroom-bot-work-changed'));
     // An open agent session learns about its changes from this socket's
     // notices: whatever it missed while the socket was down, it reads now.
     window.UsernodeReact?.agentSession?.resync?.();
