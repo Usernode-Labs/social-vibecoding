@@ -186,3 +186,16 @@ test('C11 late companion retirement retains the already released capture receipt
   assert.equal(f.journal().jobs[1].job.uid, 'late-unit');
   assert.equal(f.journal().jobs[1].stage, 'released');
 });
+
+for (const manifest of [
+  { durableCli: true, launched: false },
+  { durableCli: true, launched: true, reconstruction: 'unknown-launch' },
+]) {
+  test(`unknown launch retains its locator after visible resources retire: ${JSON.stringify(manifest)}`, async t => {
+    t.mock.method(checkRuns, 'read', async () => ({ manifest }));
+    t.mock.method(kubernetes, 'retireCheckResources', async () => ({ jobs: [
+      { kind: 'capture', stage: 'released' }, { kind: 'unit-suite', stage: 'released' },
+    ] }));
+    assert.equal((await retirement.retire(config, {}, 42, 'old')).complete, false);
+  });
+}

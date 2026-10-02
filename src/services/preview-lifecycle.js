@@ -260,6 +260,16 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         // Retirement failure does not invalidate a verdict already persisted
         // by enrolled execution. Leave its locator/lifecycle for recovery.
         if (operation.durableChecks && executionSettled) throw err;
+
+        // A submitted run with no confirmed outcome belongs to reconciliation,
+        // even when the launching process survives its lost reply. Retain its
+        // lifecycle and manifest; neither an error verdict nor another launch
+        // is justified by this process's inability to observe the outcome.
+        if (operation.durableChecks && !isCancelled(err) && !err.captureJobTerminated) {
+          const blocked = await require('./cli-preview-handoff/checks-outcome').blockLiveFailure(pool, operation, err);
+          if (blocked.accepted) return { checksBlocked: blocked.recovery };
+        }
+
         // Legacy callers stop first. Enrolled errors publish under the current
         // run guard before journalled deletion, so a restart can retire known
         // resources without needing logs it already deleted.

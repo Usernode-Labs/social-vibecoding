@@ -1,6 +1,6 @@
 'use strict';
 
-const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
+const { nativeHeadCondition } = require('../../preview-flow/enabling-conditions');
 
 function reject(reason) {
   return { accepted: false, reason, effects: [] };
@@ -53,53 +53,15 @@ function reduce(state, action) {
 
   if (preview.flow.state !== 'ready' || preview.binding?.observed?.flowId !== action.flowId
       || session.staging_commit_sha !== action.headSha) return reject('activation_unconfirmed');
-  if (action.type === 'CliChecksOutcomeBlocked') {
-    const operation = state.checkOperation;
-    if (!operation || operation.run_id !== action.runId || operation.revision !== action.headSha
-        || operation.desired_revision !== action.headSha
-        || operation.phase !== 'capture' || operation.state !== 'running') return reject('checks_run_changed');
-    if (checksSettled(session)) return reject('checks_already_settled');
-    if (state.checkRun && (state.checkRun.owner !== action.observedOwner
-        || state.checkRun.commit_sha !== action.headSha
-        || !state.checkRun.manifest?.durableCli)) return reject('checks_owner_changed');
-    if (!state.checkRun && (action.reason !== 'manifest_missing' || action.observedOwner !== null)) {
-      return reject('checks_manifest_changed');
-    }
-    return {
-      accepted: true,
-      reason: 'cli_checks_blocked',
-      change: {
-        phase: 'checking',
-        recovery: {
-          state: 'blocked', runId: action.runId, headSha: action.headSha,
-          flowId: action.flowId, reason: action.reason,
-          owner: 'check-harvest', actionId: action.actionId,
-        },
-      },
-      effects: [{ type: 'ReconcileCliChecks', runId: action.runId, owner: 'check-harvest' }],
-    };
-  }
-
   const request = action.type === 'RequestCliPreviewChecks';
-  if (request && action.force && handoff.checks_recovery) return reject('checks_reconciliation_required');
   if (!request && (!checksSettled(session) || state.checksOutstanding)) return reject('checks_pending');
   return {
     accepted: true,
     reason: request ? 'cli_checks_requested' : 'cli_checks_observed',
-    change: {
-      phase: request ? 'checking' : 'complete',
-      resetChecks: request && action.force,
-      ...(!request && handoff.checks_recovery ? { clearRecovery: true } : {}),
-    },
+    change: { phase: request ? 'checking' : 'complete', resetChecks: request && action.force },
     effects: request ? [{ type: 'CaptureCliPreviewChecks', effectKey: `${action.actionId}:checks` }] : [],
   };
 }
 
-function replayDecision(entry) {
-  if (entry.reducer_version === 1) return require('./versions/v1').reduce(entry.pre_state, entry.action);
-  if (entry.reducer_version === 2) return require('./versions/v2').reduce(entry.pre_state, entry.action);
-  if (entry.reducer_version === 3) return reduce(entry.pre_state, entry.action);
-  throw new Error(`Unsupported CLI handoff reducer version: ${entry.reducer_version}`);
-}
-
-module.exports = { reduce, checksSettled, replayDecision };
+// Retained v2 traces preserve the pre-reconciliation decision contract.
+module.exports = { reduce, checksSettled };

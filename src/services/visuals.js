@@ -2156,8 +2156,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     // A provisional manifest from the moment the row went 'pending', so a
     // process that dies anywhere between here and the Job launch leaves a
-    // row the harvester re-drives at once (launched: false — there is no
-    // Job to read) instead of one the stale sweeper finds ten minutes on.
+    // row the harvester discovers (launched: false — no full launch recipe).
+    // Legacy runs can be re-driven; enrolled runs explicitly block for
+    // reconciliation rather than authorizing competing external creation.
     // The manifest and its heartbeat bypass the lifecycle's guarded pool on
     // purpose: they describe the run's process, not its ownership of the
     // session, and a heartbeat must not cost a row lock every fifteen
@@ -2788,6 +2789,15 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       runPartial = !!res.partial;
       runPartialReason = res.partialReason || '';
       captureStderr = res.stderr || '';
+      if (opts.recoverExisting && (runPartialReason === 'run timed out'
+          || runPartialReason === 'capture log unavailable'
+          || (!stdout?.trim() && !runPartial && !(shotsOnly && !media)))) {
+        throw Object.assign(new Error('Capture outcome requires reconciliation'), {
+          code: 'CAPTURE_EXECUTION_UNCONFIRMED',
+          checksBlockedReason: runPartialReason === 'run timed out' ? 'capture_deadline_unconfirmed'
+            : 'capture_output_unavailable',
+        });
+      }
       if (runPartial) {
         log.warn('visuals', 'Capture run cut short — parsing partial output', {
           sessionId: session.id, reason: runPartialReason,

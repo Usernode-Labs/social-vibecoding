@@ -9,10 +9,10 @@ function createCliPreviewHandoff(pool) {
   const runtime = createSessionDecisionRuntime(pool);
   const machine = {
     name: 'cli-preview-handoff',
-    version: 2,
+    version: 3,
     parseAction,
     reduce,
-    async load(client, session, { sessionId }) {
+    async load(client, session, { sessionId, lock }) {
       const handoff = (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0] || null;
       // Same aggregate transaction: no independently locked domain snapshots.
       const previewState = await readState(client, session, sessionId);
@@ -21,6 +21,19 @@ function createCliPreviewHandoff(pool) {
         OR EXISTS (SELECT 1 FROM preview_operations
           WHERE session_id = $1 AND revision = $2::text AND state = 'running') AS outstanding`,
       [sessionId, session?.checks_commit_sha || null]);
+      const checkOperation = (await client.query(`SELECT run_id, revision, desired_revision, phase, state
+        FROM preview_operations WHERE session_id = $1`, [sessionId])).rows[0] || null;
+      let checkRun = null;
+      if (checkOperation?.run_id) {
+        const values = [sessionId, checkOperation.run_id];
+        // Decisions exclude manifest claims while observing/persisting their
+        // owner. Read-only snapshots cannot take this write lock.
+        if (lock) {
+          await client.query('SELECT run_id FROM check_runs WHERE session_id = $1 AND run_id = $2 FOR UPDATE', values);
+        }
+        checkRun = (await client.query(`SELECT run_id, session_id, commit_sha, owner, manifest
+          FROM check_runs WHERE session_id = $1 AND run_id = $2`, values)).rows[0] || null;
+      }
       const lifecycleSession = session ? Object.fromEntries([
         'id', 'app_id', 'user_id', 'source', 'status', 'active_turn', 'handoff_uploaded_sha',
         'handoff_head_sha', 'handoff_upload_checked_sha', 'checks_commit_sha',
@@ -31,6 +44,8 @@ function createCliPreviewHandoff(pool) {
         handoff,
         preview: previewState,
         checksOutstanding: obligations[0].outstanding,
+        checkOperation,
+        checkRun,
       };
     },
     facts: () => ({}),
@@ -46,7 +61,7 @@ function createCliPreviewHandoff(pool) {
         await client.query(`INSERT INTO cli_preview_handoffs (session_id, head_sha, started_status, admission_id, phase)
           VALUES ($1,$2,$3,$4,'preparing') ON CONFLICT (session_id) DO UPDATE
           SET head_sha = EXCLUDED.head_sha, started_status = EXCLUDED.started_status,
-            admission_id = EXCLUDED.admission_id, phase = 'preparing', flow_id = NULL,
+            admission_id = EXCLUDED.admission_id, phase = 'preparing', flow_id = NULL, checks_recovery = NULL,
             preparation_work_id = NULL, continuation_work_id = NULL`, [
           action.sessionId, action.headSha, action.startedStatus, action.actionId,
         ]);
@@ -54,6 +69,33 @@ function createCliPreviewHandoff(pool) {
       }
       await client.query('UPDATE cli_preview_handoffs SET phase = $2 WHERE session_id = $1',
         [action.sessionId, decision.change.phase]);
+      if (decision.change.recovery) {
+        const recovery = decision.change.recovery;
+        // A missing manifest must retain a conservative run locator across
+        // supersession. Reconstructed metadata never grants creation or grading.
+        const fallback = {
+          durableCli: true,
+          launched: true,
+          reconstruction: 'unknown-launch',
+          recovery,
+          unitSuite: { version: 1, state: 'submitted' },
+        };
+        const { rowCount } = await client.query(`INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest)
+          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (run_id) DO UPDATE
+          SET manifest = jsonb_set(check_runs.manifest, '{recovery}', $6::jsonb)
+          WHERE check_runs.session_id = $2 AND check_runs.commit_sha = $3
+            AND check_runs.owner = $4`, [
+          action.runId, action.sessionId, action.headSha,
+          action.observedOwner || require('../check-runs').selfOwner(),
+          JSON.stringify(fallback), JSON.stringify(recovery),
+        ]);
+        if (rowCount !== 1) throw new Error('Checks manifest changed during blocked-state persistence');
+        await client.query('UPDATE cli_preview_handoffs SET checks_recovery = $2 WHERE session_id = $1',
+          [action.sessionId, JSON.stringify(recovery)]);
+      }
+      if (decision.change.clearRecovery) {
+        await client.query('UPDATE cli_preview_handoffs SET checks_recovery = NULL WHERE session_id = $1', [action.sessionId]);
+      }
       if (decision.change.resetChecks) {
         const pending = await require('../visuals').setChecksPending(client, action.sessionId, action.headSha, 'testing', 'manual');
         if (!pending) throw new Error('Accepted recheck could not admit required checks');

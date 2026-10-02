@@ -43,9 +43,10 @@ function selfOwner() {
 }
 
 // Upsert the manifest for a run. Called twice per run in the normal case: a
-// thin provisional row the moment the run is admitted (launched: false — a
-// process that dies here has nothing to harvest, so the adopter re-drives
-// straight away), then the full manifest just before the Jobs are created.
+// thin provisional row the moment the run is admitted, then the full manifest
+// just before the Jobs are created. Legacy provisional runs may be re-driven;
+// enrolled provisional runs block for reconciliation without assuming their
+// original creator stopped.
 async function record(pool, { runId, sessionId, commitSha, manifest }) {
   if (!pool || !runId || !sessionId) return false;
   try {
@@ -151,16 +152,19 @@ function startHeartbeat(pool, runId, { intervalMs = HEARTBEAT_MS } = {}) {
 // `isInFlight(sessionId)` is visuals.hasInFlightCapture; a row whose session
 // has a live capture in this process is never an orphan, whatever its
 // heartbeat says — that run will settle it (or replace it) itself.
-async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50, sessionId = null } = {}) {
+async function listOrphans(pool, {
+  staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50, sessionId = null, runId = null,
+} = {}) {
   if (!pool) return [];
   const { rows } = await pool.query(
     `SELECT run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at,
             (heartbeat_at < NOW() - ($1::int * INTERVAL '1 millisecond')) AS stale
-       FROM check_runs
+      FROM check_runs
       WHERE ($3::integer IS NULL OR session_id = $3)
+        AND ($4::uuid IS NULL OR run_id = $4)
       ORDER BY started_at ASC
       LIMIT $2`,
-    [Math.round(staleMs), limit, sessionId]
+    [Math.round(staleMs), limit, sessionId, runId]
   );
   const me = selfOwner();
   return rows.filter((row) => {

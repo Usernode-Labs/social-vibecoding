@@ -91,7 +91,8 @@ locks and the legacy harvest/recovery owners stay in place.
 There is no persisted proof that an unacknowledged external creation ended. If a
 submitted capture never appears, its manifest remains discoverable but requires
 operator reconciliation rather than automatic duplicate creation; the same-head
-continuation remains pending. This is containment of uncertainty, not a complete
+continuation now exposes a durable blocked reason and reconciliation owner, as
+defined in [unknown-check-outcomes-contract.md](unknown-check-outcomes-contract.md). This is containment of uncertainty, not a complete
 external execution protocol or a production-ready liveness guarantee. Retired
 missing capture locators likewise remain for later reconciliation. Older C8
 manifests lacking the durable marker retain their historical re-drive behavior.
@@ -107,3 +108,12 @@ and harvest use the same journalled retirement owner. Cleanup errors cannot
 rewrite an already persisted verdict. Known deletion can be resumed without the
 Job output; genuinely unconfirmed creation/output stays discoverable. No new
 executor, timer, rollout or production compatibility claim.
+
+
+The unknown-outcome correction preserves work kind/payload v1, moves the live CLI
+reducer to v3, and freezes v2 for retained trace replay. The original harvester
+owns inspection and recoverable retirement. CLI status exposes `checksRecovery`
+and guidance to join/reconcile that run rather than replace it. Missing manifests
+for running pending checks receive conservative locators; incomplete/reconstructed
+launches cannot infer creator closure. Exact-run discovery bypasses older retained
+manifests for continuation progress; the legacy global scheduling limit remains.

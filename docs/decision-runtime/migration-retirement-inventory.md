@@ -24,10 +24,10 @@ is not permission to delete their global protection.
 | Three early durable preparation kinds: `native-preview-prepare`, `native-preview-template-prepare`, `native-preview-kpack-prepare` | No longer emitted by new admission; it always uses `native-preview-kubernetes-prepare`; keep `native-preview-retire` and `native-cli-preview-continuation`. | Stop emitting early kinds first. Delete handlers/checkpoint branches only after retained queued/running/blocked work and their resource obligations are inventoried and finished/adopted under the original contract. Never rename a persisted payload to the new kind. |
 | `nativePreviewWorkerEnabled` and three `nativePreviewRecoverable*` booleans | Removed from admission and the CLI config shim. New work always includes clone, image and runtime operations under the existing default-off CLI policy. | Keep admission separate from recovery. Direct experiment tests must use the supported contract; old persisted kind recovery cannot depend on current flags. |
 | `nativePreviewAttempts` / `PREVIEW_NATIVE_ATTEMPTS_ENABLED` | Still selects synchronous `native` → `candidate-native` for unenrolled callers. Durable CLI admission no longer supplies or depends on it. | Its redundant durable-admission/shim use is removed, **not** the synchronous feature or activation/cleanup protections. Delete globally only after its callers/retained candidates are handled. |
-| Preview frozen v1–v9; CLI v1; review v1 | Historical replay only; live versions are preview v10, CLI v2, review v2. Old copies are not alternative live state machines. | Define which persisted/exported traces retain replay support. Development checkpoints alone do not require permanent runtime copies. Preserve a reproducible archive for retained traces before removing versions from runtime; v9 requires v8. |
+| Preview frozen v1–v9; CLI v1–v2; review v1 | Historical replay only; live versions are preview v10, CLI v3, review v2. Old copies are not alternative live state machines. | Define which persisted/exported traces retain replay support. Development checkpoints alone do not require permanent runtime copies. Preserve a reproducible archive for retained traces before removing versions from runtime; v9 requires v8. |
 | Old one-shot runtime observer/creation checkpoints and staging `preparedClone` / `onRuntimeStarting` callbacks | Needed by the three early durable kinds; complete path uses named clone/image/runtime operations and persisted resource submissions. | Remove with old handlers. `startCandidateRuntime` and its old action/receipt compatibility need their own usage/retention check; do not delete shared candidate verification or current clone/build provenance guards. |
 | `recoverExisting`, persisted `durableCli`, `operation.durableChecks`, `retainInputForRetirement` | Required ownership selection, not redundant rollout switches. Existing legacy manifests/adapters have different cleanup/re-drive behavior. | Retain while contracts coexist. An in-memory marker selects a persisted owner; it cannot grant admission or stand in for the manifest. |
-| Older durable manifests without `unitSuite`/retirement progress; missing-manifest recovery branch | Unknown companion creation stays conservative. Known retirement resumes from observed identities; manifest deletion can still precede final lifecycle closure. | Inventory manifests/lifecycle rows. Remove only old-format compatibility after they are handled; preserve current final-closure recovery. Do not turn absence into an exemption or discard a late-creation locator. |
+| Older durable manifests without `unitSuite`/retirement progress; missing-manifest recovery branch | Unknown companion creation stays conservative. An enrolled pending missing manifest now gets a conservative locator and explicit block, instead of fresh execution. Provisional launches cannot re-drive or forget unknown creation. Known retirement resumes from observed identities; manifest deletion can still precede final lifecycle closure. | Inventory manifests/lifecycle rows. Remove only old-format compatibility after they are handled; preserve current final-closure recovery. Do not turn absence into an exemption or discard a late-creation locator. |
 | Session staging/lifecycle locks, build-retention guard/fail-stop, staging process queue | Legacy/shared resource and check-consumer boundaries remain; complete candidate isolation does not fence all stable binding/legacy mutations or build retention. | Keep. Narrow/remove only through demonstrated replacement tests and writer/consumer audit, not as part of pruning checkpoint variants. |
 | Web cleanup/activation recovery, build retention and global check harvest/recovery timers | Preview cleanup excludes `preparation_owner = bounded`; activation recovery excludes the enrolled desired flow. Worker census/continuation owns this cohort; global owners still cover other work. | Keep these exclusions and legacy owners. No global timer can be removed by this cohort consolidation. Legacy oldest-50 harvest fairness remains a separate limit. |
 | Attempt/Build/runtime/role tombstones, manifests and recurring retirement | Preserve unknown late creation and dependency fences. Database release is distinct from creator closure. | No age/absence-based expiry. Retain locators until creator termination/reconciliation is proven. Do not delete resource records because preparation work says `succeeded`. |
@@ -139,3 +139,27 @@ verification remain mandatory; supported-store/trace policy still gates old-form
 removal. No execution owner, lock, timer, handler or replay version was removed in
 integration. No production deployment, worker installation or push is authorized;
 default-off code integration is not full migration completion.
+
+
+## Unknown-check-outcome correction
+
+No new work kind, capability flag, timer or executor. The retained continuation
+polls the original run; `check-harvest` remains the reconciliation/retirement owner.
+`checks_recovery` records current flow/head/run/reason/owner. Its lifecycle guard
+and manifest-owner exclusion use the shared decision transaction; live reducer
+v3 is used and v2 is retained only for existing traces. Required recover/replay
+support remains subject to the store/export audit, not a permanent checkpoint rule.
+
+For this cohort, removed authority is **provisional/missing-manifest re-drive**,
+implicit “pending forever” for named unknown outcomes, and lifecycle closure after
+an inspection exception. Capture deadlines/lost logs no longer fabricate terminal
+outcomes. Confirmed failures and graduation policy remain. Legacy re-drive,
+lifecycle locks, global harvest timers and best-effort optional artifacts are still
+required; none is removed by this correction. Exact-run continuation discovery
+cannot be hidden behind batches of retained predecessors; this does not repair
+legacy global oldest-50 cleanup scheduling.
+
+Provisional/reconstructed locators intentionally persist after visible cleanup,
+including supersession. Removing them requires trustworthy original creation
+closure/specification evidence. There is no age-based expiry or operator reset
+API here. See [the contract](unknown-check-outcomes-contract.md).

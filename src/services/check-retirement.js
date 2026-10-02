@@ -25,7 +25,9 @@ async function retire(config, pool, sessionId, runId) {
   });
   const released = kind => result.jobs.some(job => job.kind === kind && job.stage === 'released');
   let why = null;
-  if (captureRequired && !released('capture')) why = 'capture creation unconfirmed';
+  if (manifest.reconstruction) why = 'original launch specification unavailable';
+  else if (!manifest.launched) why = 'launch manifest incomplete';
+  else if (captureRequired && !released('capture')) why = 'capture creation unconfirmed';
   else if (unitRequired && !released('unit-suite')) why = 'unit-suite creation unconfirmed';
   return { complete: why === null, why };
 }

@@ -17,6 +17,7 @@ const SUITES = [
   'tests/recoverable-preview-runtime.test.js',
   'tests/cli-preview-handoff-postgres.test.js',
   'tests/cli-preview-checks.test.js',
+  'tests/cli-preview-checks-outcome.test.js',
   'tests/check-harvest.test.js',
   'tests/check-retirement.test.js',
   'tests/unit-suite-check.test.js',

@@ -219,7 +219,12 @@ function createCliHandoffWork(pool, config, {
     if (!current(state, input)) return { outcome: 'succeeded', code: 'handoff_obsolete' };
     return checksSettled(state.session) && !state.checksOutstanding
       ? { outcome: 'succeeded', result: { checksObserved: true } }
-      : { outcome: 'waiting', code: 'checks_continuation_pending', delayMs: 1000 };
+      : {
+        outcome: 'waiting',
+        code: state.handoff.checks_recovery ? 'checks_outcome_blocked' : 'checks_continuation_pending',
+        result: state.handoff.checks_recovery ? { checksBlocked: state.handoff.checks_recovery } : null,
+        delayMs: 1000,
+      };
   }
 
   async function commitContinuation(transaction, attempt, proposed) {

@@ -774,7 +774,7 @@ for (const superseded of [false, true]) {
         unitSuite: arrived ? { name: 'unit', uid: 'unit-uid' } : null }),
       collectCheckJob: async (_config, { kind }) => {
         assert.equal(arrived, true, 'No verdict is collected while the expected companion is absent');
-        return { state: 'succeeded', stdout: kind === 'unit-suite' ? '# tests 2\n# pass 2\n# fail 0\n' : '', stderr: '' };
+        return { state: 'succeeded', stdout: kind === 'unit-suite' ? '# tests 2\n# pass 2\n# fail 0\n' : 'capture output', stderr: '' };
       },
     });
     stub(t, retirement, { retire: async (_config, _pool, session, run) => {
@@ -828,8 +828,8 @@ for (const superseded of [false, true]) {
     });
     stub(t, retirement, { retire: async () => { throw new Error('Unit Job ownership conflicts'); } });
     const result = await harvest.adopt(config, pool, row);
-    assert.equal(result.outcome, 'failed');
-    assert.match(result.err, /ownership/);
+    assert.equal(result.outcome, superseded ? 'failed' : 'waiting');
+    assert.match(superseded ? result.err : result.why, /ownership/);
     assert.deepEqual(pool.deleted, []);
   });
 }

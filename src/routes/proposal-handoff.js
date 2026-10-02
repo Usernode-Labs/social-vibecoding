@@ -690,6 +690,16 @@ function publicSessionStatus(session, options = {}) {
   const checks = checksSnapshot(session, runtime, options);
   const revisionState = revisionBuildState(session, checks, runtime);
   const state = session.status === 'active' ? revisionState : session.status;
+  const blocked = options.checksRecovery?.state === 'blocked'
+    && options.checksRecovery.headSha === headSha
+    && ['active', 'paused', 'promoted', 'merging'].includes(session.status);
+  const nextStep = blocked ? [
+    `Checks are blocked (${options.checksRecovery.reason}).`,
+    `The check-harvest owner reconciles the original run ${options.checksRecovery.runId}.`,
+    'Poll proposal_status; proposal_recheck joins this run and cannot replace it.',
+    'If evidence remains unavailable, investigate this retained run instead of starting another execution.',
+  ].join(' ') : statusNextStep(state, ['paused', 'promoted'].includes(session.status) ? revisionState : null, checks);
+
   return {
     sessionId: Number(session.id),
     source: session.source,
@@ -707,14 +717,14 @@ function publicSessionStatus(session, options = {}) {
     checkState: session.check_state || null,
     checkError: session.check_error_detail || null,
     checks,
+    ...(options.checksRecovery ? { checksRecovery: options.checksRecovery } : {}),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
     supersedesSessionId: session.handoff_supersedes_session_id == null
       ? null
       : Number(session.handoff_supersedes_session_id),
     webPath: changeHashPath(session.app_slug, session.id),
-    nextStep: statusNextStep(state,
-      ['paused', 'promoted'].includes(session.status) ? revisionState : null, checks),
+    nextStep,
   };
 }
 
@@ -1978,7 +1988,8 @@ function proposalHandoffRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'view'))) {
         return res.status(404).json({ error: 'Handoff session not found' });
       }
-      res.json(publicSessionStatus(session));
+      const checksRecovery = await require('../services/cli-preview-handoff/checks-outcome').readRecovery(pool, session);
+      res.json(publicSessionStatus(session, { checksRecovery }));
     } catch (err) {
       log.error('proposal-handoff', 'Failed to read status', { err: err.message });
       res.status(500).json({ error: 'Internal server error' });

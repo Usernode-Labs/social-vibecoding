@@ -20,6 +20,9 @@ async function fixture(t) {
   const selected = await readPreviewPostgresFixture();
   const db = await createExecutionDatabase(selected.databaseUrl);
   await addHandoffColumns(db.pool);
+  await db.pool.query(`ALTER TABLE apps ADD COLUMN name TEXT,
+      ADD COLUMN runtime_name TEXT, ADD COLUMN runtime_kind TEXT;
+    ALTER TABLE chat_sessions ADD COLUMN imported_pr_head_sha TEXT`);
   await db.pool.query(`INSERT INTO chat_sessions (id, handoff_uploaded_sha, checks_commit_sha)
     VALUES (1,$1,$1)`, [HEAD]);
   const oldLifecycle = process.env.PREVIEW_LIFECYCLE_ENABLED;
@@ -371,7 +374,6 @@ test('C11 retirement journal requires the claimed owner and prior progress', { s
 
 test('C11 retirement failure preserves a settled live verdict and recovery locator', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
-  await f.pool.query('ALTER TABLE chat_sessions ADD COLUMN imported_pr_head_sha TEXT');
   const runs = require('../src/services/check-runs');
   const retirement = require('../src/services/check-retirement');
   const { createLifecycle } = require('../src/services/preview-lifecycle');
@@ -394,4 +396,312 @@ test('C11 retirement failure preserves a settled live verdict and recovery locat
   assert.equal((await f.session()).check_state, 'passing');
   assert.equal((await runs.read(f.pool, runId, 1)).manifest.retirement.version, 1);
   assert.equal((await f.pool.query('SELECT state FROM preview_operations WHERE session_id = 1')).rows[0].state, 'running');
+});
+
+
+async function pendingChecks(t, manifest = { launched: true, durableCli: true,
+  unitSuite: { version: 1, state: 'not-required' } }) {
+  const f = await fixture(t);
+  const work = f.make({ capture: async () => {} });
+  const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
+  await candidate(f, work, admitted);
+  await tick(work);
+  const runId = randomUUID();
+  await f.pool.query(`INSERT INTO preview_operations
+    (session_id, desired_revision, run_id, revision, phase, state)
+    VALUES (1,$1,$2,$1,'capture','running')`, [HEAD, runId]);
+  const runs = require('../src/services/check-runs');
+  if (manifest) assert.equal(await runs.record(f.pool, {
+    runId, sessionId: 1, commitSha: HEAD, manifest,
+  }), true);
+  return { ...f, work, admitted, runId, runs };
+}
+
+function useChecksLifecycle(t, f) {
+  const lifecycle = require('../src/services/preview-lifecycle');
+  const local = lifecycle.createLifecycle({ poolFor: () => f.pool, lock: async (_c, _k, _id, run) => run() });
+  t.mock.method(lifecycle, 'adopt', local.adopt);
+  t.mock.method(lifecycle, 'settleAdopted', local.settleAdopted);
+  return lifecycle;
+}
+
+async function blockChecks(f, reason = 'capture_creation_unconfirmed') {
+  return require('../src/services/cli-preview-handoff/checks-outcome').blockOutcome(f.pool, {
+    sessionId: 1, runId: f.runId, headSha: HEAD, reason, observedOwner: f.runs.selfOwner(),
+  });
+}
+
+test('unknown checks: blocked outcome survives reply loss, restart and admission pause', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  const first = await blockChecks(f);
+  assert.equal(first.accepted, true);
+  assert.equal(first.recovery.owner, 'check-harvest');
+  const before = await f.work.owner.trace(1);
+  const retry = await blockChecks(f);
+  assert.deepEqual(retry.recovery, first.recovery, 'Adopt a commit whose reply was lost');
+  assert.equal((await f.work.owner.trace(1)).length, before.length);
+  const { readRecovery } = require('../src/services/cli-preview-handoff/checks-outcome');
+  assert.deepEqual(await readRecovery(f.pool, await f.session()), first.recovery);
+  const serving = (await f.session()).staging_runtime_name;
+  f.config.nativeCliPreviewHandoffEnabled = false;
+  const restart = f.make({ capture: async () => {} });
+  const original = await restart.recover(1);
+  const retries = await Promise.all(Array.from({ length: 6 }, () => restart.recover(1, { force: true })));
+  assert.ok(retries.every(item => item.id === original.id));
+  await f.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE id = $1', [original.id]);
+  await tick(restart);
+  const waiting = await restart.recover(1);
+  assert.equal(waiting.status, 'queued');
+  assert.equal(waiting.result.checksBlocked.runId, f.runId);
+  assert.equal((await f.session()).check_state, 'pending');
+  assert.equal((await f.session()).staging_runtime_name, serving);
+  assert.equal(f.creates(), 1);
+  const { replayDecision } = require('../src/services/cli-preview-handoff/reducer');
+  for (const entry of await restart.owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+  const historical = { reducer_version: 2, pre_state: await restart.owner.read(1), action: {
+    type: 'RequestCliPreviewChecks', actionId: randomUUID(), sessionId: 1,
+    flowId: f.admitted.work.input.identity.flowId, headSha: HEAD, force: true,
+  } };
+  assert.equal(replayDecision(historical).accepted, true, 'Retained v2 does not acquire the new v3 guard');
+});
+
+test('unknown checks: persistence error rolls back block, manifest and journals', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t, null);
+  const connect = f.pool.connect.bind(f.pool);
+  let fail = true;
+  const faulty = {
+    query: f.pool.query.bind(f.pool),
+    async connect() {
+      const client = await connect();
+      return {
+        release: () => client.release(),
+        async query(sql, values) {
+          const result = await client.query(sql, values);
+          if (fail && sql.startsWith('UPDATE cli_preview_handoffs SET checks_recovery')) {
+            throw new Error('Injected mapping error after writes');
+          }
+          return result;
+        },
+      };
+    },
+  };
+  const outcome = require('../src/services/cli-preview-handoff/checks-outcome');
+  const report = () => outcome.blockOutcome(faulty, {
+    sessionId: 1, runId: f.runId, headSha: HEAD, reason: 'manifest_missing', observedOwner: null,
+  });
+  const traces = (await f.work.owner.trace(1)).length;
+  await assert.rejects(report(), /Injected mapping/);
+  assert.equal((await f.work.owner.read(1)).handoff.checks_recovery, null);
+  assert.equal(await f.runs.read(f.pool, f.runId, 1), null);
+  assert.equal((await f.work.owner.trace(1)).length, traces);
+  fail = false;
+  assert.equal((await report()).accepted, true);
+  assert.equal((await f.runs.read(f.pool, f.runId, 1)).manifest.reconstruction, 'unknown-launch');
+});
+
+test('unknown checks: current lifecycle, owner, head and flow fence reports', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  const action = {
+    type: 'CliChecksOutcomeBlocked', actionId: randomUUID(), sessionId: 1,
+    flowId: f.admitted.work.input.identity.flowId, headSha: HEAD, runId: f.runId,
+    reason: 'capture_creation_unconfirmed', observedOwner: 'other-owner',
+  };
+  assert.equal((await f.work.owner.apply(action)).decision.reason, 'checks_owner_changed');
+  action.observedOwner = f.runs.selfOwner();
+  action.actionId = randomUUID();
+  await f.pool.query('UPDATE preview_operations SET desired_revision = $1 WHERE session_id = 1', [NEXT]);
+  assert.equal((await f.work.owner.apply(action)).decision.reason, 'checks_run_changed');
+  await f.pool.query('UPDATE preview_operations SET desired_revision = $1 WHERE session_id = 1', [HEAD]);
+  action.actionId = randomUUID();
+  action.flowId = randomUUID();
+  assert.equal((await f.work.owner.apply(action)).decision.reason, 'superseded_handoff');
+  assert.equal((await f.work.owner.read(1)).handoff.checks_recovery, null);
+});
+
+for (const kind of ['capture', 'unit']) {
+  test(`unknown checks: delayed ${kind} is adopted, not re-created`, { skip: !postgresEnabled }, async t => {
+    const f = await pendingChecks(t, { launched: true, durableCli: true,
+      unitSuite: { version: 1, state: kind === 'unit' ? 'submitted' : 'not-required' } });
+    useChecksLifecycle(t, f);
+    const kubernetes = require('../src/services/kubernetes');
+    const visuals = require('../src/services/visuals');
+    const harvest = require('../src/services/check-harvest');
+    let arrived = false;
+    let collections = 0;
+    t.mock.method(kubernetes, 'findCheckJobs', async () => ({
+      capture: kind === 'unit' || arrived ? { name: 'capture', uid: 'capture-uid' } : null,
+      unitSuite: kind === 'unit' && arrived ? { name: 'unit', uid: 'unit-uid' } : null,
+    }));
+    t.mock.method(kubernetes, 'collectCheckJob', async () => {
+      collections++;
+      return { state: 'succeeded', stdout: 'verified fixture output', stderr: '', exitCode: 0 };
+    });
+    t.mock.method(kubernetes, 'runCaptureJob', async () => assert.fail('No competing capture'));
+    t.mock.method(kubernetes, 'runUnitSuiteJob', async () => assert.fail('No competing unit suite'));
+    t.mock.method(require('../src/services/check-retirement'), 'retire', async () => {
+      assert.equal(arrived, true);
+      return { complete: true };
+    });
+    t.mock.method(visuals, 'scheduleShots', () => {});
+    t.mock.method(visuals, 'maybeAutoMergeAfterChecks', () => {});
+    t.mock.method(visuals, 'noteBotChecksAfterChecks', () => {});
+    t.mock.method(visuals, 'settleCaptureRun', async (_c, pool, run) => {
+      assert.equal(run.commitHash, HEAD);
+      if (kind === 'unit') assert.ok(run.unitOutcome.row);
+      await visuals.storeChecks(pool, 1, HEAD, { state: 'passing', results: [] });
+      return { traceStatus: 'passing', result: { state: 'passing' } };
+    });
+    const adopt = async () => harvest.adopt(f.config, f.pool, await f.runs.read(f.pool, f.runId, 1));
+    assert.equal((await adopt()).outcome, 'blocked');
+    assert.equal(collections, 0);
+    assert.equal((await f.work.owner.read(1)).handoff.checks_recovery.reason, `${kind}_creation_unconfirmed`);
+    const binding = (await f.session()).staging_runtime_name;
+    arrived = true;
+    assert.equal((await adopt()).outcome, 'settled');
+    assert.equal(await f.runs.read(f.pool, f.runId, 1), null);
+    assert.equal((await f.session()).staging_runtime_name, binding);
+    const continuation = await f.work.recover(1);
+    await f.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE id = $1', [continuation.id]);
+    await tick(f.work);
+    assert.equal((await f.work.recover(1)).status, 'succeeded');
+    assert.equal((await f.work.owner.read(1)).handoff.checks_recovery, null);
+    assert.equal(f.creates(), 1);
+  });
+}
+
+for (const manifest of [null, { launched: false, durableCli: true }]) {
+  test(`unknown checks: ${manifest ? 'provisional' : 'missing'} manifest cannot authorize fresh execution`, { skip: !postgresEnabled }, async t => {
+    const f = await pendingChecks(t, manifest);
+    const recovery = require('../src/services/cli-preview-handoff/checks');
+    const result = await recovery.recoverCaptureRun(f.config, {
+      pool: f.pool, session: await f.session(),
+      previous: (await f.pool.query('SELECT * FROM preview_operations WHERE session_id = 1')).rows[0], force: true,
+    });
+    assert.equal(result.handled, true);
+    const blocked = (await f.work.owner.read(1)).handoff.checks_recovery;
+    assert.equal(blocked.reason, manifest ? 'launch_manifest_incomplete' : 'manifest_missing');
+    await f.pool.query('UPDATE chat_sessions SET handoff_uploaded_sha = $1 WHERE id = 1', [NEXT]);
+    const successor = await f.work.admit({ session: await f.session(), headSha: NEXT });
+    assert.equal(successor.accepted, true);
+    const old = await f.runs.read(f.pool, f.runId, 1);
+    assert.ok(old, 'Supersession keeps the original cleanup locator');
+    t.mock.method(require('../src/services/kubernetes'), 'retireCheckResources', async () => ({ jobs: [
+      { kind: 'capture', stage: 'released' }, { kind: 'unit-suite', stage: 'released' },
+    ] }));
+    const retired = await require('../src/services/check-retirement').retire(f.config, f.pool, 1, f.runId);
+    assert.equal(retired.complete, false, 'Visible retirement cannot reconstruct unknown original creation');
+    assert.equal((await f.work.owner.read(1)).handoff.checks_recovery, null);
+    assert.equal((await f.session()).checks_commit_sha, NEXT);
+    assert.ok(await f.runs.read(f.pool, f.runId, 1));
+  });
+}
+
+test('unknown checks: launching process exposes lost external acknowledgment without retiring the run', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  await f.pool.query('DELETE FROM preview_operations WHERE session_id = 1');
+  await f.runs.finish(f.pool, f.runId);
+  const lifecycle = require('../src/services/preview-lifecycle').createLifecycle({
+    poolFor: () => f.pool, lock: async (_c, _k, _id, run) => run(),
+    checks: () => ({ cancelPreviewChecks: async () => {} }),
+  });
+  const result = await lifecycle.run(f.config, await f.session(), HEAD, 'capture', async operation => {
+    operation.durableChecks = true;
+    f.runId = operation.runId;
+    assert.equal(await f.runs.record(f.pool, {
+      sessionId: 1, runId: operation.runId, commitSha: HEAD,
+      manifest: { launched: true, durableCli: true, unitSuite: { version: 1, state: 'submitted' } },
+    }), true);
+    throw Object.assign(new Error('Injected unit POST reply loss'), { code: 'UNIT_SUITE_EXECUTION_UNCONFIRMED' });
+  }, { onError: async () => assert.fail('Unknown is not a confirmed failure verdict') });
+  assert.equal(result.checksBlocked.reason, 'unit_outcome_unconfirmed');
+  assert.equal((await f.pool.query('SELECT state FROM preview_operations WHERE session_id = 1')).rows[0].state, 'running');
+  assert.equal((await f.session()).check_state, 'pending');
+  assert.ok(await f.runs.read(f.pool, f.runId, 1));
+});
+
+test('unknown checks: vanished/deadline/lost output stays adoptable, transport errors retry, later output settles', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  useChecksLifecycle(t, f);
+  const kubernetes = require('../src/services/kubernetes');
+  const visuals = require('../src/services/visuals');
+  const harvest = require('../src/services/check-harvest');
+  let observation = { state: 'gone', stdout: '' };
+  let unavailable = false;
+  t.mock.method(kubernetes, 'findCheckJobs', async () => {
+    if (unavailable) throw new Error('Injected temporary inspection error');
+    return { capture: { name: 'same-capture', uid: 'same-uid' }, unitSuite: null };
+  });
+  t.mock.method(kubernetes, 'collectCheckJob', async () => observation);
+  t.mock.method(require('../src/services/check-retirement'), 'retire', async () => {
+    assert.equal(observation.state, 'succeeded');
+    assert.equal(observation.partialReason, undefined);
+    return { complete: true };
+  });
+  t.mock.method(visuals, 'scheduleShots', () => {});
+  t.mock.method(visuals, 'maybeAutoMergeAfterChecks', () => {});
+  t.mock.method(visuals, 'noteBotChecksAfterChecks', () => {});
+  t.mock.method(visuals, 'settleCaptureRun', async (_config, pool) => {
+    await visuals.storeChecks(pool, 1, HEAD, { state: 'failing', results: [] });
+    return { traceStatus: 'failing', result: { state: 'failing' } };
+  });
+  const adopt = async () => harvest.adopt(f.config, f.pool, await f.runs.read(f.pool, f.runId, 1));
+  for (const [outcome, reason] of [
+    [{ state: 'gone', stdout: '' }, 'capture_outcome_unconfirmed'],
+    [{ state: 'timeout', stdout: 'partial' }, 'capture_deadline_unconfirmed'],
+    [{ state: 'succeeded', stdout: 'partial', partialReason: 'capture log unavailable' }, 'capture_output_unavailable'],
+  ]) {
+    observation = outcome;
+    assert.equal((await adopt()).outcome, 'blocked');
+    assert.equal((await f.work.owner.read(1)).handoff.checks_recovery.reason, reason);
+    assert.equal((await f.session()).check_state, 'pending');
+    assert.equal((await f.pool.query('SELECT state FROM preview_operations WHERE session_id = 1')).rows[0].state, 'running');
+  }
+  unavailable = true;
+  assert.equal((await adopt()).outcome, 'failed');
+  assert.equal((await f.pool.query('SELECT state FROM preview_operations WHERE session_id = 1')).rows[0].state, 'running',
+    'An inspection exception must not close the lifecycle and strand the original run');
+  unavailable = false;
+  observation = { state: 'succeeded', stdout: 'recovered frames' };
+  assert.equal((await adopt()).outcome, 'settled');
+  assert.equal((await f.session()).check_state, 'failing', 'Adopt the actual failing verdict without re-running it');
+});
+
+test('unknown checks: conflicting unit UID blocks adoption and keeps successor untouched', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t, { launched: true, durableCli: true, unitSuite: {
+    version: 1, state: 'observed', job: { name: 'unit', uid: 'original' },
+  } });
+  useChecksLifecycle(t, f);
+  const kubernetes = require('../src/services/kubernetes');
+  const harvest = require('../src/services/check-harvest');
+  t.mock.method(kubernetes, 'findCheckJobs', async () => ({
+    capture: { name: 'capture', uid: 'original-capture' }, unitSuite: { name: 'unit', uid: 'successor' },
+  }));
+  t.mock.method(kubernetes, 'collectCheckJob', async () => assert.fail('Conflicting output cannot be consumed'));
+  t.mock.method(require('../src/services/check-retirement'), 'retire', async () => assert.fail('Current uncertain outcome cannot retire successor'));
+  const result = await harvest.adopt(f.config, f.pool, await f.runs.read(f.pool, f.runId, 1));
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.recovery.reason, 'unit_ownership_conflict');
+  assert.equal((await f.runs.read(f.pool, f.runId, 1)).manifest.unitSuite.job.uid, 'original');
+});
+
+test('unknown checks: retained predecessors cannot hide the enrolled current run from reconciliation', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  useChecksLifecycle(t, f);
+  t.mock.method(require('../src/services/kubernetes'), 'findCheckJobs', async () => ({ capture: null, unitSuite: null }));
+  for (let index = 0; index < 55; index++) {
+    await f.pool.query(`INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest, started_at)
+      VALUES ($1,1,$2,$3,$4,NOW() - INTERVAL '1 hour')`, [
+      randomUUID(), NEXT, f.runs.selfOwner(), JSON.stringify({ launched: true, durableCli: true }),
+    ]);
+  }
+  const outcome = await require('../src/services/cli-preview-handoff/checks').recoverCaptureRun(f.config, {
+    pool: f.pool, session: await f.session(),
+    previous: (await f.pool.query('SELECT * FROM preview_operations WHERE session_id = 1')).rows[0],
+  });
+  // Only external Job discovery is injected; selection/admission/state are SQL.
+  // No cluster endpoint belongs to this PostgreSQL-only fixture.
+  assert.equal(outcome.handled, true);
+  assert.equal(outcome.result.checksBlocked.runId, f.runId);
+  assert.equal((await f.pool.query('SELECT COUNT(*) FROM check_runs')).rows[0].count, '56',
+    'Earlier obligations remain discoverable');
 });

@@ -125,7 +125,8 @@ async function claimRun(pool, row, base) {
 // log line: 'settled' (a verdict was stored from the Job's output), 'redriven'
 // (nothing readable — a fresh run was requested), 'moot' (the session no
 // longer wants this run), 'busy' (a live run here has the session),
-// 'contested' (another harvester took the row first), or 'failed'.
+// 'contested' (another harvester took the row first), 'blocked' (an enrolled
+// outcome cannot be established), or 'failed' (an inspection attempt threw).
 // `hold` is the seat claimRun() took; without one the claim happens here.
 async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJobs = false } = {}) {
   const visuals = require('./visuals');
@@ -148,9 +149,21 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     if (!jobs.unitSuite) return 'unit-suite creation unconfirmed';
     const receipt = manifest.unitSuite?.job;
     if (receipt && (receipt.name !== jobs.unitSuite.name || receipt.uid !== jobs.unitSuite.uid)) {
-      throw new Error('Unit Job ownership conflicts with its observed receipt');
+      return 'unit-suite ownership conflicts';
     }
     return null;
+  }
+
+  async function blocked(reason, why) {
+    const persisted = await require('./cli-preview-handoff/checks-outcome').blockOutcome(pool, {
+      sessionId, runId, headSha: row.commit_sha, reason, observedOwner: checkRuns.selfOwner(),
+    });
+    return {
+      outcome: persisted.accepted ? 'blocked' : 'waiting',
+      why,
+      recovery: persisted.recovery || null,
+      ...base,
+    };
   }
 
   const retireConsumers = async () => {
@@ -228,7 +241,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url,
       runtime_name: session.app_runtime_name, runtime_kind: session.app_runtime_kind,
     };
-    if (!manifest.launched) return await redrive(session, 'process died before the Jobs were created');
+    if (manifest.durableCli && manifest.reconstruction) return await blocked('manifest_missing', 'launch specification unavailable');
+    if (!manifest.launched) {
+      if (manifest.durableCli) return await blocked('launch_manifest_incomplete', 'launch manifest incomplete');
+      return await redrive(session, 'process died before the Jobs were created');
+    }
 
     // Under the lifecycle the run's operation row must still be ours to
     // settle; a newer run's row means a successor already owns the session
@@ -250,11 +267,12 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       // The launch manifest precedes external creation. For the enrolled
       // contract, absence cannot close that submission or authorize a second
       // run. Keep the locator so a delayed Job can still be harvested.
-      if (manifest.durableCli) return { outcome: 'waiting', why: 'capture creation unconfirmed', ...base };
+      if (manifest.durableCli) return await blocked('capture_creation_unconfirmed', 'capture creation unconfirmed');
       return await redrive(session, 'capture Job not found');
     }
     const missingUnit = missingUnitCompanion(jobs);
-    if (missingUnit) return { outcome: 'waiting', why: missingUnit, ...base };
+    if (missingUnit) return await blocked(missingUnit === 'unit-suite ownership conflicts'
+      ? 'unit_ownership_conflict' : 'unit_creation_unconfirmed', missingUnit);
 
     log.info('check-harvest', 'Adopting an orphaned checks run', {
       ...base, owner: row.owner,
@@ -297,16 +315,14 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       progress.close();
     }
     if (controller.signal.aborted) return await moot('superseded while collecting');
-    if (manifest.durableCli && unit && ['gone', 'aborted'].includes(unit.state)) {
-      return { outcome: 'waiting', why: 'unit-suite outcome unconfirmed', ...base };
+    if (manifest.durableCli) {
+      const { collectedUncertainty } = require('./cli-preview-handoff/checks-outcome');
+      const uncertainty = collectedUncertainty('capture', capture) || collectedUncertainty('unit', unit);
+      if (uncertainty) return await blocked(uncertainty, uncertainty.replaceAll('_', ' '));
     }
     if (capture && (capture.state === 'gone' || capture.state === 'aborted')) {
-      // The Job vanished under us. A successor that cancelled it would have
-      // moved the session on; if it has not, the TTL collected the Job and
-      // its output with it, and only a fresh run can judge this head.
       const again = stillCurrent(await loadSession(pool, sessionId), commitSha);
       if (!again.current) return await moot(again.why);
-      if (manifest.durableCli) return { outcome: 'waiting', why: 'capture outcome unconfirmed', ...base };
       return await redrive(session, 'capture Job gone before it could be read');
     }
 
@@ -314,10 +330,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     // now rather than from the manifest: the history could only have moved
     // towards graduated, and that is what a fresh run would see too. A Job
     // that vanished contributes no row for legacy runs. Enrolled runs retain
-    // uncertainty above; a timeout contributes the existing failure policy.
+    // uncertainty above; an enrolled timeout cannot establish termination.
     let unitOutcome = null;
-    if (unit && (unit.state === 'succeeded' || unit.state === 'failed'
-        || (manifest.durableCli && unit.state === 'timeout'))) {
+    if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
       let graduated = false;
       try {
         graduated = (await checkHistory.loadGraduated(pool, app.id))
@@ -421,7 +436,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       return { outcome: 'waiting', why: err.message, ...base };
     }
     log.warn('check-harvest', 'Harvest failed (non-fatal); the stale sweep keeps the row', { ...base, err: err.message });
-    if (operation) await lifecycle.settleAdopted(config, operation, { error: err }).catch(() => {});
+    // An inspection or settlement exception does not establish an enrolled
+    // external outcome. Keep that run adoptable on the next reconciliation.
+    if (operation && !manifest.durableCli) {
+      await lifecycle.settleAdopted(config, operation, { error: err }).catch(() => {});
+    }
     return { outcome: 'failed', err: err.message, ...base };
   } finally {
     stopHeartbeat();

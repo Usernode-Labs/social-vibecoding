@@ -11429,8 +11429,10 @@ CREATE TABLE IF NOT EXISTS cli_preview_handoffs (
   flow_id UUID,
   preparation_work_id UUID REFERENCES execution_work_requests(id),
   continuation_work_id UUID REFERENCES execution_work_requests(id),
+  checks_recovery JSONB,
   phase TEXT NOT NULL CHECK (phase IN ('preparing', 'continuing', 'checking', 'complete'))
 );
+ALTER TABLE cli_preview_handoffs ADD COLUMN IF NOT EXISTS checks_recovery JSONB;
 CREATE TABLE IF NOT EXISTS cli_preview_receipts (
   session_id INTEGER NOT NULL CHECK (session_id > 0),
   action_id UUID NOT NULL,

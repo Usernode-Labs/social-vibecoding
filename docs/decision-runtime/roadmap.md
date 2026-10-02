@@ -43,7 +43,7 @@ injected interruption points do not prove public-edge or installation compatibil
 | --- | --- | --- |
 | Consolidate one CLI contract | Consolidation + verification | **New admission consolidated.** Inventory retained work/receipts/manifests/traces before pruning recovery/replay formats. Follow the [removal slice](migration-retirement-inventory.md); keep legacy safeguards. |
 | Integrate canonical main and CI | Consolidation + verification | **Integrated locally:** canonical behavior, persisted specs, writer inventory and focused CI reconciled. PostgreSQL and disposable-resource failure matrix rerun; CI execution on GitHub remains unverified because no push is authorized. See the integration record. |
-| Resolve unknown checks outcomes | New implementation + verification | Explicit recover-or-block outcome and reconciliation owner for unconfirmed creation or lost/expired output. Absence/timeout/lease expiry cannot establish creator closure. |
+| Resolve unknown checks outcomes | **Implemented locally; bounded verification** | [Recover or explicitly block](unknown-check-outcomes-contract.md). Original-run reconciliation owns delayed Jobs/output; pending missing/provisional manifests cannot admit competing checks. Unknown creation and cleanup remain discoverable. Permanent evidence loss still needs trustworthy evidence; no unsafe reset or creator-closure inference. |
 | Idempotent check gating settlement | New implementation + verification | Verdict, history/graduation and required gate follow-ups commit together or have durable deduplicated delivery. Best-effort `checkHistory.recordRun` does not provide this. Preserve graduation policy. |
 | Verify capture/worker boundaries | Verification; adapter changes where needed | Backend revision, public origin/assets/TLS/access, private-user behavior, permissions and compatible restart/admission pause, in isolated fixtures. Current substitutions leave these unproved. |
 | Migrate remaining writers | New implementation + consolidation + verification; **after CLI gate** | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery paths, with explicit policies. Prove Docker separately; retire competing owners and allowlist entries after handling retained work. |
@@ -72,7 +72,7 @@ This scope does not require rewriting every platform lifecycle.
   its own proof; current protections and locators remain until then.
 - Broader turn, merge and release lifecycle refactors after this migration.
 
-**Next action:** review the integrated supported contract and retained-store/trace
-policy, then address the mandatory unknown-check-outcome and gating-settlement
-gaps. New callers remain behind the first supported CLI gate. CI configuration
+**Next action:** address idempotent gating settlement, then complete the supported
+contract/boundary review and retained-store/trace policy. The bounded unknown-outcome
+correction does not provide automatic repair of permanently missing evidence. New callers remain behind the first supported CLI gate. CI configuration
 is validated locally; running it on GitHub requires separate push authorization.
