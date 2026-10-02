@@ -14569,6 +14569,16 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-topic-back:hover { background: var(--brand-line); }
 .dev-topic-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-topic-back-icon { width: 18px; height: 18px; flex-shrink: 0; }
+/* #3691: a card opened from Messages carries two chips, "‹ Messages" and
+   "‹ Workshop", side by side in the one chip's place. The row takes over the
+   chip's left alignment; each chip keeps its own margins, so the row adds
+   none, and it wraps rather than overflowing a narrow phone. */
+.dev-topic-backs {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  align-self: flex-start;
+}
 .dev-change-overview {
   flex: 1;
   min-height: 0;
