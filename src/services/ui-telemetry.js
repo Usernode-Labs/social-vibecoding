@@ -13,10 +13,29 @@ const ID_RE = /^[a-z0-9][a-z0-9-]{15,79}$/;
 const APP_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const BUILD_RE = /^(?:[0-9a-f]{7,40}|dev)$/;
 
-const SCREENS = Object.freeze(new Set([
+// The seven representative journeys #3553 instruments for its failure
+// report. That report (aggregate below) reads only these, so the navigation
+// codes added for the admin Journey page (#3369) never change its numbers.
+const JOURNEY_SCREENS = Object.freeze(new Set([
   'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
   'report_dialog', 'change_workspace', 'preview',
 ]));
+// Navigation (#3369): one code per screen root the shell reveals, so a
+// person's path can be read in the order they took it. `app` is the running
+// app; `project` is the platform's own surface about one app (its hub,
+// Workshop, discussion, a change). Named roots only: never an address, a
+// conversation or anything inside an app.
+const NAV_SCREENS = Object.freeze(new Set([
+  'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
+  'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+]));
+const SCREENS = Object.freeze(new Set([...JOURNEY_SCREENS, ...NAV_SCREENS]));
+// How a person arrived at a navigation screen. `returned` marks the screen
+// re-reported when the app comes back to the foreground after a long break:
+// the phone app keeps one page open for days, so without it two days of use
+// would read as one visit.
+const VIAS = Object.freeze(new Set(['own', 'nudged', 'handed', 'address', 'back', 'returned']));
+const SCHEMA_VERSIONS = Object.freeze(new Set([1, 2]));
 const ACTIONS = Object.freeze(new Set([
   'shell_boot', 'app_detail_load', 'app_discussion_load',
   'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
@@ -24,6 +43,9 @@ const ACTIONS = Object.freeze(new Set([
 const KINDS = Object.freeze(new Set([
   'screen_visit', 'action_attempt', 'action_outcome', 'repeated_action',
   'loading_timeout', 'navigation_abandonment', 'recovery', 'boot_failure',
+  // The page was hidden or closed while a navigation screen was showing: the
+  // end of the last screen of a visit, so time on it is known.
+  'screen_hidden',
 ]));
 const OUTCOMES = Object.freeze(new Set(['success', 'failure', 'cancelled']));
 const ERROR_CODES = Object.freeze(new Set([
@@ -36,6 +58,7 @@ const ERROR_CODES = Object.freeze(new Set([
 const EVENT_KEYS = Object.freeze([
   'id', 'visitId', 'attemptId', 'kind', 'screen', 'action', 'outcome',
   'errorCode', 'durationMs', 'appSlug', 'build', 'occurredAt', 'sequence',
+  'via',
 ]);
 
 class TelemetryValidationError extends Error {}
@@ -101,6 +124,14 @@ function parseEvent(value, index, nowMs) {
   const outcome = oneOf(value.outcome, OUTCOMES, `events[${index}].outcome`, true);
   const errorCode = oneOf(value.errorCode, ERROR_CODES, `events[${index}].errorCode`, true);
   const attemptId = opaqueId(value.attemptId, `events[${index}].attemptId`, true);
+  const via = oneOf(value.via, VIAS, `events[${index}].via`, true);
+  if (via && !(kind === 'screen_visit' && NAV_SCREENS.has(screen))) {
+    throw new TelemetryValidationError('via is only valid on a navigation screen_visit');
+  }
+  if (kind === 'screen_hidden' && (!NAV_SCREENS.has(screen) || attemptId || action || outcome
+      || errorCode || value.durationMs != null)) {
+    throw new TelemetryValidationError('screen_hidden is a bare mark on a navigation screen');
+  }
 
   if (kind === 'action_attempt' && (!action || !attemptId)) {
     throw new TelemetryValidationError('action_attempt requires action and attemptId');
@@ -175,6 +206,7 @@ function parseEvent(value, index, nowMs) {
     build,
     occurredAt: eventTimestamp(value.occurredAt, nowMs),
     sequence: integer(value.sequence, `events[${index}].sequence`, 1, 1_000_000),
+    via,
   };
 }
 
@@ -183,7 +215,12 @@ function parseBatch(body, { nowMs = Date.now() } = {}) {
     throw new TelemetryValidationError('batch is too large');
   }
   exactKeys(body, ['schemaVersion', 'batchId', 'events', 'delivery'], 'body');
-  if (body.schemaVersion !== 1) throw new TelemetryValidationError('schemaVersion must be 1');
+  // Version 2 adds navigation (#3369). Version 1 stays accepted: a shell
+  // cached before it shipped keeps reporting its failures, and the Journey
+  // page reads a person with no navigation rows as "no navigation data".
+  if (!SCHEMA_VERSIONS.has(body.schemaVersion)) {
+    throw new TelemetryValidationError('schemaVersion must be 1 or 2');
+  }
   const batchId = opaqueId(body.batchId, 'batchId');
   if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > MAX_BATCH_EVENTS) {
     throw new TelemetryValidationError(`events must contain 1-${MAX_BATCH_EVENTS} records`);
@@ -207,7 +244,7 @@ function eventMetadata(event) {
     screen: event.screen,
     sequence: event.sequence,
   };
-  for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build']) {
+  for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build', 'via']) {
     if (event[key] != null) metadata[key] = event[key];
   }
   return metadata;
@@ -313,12 +350,18 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
   const params = [days, [...usernames.SERVICE_IDENTITIES]];
   const base = `e.created_at >= NOW() - ($1::int * INTERVAL '1 day') ${adminClause}
     AND NOT (LOWER(u.username) = ANY($2::text[]))`;
+  // Observations are read for the seven journeys only. Navigation rows share
+  // the event type (#3369) and would otherwise inflate visits, reporting
+  // users and the screen list. Delivery receipts cannot be split by screen,
+  // so they count every record a client sent.
+  const uiParams = [...params, [...JOURNEY_SCREENS]];
+  const uiBase = `${base} AND e.metadata->>'screen' = ANY($3::text[])`;
   const [overall, journeys, screens, contexts, errors, delivery] = await Promise.all([
     pool.query(
       `WITH ui AS (
          SELECT e.id AS row_id, e.user_id, e.metadata
            FROM events e JOIN users u ON u.id = e.user_id
-          WHERE e.event_type = 'ui_experience' AND ${base}
+          WHERE e.event_type = 'ui_experience' AND ${uiBase}
        ), attempts AS (
          SELECT user_id, metadata->>'attemptId' AS id
            FROM ui WHERE metadata->>'kind' IN ('action_attempt','server_failure')
@@ -374,11 +417,11 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
          (SELECT COUNT(DISTINCT user_id) FROM ui WHERE
            (metadata->>'kind' = 'action_outcome' AND metadata->>'outcome' = 'failure')
            OR metadata->>'kind' IN ('boot_failure','loading_timeout','navigation_abandonment','server_failure'))::int AS affected_users
-       FROM cohort`, params),
+       FROM cohort`, uiParams),
     pool.query(
       `WITH ui AS (
          SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id
-          WHERE e.event_type = 'ui_experience' AND ${base}
+          WHERE e.event_type = 'ui_experience' AND ${uiBase}
        ), attempts AS (
          SELECT user_id, metadata->>'attemptId' AS id,
            COALESCE(MIN(metadata->>'action') FILTER (WHERE metadata->>'kind' = 'action_attempt'),
@@ -437,20 +480,20 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
        SELECT *, (successes + failures)::int AS failure_denominator,
          CASE WHEN successes + failures > 0
            THEN ROUND(100.0 * failures / (successes + failures), 1)::float ELSE NULL END AS failure_rate
-       FROM actions ORDER BY failures DESC, timeouts DESC, attempts DESC, action ASC`, params),
+       FROM actions ORDER BY failures DESC, timeouts DESC, attempts DESC, action ASC`, uiParams),
     pool.query(
       `SELECT e.metadata->>'screen' AS screen,
          COUNT(*)::int AS visits,
          COUNT(DISTINCT e.user_id)::int AS users
        FROM events e JOIN users u ON u.id = e.user_id
-       WHERE e.event_type = 'ui_experience' AND ${base}
+       WHERE e.event_type = 'ui_experience' AND ${uiBase}
          AND e.metadata->>'kind' = 'screen_visit'
-       GROUP BY e.metadata->>'screen' ORDER BY visits DESC, screen ASC`, params),
+       GROUP BY e.metadata->>'screen' ORDER BY visits DESC, screen ASC`, uiParams),
     pool.query(
       `WITH ui AS (
          SELECT e.id AS row_id, e.user_id, e.app_id, e.metadata
            FROM events e JOIN users u ON u.id = e.user_id
-           WHERE e.event_type = 'ui_experience' AND ${base}
+           WHERE e.event_type = 'ui_experience' AND ${uiBase}
        ), per_attempt AS (
          SELECT user_id,
            COALESCE(metadata->>'attemptId', 'event-' || row_id::text) AS identity,
@@ -474,7 +517,7 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
        GROUP BY a.slug, p.build
        HAVING COUNT(*) FILTER (WHERE p.failed OR p.timed_out OR p.abandoned) > 0
        ORDER BY failures DESC, timeouts DESC, abandonments DESC, affected_users DESC
-       LIMIT 20`, params),
+       LIMIT 20`, uiParams),
     pool.query(
       `WITH coded AS (
          SELECT e.id, e.user_id, e.metadata, e.created_at,
@@ -490,12 +533,12 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
              ORDER BY (e.metadata->>'kind' = 'server_failure') DESC, e.created_at DESC
            ) AS rank
          FROM events e JOIN users u ON u.id = e.user_id
-         WHERE e.event_type = 'ui_experience' AND ${base} AND e.metadata ? 'errorCode'
+         WHERE e.event_type = 'ui_experience' AND ${uiBase} AND e.metadata ? 'errorCode'
        )
        SELECT metadata->>'errorCode' AS error_code,
          COUNT(*)::int AS count, COUNT(DISTINCT user_id)::int AS affected_users
        FROM coded WHERE rank = 1
-       GROUP BY metadata->>'errorCode' ORDER BY count DESC, error_code ASC LIMIT 12`, params),
+       GROUP BY metadata->>'errorCode' ORDER BY count DESC, error_code ASC LIMIT 12`, uiParams),
     pool.query(
       `SELECT COUNT(*)::int AS receipts, COUNT(DISTINCT e.user_id)::int AS reporting_users,
          COALESCE(SUM((e.metadata->>'submitted')::int), 0)::int AS submitted,
@@ -535,6 +578,9 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
 
 module.exports = {
   ACTIONS,
+  JOURNEY_SCREENS,
+  NAV_SCREENS,
+  VIAS,
   ERROR_CODES,
   KINDS,
   MAX_BATCH_EVENTS,

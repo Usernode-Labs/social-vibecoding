@@ -63,6 +63,50 @@ test('collector accepts only the fixed content-free vocabulary', () => {
   /errorCode is only valid for failures/);
 });
 
+test('navigation vocabulary: named screens, a via only on navigation, hidden is a bare mark', () => {
+  const parsed = telemetry.parseBatch(batch([
+    event({ screen: 'home', via: 'own' }),
+    event({ screen: 'project', appSlug: 'run-club', via: 'nudged', sequence: 2 }),
+    event({ kind: 'screen_hidden', screen: 'project', appSlug: 'run-club', sequence: 3 }),
+    event({ screen: 'discover', sequence: 4 }),
+  ], { schemaVersion: 2 }));
+  assert.deepEqual(parsed.events.map((e) => [e.kind, e.screen, e.via]), [
+    ['screen_visit', 'home', 'own'],
+    ['screen_visit', 'project', 'nudged'],
+    ['screen_hidden', 'project', null],
+    ['screen_visit', 'discover', null],
+  ]);
+  assert.ok(telemetry.parseBatch(batch([event()], { schemaVersion: 1 })),
+    'a shell cached before navigation shipped still reports its failures');
+  assert.throws(() => telemetry.parseBatch(batch([event()], { schemaVersion: 3 })),
+    /schemaVersion must be 1 or 2/);
+  assert.throws(() => telemetry.parseBatch(batch([event({ screen: 'home', via: 'teleport' })])),
+    /not allowlisted/);
+  assert.throws(() => telemetry.parseBatch(batch([event({ screen: 'app_detail', via: 'own' })])),
+    /via is only valid on a navigation screen_visit/,
+    'the seven failure journeys never carry a via');
+  assert.throws(() => telemetry.parseBatch(batch([event({ kind: 'screen_hidden', screen: 'app_detail' })])),
+    /screen_hidden is a bare mark/);
+  assert.throws(() => telemetry.parseBatch(batch([event({ kind: 'screen_hidden', screen: 'home',
+    durationMs: 10 })])), /screen_hidden is a bare mark/);
+  assert.throws(() => telemetry.parseBatch(batch([event({ screen: 'home', path: '#app/x' })])),
+    /unsupported field/, 'an address never travels with a navigation step');
+  for (const code of telemetry.NAV_SCREENS) {
+    assert.equal(telemetry.JOURNEY_SCREENS.has(code), false, `${code} is not a failure journey`);
+  }
+});
+
+test('the failure report reads its seven journeys only', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'ui-telemetry.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function aggregate'), src.indexOf('module.exports'));
+  assert.equal((body.match(/'ui_experience' AND \$\{base\}/g) || []).length, 0,
+    'every observation query is scoped by uiBase');
+  assert.equal((body.match(/'ui_experience' AND \$\{uiBase\}/g) || []).length, 5);
+  assert.match(body, /const uiBase = `\$\{base\} AND e\.metadata->>'screen' = ANY\(\$3::text\[\]\)`/);
+  assert.match(body, /'ui_telemetry_delivery' AND \$\{base\}`, params\)/,
+    'delivery receipts keep the unscoped parameters');
+});
+
 function clientHarness({ fetchImpl, hash = '', boot = null, withDocument = false, stored = {} } = {}) {
   let now = Date.parse('2026-10-01T10:00:00Z');
   let uuid = 0;
@@ -671,7 +715,21 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
           failedBatches: 0, droppedEvents: 0 })]
     );
 
+    // Navigation shares the event type (#3369) but is not one of the seven
+    // journeys: it must not move the failure report's visits or screens.
+    await pool.query(
+      `INSERT INTO events (user_id, event_type, metadata) VALUES
+       ($1, 'ui_experience', $2::jsonb), ($1, 'ui_experience', $3::jsonb)`,
+      [user.id,
+        JSON.stringify({ eventId: id('event'), visitId: id('visit'), kind: 'screen_visit',
+          screen: 'home', via: 'own', sequence: 1 }),
+        JSON.stringify({ eventId: id('event'), visitId: id('visit'), kind: 'screen_hidden',
+          screen: 'home', sequence: 2 })]
+    );
+
     const report = await telemetry.aggregate(pool, { days: 14 });
+    assert.equal(report.screens.some((row) => row.screen === 'home'), false,
+      'navigation never appears in the failure report');
     assert.equal(report.coverage.receipts, 1, 'batch replay does not duplicate its receipt');
     assert.equal(report.overview.visits, 2,
       'historic service-identity observations are excluded from the aggregate');
@@ -717,4 +775,44 @@ test('admin surface explains coverage and non-failure signals', () => {
   assert.match(source, /Neither signal alone establishes frustration/);
   assert.match(server, /req\.path === '\/api\/ui-telemetry\/batch'\) return next\(\)/,
     'the global parser must leave the body for the stricter collector limit');
+});
+
+test('client reports navigation once per change, with how they got there, a hidden mark and returns', async () => {
+  const { api, sent, documentListeners, document, elapse } = clientHarness({ withDocument: true });
+  api.setUser({ id: 42, uiTelemetryEligible: true }, true);
+  api.navigate('home');
+  api.navigate('home');
+  api.navigate('project', { appSlug: 'run-club' });
+  api.navigate('project', { appSlug: 'run-club' });
+  api.markNextVia('nudged');
+  api.navigate('messages');
+  api.navigate('discover', { via: 'back' });
+  api.navigate('not-a-screen');
+  document.visibilityState = 'hidden';
+  documentListeners.get('visibilitychange')();
+  elapse(5 * 60 * 1000);
+  document.visibilityState = 'visible';
+  documentListeners.get('visibilitychange')();
+  document.visibilityState = 'hidden';
+  documentListeners.get('visibilitychange')();
+  elapse(31 * 60 * 1000);
+  document.visibilityState = 'visible';
+  documentListeners.get('visibilitychange')();
+  await api.flush(false);
+  elapse(120_000, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  await api.flush(false);
+  const events = sent.flatMap((b) => b.body.events);
+  assert.ok(sent.every((b) => b.body.schemaVersion === 2), 'navigation-capable clients send version 2');
+  assert.deepEqual(events.map((e) => [e.kind, e.screen, e.via || null, e.appSlug || null]), [
+    ['screen_visit', 'home', 'own', null],
+    ['screen_visit', 'project', 'own', 'run-club'],
+    ['screen_visit', 'messages', 'nudged', null],
+    ['screen_visit', 'discover', 'back', null],
+    ['screen_hidden', 'discover', null, null],
+    ['screen_hidden', 'discover', null, null],
+    ['screen_visit', 'discover', 'returned', null],
+  ], 'a short hide is not a return; a hide of 30 minutes or more is');
+  const sequences = events.map((e) => e.sequence);
+  assert.deepEqual(sequences, [...sequences].sort((a, b) => a - b), 'the order of the path is kept');
 });
