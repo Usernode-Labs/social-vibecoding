@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { UserFieldRow, userHandle } from './admin-user-field';
 
 // Welcome messages (#admin/welcome-dm): somebody let in gets a group
 // conversation with the people chosen here, opened by a message from the
@@ -25,7 +26,6 @@ interface Status { text: string; tone: Tone }
 
 interface Member { id: number; username: string | null; active: boolean }
 interface Row { key: number; username: string; inactive: boolean }
-interface Suggestion { id: number; username: string }
 interface RecentRow {
   userId: number; username: string; status: 'pending' | 'sent' | 'skipped' | 'failed';
   enqueuedAt: string; processedAt: string | null; conversationId: number | null;
@@ -60,12 +60,6 @@ const DETAIL_TEXT: Record<string, string> = {
   group_refused: 'The group could not be opened.',
 };
 
-const SUGGEST_DELAY_MS = 150;
-
-function handle(raw: string): string {
-  return raw.trim().replace(/^@/, '');
-}
-
 // One row per saved person, and one empty row when there is nobody yet, so
 // the list always starts with somewhere to type.
 function rowsFrom(members: Member[], nextKey: () => number): Row[] {
@@ -76,105 +70,37 @@ function rowsFrom(members: Member[], nextKey: () => number): Row[] {
 }
 
 function membersFrom(rows: Row[]): string[] {
-  return rows.map((r) => handle(r.username)).filter(Boolean);
+  return rows.map((r) => userHandle(r.username)).filter(Boolean);
 }
 
-// One "People in the group" row: a username field that suggests accounts as
-// you type, a beat behind (a late answer to an older query never replaces a
-// newer one), with the create dialog's keyboard: arrows move, Enter picks,
-// Escape closes. An option is taken on mousedown, before the field's blur
-// can close the list.
+// One "People in the group" row: the shared username field
+// (admin-user-field.tsx), asking this section's search, which offers only
+// people the Save will accept. The first row is marked as the sender.
 function MemberRow({ row, index, taken, disabled, canWrite, onEdit, onRemove, inputRef }: {
   // The other rows' handles, lowercased and newline-joined: a string, so the
-  // suggestion effect below only re-runs when they actually change.
+  // field's suggestion effect only re-runs when they actually change.
   row: Row; index: number; taken: string; disabled: boolean; canWrite: boolean;
   onEdit: (username: string) => void; onRemove: () => void;
   inputRef: (el: HTMLInputElement | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [active, setActive] = useState(0);
-  const seq = useRef(0);
-  const q = handle(row.username);
-
-  useEffect(() => {
-    if (!open || !q) { seq.current += 1; setSuggestions([]); return undefined; }
-    const mine = ++seq.current;
-    const timer = setTimeout(async () => {
-      const { data } = await (window as any).AdminConsole
-        .fetchJson(`/api/admin/welcome-dm/people?q=${encodeURIComponent(q)}`);
-      if (mine !== seq.current) return;
-      const found: Suggestion[] = Array.isArray(data?.users) ? data.users : [];
-      const others = new Set(taken.split('\n'));
-      setSuggestions(found.filter((u) => !others.has(u.username.toLowerCase())));
-      setActive(0);
-    }, SUGGEST_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [open, q, taken]);
-
-  const pick = (username: string) => {
-    onEdit(username);
-    setSuggestions([]);
-    setOpen(false);
-  };
-  // Nothing to offer when the one suggestion is what is already typed.
-  const shown = open && suggestions.length > 0
-    && !(suggestions.length === 1 && suggestions[0].username.toLowerCase() === q.toLowerCase());
-  const listId = `admin-welcome-dm-member-${index}-suggestions`;
-  const optionId = (i: number) => `${listId}-${i}`;
-  const name = q ? `@${q}` : `person ${index + 1}`;
-
   return (
-    <div className="relative" data-welcome-member-row={index}>
-      <div className="flex items-center gap-2">
-        <input
-          id={`admin-welcome-dm-member-${index}`} ref={inputRef}
-          type="text" autoComplete="off" spellCheck={false}
-          className={`${AdminUI.input} disabled:opacity-60`}
-          placeholder="@username" disabled={disabled}
-          aria-label={index === 0 ? 'Person 1, who sends the message' : `Person ${index + 1}`}
-          role="combobox" aria-autocomplete="list" aria-expanded={shown} aria-controls={listId}
-          aria-activedescendant={shown ? optionId(active) : undefined}
-          value={row.username}
-          onChange={(e) => { onEdit(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onKeyDown={(e) => {
-            if (!shown) return;
-            if (e.key === 'ArrowDown') { e.preventDefault(); setActive((active + 1) % suggestions.length); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((active - 1 + suggestions.length) % suggestions.length); }
-            else if (e.key === 'Enter') { e.preventDefault(); pick(suggestions[active].username); }
-            else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
-          }}
-        />
-        {index === 0 ? (
-          <span className={`${AdminUI.badge.secondary} shrink-0`} title="The first person sends the message and owns the group">Sends</span>
-        ) : null}
-        {canWrite ? (
-          <button type="button" className={`${AdminUI.btn.outlineSm} shrink-0`}
-            data-welcome-member-remove={index} aria-label={`Remove ${name}`}
-            disabled={disabled} onClick={onRemove}>Remove</button>
-        ) : null}
-      </div>
+    <UserFieldRow
+      idPrefix="admin-welcome-dm-member" dataPrefix="welcome-member"
+      searchPath="/api/admin/welcome-dm/people"
+      index={index} value={row.username} taken={taken}
+      disabled={disabled} canWrite={canWrite}
+      ariaLabel={index === 0 ? 'Person 1, who sends the message' : `Person ${index + 1}`}
+      badge={index === 0 ? (
+        <span className={`${AdminUI.badge.secondary} shrink-0`} title="The first person sends the message and owns the group">Sends</span>
+      ) : null}
+      onEdit={onEdit} onRemove={onRemove} inputRef={inputRef}
+    >
       {row.inactive ? (
         <p className="text-xs mt-1 text-amber-700 dark:text-amber-400" data-welcome-member-inactive={index}>
-          @{q} can no longer use the platform and will be left out of new groups.
+          @{userHandle(row.username)} can no longer use the platform and will be left out of new groups.
         </p>
       ) : null}
-      {shown ? (
-        <ul id={listId} role="listbox" aria-label={`Accounts matching ${q}`}
-          className="absolute left-0 right-0 z-10 mt-1 max-h-60 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
-          {suggestions.map((u, i) => (
-            <li key={u.id} id={optionId(i)} role="option" aria-selected={i === active}
-              className="cursor-pointer px-3 py-1.5 text-sm text-zinc-900 aria-selected:bg-zinc-100 dark:text-zinc-100 dark:aria-selected:bg-zinc-700"
-              onMouseEnter={() => setActive(i)}
-              onMouseDown={(e) => { e.preventDefault(); pick(u.username); }}>
-              @{u.username}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+    </UserFieldRow>
   );
 }
 
@@ -294,7 +220,7 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
           {rows.map((row, i) => (
             <MemberRow
               key={row.key} row={row} index={i} disabled={dis} canWrite={canWrite}
-              taken={rows.filter((r) => r.key !== row.key).map((r) => handle(r.username).toLowerCase()).filter(Boolean).join('\n')}
+              taken={rows.filter((r) => r.key !== row.key).map((r) => userHandle(r.username).toLowerCase()).filter(Boolean).join('\n')}
               onEdit={(username) => editRow(row.key, username)}
               onRemove={() => removeRow(row.key)}
               inputRef={(el) => { if (el) inputs.current.set(row.key, el); else inputs.current.delete(row.key); }}

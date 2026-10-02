@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { UserFieldRow, userHandle } from './admin-user-field';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, slice 1.
 //
@@ -51,6 +52,13 @@ interface DmUser {
   exists: boolean;
   weeklySpentCents: number | null;
 }
+
+// One row of the DM list as edited. The key outlives the row's position, so
+// a field keeps its focus and its suggestions while rows above it go.
+interface DmRow { key: string; username: string }
+
+// The server keeps at most this many (MAX_DM_USERS in services/homeroom-bot.js).
+const DM_USERS_MAX = 50;
 
 interface BuildLane {
   queued: number;
@@ -452,6 +460,131 @@ function buildLaneLine(b: BuildLane | undefined): string {
   return line;
 }
 
+/**
+ * #3624: the people the bot talks to in a DM, edited like the live apps
+ * list: one person per row, each row's field suggesting accounts as you type
+ * (GET /api/admin/homeroom-bot/people), and nothing saved until Save. A saved
+ * row says what that person's requests cost this week, or that the name is
+ * no account. The draft is null while it matches what is saved, so the
+ * dashboard's poll can refresh the rows without throwing an edit away.
+ */
+function DmPeople({ saved, spend, mode, userWeeklyCents, canWrite, busy, onSave }: {
+  saved: string[];
+  spend: DmUser[];
+  mode: Settings['mode'] | undefined;
+  userWeeklyCents: number | undefined;
+  canWrite: boolean;
+  busy: boolean;
+  onSave: (names: string[]) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState<DmRow[] | null>(null);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const nextKey = useRef(0);
+  const inputs = useRef(new Map<string, HTMLInputElement>());
+
+  // A row just added takes the focus, so "Add person" goes straight to typing.
+  useEffect(() => {
+    if (focusKey == null) return;
+    inputs.current.get(focusKey)?.focus();
+    setFocusKey(null);
+  }, [focusKey]);
+
+  // Saved rows are keyed by place, so the first edit turns them into the
+  // draft without remounting the field being typed in.
+  const rows: DmRow[] = draft ?? saved.map((username, i) => ({ key: `saved-${i}`, username }));
+  const chosen = [...new Set(rows.map((r) => userHandle(r.username).toLowerCase()).filter(Boolean))];
+  const dirty = chosen.join(',') !== saved.join(',');
+  const spendOf = new Map(spend.map((u) => [u.username.toLowerCase(), u]));
+
+  const edit = (key: string, username: string) => setDraft(rows.map((r) => (r.key === key ? { ...r, username } : r)));
+  const remove = (key: string) => setDraft(rows.filter((r) => r.key !== key));
+  const add = () => {
+    nextKey.current += 1;
+    const key = `new-${nextKey.current}`;
+    setDraft([...rows, { key, username: '' }]);
+    setFocusKey(key);
+  };
+  const save = async () => {
+    if (!dirty) return;
+    if (await onSave(chosen)) setDraft(null);
+  };
+
+  return (
+    <>
+      <p className={AdminUI.label} id="admin-homeroom-bot-dm-users-label">People it talks to in a DM</p>
+      <div id="admin-homeroom-bot-dm-users" role="group" aria-labelledby="admin-homeroom-bot-dm-users-label" className="mt-1 space-y-2 max-w-xl">
+        {rows.length ? rows.map((row, i) => {
+          const name = userHandle(row.username).toLowerCase();
+          const known = name && saved.includes(name) ? spendOf.get(name) : undefined;
+          return (
+            <UserFieldRow
+              key={row.key}
+              idPrefix="admin-homeroom-bot-dm-user" dataPrefix="dm-user"
+              searchPath="/api/admin/homeroom-bot/people"
+              index={i} value={row.username}
+              taken={rows.filter((r) => r.key !== row.key).map((r) => userHandle(r.username).toLowerCase()).filter(Boolean).join('\n')}
+              disabled={!canWrite} canWrite={canWrite}
+              ariaLabel={`Person ${i + 1}`}
+              onEdit={(username) => edit(row.key, username)}
+              onRemove={() => remove(row.key)}
+              inputRef={(el) => { if (el) inputs.current.set(row.key, el); else inputs.current.delete(row.key); }}
+            >
+              {known ? (
+                <p className={`${AdminUI.muted} mt-1`} data-dm-user={known.username}>
+                  {known.exists
+                    ? `Their requests this week: ${dollarsFromCents(known.weeklySpentCents ?? 0)}${userWeeklyCents ? ` of ${dollarsFromCents(userWeeklyCents)}` : ', no limit'}.`
+                    : 'No account by that name.'}
+                </p>
+              ) : null}
+            </UserFieldRow>
+          );
+        }) : (
+          <p className={AdminUI.muted} id="admin-homeroom-bot-dm-users-none">Nobody: it talks to people only on their requests.</p>
+        )}
+      </div>
+      {canWrite ? (
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <button
+            type="button"
+            id="admin-homeroom-bot-dm-add"
+            className={AdminUI.btn.outlineSm}
+            disabled={rows.length >= DM_USERS_MAX}
+            onClick={add}
+          >
+            Add person
+          </button>
+          <button
+            type="button"
+            id="admin-homeroom-bot-dm-save"
+            className={AdminUI.btn.primarySm}
+            disabled={!dirty || busy}
+            onClick={save}
+          >
+            Save
+          </button>
+          {draft !== null ? (
+            <button
+              type="button"
+              id="admin-homeroom-bot-dm-reset"
+              className={AdminUI.btn.ghost}
+              onClick={() => setDraft(null)}
+            >
+              Undo changes
+            </button>
+          ) : null}
+          <span className={AdminUI.muted} id="admin-homeroom-bot-dm-state">
+            {dirty
+              ? 'Not saved yet.'
+              : saved.length
+                ? `Saved: talks to ${saved.map((n) => `@${n}`).join(', ')} in a DM${mode === 'off' ? ', once the bot is turned on' : ''}.`
+                : 'Saved: talks to nobody in a DM.'}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function HomeroomBotSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -469,9 +602,8 @@ function HomeroomBotSection() {
   // saved. Null is what lets the 30-second poll refresh the rows without
   // throwing away an edit in progress.
   const [liveDraft, setLiveDraft] = useState<string[] | null>(null);
-  // #3624: the DM list as typed (comma or space separated), and the
-  // per-person weekly cap in dollars; null until edited.
-  const [dmDraft, setDmDraft] = useState<string | null>(null);
+  // #3624: the per-person weekly cap in dollars; null until edited. The DM
+  // list keeps its own draft, in DmPeople.
   const [userCapDraft, setUserCapDraft] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -636,19 +768,12 @@ function HomeroomBotSection() {
     await saveSettings({ pausedApps: [...paused] }, willPause ? `${slug} paused.` : `${slug} resumed.`);
   };
 
-  const savedDm = payload?.settings.dmUsers || [];
-  const dmChosen = [...new Set((dmDraft ?? savedDm.join(', ')).split(/[\s,]+/)
-    .map((n) => n.replace(/^@/, '').trim().toLowerCase()).filter(Boolean))];
-  const dmDirty = dmDraft !== null && dmChosen.join(',') !== savedDm.join(',');
-  const saveDm = async () => {
-    if (!dmDirty) return;
-    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { dmUsers: dmChosen }, dmChosen.length
-      ? `Saved. The bot now talks to ${dmChosen.map((n) => `@${n}`).join(', ')} in a DM.`
+  const saveDm = async (names: string[]) => {
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { dmUsers: names }, names.length
+      ? `Saved. The bot now talks to ${names.map((n) => `@${n}`).join(', ')} in a DM.`
       : 'Saved. The bot talks to nobody in a DM.');
-    if (data) {
-      setDmDraft(null);
-      apply(data as Payload);
-    }
+    if (data) apply(data as Payload);
+    return !!data;
   };
   const saveUserCap = async () => {
     if (userCapDraft === null) return;
@@ -978,34 +1103,15 @@ function HomeroomBotSection() {
           </div>
 
           <div className="md:col-span-3" id="admin-homeroom-bot-dm">
-            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-dm-users">People it talks to in a DM</label>
-            <div className="flex flex-wrap items-center gap-2 mt-1">
-              <input
-                id="admin-homeroom-bot-dm-users"
-                type="text"
-                className={AdminUI.input}
-                placeholder="usernames, separated by commas"
-                value={dmDraft ?? savedDm.join(', ')}
-                disabled={!canWrite}
-                onChange={(e) => setDmDraft(e.target.value)}
-              />
-              {canWrite ? (
-                <button type="button" id="admin-homeroom-bot-dm-save" className={AdminUI.btn.primarySm} disabled={!dmDirty || !!busy} onClick={saveDm}>
-                  Save
-                </button>
-              ) : null}
-            </div>
-            {payload?.dmUsers?.length ? (
-              <ul className="mt-2 space-y-1" id="admin-homeroom-bot-dm-list">
-                {payload.dmUsers.map((u) => (
-                  <li key={u.username} className={AdminUI.muted} data-dm-user={u.username}>
-                    {u.exists
-                      ? `@${u.username}: ${dollarsFromCents(u.weeklySpentCents ?? 0)} of ${settings?.userWeeklyCents ? dollarsFromCents(settings.userWeeklyCents) : 'no limit'} this week`
-                      : `@${u.username}: no account by that name`}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <DmPeople
+              saved={settings?.dmUsers || []}
+              spend={payload?.dmUsers || []}
+              mode={settings?.mode}
+              userWeeklyCents={settings?.userWeeklyCents}
+              canWrite={canWrite}
+              busy={busy !== ''}
+              onSave={saveDm}
+            />
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <label className={AdminUI.label} htmlFor="admin-homeroom-bot-user-cap">Each person's weekly allowance, dollars</label>
               <input
@@ -1331,4 +1437,5 @@ const AdminHomeroomBot = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminHomeroomBot = AdminHomeroomBot;
 
-export { AdminHomeroomBot };
+// DmPeople is exported for tests/admin-homeroom-bot.test.js, which renders it.
+export { AdminHomeroomBot, DmPeople };

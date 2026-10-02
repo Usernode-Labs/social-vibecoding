@@ -50,6 +50,8 @@ let runRow = { id: 41, rating: null, rating_note: null, rated_at: null };
 // Whether the bot's users row exists yet: the dashboard creates it on load
 // when it does not, so the cap box is never blank (#2684 follow-up).
 let botExists = true;
+// What the people search was asked for.
+const peopleSearches = [];
 
 const poolMod = require('../src/db/pool');
 poolMod.getPool = () => ({
@@ -83,6 +85,11 @@ poolMod.getPool = () => ({
       return { rows };
     }
     if (/SELECT slug, name FROM apps/.test(s)) return { rows: [{ slug: 'todo', name: 'Todo' }] };
+    // welcomeDm.searchPeople, which the DM list's username rows ask (#3624).
+    if (/WHERE LOWER\(username\) LIKE LOWER\(\$1\)/.test(s)) {
+      peopleSearches.push(params[0]);
+      return { rows: [{ id: 12, username: 'ada' }, { id: 13, username: 'adam' }] };
+    }
     if (/UPDATE homeroom_bot_runs/.test(s)) {
       if (params[0] !== 41) return { rows: [] };
       runRow = { ...runRow, rating: params[1], rating_note: params[3], rated_at: params[1] ? 'now' : null };
@@ -484,3 +491,81 @@ test('a saved live app has a "Triage again" button that queues its open issues (
   assert.match(admin, /router\.post\('\/api\/admin\/homeroom-bot\/retriage-app', requireAdminWrite, drainGuard, async \(req, res\) => \{/);
   assert.match(admin, /homeroomBot\.retriageApp\(pool, \{ slug: req\.body\?\.slug, actorId: req\.user\.id \}\)/);
 });
+
+test('the DM list suggests people from its own search, open to any admin (#3624)', async () => {
+  who = VIEW_ADMIN;
+  const res = await call('GET', '/api/admin/homeroom-bot/people?q=%40ad');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { users: [{ id: 12, username: 'ada' }, { id: 13, username: 'adam' }] });
+  assert.deepEqual(peopleSearches, ['ad'], 'a leading @ is dropped before the prefix match');
+  const empty = await call('GET', '/api/admin/homeroom-bot/people?q=');
+  assert.deepEqual(await empty.json(), { users: [] });
+  assert.equal(peopleSearches.length, 1, 'an empty query never reaches the database');
+  who = NORMAL;
+  const denied = await fetch(`${base}/api/admin/homeroom-bot/people?q=ad`, { redirect: 'manual' });
+  assert.ok(denied.status === 302 || denied.status === 403, `non-admin is turned away (${denied.status})`);
+  who = FULL_ADMIN;
+});
+
+function loadBotSection() {
+  globalThis.window = globalThis.window || globalThis;
+  const { loadTsx } = require('./lib/render-tsx');
+  return loadTsx('frontend/src/features/admin/admin-homeroom-bot.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, {
+          get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)),
+        }),
+      },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+}
+
+test('the DM list is one person per row, like the live apps list, with what each costs this week (#3624)', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { DmPeople } = loadBotSection();
+  const props = {
+    saved: ['ada', 'ghost'],
+    spend: [
+      { username: 'Ada', exists: true, weeklySpentCents: 125 },
+      { username: 'ghost', exists: false, weeklySpentCents: null },
+    ],
+    mode: 'shadow', userWeeklyCents: 5000, canWrite: true, busy: false, onSave: async () => true,
+  };
+  const html = renderToHtml(createElement(DmPeople, props));
+  assert.match(html, /id="admin-homeroom-bot-dm-users" role="group" aria-labelledby="admin-homeroom-bot-dm-users-label"/);
+  // Each saved person is a row whose field suggests accounts as you type.
+  assert.match(html, /id="admin-homeroom-bot-dm-user-0"[^>]*aria-label="Person 1"[^>]*role="combobox"[^>]*value="ada"/);
+  assert.match(html, /id="admin-homeroom-bot-dm-user-1"[^>]*value="ghost"/);
+  assert.doesNotMatch(html, /id="admin-homeroom-bot-dm-user-2"/);
+  assert.equal((html.match(/data-dm-user-remove=/g) || []).length, 2, 'every row can be removed');
+  assert.match(html, /data-dm-user="Ada"[^>]*>Their requests this week: \$1\.25 of \$50\.00\.</);
+  assert.match(html, /data-dm-user="ghost"[^>]*>No account by that name\.</);
+  // Add, Save (nothing to save until a row changes) and the saved state.
+  assert.match(html, /id="admin-homeroom-bot-dm-add"[^>]*>Add person</);
+  assert.match(html, /id="admin-homeroom-bot-dm-save"[^>]*disabled=""/);
+  assert.doesNotMatch(html, /admin-homeroom-bot-dm-reset/, 'nothing to undo before an edit');
+  assert.match(html, /id="admin-homeroom-bot-dm-state"[^>]*>Saved: talks to @ada, @ghost in a DM\.</);
+  assert.doesNotMatch(html, /—/, 'no em dash in the copy');
+
+  const off = renderToHtml(createElement(DmPeople, { ...props, mode: 'off', userWeeklyCents: 0 }));
+  assert.match(off, /Their requests this week: \$1\.25, no limit\./);
+  assert.match(off, /in a DM, once the bot is turned on\./);
+
+  const nobody = renderToHtml(createElement(DmPeople, { ...props, saved: [], spend: [] }));
+  assert.match(nobody, /id="admin-homeroom-bot-dm-users-none"[^>]*>Nobody: it talks to people only on their requests\.</);
+  assert.match(nobody, /Saved: talks to nobody in a DM\./);
+
+  const viewOnly = renderToHtml(createElement(DmPeople, { ...props, canWrite: false }));
+  assert.match(viewOnly, /id="admin-homeroom-bot-dm-user-0"[^>]*disabled=""/);
+  assert.doesNotMatch(viewOnly, /data-dm-user-remove=|admin-homeroom-bot-dm-add|admin-homeroom-bot-dm-save/,
+    'a view-only admin reads the list and changes nothing');
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /searchPath="\/api\/admin\/homeroom-bot\/people"/);
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/settings', 'PUT', \{ dmUsers: names \}/,
+    'Save goes through the settings route like every other knob');
+  assert.match(tsx, /if \(await onSave\(chosen\)\) setDraft\(null\);/, 'a successful save goes back to showing the saved list');
+});
+

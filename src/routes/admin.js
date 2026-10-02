@@ -1169,6 +1169,17 @@ function adminRoutes(config) {
     }
   });
 
+  // #3624: the DM list's username rows suggest accounts as you type. The
+  // same people Welcome messages offers: let in, not deleted, not a bot.
+  router.get('/api/admin/homeroom-bot/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/homeroom-bot/settings', requireAdminWrite, async (req, res) => {
     try {
       const result = await homeroomBot.writeSettings(pool, req.body || {}, req.user.id, config);

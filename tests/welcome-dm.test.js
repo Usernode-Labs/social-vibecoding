@@ -171,9 +171,12 @@ test('the form shows the saved people in order, the preview, and Save only to fu
 
 test('each row asks the admin search for people, which offers only accounts the Save accepts', () => {
   const tsx = read('frontend/src/features/admin/admin-welcome-dm.tsx');
-  assert.match(tsx, /fetchJson\(`\/api\/admin\/welcome-dm\/people\?q=\$\{encodeURIComponent\(q\)\}`\)/);
-  assert.match(tsx, /if \(mine !== seq\.current\) return;/, 'a late answer never replaces a newer one');
-  assert.match(tsx, /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); pick\(u\.username\); \}\}/,
+  assert.match(tsx, /searchPath="\/api\/admin\/welcome-dm\/people"/);
+  // The row is the shared field the Homeroom bot's DM list uses too.
+  const field = read('frontend/src/features/admin/admin-user-field.tsx');
+  assert.match(field, /fetchJson\(`\$\{searchPath\}\?q=\$\{encodeURIComponent\(q\)\}`\)/);
+  assert.match(field, /if \(mine !== seq\.current\) return;/, 'a late answer never replaces a newer one');
+  assert.match(field, /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); pick\(u\.username\); \}\}/,
     'an option is taken before the blur closes the list');
   const admin = read('src/routes/admin.js');
   assert.match(admin, /router\.get\('\/api\/admin\/welcome-dm\/people', async/);
