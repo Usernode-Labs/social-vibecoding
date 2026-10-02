@@ -9772,7 +9772,7 @@ CREATE TABLE IF NOT EXISTS bench_grades (
   criteria        JSONB NOT NULL DEFAULT '{}',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT bench_grades_grader_check CHECK (grader IN ('opus', 'human')),
-  CONSTRAINT bench_grades_verdict_check CHECK (verdict IN ('pass', 'fail'))
+  CONSTRAINT bench_grades_verdict_check CHECK (verdict = 'pass' OR verdict = 'fail')
 );
 CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
 COMMENT ON TABLE bench_grades IS 'staging:private';

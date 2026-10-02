@@ -582,7 +582,7 @@ function AddToSuite({ run, busy }: { run: Run; busy: boolean }) {
           id={`admin-homeroom-bot-bench-suite-${run.id}`} className={`${AdminUI.select} mt-1`}
           value={suiteId} onChange={(e) => setSuiteId(e.target.value)} disabled={!suitesList?.length}
         >
-          {suitesList == null ? <option value="">Loading…</option> : null}
+          {suitesList == null ? <option value="">{'Loading…'}</option> : null}
           {suitesList && !suitesList.length ? <option value="">No open suite: make one under Benchmark</option> : null}
           {(suitesList || []).map((x) => <option key={x.id} value={x.id}>{`${x.name} v${x.version}`}</option>)}
         </select>
