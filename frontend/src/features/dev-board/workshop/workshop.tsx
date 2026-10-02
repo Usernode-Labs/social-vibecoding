@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -74,8 +74,9 @@ import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
+import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
@@ -1329,6 +1330,54 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
+/**
+ * The vote sheet's form (#3613): the card's own `VotePicker`
+ * (card/dev-card.tsx), drawn inline on the sheet — the Yes/No switch with
+ * the tally, the line for the group under it (optional on a Yes, required
+ * on a No), Cancel and one "Vote yes" / "Vote no". The line used to be
+ * asked for AFTER the press, by castVote's prompt card on top of the sheet;
+ * now it is written here and sent with the vote. The state is NeedsFeed's,
+ * so a key can turn the switch; exported for the render test.
+ */
+export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+  row: QueueRow;
+  side: 'yes' | 'no';
+  line: string;
+  boxRef?: RefObject<HTMLTextAreaElement | null>;
+  onSide: (side: 'yes' | 'no') => void;
+  onLine: (line: string) => void;
+  onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
+  onCancel: () => void;
+  onSend: () => void;
+}): ReactNode {
+  return (
+    <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
+      <VotePicker
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : 'Yes', act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : 'No', act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        prior={null}
+        side={side}
+        line={line}
+        reasonId={`dev-ws-vote-reason-${row.key.replace(/[^\w-]/g, '-')}`}
+        boxRef={boxRef}
+        tally={labelTally}
+        withLine
+        onSide={onSide}
+        onLine={onLine}
+        onBoxKey={onBoxKey}
+        onCancel={onCancel}
+        onSend={onSend}
+      />
+    </div>
+  );
+}
+
+/** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
+function labelTally(a: { label?: string }): string {
+  const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
+  return m ? m[1] : '';
+}
+
 function tallyLine(row: QueueRow): string {
   const st = row.card.pill ? row.card.pill.state : null;
   if (!st) {
@@ -2207,6 +2256,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // state is what the rail button draws from.
   const [sending, setSending] = useState<Record<string, string>>({});
   const sendingRef = useRef<Set<string>>(new Set());
+  // #3613: the vote sheet's own form — the card's VotePicker, inline: the
+  // Yes/No switch, the line for the group and the send button, so the line
+  // is written on the sheet rather than in a prompt card castVote raises
+  // after the press.
+  const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
+  const [voteLine, setVoteLine] = useState('');
+  const voteBoxRef = useRef<HTMLTextAreaElement>(null);
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
   // the same breath as the vote and read back in the very next publish.
@@ -2393,6 +2449,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     if (sheet === kind) { closeSheet(); return; }
     setLeaving(null);
     setSheet(kind);
+    // The vote form opens fresh: on Yes, with an empty line.
+    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); }
   };
   // The leave animation's length, then the sheet is gone. Nothing to wait
   // for where motion is unwelcome — app.css runs no animation there.
@@ -2460,8 +2518,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    * back as soon as the prompt closes. The swipe only reaches a vote row
    * with both acts and none in flight (`swipeHandle` checks), which is the
    * one path below that calls it.
+   *
+   * `reason` is the vote sheet's line (#3613): a string is sent with the
+   * vote, null sends none, and leaving it out (the swipe) lets castVote ask
+   * for it the way it always has.
    */
-  const answer = (which: 'yes' | 'no', settled?: () => void) => {
+  const answer = (which: 'yes' | 'no', settled?: () => void, reason?: string | null) => {
     if (!row) return;
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
@@ -2496,7 +2558,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       setSending((cur) => ({ ...cur, [key]: which }));
       if (settled) settled();
     };
-    Promise.resolve(callAppView(spec.act.fn, ...args, { onSend }))
+    const opts = reason === undefined ? { onSend } : { onSend, reason };
+    Promise.resolve(callAppView(spec.act.fn, ...args, opts))
       .catch(() => false)
       .then((ok) => {
         sendingRef.current.delete(key);
@@ -2515,6 +2578,29 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         if (settled) settled();
       });
   };
+  /**
+   * The vote sheet's send (#3613): the switch's side with the line written
+   * under it. A No needs its line, as on a card; a Yes may go without one,
+   * and then sends none rather than asking.
+   */
+  const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
+  const submitVote = () => {
+    if (voteSide === 'no' && !voteTrimmed) { voteBoxRef.current?.focus(); return; }
+    answer(voteSide, undefined, voteTrimmed || null);
+  };
+  const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
+    // The window's keys stand down inside a field, so the box closes itself.
+    if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
+  };
+  // The box takes focus the moment the switch lands on No, the side that
+  // needs a line — as the card's picker does. Not on opening: a keyboard
+  // rising over a one-tap "Vote yes" would be in the way, and the Y and N
+  // keys only work while the box is not focused.
+  useLayoutEffect(() => {
+    if (sheet === 'vote' && voteSide === 'no') voteBoxRef.current?.focus();
+  }, [sheet, voteSide]);
+
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already
@@ -2613,8 +2699,15 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       if (k === 'ArrowUp' || k === 'k' || k === 'K') { go(-1); e.preventDefault(); return; }
       if (!row) return;
       if ((k === 'v' || k === 'V') && row.kind === 'vote') { toggleSheet('vote'); return; }
-      if ((k === 'y' || k === 'Y') && sheet === 'vote') { answer('yes'); return; }
-      if ((k === 'n' || k === 'N') && sheet === 'vote') { answer('no'); return; }
+      // On the vote sheet Y and N turn its switch, and Enter sends it: the
+      // line is written on the sheet, so a key no longer votes on its own.
+      if ((k === 'y' || k === 'Y') && sheet === 'vote') { setVoteSide('yes'); return; }
+      if ((k === 'n' || k === 'N') && sheet === 'vote') { setVoteSide('no'); return; }
+      if (k === 'Enter' && sheet === 'vote' && !(t && (t.tagName === 'BUTTON' || t.tagName === 'A'))) {
+        e.preventDefault();
+        submitVote();
+        return;
+      }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
       if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
@@ -2936,7 +3029,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           {moveRow}
           {/* The vote: the question, where it stands, and the two answers. A
               sheet from the floor on a phone, a popover on this button on a
-              wide window (app.css). Decide later closes it. */}
+              wide window (app.css). Cancel (Decide later, on a group decision)
+              closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
             <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
               <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
@@ -2949,17 +3043,30 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                     so it is decided on its own page, which shows the options
                     and what follows. Two dead buttons said nothing of that. */}
                 {row.yes || row.no || !cardHref ? (
-                  <div className="dev-ws-answer-row">
-                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-yes" data-ws-answer-btn="yes" disabled={!row.yes} onClick={() => answer('yes')}>Vote yes</button>
-                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-no" data-ws-answer-btn="no" disabled={!row.no} onClick={() => answer('no')}>Vote no</button>
-                  </div>
+                  /* #3613: the card's own vote picker, inline — the switch,
+                     the line for the group under it, Cancel and the send —
+                     rather than two buttons followed by castVote's prompt
+                     card. Cancel is what Decide later was. */
+                  <NeedsVoteForm
+                    row={row}
+                    side={voteSide}
+                    line={voteLine}
+                    boxRef={voteBoxRef}
+                    onSide={setVoteSide}
+                    onLine={setVoteLine}
+                    onBoxKey={onVoteBoxKey}
+                    onCancel={closeSheet}
+                    onSend={submitVote}
+                  />
                 ) : (
-                  <div className="dev-ws-answer-row">
-                    <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
-                  </div>
+                  <>
+                    <div className="dev-ws-answer-row">
+                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
+                    </div>
+                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
+                  </>
                 )}
-                <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Esc close</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
               </div>
             </div>
           ) : null}

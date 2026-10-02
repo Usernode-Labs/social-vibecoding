@@ -45,6 +45,19 @@ const INLINE_TOTAL_CHAR_CAP = 80000;
 // placeholder — bounds recurring vision cost on long conversations.
 const IMAGE_REPLAY_TURNS = 4;
 const IMAGE_REPLAY_MAX = 8;
+// PDF replay policy (#3557), the same shape and tighter: a PDF costs far
+// more than an image (every page is read as text and as a picture), so it
+// is sent as a document block only on the last DOCUMENT_REPLAY_TURNS user
+// turns, at most DOCUMENT_REPLAY_MAX per request, and only up to
+// MAX_DOCUMENT_BYTES. Anything else keeps the one-line placeholder.
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const DOCUMENT_REPLAY_TURNS = 2;
+const DOCUMENT_REPLAY_MAX = 2;
+// A provider refuses a whole request over one PDF it cannot take, so a PDF
+// is checked cheaply before it is sent (see documentProblem).
+const MAX_DOCUMENT_PAGES = 100;
+const PDF_EOF_WINDOW = 1024;
+const PDF_CONTENT_TYPE = 'application/pdf';
 
 // The stored text a user row gets when the user sent attachments with no
 // typed message — downstream code never sees empty content.
@@ -74,6 +87,20 @@ function sniffImageType(buf) {
   if (buf.subarray(0, 4).toString('latin1') === 'RIFF'
       && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   return null;
+}
+
+// #3557: a PDF is told by its first bytes (`%PDF-`), never by its name or
+// the client's Content-Type. It stays kind 'binary' (the kind every
+// consumer and serve route already handles); only its content type says
+// what it is.
+function isPdf(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= 5
+    && buf.subarray(0, 5).toString('latin1') === '%PDF-';
+}
+
+// The stored content type for a 'binary' upload.
+function binaryContentType(buf) {
+  return isPdf(buf) ? PDF_CONTENT_TYPE : 'application/octet-stream';
 }
 
 // Valid UTF-8 with no NUL bytes — the gate for `kind: 'text'` uploads.
@@ -228,6 +255,16 @@ function validateUpload({ filename, data }) {
   if (!Buffer.isBuffer(data) || !data.length) {
     return { ok: false, error: 'Empty file' };
   }
+  // #3557: a PDF is told by its magic bytes before any extension branch,
+  // so a name never overrides them. It is binary even when every byte is
+  // readable text (its source is never inlined), and its content type
+  // records that it is a PDF, which is what lets an agent read it.
+  if (isPdf(data)) {
+    if (data.length > MAX_BINARY_BYTES) {
+      return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+    }
+    return { ok: true, kind: 'binary', contentType: binaryContentType(data), meta: null };
+  }
   const ext = fileExt(name);
   if (IMAGE_EXT_TYPES[ext]) {
     if (data.length > MAX_IMAGE_BYTES) {
@@ -282,6 +319,16 @@ function validateChatUpload({ filename, data }) {
   }
   if (!Buffer.isBuffer(data) || !data.length) {
     return { ok: false, error: 'Empty file' };
+  }
+  // #3557: a PDF is told by its magic bytes before any extension branch,
+  // so a name never overrides them. It is binary even when every byte is
+  // readable text (its source is never inlined), and its content type
+  // records that it is a PDF, which is what lets an agent read it.
+  if (isPdf(data)) {
+    if (data.length > MAX_BINARY_BYTES) {
+      return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+    }
+    return { ok: true, kind: 'binary', contentType: binaryContentType(data), meta: null };
   }
   const ext = fileExt(name);
   if (IMAGE_EXT_TYPES[ext]) {
@@ -371,6 +418,55 @@ function planImageInclusion(imageCounts, { turnWindow = IMAGE_REPLAY_TURNS, maxI
   return include;
 }
 
+// #3557: PDF replay planning, per document rather than per turn: the
+// newest turn first, as many of its PDFs as the budget allows (the excess
+// get placeholders), then whatever is left on the turn before, within the
+// window. `documentCounts` is per user turn, CHRONOLOGICAL. Returns how
+// many PDFs of each turn to send.
+function planDocumentInclusion(documentCounts, {
+  turnWindow = DOCUMENT_REPLAY_TURNS, maxDocuments = DOCUMENT_REPLAY_MAX,
+} = {}) {
+  const include = documentCounts.map(() => 0);
+  let budget = maxDocuments;
+  for (let back = 0; back < Math.min(turnWindow, documentCounts.length) && budget > 0; back++) {
+    const i = documentCounts.length - 1 - back;
+    include[i] = Math.min(documentCounts[i] || 0, budget);
+    budget -= include[i];
+  }
+  return include;
+}
+
+// #3557: the line a document block becomes when the provider refused the
+// request it was in.
+function refusedDocumentLine(block) {
+  const title = typeof block?.title === 'string' && block.title.trim() ? block.title.trim() : 'a PDF';
+  return `[attached file: ${title} — PDF. The model provider could not read it, so it is not shown to you. It is made available to the coding agent on dispatch.]`;
+}
+
+function hasDocumentBlocks(messages) {
+  const inBlocks = (blocks) => Array.isArray(blocks) && blocks.some((block) => block && (
+    block.type === 'document' || (block.type === 'tool_result' && inBlocks(block.content))
+  ));
+  return Array.isArray(messages) && messages.some((message) => inBlocks(message && message.content));
+}
+
+// The same messages with every document block replaced by its line: the
+// one retry a Mayor request gets when a provider refuses a request that
+// carried a PDF, so one bad file cannot fail every turn it is replayed on.
+function withoutDocuments(messages) {
+  const strip = (blocks) => blocks.map((block) => {
+    if (!block || typeof block !== 'object') return block;
+    if (block.type === 'document') return { type: 'text', text: refusedDocumentLine(block) };
+    if (block.type === 'tool_result' && Array.isArray(block.content)) {
+      return { ...block, content: strip(block.content) };
+    }
+    return block;
+  });
+  return (Array.isArray(messages) ? messages : []).map((message) => (
+    message && Array.isArray(message.content) ? { ...message, content: strip(message.content) } : message
+  ));
+}
+
 // One-line Mayor-facing placeholder for a zip attachment, built from
 // the manifest captured at upload time. The Mayor never sees archive
 // bytes — this is how it learns enough to write a good dispatch brief.
@@ -384,25 +480,85 @@ function zipPlaceholderLine(att) {
   return `[attached file: ${att.filename} — zip archive, ${size}${count}${top}. Its contents are made available to the coding agent on dispatch.]`;
 }
 
+const DOCUMENT_PROBLEM_TEXT = Object.freeze({
+  too_large: `It is too large for you to read directly (over ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)} MB).`,
+  encrypted: 'It is encrypted, so you cannot read it directly.',
+  too_many_pages: `It has too many pages for you to read directly (over ${MAX_DOCUMENT_PAGES}).`,
+  unreadable: 'It could not be read as a PDF.',
+});
+
 function binaryPlaceholderLine(att) {
   const size = humanSize(att.sizeBytes != null ? att.sizeBytes : (att.data ? att.data.length : 0));
+  if (isPdfAttachment(att)) {
+    const problem = documentProblem(att);
+    const why = problem ? DOCUMENT_PROBLEM_TEXT[problem] : 'Not sent to you in this turn.';
+    return `[attached file: ${att.filename} — PDF, ${size}. ${why} It is made available to the coding agent on dispatch.]`;
+  }
   return `[attached file: ${att.filename} — binary file, ${size}. It is made available to the coding agent on dispatch.]`;
+}
+
+// #3557: a stored PDF, re-checked against its bytes so a row's content type
+// alone never decides what is sent to a model.
+function isPdfAttachment(att) {
+  return !!att && att.kind === 'binary'
+    && (att.contentType || att.content_type) === PDF_CONTENT_TYPE && isPdf(att.data);
+}
+
+// Why a stored PDF cannot go to the Mayor as a document block, or null when
+// it can: 'too_large', or a cheap structural check (no PDF library) for the
+// files a provider refuses outright, which would fail the whole request on
+// every turn the PDF is replayed. 'unreadable' when the `%%EOF` trailer is
+// missing from the end (truncated), 'encrypted' for an /Encrypt entry, and
+// 'too_many_pages' when the uncompressed /Type /Page objects (not /Pages)
+// exceed the cap. Pages inside compressed object streams are not counted,
+// so the provider fallback in llm.js / openrouter-mayor.js stays the
+// backstop.
+function documentProblem(att) {
+  if (!isPdfAttachment(att)) return 'unreadable';
+  const data = att.data;
+  if (data.length > MAX_DOCUMENT_BYTES) return 'too_large';
+  if (!data.subarray(Math.max(0, data.length - PDF_EOF_WINDOW)).toString('latin1').includes('%%EOF')) {
+    return 'unreadable';
+  }
+  const source = data.toString('latin1');
+  if (/\/Encrypt\b/.test(source)) return 'encrypted';
+  const pages = source.match(/\/Type\s*\/Page\b/g);
+  if (pages && pages.length > MAX_DOCUMENT_PAGES) return 'too_many_pages';
+  return null;
+}
+
+// A PDF that may be sent to the Mayor as a document block.
+function readableDocument(att) {
+  return isPdfAttachment(att) && documentProblem(att) === null;
+}
+
+// An Anthropic document block. `title` carries the filename, which is how
+// the model (and an adapter that cannot pass the bytes on) names it.
+function documentBlock(att) {
+  return {
+    type: 'document',
+    source: { type: 'base64', media_type: PDF_CONTENT_TYPE, data: att.data.toString('base64') },
+    title: String(att.filename || 'document.pdf'),
+  };
 }
 
 // Build the Mayor-facing content for one user row that has attachments.
 // `attachments` entries: { kind, filename, contentType, data: Buffer }.
 // Returns a plain string when there are no attachments, otherwise an
-// Anthropic content-block array: image blocks first, then a single text
-// block carrying the user's text + inlined text files (+ placeholders for
-// images excluded by the replay policy and for zip/binary attachments,
-// which are never inlined). Only user rows ever become arrays —
-// assistant rows stay strings (buildMayorMessages merges them).
-function buildUserMessageContent({ text, attachments, includeImages }) {
+// Anthropic content-block array: image and document (PDF) blocks first,
+// then a single text block carrying the user's text + inlined text files
+// (+ placeholders for images and PDFs excluded by the replay policy and
+// for zip/other binary attachments, which are never inlined). Only user
+// rows ever become arrays — assistant rows stay strings
+// (buildMayorMessages merges them). `documentBudget` is how many of this
+// row's readable PDFs, in order, go as document blocks (#3557).
+function buildUserMessageContent({ text, attachments, includeImages, documentBudget = 0 }) {
   const atts = attachments || [];
   if (!atts.length) return text;
 
   const blocks = [];
   const textParts = [String(text || '')];
+  let documentsLeft = Number.isInteger(documentBudget) && documentBudget > 0 ? documentBudget : 0;
 
   for (const att of atts) {
     if (att.kind === 'image') {
@@ -421,7 +577,15 @@ function buildUserMessageContent({ text, attachments, includeImages }) {
     } else if (att.kind === 'zip') {
       textParts.push(zipPlaceholderLine(att));
     } else if (att.kind === 'binary') {
-      textParts.push(binaryPlaceholderLine(att));
+      // #3557: a PDF inside the replay budget goes as a document block,
+      // which a model that reads PDFs reads and an adapter for one that
+      // does not turns back into a line naming the file.
+      if (documentsLeft > 0 && readableDocument(att)) {
+        documentsLeft -= 1;
+        blocks.push(documentBlock(att));
+      } else {
+        textParts.push(binaryPlaceholderLine(att));
+      }
     } else {
       textParts.push(attachedFileBlock(att.filename, att.data.toString('utf8')));
     }
@@ -468,6 +632,11 @@ function buildDispatchBlock(attachments) {
         : '';
       const dirName = safeName.replace(/\.zip$/i, '') || 'archive';
       parts.push(`zip archive: ${att.filename} (id ${att.id}${count}${top}) — extract it with \`usernode-attachments ${att.id} --unzip /home/node/attachments/${dirName}/\` (run via Bash), then browse that directory with your normal tools. Treat it as read-only reference material — do not copy it wholesale into the repo unless asked.`);
+    } else if (att.kind === 'binary' && isPdfAttachment(att)) {
+      // #3557: Claude Code's Read tool shows a PDF to a model that reads
+      // them; the adapter tells a text-only model it cannot.
+      hasCliRefs = true;
+      parts.push(`PDF: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash), then use your Read tool on /home/node/attachments/${safeName} to read it. If the tool says this model cannot read PDFs, use a command-line text extractor if one is installed, or work from what the user said about it.`);
     } else if (att.kind === 'binary') {
       hasCliRefs = true;
       parts.push(`binary file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash).`);
@@ -574,9 +743,21 @@ module.exports = {
   INLINE_TOTAL_CHAR_CAP,
   IMAGE_REPLAY_TURNS,
   IMAGE_REPLAY_MAX,
+  MAX_DOCUMENT_BYTES,
+  DOCUMENT_REPLAY_TURNS,
+  DOCUMENT_REPLAY_MAX,
+  MAX_DOCUMENT_PAGES,
+  PDF_CONTENT_TYPE,
   ATTACHMENTS_ONLY_TEXT,
   fileExt,
   sniffImageType,
+  isPdf,
+  isPdfAttachment,
+  readableDocument,
+  documentProblem,
+  planDocumentInclusion,
+  hasDocumentBlocks,
+  withoutDocuments,
   isUtf8Text,
   humanSize,
   validateZip,

@@ -220,8 +220,11 @@ test('the worker runs a shots turn on its pinned model, and every other turn on 
     assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+    // #3579: Sonnet 5.5 is on the author allowlist now, and a turn that
+    // still names the retired Sonnet 5 runs on its successor.
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-nope'), 'claude-opus-5-5', mode);
   }
 });
 

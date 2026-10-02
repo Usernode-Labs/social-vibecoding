@@ -3105,6 +3105,9 @@ async function execInWorker(sessionId, {
     // #3426: '1' lets the adapter pass image blocks through to a model the
     // OpenRouter catalog lists as taking images; anything else is text only.
     safeEnv.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata?.supportsImages === true ? '1' : '';
+    // #3557: '1' lets it pass a PDF (a document block) through to a model
+    // the catalog lists as taking files; anything else is a note.
+    safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
     safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
     safeEnv.TURN_UUID = turnUuid || '';
