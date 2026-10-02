@@ -127,9 +127,17 @@ function attemptsFor(stage, { repeats, repeatStages = null }) {
  * suite has tasks at, three repeats for triage and one for everything else,
  * and the $50 cap.
  */
+const DEFAULT_STAGES = Object.freeze(['triage', 'dm']);
+
 function launcherDefaults({ suites: list = [], coreSuiteId = null } = {}) {
   const pick = list.find((s) => s.id === coreSuiteId) || list.find((s) => s.frozen_at) || list[0] || null;
-  const stages = pick ? Object.keys(pick.counts || {}).filter((st) => (pick.counts[st] || 0) > 0) : [];
+  // Ticked by default: the cheap stages (triage, and DM, which is triage
+  // turns), so a first Run of every model finishes under the $50 cap. Builds,
+  // checks fixes and follow-ups cost one to two orders more per trial, and
+  // eight models of them would stop at the cap part-way through; they are a
+  // deliberate run of their own, ticked by hand.
+  const stages = pick ? Object.keys(pick.counts || {})
+    .filter((st) => DEFAULT_STAGES.includes(st) && (pick.counts[st] || 0) > 0) : [];
   const models = [catalog.BASELINE, ...catalog.CANDIDATES.map((c) => c.id).filter((id) => id !== catalog.BASELINE)];
   return {
     suiteId: pick ? pick.id : null,

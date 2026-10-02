@@ -372,7 +372,7 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     // And the launcher starts on Core.
     const d = lane.launcherDefaults({ suites: await suites.listSuites(pool), coreSuiteId: await core.coreSuiteId(pool, def) });
     assert.equal(d.suiteId, first.suiteId);
-    assert.deepEqual(d.stages.sort(), ['build', 'checks_fix', 'dm', 'followup', 'triage']);
+    assert.deepEqual(d.stages.sort(), ['dm', 'triage']);
   });
 
   await t.test('the routes: any admin reads Core\'s status, a full admin starts it, the launcher starts on it', async (st) => {

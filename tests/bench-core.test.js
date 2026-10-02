@@ -187,7 +187,7 @@ test('the launcher starts on Core v1 with the candidate models, triage repeated,
   ];
   const d = lane.launcherDefaults({ suites, coreSuiteId: 7 });
   assert.equal(d.suiteId, 7);
-  assert.deepEqual(d.stages, ['triage', 'build', 'checks_fix', 'dm']);
+  assert.deepEqual(d.stages, ['triage', 'dm'], 'the cheap stages; builds are a run of their own');
   assert.deepEqual(d.models, [
     'z-ai/glm-5.3-flash', 'xiaomi/mimo-v2.6-pro', 'deepseek/deepseek-v4.1-flash', 'qwen/qwen3.8-flash',
     'minimax/minimax-m3', 'openai/gpt-5.6-luna', 'moonshotai/kimi-k2.7-code', 'anthropic/claude-sonnet-5.5',
