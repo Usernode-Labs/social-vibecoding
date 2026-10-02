@@ -364,8 +364,10 @@ async function ensureFixtures(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return new Map();
   return conversations.transaction(pool, async db => {
     await db.query('SELECT pg_advisory_xact_lock(4781, $1)', [user.id]);
+    // The four conversations of this recipe; #3624's bot DM (BOT_DM_LEGACY_ID)
+    // is its own fixture, below.
     const existing = await db.query(
-      'SELECT legacy_id, conversation_id FROM staging_conversation_fixtures WHERE user_id = $1', [user.id]);
+      'SELECT legacy_id, conversation_id FROM staging_conversation_fixtures WHERE user_id = $1 AND legacy_id <= 910004', [user.id]);
     const ids = new Map(existing.rows.map(row => [row.legacy_id, row.conversation_id]));
     let complete = false;
     if (ids.size === 4) {
@@ -442,10 +444,59 @@ async function ensureFixtures(pool, user) {
   });
 }
 
+// #3624: the Homeroom bot's DM, with one question still open, so a staging
+// preview shows the suggested answers and the line saying an answer is
+// public. The bot never acts on staging (homeroom-bot-live.js isLiveFor), so
+// nothing would put a question there otherwise. Obviously fake (a
+// "Staging demo" project and request), never registered as a question the
+// bot is waiting on: an answer tapped here gets the bot's short help, and
+// nothing is posted on any request. The bot's account is the platform's own
+// synthetic user, created here as a bare row when a fresh staging database
+// has none.
+const BOT_DM_LEGACY_ID = 910005;
+const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
+
+async function ensureBotDmFixture(pool, user) {
+  if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic)
+     VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+     ON CONFLICT DO NOTHING`
+  );
+  const bot = (await pool.query(
+    `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE`
+  )).rows[0];
+  if (!bot || bot.id === user.id) return null;
+  const opened = await conversations.ensureAdmittedDirect(pool, bot.id, user.id);
+  if (!opened) return null;
+  await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+    content: '**Staging demo app** · request #12: Staging demo, sort the list by date\n\n'
+      + 'I have a question before I build this:\n\nShould the newest items show first, or the oldest?',
+    idempotency_key: BOT_DM_QUESTION_KEY,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'question', appName: 'Staging demo app', issueNumber: 12,
+        issueTitle: 'Staging demo, sort the list by date', mirrors: true, status: 'open',
+        question: 'Should the newest items show first, or the oldest?',
+        answers: ['Newest first', 'Oldest first', 'Let me pick each time'],
+      },
+    },
+  });
+  await pool.query(
+    `INSERT INTO staging_conversation_fixtures (user_id, legacy_id, conversation_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, legacy_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
+    [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
+  );
+  return opened.conversationId;
+}
+
 async function resolveLegacyLink(pool, user, id) {
-  if (process.env.USERNODE_ENV !== 'staging' || id < 910001 || id > 910004) return id;
+  if (process.env.USERNODE_ENV !== 'staging' || id < 910001 || id > BOT_DM_LEGACY_ID) return id;
   // A real accessible ID always wins over a historical display-only address.
   if (await conversations.loadMembership(pool, id, user.id, { allowInvited: true })) return id;
+  if (id === BOT_DM_LEGACY_ID) return (await ensureBotDmFixture(pool, user)) || id;
   const ids = await ensureFixtures(pool, user);
   return ids.get(id) || id;
 }
@@ -465,4 +516,7 @@ async function resolveLegacyMessageLink(pool, user, conversationId, id) {
   return stored.rows[0]?.id || id;
 }
 
-module.exports = { ensureFixtures, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages };
+module.exports = {
+  ensureFixtures, ensureBotDmFixture, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages,
+  BOT_DM_LEGACY_ID,
+};

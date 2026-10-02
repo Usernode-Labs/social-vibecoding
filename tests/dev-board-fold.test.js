@@ -1406,14 +1406,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Hub. It has a route of its own (?shot=tab-back presses the tab and goes
   // Back in the page), so it could not share another check's route.
   //
-  // 832 → 833: +1 (#3521): the create dialog's "Start from a template" now
+  // 832 → 833: +1 (#3567): the welcome tour's first card, what a community
+  // is. No check could see the tour open before (every ?shot= route kept it
+  // shut), so ?shot=welcome-tour opens it at step 1; the #2255 check that
+  // it ships hidden on a plain load still says something this one cannot.
+  //
+  // 833 → 834: +1 (#3624): the Homeroom bot's DM with a question open on
+  // the staging fixture (#messages/910005): its Bot badge, its suggested
+  // answers with the default marked, and the line saying an answer is
+  // posted publicly on the request, folded into one check with :has().
+  //
+  // 834 → 835: +1 (#3521): the create dialog's "Start from a template" now
   // opens four starters under its row, a state no check could reach before
-  // (the row was a dimmed Soon). Reached by ?shot=create-template. 833
-  // leaves 27 slots against 860.
+  // (the row was a dimmed Soon). Reached by ?shot=create-template. 835
+  // leaves 25 slots against MAX_DECLARED_TESTS (860).
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 833);
+  checkCap.assertPinned(DAPP.tests.length, 835);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

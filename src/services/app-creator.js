@@ -453,6 +453,12 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
+    // #3624: a project its creator described for the Homeroom bot to build
+    // is filed as its first-version request now that it runs. The bot's own
+    // sweep files it later if this misses; never a reason creation fails.
+    require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
+      log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
+    });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
     const failure = deployFailure.record(err, { sha: mainSha || null });

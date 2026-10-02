@@ -3072,6 +3072,12 @@
       "expectSelector": "#home-tour.hidden #home-tour-card #home-tour-body #home-tour-next"
     },
     {
+      "name": "The welcome tour opens on what a community is: projects built together, changes proposed and voted in (#3567)",
+      "path": "/?shot=welcome-tour",
+      "expectSelector": "#home-tour:not(.hidden) #home-tour-card:not(.opacity-0) #home-tour-body:not(.hidden) #home-tour-title",
+      "expectText": "Homeroom is made of communities that build projects together"
+    },
+    {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
       "path": "/#settings/about",
       "expectSelector": "#settings-about-section #drawer-row-platform-version ~ #drawer-row-native-app-version"
@@ -5412,6 +5418,18 @@
       "path": "/?demo=1#messages/910003",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
       "expectText": "Invitation pending"
+    },
+    {
+      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request (#3624)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-message:has(.messages-message-head .messages-bot-badge) .messages-bot-question[data-bot-question=\"open\"] .messages-bot-answers button[data-bot-answer=\"default\"] .messages-bot-default",
+      "expectText": "public discussion",
+      "id": "homeroom-bot-dm-question",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/messages/**",
+        "src/services/homeroom-bot-dm.js"
+      ]
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

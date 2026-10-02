@@ -19,7 +19,7 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
@@ -932,6 +932,35 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #3624: the create dialog's suggested one-line "What is it?", from the
+  // longer description somebody the Homeroom bot builds for has written.
+  // Only for them: nobody else is shown the longer field. A helper-model
+  // call billed like a session title, and the description's own first
+  // sentence when the model is unavailable.
+  router.post('/api/apps/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      if (!(await homeroomBotDm.isEnabledFor(pool, req.user))) return res.status(404).json({ error: 'Not found' });
+      const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
+      const name = typeof req.body?.name === 'string' ? req.body.name.slice(0, 120) : '';
+      const out = await homeroomBotDm.suggestShortDescription({ name, brief, max: createOptions.DESCRIPTION_MAX });
+      if (!out) return res.status(400).json({ error: 'Describe the project in a sentence or two first.' });
+      if (out.usage && out.model) {
+        try {
+          const llm = require('../services/llm');
+          const limits = require('../services/limits');
+          await limits.recordSpend(pool, req.user.id, llm.estimateCostCents(out.usage, out.model), { byok: false });
+        } catch (err) {
+          log.warn('apps', 'Short description spend debit failed', { err: err.message });
+        }
+      }
+      return res.json({ description: out.description });
+    } catch (err) {
+      log.error('apps', 'Short description suggestion failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
     const { name, repoUrl } = req.body;
 
@@ -1165,7 +1194,22 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      // #3624: a longer description from somebody the Homeroom bot builds
+      // for: it files it as the project's first version once the project
+      // runs, and says so in their DM, which the dialog then offers to open.
+      // Never a reason the create fails.
+      let homeroomBot = null;
+      if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
+        try {
+          homeroomBot = await require('../services/homeroom-bot-dm').startFirstVersion(pool, config, {
+            app: appRow, user: req.user, brief: req.body.brief,
+          });
+        } catch (err) {
+          log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+      }
+
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {

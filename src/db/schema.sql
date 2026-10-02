@@ -7670,6 +7670,15 @@ CREATE TABLE IF NOT EXISTS staging_conversation_fixtures (
   PRIMARY KEY (user_id, legacy_id)
 );
 COMMENT ON TABLE staging_conversation_fixtures IS 'staging:private';
+-- #3624: a fifth address, 910005, for the Homeroom bot's DM with a question
+-- open (services/staging-messages.js ensureBotDmFixture). Widening a CHECK
+-- rejects no row already stored.
+DO $$
+BEGIN
+  ALTER TABLE staging_conversation_fixtures DROP CONSTRAINT IF EXISTS staging_conversation_fixtures_legacy_id_check;
+  ALTER TABLE staging_conversation_fixtures ADD CONSTRAINT staging_conversation_fixtures_legacy_id_check
+    CHECK (legacy_id BETWEEN 910001 AND 910005);
+END $$;
 
 CREATE TABLE IF NOT EXISTS staging_app_fixtures (
   app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
@@ -9486,6 +9495,76 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_mention_optouts (
   PRIMARY KEY (app_id, issue_number, user_id)
 );
 
+-- #3624: the bot in a DM (services/homeroom-bot-dm.js).
+--
+-- A triage question's suggested answers, the default first: what the DM
+-- offers to tap. NULL on every other verdict and on a run before #3624.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS question_answers JSONB;
+
+-- Who each request the live loop looked at is FOR: whoever filed it, or the
+-- creator a project's first version was filed for. Its questions and its
+-- outcome reach that person's DM, and its runs count against their weekly
+-- Homeroom bot allowance.
+CREATE TABLE IF NOT EXISTS homeroom_bot_requesters (
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number   INTEGER NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  issue_title    TEXT,
+  first_version  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
+  ON homeroom_bot_requesters(user_id);
+
+-- Every DM message the bot sent about a request, so a person's reply can
+-- be posted on the right request. A question is a row whose
+-- question_status is set: open until answered, or closed by newer news on
+-- the same request. Private: it indexes direct messages.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_messages (
+  message_id         INTEGER PRIMARY KEY REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id    INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number       INTEGER NOT NULL,
+  kind               TEXT NOT NULL,
+  run_id             INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  question_status    TEXT,
+  answer_message_id  INTEGER,
+  answered_at        TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_dm_messages_status_check
+    CHECK (question_status IS NULL OR question_status IN ('open', 'answered', 'closed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_open
+  ON homeroom_bot_dm_messages(user_id, created_at DESC) WHERE question_status = 'open';
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_issue
+  ON homeroom_bot_dm_messages(user_id, app_id, issue_number);
+COMMENT ON TABLE homeroom_bot_dm_messages IS 'staging:private';
+
+-- A project created with a description by somebody the bot talks to in a
+-- DM: filed as the project's first-version request once the project is
+-- running (waiting, then filing, then filed; failed after three tries).
+-- The bot acts live on the project while its creator is on the DM list.
+-- Private: the brief is what the person typed, before they chose to post
+-- it anywhere.
+CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  brief         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'waiting',
+  issue_number  INTEGER,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  filed_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_first_versions_status_check
+    CHECK (status IN ('waiting', 'filing', 'filed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
+  ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
+COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9500,7 +9579,10 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_live_apps', '[]'),
   ('homeroom_bot_shadow_builds', 'off'),
   ('homeroom_bot_build_concurrency', '2'),
-  ('homeroom_bot_shadow_build_platform', 'off')
+  ('homeroom_bot_shadow_build_platform', 'off'),
+  -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
+  ('homeroom_bot_dm_users', '[]'),
+  ('homeroom_bot_user_weekly_cents', '5000')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have

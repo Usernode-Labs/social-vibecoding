@@ -1303,6 +1303,72 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-quote p,
 .messages-reply-draft p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* #3624: the Homeroom bot's messages. Its name carries a small "Bot"
+   badge; a question it asks carries its suggested answers as pills in the
+   suggestion language Global Chat uses (the default first, marked), a
+   "Something else" pill in the neutral fill, and one muted line saying the
+   answer is posted publicly on the request. */
+.messages-bot-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.messages-bot-question { margin-top: 8px; }
+.messages-bot-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.messages-bot-answers button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: left;
+}
+.messages-bot-answers button:hover { filter: brightness(.97); }
+.messages-bot-answers .messages-bot-other {
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+}
+.messages-bot-default {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: .7;
+}
+.messages-bot-answered {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.messages-bot-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.messages-bot-note svg { margin-top: 1px; }
+.messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
+
 /* Reaction pills, the language's own: a filled neutral chip, and the one
    that is YOURS on a tinted accent ground with accent ink — a fill, not an
    outline, because a bordered pill among filled ones reads as a different

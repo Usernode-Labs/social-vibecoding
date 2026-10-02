@@ -67,6 +67,7 @@ stub(ids.rateLimits, {
   // `undefined` middleware at mount time, so a missing one fails the whole
   // route module, not just the route that uses it.
   githubLookupLimiter: (_req, _res, next) => next(),
+  feedbackTitleLimiter: (_req, _res, next) => next(),
 });
 
 const pool = {
