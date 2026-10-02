@@ -1416,6 +1416,41 @@ async function listWorkers(config) {
   })).filter((item) => Number.isFinite(item.sessionId));
 }
 
+// appResourceName's preview spelling. The name is the identity: evidence
+// replays (`sv-evidence-*`) share the staging environment label and carry a
+// session id too, but they belong to the evidence runner, not to a session's
+// preview, so the label selector alone would sweep them up.
+const PREVIEW_NAME_RE = /^sv-preview-(\d+)-s(\d+)$/;
+
+// Every preview Deployment in the app namespace, whatever the session rows
+// say about it. This is the Kubernetes counterpart of `docker ps -a` for the
+// stale-preview sweep (services/staging-reap.js): a preview whose row was
+// nulled, or whose row is gone, is visible only from this side.
+async function listPreviews(config) {
+  const namespace = config.kubernetes.appNamespace;
+  const deployments = await getClients().apps.listNamespacedDeployment({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`,
+  });
+  const previews = [];
+  for (const deployment of deployments.items || []) {
+    const name = deployment.metadata?.name || '';
+    const labelsMap = deployment.metadata?.labels || {};
+    const match = PREVIEW_NAME_RE.exec(name);
+    if (!match || labelsMap['social.usernode.io/session-id'] !== match[2]) continue;
+    const state = deploymentState(deployment);
+    previews.push({
+      name,
+      appId: Number(match[1]),
+      sessionId: Number(match[2]),
+      state: state === 'creating' ? 'created' : state,
+      image: deployment.spec?.template?.spec?.containers?.find((c) => c.name === 'app')?.image || null,
+      labels: labelsMap,
+    });
+  }
+  return previews;
+}
+
 // Every worker state volume, with whether a worker Deployment still mounts it.
 async function listWorkerVolumes(config) {
   const namespace = config.kubernetes.workerNamespace;
@@ -2333,7 +2368,7 @@ module.exports = {
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, isQuotaExceeded,
+  listWorkerVolumes, listPreviews, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
