@@ -13,6 +13,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
+const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
 const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
@@ -549,6 +550,7 @@ const recheckInFlight = new Set();
 function stagingMockOwnSession(userId, appSlug) {
   return {
     id: 990101, branch_name: 'mock/my-session', pr_number: null,
+    preview_placeholder: true,
     user_id: userId,
     pr_url: null, pr_title: null,
     session_title: '[Mock] Your in-progress session',
@@ -566,6 +568,117 @@ function stagingMockOwnSession(userId, appSlug) {
     // appended after the map that computes the real verdict.
     awaiting_input: true,
   };
+}
+
+// One source for the display-only rows in the list and their detail reads.
+function stagingMockOwnSessions(userId, appSlug) {
+  return [
+  stagingMockOwnSession(userId, appSlug),
+  // Card-as-pointer revision: a PRIVATE session that already has a
+  // PR, so the muted/draft shell renders WITH the icon Preview
+  // affordance beside its ⋯. Both other private rows have
+  // pr_number: null, so without this one the muted-plus-preview
+  // combination is unreviewable in a preview.
+  {
+    id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your private session with a preview',
+    status: 'active', linked_issues: [900011], shared_at: null,
+    created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // Busy own session — exercises the "working…" state (spinner tag
+  // beside the title, which the single-row shell keeps uncrushed).
+  {
+    id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Busy own session with a fairly long title to verify the working-state layout',
+    status: 'active', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+    last_activity_at: new Date().toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: true,
+  },
+  // Visible (shared) own session — renders below the archived
+  // toggle under the "Visible to everyone." caption, with the
+  // Preview (#689: pr_number set) + Open chat + Share chat + Hide
+  // buttons. transcript_shared_at is NULL here, so this row is the
+  // "visible, chat still private" half of the chip pair.
+  {
+    id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
+    pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
+    session_title: '[Mock] Your visible session',
+    status: 'active', linked_issues: [],
+    shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+    transcript_shared_at: null,
+    created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // The other half: visible AND transcript-published, so the card
+  // renders the "Chat shared" toggle plus the "· chat readable"
+  // subtitle. A live seed can't hold both states at once (one row,
+  // one flag), which is exactly what the demo path is for.
+  {
+    id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your visible session with the chat shared',
+    status: 'active', linked_issues: [],
+    shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // #747: promoted own session whose id matches the first mock
+  // proposal (stagingMockProposals in votes.js), which the
+  // /api/me/proposals demo block also returns — so the work
+  // drawer's de-dup is reviewable via ?demo=1: this row must
+  // render under "Your proposals" only, never "Your sessions".
+  {
+    id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
+    pr_url: null,
+    pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+    session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+    status: 'promoted', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // A proposal-in-vote row so the dev drawer's violet "Proposed"
+  // card state is reviewable in a demo preview. Unlike 9000001
+  // above, this id is deliberately NOT in the mock proposals list,
+  // so it renders in the session list (the "proposals fetch
+  // failed" fallback the work drawer documents) — which is exactly
+  // the card the promoted-cap copy talks about. Appended AFTER
+  // totals like every other mock, so the "(x/y)" numerator stays
+  // honest and the denominators come from `caps` below.
+  {
+    id: 990105, branch_name: 'mock/my-proposal-in-vote', pr_number: 990105,
+    pr_url: null, pr_title: '[Mock] Proposal up for vote',
+    session_title: '[Mock] Proposal up for vote',
+    status: 'promoted', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // #1808: the row PAST the relative form's seven-day floor. Every
+  // other mock here is minutes or hours old, so the session rows'
+  // stamp read "5m ago" on all of them and the branch that prints a
+  // real date was unreachable in a preview. A session parked a
+  // fortnight ago is also the case the old code got worst: it
+  // bucketed at thirty days and then months, so this row read "0mo
+  // ago" once and "5mo ago" later, neither of which is a day.
+  {
+    id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your session from a couple of weeks ago',
+    status: 'active', linked_issues: [], shared_at: null,
+    created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  }
+].map((sample) => ({ ...sample, preview_placeholder: true }));
 }
 
 function stagingMockSharedSessions() {
@@ -1857,6 +1970,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
+  // Reader-facing description, shared by the menu editor and MCP. Reading
+  // just this resource avoids downloading the author's private build chat.
+  router.get('/api/sessions/:id/description', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    try {
+      const session = await proposalDescriptionEdit.readEditable(pool, id, req.user.id);
+      if (!session) return res.status(404).json({ error: 'Change not found or no longer editable.' });
+      return res.json(proposalDescriptionEdit.snapshot(session));
+    } catch (err) {
+      log.warn('sessions', 'Description read failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not load the description.' });
+    }
+  });
+
+  router.patch('/api/sessions/:id/description', drainGuard, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    let input;
+    try { input = proposalDescriptionEdit.parseEdit(req.body); }
+    catch (err) { return res.status(400).json({ error: 'invalid_request', message: err.message }); }
+    try {
+      const result = await proposalDescriptionEdit.edit({ pool, sessionId: id, userId: req.user.id, input });
+      if (result.status === 200) {
+        try {
+          require('../services/ws').pushSessionUpdate({
+            action: 'description_updated', sessionId: id,
+            appId: result.session.app_id, appSlug: result.session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'Description broadcast failed', { sessionId: id, message: err.message });
+        }
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      log.warn('sessions', 'Description edit failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not save the description. Your draft has been kept.' });
+    }
+  });
+
   // PATCH /api/sessions/:id/linked-issues (#2028)
   //
   // A proposal's issue links used to be writable only as a side effect of
@@ -2128,6 +2281,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   on the ?demo=1 path.
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
+      await require('../services/staging-review-session').ensure(pool, config, req.user);
       // Imported PRs have no dev-chat worker. Keep them out of callers that
       // use this endpoint as a cross-app worker/session list; the Dev board
       // opts in so it can render the owner's imported In-progress cards.
@@ -2241,113 +2395,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // server-side. Its read-only detail projection exists so declared
       // checks can open the full change page without a console-erroring 404.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        sessions.push(
-          stagingMockOwnSession(req.user.id, config.selfAppSlug),
-          // Card-as-pointer revision: a PRIVATE session that already has a
-          // PR, so the muted/draft shell renders WITH the icon Preview
-          // affordance beside its ⋯. Both other private rows have
-          // pr_number: null, so without this one the muted-plus-preview
-          // combination is unreviewable in a preview.
-          {
-            id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your private session with a preview',
-            status: 'active', linked_issues: [900011], shared_at: null,
-            created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // Busy own session — exercises the "working…" state (spinner tag
-          // beside the title, which the single-row shell keeps uncrushed).
-          {
-            id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Busy own session with a fairly long title to verify the working-state layout',
-            status: 'active', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-            last_activity_at: new Date().toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: true,
-          },
-          // Visible (shared) own session — renders below the archived
-          // toggle under the "Visible to everyone." caption, with the
-          // Preview (#689: pr_number set) + Open chat + Share chat + Hide
-          // buttons. transcript_shared_at is NULL here, so this row is the
-          // "visible, chat still private" half of the chip pair.
-          {
-            id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
-            pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
-            session_title: '[Mock] Your visible session',
-            status: 'active', linked_issues: [],
-            shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-            transcript_shared_at: null,
-            created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // The other half: visible AND transcript-published, so the card
-          // renders the "Chat shared" toggle plus the "· chat readable"
-          // subtitle. A live seed can't hold both states at once (one row,
-          // one flag), which is exactly what the demo path is for.
-          {
-            id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your visible session with the chat shared',
-            status: 'active', linked_issues: [],
-            shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-            transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // #747: promoted own session whose id matches the first mock
-          // proposal (stagingMockProposals in votes.js), which the
-          // /api/me/proposals demo block also returns — so the work
-          // drawer's de-dup is reviewable via ?demo=1: this row must
-          // render under "Your proposals" only, never "Your sessions".
-          {
-            id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
-            pr_url: null,
-            pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
-            session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
-            status: 'promoted', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // A proposal-in-vote row so the dev drawer's violet "Proposed"
-          // card state is reviewable in a demo preview. Unlike 9000001
-          // above, this id is deliberately NOT in the mock proposals list,
-          // so it renders in the session list (the "proposals fetch
-          // failed" fallback the work drawer documents) — which is exactly
-          // the card the promoted-cap copy talks about. Appended AFTER
-          // totals like every other mock, so the "(x/y)" numerator stays
-          // honest and the denominators come from `caps` below.
-          {
-            id: 990105, branch_name: 'mock/my-proposal-in-vote', pr_number: 990105,
-            pr_url: null, pr_title: '[Mock] Proposal up for vote',
-            session_title: '[Mock] Proposal up for vote',
-            status: 'promoted', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          },
-          // #1808: the row PAST the relative form's seven-day floor. Every
-          // other mock here is minutes or hours old, so the session rows'
-          // stamp read "5m ago" on all of them and the branch that prints a
-          // real date was unreachable in a preview. A session parked a
-          // fortnight ago is also the case the old code got worst: it
-          // bucketed at thirty days and then months, so this row read "0mo
-          // ago" once and "5mo ago" later, neither of which is a day.
-          {
-            id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your session from a couple of weeks ago',
-            status: 'active', linked_issues: [], shared_at: null,
-            created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-          }
-        );
+        sessions.push(...stagingMockOwnSessions(req.user.id, config.selfAppSlug));
       }
       // #1417: the work the viewer has handed to a coding agent through the
       // connector, which is NOT in chat_sessions and never will be until the
@@ -2563,6 +2611,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
       const appRows = [app];
+      await require('../services/staging-review-session').ensure(pool, config, req.user, { ...app, slug: req.params.slug });
 
       // has_spec (#894): a boolean, never the spec body — the dev chat's
       // quick-reply fallback picks between the post-build and post-spec
@@ -2653,10 +2702,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Staging-only demo row (?demo=1): a mock archived session so the
       // "Show archived" toggle — the anchor the visible-sessions group
       // renders beneath — is present for any demo viewer. Same read-only
-      // 99xxxx convention as the other mocks (Unarchive 404s server-side).
+      // 99xxxx convention as the other mocks (Unarchive 404s server-side),
+      // with an id of its own: 990104 is the chat-shared session mock.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         listed.push({
-          id: 990104, branch_name: 'mock/archived-session', pr_number: null,
+          id: 990109, branch_name: 'mock/archived-session', pr_number: null,
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
           staging_url: null, status: 'archived', linked_issues: [],
@@ -3576,8 +3626,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
-          || (Number(req.params.id) === 990101
-            ? stagingMockOwnSession(req.user.id, config.selfAppSlug) : null);
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id));
         if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
       }
       const { rows } = await pool.query(
@@ -6449,7 +6498,10 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // effort, so the note says what to do when they are absent.
 const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal and get_change. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results. They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
 
-const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
+// #3426: Codex views a local image with view_image, Claude Code with Read;
+// both work only for a model that takes images. A text-only model that is
+// told so stops there, instead of spending its turn decoding the PNG by hand.
+const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and view /tmp/issue-screenshot.png with its image tool (view_image, or the Read tool) before working. If the tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art or with OCR): work from the text, and say what the screenshot would have needed to show.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
 // call offered after a successful scout, where the run may proceed straight
@@ -8923,6 +8975,21 @@ function describeTurnError(err) {
     if (message.startsWith('checkout failed')) {
       return 'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
         + `${git} Retrying will not help until the branch problem is resolved.`;
+    }
+    // The machine the agent runs on never started. The typed reason is set
+    // by the Kubernetes bootstrap wait; the raw kubelet reason, node and log
+    // stay in the platform log, never in this copy.
+    const couldNotStart = {
+      image_unavailable: 'its software image could not be downloaded',
+      config_error: 'of a problem in its platform configuration',
+      unschedulable: 'the platform had no free capacity to run it',
+    }[err.bootstrapReason];
+    if (couldNotStart) {
+      return `The coding agent's machine could not start because ${couldNotStart}, so the agent never started and no code was changed. `
+        + 'This is a platform problem, not your change.'
+        + (err.bootstrapReason === 'unschedulable'
+          ? ' Try again in a few minutes.'
+          : ' Retrying will not help until the platform is fixed.');
     }
     if (message.startsWith('warm-ready timeout')) {
       return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';

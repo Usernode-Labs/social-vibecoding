@@ -159,9 +159,10 @@ test('every legacy <script> in Shell.tsx goes through assetUrl, and the head thr
   const scoped = shell.match(/<script src=\{assetUrl\('\/js\/[a-z-]+\.js'\)\} \/>/g) || [];
   const plain = shell.match(/<script src="\/js\/[a-z-]+\.js" \/>/g) || [];
   assert.equal(plain.length, 0, `a plain src would revalidate on every load in a deploy: ${plain.join(' ')}`);
-  // #1891 moved launchpad.js into the React bundle; shell-script-order.test.js
-  // pins the same 24 remaining legacy scripts at the end of <body>.
-  assert.equal(scoped.length, 24, 'the 24 legacy scripts');
+  // #1891 moved launchpad.js into the React bundle. The privacy-bounded UI
+  // telemetry collector adds one classic module, and shell-script-order.test.js
+  // pins the same 25 remaining legacy scripts at the end of <body>.
+  assert.equal(scoped.length, 25, 'the 25 legacy scripts');
   assert.match(shell, /import \{ assetUrl \} from '\.\/lib\/asset-url';/);
 
   const build = fs.readFileSync(path.join(ROOT, 'frontend/scripts/build-shell.mjs'), 'utf8');

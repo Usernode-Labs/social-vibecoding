@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -74,8 +74,9 @@ import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
+import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
@@ -192,6 +193,29 @@ export function pageTitle(tab: TabKey): string {
   if (tab === 'all') return 'All items';
   if (tab === 'discussion') return 'Discussion';
   return 'Workshop';
+}
+
+/**
+ * #3583: BACK TO THE HEAD OF THE PAGE, IN WHICHEVER ELEMENT SCROLLS IT.
+ *
+ * A tab press and a door both promise that the page they open starts at its
+ * own head, and both kept it with `window.scrollTo`. That moves the page only
+ * where the DOCUMENT scrolls: a phone or tablet browser, or a window under
+ * 768px (../../../lib/browser-scroll.ts). On a computer, and in the installed
+ * app and the native WebView, the page scrolls inside #dev-forum-scroll, so
+ * the call moved nothing and the new tab opened at the old one's offset.
+ * Press Hub from halfway down the Workshop and the hub came up scrolled past
+ * its own hero, the tab strip already pinned over it on its band, and nothing
+ * on screen to say why: "sometimes the hub looks like this".
+ *
+ * Both are reset; the one that is not scrolling has nothing to move. The
+ * scroller is found from the page itself rather than by id from the
+ * document, so a page that is not in one is left alone.
+ */
+export function scrollToHead(host: HTMLElement | null): void {
+  try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+  const feed = host?.closest<HTMLElement>('#dev-forum-scroll');
+  if (feed && feed.scrollTop) feed.scrollTop = 0;
 }
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
@@ -1306,6 +1330,54 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
+/**
+ * The vote sheet's form (#3613): the card's own `VotePicker`
+ * (card/dev-card.tsx), drawn inline on the sheet — the Yes/No switch with
+ * the tally, the line for the group under it (optional on a Yes, required
+ * on a No), Cancel and one "Vote yes" / "Vote no". The line used to be
+ * asked for AFTER the press, by castVote's prompt card on top of the sheet;
+ * now it is written here and sent with the vote. The state is NeedsFeed's,
+ * so a key can turn the switch; exported for the render test.
+ */
+export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+  row: QueueRow;
+  side: 'yes' | 'no';
+  line: string;
+  boxRef?: RefObject<HTMLTextAreaElement | null>;
+  onSide: (side: 'yes' | 'no') => void;
+  onLine: (line: string) => void;
+  onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
+  onCancel: () => void;
+  onSend: () => void;
+}): ReactNode {
+  return (
+    <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
+      <VotePicker
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : 'Yes', act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : 'No', act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        prior={null}
+        side={side}
+        line={line}
+        reasonId={`dev-ws-vote-reason-${row.key.replace(/[^\w-]/g, '-')}`}
+        boxRef={boxRef}
+        tally={labelTally}
+        withLine
+        onSide={onSide}
+        onLine={onLine}
+        onBoxKey={onBoxKey}
+        onCancel={onCancel}
+        onSend={onSend}
+      />
+    </div>
+  );
+}
+
+/** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
+function labelTally(a: { label?: string }): string {
+  const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
+  return m ? m[1] : '';
+}
+
 function tallyLine(row: QueueRow): string {
   const st = row.card.pill ? row.card.pill.state : null;
   if (!st) {
@@ -2184,6 +2256,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // state is what the rail button draws from.
   const [sending, setSending] = useState<Record<string, string>>({});
   const sendingRef = useRef<Set<string>>(new Set());
+  // #3613: the vote sheet's own form — the card's VotePicker, inline: the
+  // Yes/No switch, the line for the group and the send button, so the line
+  // is written on the sheet rather than in a prompt card castVote raises
+  // after the press.
+  const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
+  const [voteLine, setVoteLine] = useState('');
+  const voteBoxRef = useRef<HTMLTextAreaElement>(null);
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
   // the same breath as the vote and read back in the very next publish.
@@ -2370,6 +2449,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     if (sheet === kind) { closeSheet(); return; }
     setLeaving(null);
     setSheet(kind);
+    // The vote form opens fresh: on Yes, with an empty line.
+    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); }
   };
   // The leave animation's length, then the sheet is gone. Nothing to wait
   // for where motion is unwelcome — app.css runs no animation there.
@@ -2437,8 +2518,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    * back as soon as the prompt closes. The swipe only reaches a vote row
    * with both acts and none in flight (`swipeHandle` checks), which is the
    * one path below that calls it.
+   *
+   * `reason` is the vote sheet's line (#3613): a string is sent with the
+   * vote, null sends none, and leaving it out (the swipe) lets castVote ask
+   * for it the way it always has.
    */
-  const answer = (which: 'yes' | 'no', settled?: () => void) => {
+  const answer = (which: 'yes' | 'no', settled?: () => void, reason?: string | null) => {
     if (!row) return;
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
@@ -2473,7 +2558,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       setSending((cur) => ({ ...cur, [key]: which }));
       if (settled) settled();
     };
-    Promise.resolve(callAppView(spec.act.fn, ...args, { onSend }))
+    const opts = reason === undefined ? { onSend } : { onSend, reason };
+    Promise.resolve(callAppView(spec.act.fn, ...args, opts))
       .catch(() => false)
       .then((ok) => {
         sendingRef.current.delete(key);
@@ -2492,6 +2578,29 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         if (settled) settled();
       });
   };
+  /**
+   * The vote sheet's send (#3613): the switch's side with the line written
+   * under it. A No needs its line, as on a card; a Yes may go without one,
+   * and then sends none rather than asking.
+   */
+  const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
+  const submitVote = () => {
+    if (voteSide === 'no' && !voteTrimmed) { voteBoxRef.current?.focus(); return; }
+    answer(voteSide, undefined, voteTrimmed || null);
+  };
+  const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
+    // The window's keys stand down inside a field, so the box closes itself.
+    if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
+  };
+  // The box takes focus the moment the switch lands on No, the side that
+  // needs a line — as the card's picker does. Not on opening: a keyboard
+  // rising over a one-tap "Vote yes" would be in the way, and the Y and N
+  // keys only work while the box is not focused.
+  useLayoutEffect(() => {
+    if (sheet === 'vote' && voteSide === 'no') voteBoxRef.current?.focus();
+  }, [sheet, voteSide]);
+
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already
@@ -2590,8 +2699,15 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       if (k === 'ArrowUp' || k === 'k' || k === 'K') { go(-1); e.preventDefault(); return; }
       if (!row) return;
       if ((k === 'v' || k === 'V') && row.kind === 'vote') { toggleSheet('vote'); return; }
-      if ((k === 'y' || k === 'Y') && sheet === 'vote') { answer('yes'); return; }
-      if ((k === 'n' || k === 'N') && sheet === 'vote') { answer('no'); return; }
+      // On the vote sheet Y and N turn its switch, and Enter sends it: the
+      // line is written on the sheet, so a key no longer votes on its own.
+      if ((k === 'y' || k === 'Y') && sheet === 'vote') { setVoteSide('yes'); return; }
+      if ((k === 'n' || k === 'N') && sheet === 'vote') { setVoteSide('no'); return; }
+      if (k === 'Enter' && sheet === 'vote' && !(t && (t.tagName === 'BUTTON' || t.tagName === 'A'))) {
+        e.preventDefault();
+        submitVote();
+        return;
+      }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
       if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
@@ -2913,7 +3029,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           {moveRow}
           {/* The vote: the question, where it stands, and the two answers. A
               sheet from the floor on a phone, a popover on this button on a
-              wide window (app.css). Decide later closes it. */}
+              wide window (app.css). Cancel (Decide later, on a group decision)
+              closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
             <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
               <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
@@ -2926,17 +3043,30 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                     so it is decided on its own page, which shows the options
                     and what follows. Two dead buttons said nothing of that. */}
                 {row.yes || row.no || !cardHref ? (
-                  <div className="dev-ws-answer-row">
-                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-yes" data-ws-answer-btn="yes" disabled={!row.yes} onClick={() => answer('yes')}>Vote yes</button>
-                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-no" data-ws-answer-btn="no" disabled={!row.no} onClick={() => answer('no')}>Vote no</button>
-                  </div>
+                  /* #3613: the card's own vote picker, inline — the switch,
+                     the line for the group under it, Cancel and the send —
+                     rather than two buttons followed by castVote's prompt
+                     card. Cancel is what Decide later was. */
+                  <NeedsVoteForm
+                    row={row}
+                    side={voteSide}
+                    line={voteLine}
+                    boxRef={voteBoxRef}
+                    onSide={setVoteSide}
+                    onLine={setVoteLine}
+                    onBoxKey={onVoteBoxKey}
+                    onCancel={closeSheet}
+                    onSend={submitVote}
+                  />
                 ) : (
-                  <div className="dev-ws-answer-row">
-                    <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
-                  </div>
+                  <>
+                    <div className="dev-ws-answer-row">
+                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
+                    </div>
+                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
+                  </>
                 )}
-                <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Esc close</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
               </div>
             </div>
           ) : null}
@@ -3286,6 +3416,15 @@ function useStripInsets(
  * The attribute is written straight onto the host, like useStripInsets's
  * properties: it changes on scroll, and a React state for it would re-render
  * the whole Workshop, board included, on the frame the strip sticks.
+ *
+ * #3583: NOT PINNED WHILE THE PAGE IS NOT DRAWN. A door pressed from another
+ * screen (the Communities tab, Messages) switches this page's tab while
+ * #app-view is still hidden, and the effect re-measured then: a hidden page
+ * has no box, every edge reads 0, and `0 < 0 + 10` said pinned. The page
+ * then came into view at its top with no scroll to correct it, and its band
+ * stood behind the tabs at rest. A strip with no height is not pinned; and
+ * the host is watched for size, which is how the page coming back into view
+ * — a box again — is heard when no scroll comes with it.
  */
 function usePinnedStrip(
   bar: HTMLElement | null,
@@ -3305,7 +3444,8 @@ function usePinnedStrip(
       frame = 0;
       const body = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody');
       if (!body) return;
-      const pinned = body.getBoundingClientRect().top < bar.getBoundingClientRect().bottom + WS_GAP_PX - 0.5;
+      const strip = bar.getBoundingClientRect();
+      const pinned = strip.height > 0 && body.getBoundingClientRect().top < strip.bottom + WS_GAP_PX - 0.5;
       if (pinned !== host.hasAttribute('data-ws-pinned')) host.toggleAttribute('data-ws-pinned', pinned);
     };
     const schedule = () => {
@@ -3313,52 +3453,17 @@ function usePinnedStrip(
     };
     document.addEventListener('scroll', schedule, { capture: true, passive: true });
     window.addEventListener('resize', schedule);
+    const seen = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    seen?.observe(host);
     check();
     return () => {
       document.removeEventListener('scroll', schedule, { capture: true });
       window.removeEventListener('resize', schedule);
+      seen?.disconnect();
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
     };
   }, [bar, hostRef, enabled, tab]);
-}
-
-/**
- * #3514: HOW FAR A PULL TO REFRESH HAS SLID THE PAGE, as `--ptr-gap` on
- * <html>.
- *
- * The kit's pull (public/js/app-view.js attaches it to #dev-forum-scroll)
- * slides the whole scroller down to show its spinner, and on a project page
- * that pulled the coloured tab band away from the coloured header: the gap
- * between them showed the plain page. app.css paints exactly that gap in the
- * community's colour, so header, gap and band read as one band stretching;
- * it can only size the paint by the gap, which the kit keeps nowhere but the
- * scroller's inline transform. So the transform is read back here as it
- * changes and published as a length. A 240px spinner layer painted whole
- * would show through the page's transparent hero below the band.
- *
- * On <html>, not on the scroller's parent, because that parent is not this
- * component's to write to, and a custom property only reaches the spinner's
- * layer (the scroller's sibling) from an ancestor of both.
- */
-function usePullGap(hostRef: React.RefObject<HTMLDivElement | null>): void {
-  useEffect(() => {
-    const scroller = hostRef.current?.closest<HTMLElement>('#dev-forum-scroll');
-    if (!scroller || typeof MutationObserver !== 'function') return undefined;
-    const root = document.documentElement;
-    const sync = () => {
-      const m = /translateY\(([\d.]+)px\)/.exec(scroller.style.transform || '');
-      const gap = m ? Math.round(parseFloat(m[1])) : 0;
-      if (gap > 0) root.style.setProperty('--ptr-gap', `${gap}px`);
-      else root.style.removeProperty('--ptr-gap');
-    };
-    const mo = new MutationObserver(sync);
-    mo.observe(scroller, { attributes: true, attributeFilter: ['style'] });
-    return () => {
-      mo.disconnect();
-      root.style.removeProperty('--ptr-gap');
-    };
-  }, [hostRef]);
 }
 
 export function DevWorkshop(): ReactNode {
@@ -3421,11 +3526,34 @@ export function DevWorkshop(): ReactNode {
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
-  // from a door lower down should start at its own head.
+  // from a door lower down should start at its own head — in the element
+  // that actually scrolls it (#3583, scrollToHead).
+  //
+  // And the page's memory of where it was goes with it (#3583). AppView keeps
+  // the feed's offset to put a reader back after an item and Back; that
+  // offset was the OLD tab's, and coming back to the page later (Back from
+  // another screen) laid it over the new one: the hub again, scrolled under
+  // its own strip. A zero is how that memory is told the page is at its top.
+  //
+  // #3620: AND A PRESS IS A STEP BACK CAN UNDO. The tabs share the page's
+  // address, so AppView._pushWorkshopTab pushes an entry at it naming the tab,
+  // after writing the one being left onto the entry it leaves: Back from the
+  // Workshop is the hub again, not the screen the project was opened from.
+  // Up from All items to the Workshop (its back bar, or the Workshop tab lit
+  // over it) is a step Back instead when the Workshop is the entry below
+  // (AppView._upWorkshopTab), so it leaves no loop. `tabRef` is the tab up
+  // now: it is read before the render this press causes, and by the listener
+  // below, which outlives the render it was made in.
+  const tabRef = useRef<TabKey>(tab);
+  tabRef.current = tab;
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
-    try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+    const was = tabRef.current;
+    const up = was === 'all' && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
+    if (!up) callAppView('_pushWorkshopTab', v.slug, was, next);
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -3449,15 +3577,43 @@ export function DevWorkshop(): ReactNode {
   // A DOOR TO THIS PROJECT'S HUB, pressed while its page is already open —
   // the logo menu's "Go to community hub" changes no address, so no route
   // runs. AppView._landOnHub says so; a door to another project is not ours.
+  //
+  // #3620: AND BACK OR FORWARD LANDING ON ONE OF THIS PAGE'S ENTRIES, which
+  // the router announces the same way, marked `traversal`. That shows the
+  // entry's tab and pushes nothing: Back and Forward are not doors, and a
+  // traversal onto the tab already up leaves the page (and its scroll) alone.
+  // A door pushes nothing here either: every door goes on to navigate to the
+  // page's address, and that navigation is its entry.
   useEffect(() => {
     const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey; traversal?: boolean } | null>).detail;
+      if (door && door.traversal && door.tab === tabRef.current) return;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
-      try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+      // #3583: the scroller that is really there (see scrollToHead). AppView
+      // has forgotten the offset already (_landOnTab), and a door that goes
+      // on to route reads this page at its top when it saves it.
+      scrollToHead(hostRef.current);
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, [v.slug]);
+  // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
+  // project's page to another's keeps the host (#app-view keeps
+  // #dev-workshop and republishes into it), so this is not mounted again,
+  // and the seed above — which is how a door to ANOTHER project's tab is
+  // read, since the listener leaves those alone — never ran for the new
+  // one: it opened on whatever tab the last project was on. A Recents
+  // channel's Discussion pressed beside one project's page, or the
+  // community switcher's hub, landed on the previous project's tab. So when
+  // the project changes, the tab is read afresh as a mount reads it, before
+  // paint, so the old tab never shows under the new name.
+  const tabSlug = useRef<string | null>(v.slug || null);
+  useLayoutEffect(() => {
+    if (!v.slug) return;
+    const was = tabSlug.current;
+    tabSlug.current = v.slug;
+    if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
@@ -3471,7 +3627,14 @@ export function DevWorkshop(): ReactNode {
   const stripSticks = useMediaFlag(WIDE_QUERY);
   useStripInsets(bar, hostRef, stripSticks);
   usePinnedStrip(bar, hostRef, stripSticks, tab);
-  usePullGap(hostRef);
+  // NO PULL HOOK HERE ANY MORE (pull-to-refresh under the tabs, evan,
+  // 2026-10-01). #3514's usePullGap read the kit's transform off
+  // #dev-forum-scroll and published it as `--ptr-gap` on <html>, so app.css
+  // could paint the gap a pull opened between the header and the band. A pull
+  // no longer moves the band or opens that gap: the kit publishes the pull
+  // itself (`--dev-ptr-pull` on the scroller, public/js/app-view.js) and
+  // app.css slides only what is under the band by it. Nothing in this
+  // component takes part, which is how it stays the only writer of its tree.
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -3642,6 +3805,10 @@ export function DevWorkshop(): ReactNode {
       ref={hostRef}
       className="dev-ws"
       data-ws-tab={tab}
+      // #3583: whose page this is, beside which tab it is on. AppView reads
+      // both when it saves the list's offset on the way out (renderDevView),
+      // because by then App.currentApp already names the page coming in.
+      data-ws-slug={slug || undefined}
     >
       {band}
       {pageBar}

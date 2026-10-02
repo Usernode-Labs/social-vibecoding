@@ -123,3 +123,20 @@ test('resolver is pure — repeated calls with the same inputs match, inputs unm
   assert.deepStrictEqual(cfg, CONFIG);
   assert.deepStrictEqual(user, { id: 2, canAdminWrite: true });
 });
+
+test('the Homeroom bot\'s in-process promote carries its own proposal ceiling, and nothing else can (#3576)', () => {
+  const { BOT_PROMOTED_CEILING } = require('../src/services/session-caps');
+  const cfg = { maxUserSessions: 3, maxUserPromotedSessions: 5 };
+  const bot = { id: 77, is_synthetic: true, [BOT_PROMOTED_CEILING]: 20 };
+  assert.deepEqual(effectiveSessionCaps(cfg, bot), { activeSessions: 3, promotedSessions: 20 },
+    'its per-app cap times its live apps, in place of the per-user 5; running sessions are untouched');
+  // As a client could send it: a string key is not the marker.
+  assert.equal(effectiveSessionCaps(cfg, { id: 77, BOT_PROMOTED_CEILING: 20 }).promotedSessions, 5);
+  assert.equal(effectiveSessionCaps(cfg, { id: 77, homeroom_bot_promoted_ceiling: 20 }).promotedSessions, 5);
+  for (const bad of [0, -1, 2.5, '20', null]) {
+    assert.equal(effectiveSessionCaps(cfg, { id: 77, [BOT_PROMOTED_CEILING]: bad }).promotedSessions, 5, String(bad));
+  }
+  // The route reads the requester's caps, so the bot's promote meets its ceiling there.
+  const votes = require('node:fs').readFileSync(require.resolve('../src/routes/votes.js'), 'utf8');
+  assert.match(votes, /const caps = effectiveSessionCaps\(config, req\.user\);\n\s+const \{ rows: promotedRows \} = await pool\.query\(/);
+});

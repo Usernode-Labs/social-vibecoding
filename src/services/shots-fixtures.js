@@ -342,6 +342,8 @@ async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfA
 }
 
 module.exports = {
+  assertShotsDatabase,
+  withClient,
   PROFILE,
   FULL_ADMIN_SESSION_ID,
   FULL_ADMIN_CHANGE_ID,

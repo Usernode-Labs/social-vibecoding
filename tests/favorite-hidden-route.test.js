@@ -32,6 +32,7 @@ const ids = {
   appManifest: require.resolve('../src/services/app-manifest'),
   renamePr: require.resolve('../src/services/rename-pr'),
   staging: require.resolve('../src/services/staging'),
+  events: require.resolve('../src/services/events'),
 };
 
 stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
@@ -45,6 +46,11 @@ stub(ids.appSecrets, {});
 stub(ids.appManifest, { MAX_APP_NAME_LENGTH: 64 });
 stub(ids.renamePr, {});
 stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
+const eventCalls = [];
+stub(ids.events, {
+  EVENT_TYPES: { APP_FAVORITED: 'app_favorited' },
+  record: (_pool, event) => { eventCalls.push(event); },
+});
 
 // Mock pool: resolves the app-by-slug lookup, answers the
 // app_collaborators membership probe from `memberUserIds`, records
@@ -119,6 +125,7 @@ test('member favorited=false persists a hidden opt-out row, not a delete', async
   appRow = makeAppRow();
   memberUserIds = new Set([100]);
   favQueries = [];
+  eventCalls.length = 0;
   currentUser = { id: 100, username: 'creator' };
   const server = await startServer();
   try {
@@ -131,6 +138,7 @@ test('member favorited=false persists a hidden opt-out row, not a delete', async
     assert.match(q.sql, /sort_order = NULL/, 'ordering slot cleared');
     assert.doesNotMatch(q.sql, /DELETE/, 'no delete for members');
     assert.deepEqual(q.params, [7, 100]);
+    assert.deepEqual(eventCalls, [], 'removing a favorite does not mint a favorited event');
   } finally {
     server.close();
   }
@@ -140,6 +148,7 @@ test('non-member favorited=false still deletes the favorite row', async () => {
   appRow = makeAppRow();
   memberUserIds = new Set(); // caller is NOT a member
   favQueries = [];
+  eventCalls.length = 0;
   currentUser = { id: 200, username: 'visitor' };
   const server = await startServer();
   try {
@@ -148,6 +157,7 @@ test('non-member favorited=false still deletes the favorite row', async () => {
     assert.equal(favQueries.length, 1);
     assert.match(favQueries[0].sql, /DELETE FROM app_favorites/);
     assert.deepEqual(favQueries[0].params, [7, 200]);
+    assert.deepEqual(eventCalls, [], 'removing a favorite does not mint a favorited event');
   } finally {
     server.close();
   }
@@ -157,6 +167,7 @@ test('favorited=true upserts with hidden = FALSE (add + un-hide in one)', async 
   appRow = makeAppRow();
   memberUserIds = new Set([100]);
   favQueries = [];
+  eventCalls.length = 0;
   currentUser = { id: 100, username: 'creator' };
   const server = await startServer();
   try {
@@ -167,6 +178,11 @@ test('favorited=true upserts with hidden = FALSE (add + un-hide in one)', async 
     assert.match(q.sql, /INSERT INTO app_favorites/);
     assert.match(q.sql, /DO UPDATE SET hidden = FALSE/, 'conflict path clears the opt-out');
     assert.deepEqual(q.params, [7, 100]);
+    assert.deepEqual(eventCalls, [{
+      type: 'app_favorited', userId: 100, appId: 7,
+      metadata: { source: 'user_favorite_toggle' },
+    }],
+      'the action survives a later hide or delete in the append-only event log');
   } finally {
     server.close();
   }
@@ -176,6 +192,7 @@ test('PUT /api/favorites/order never touches hidden', async () => {
   appRow = makeAppRow();
   memberUserIds = new Set([100]);
   favQueries = [];
+  eventCalls.length = 0;
   currentUser = { id: 100, username: 'creator' };
   const server = await startServer();
   try {
@@ -198,6 +215,7 @@ test('GET /api/apps serves your_apps_hidden as a boolean and hidden rows as not 
   appRow = null;
   memberUserIds = new Set();
   favQueries = [];
+  eventCalls.length = 0;
   currentUser = { id: 100, username: 'creator' };
   // Shape mirrors what the real query returns for a member app whose
   // favorites row is hidden=TRUE: the SQL derives is_favorited=false

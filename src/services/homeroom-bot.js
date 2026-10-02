@@ -161,7 +161,9 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // The live caps the dashboard SIMULATES in shadow mode: a run reports
 // whether these would have suppressed it, so the dashboard shows the live
 // bot's behaviour and not only the raw model's.
-const PROPOSALS_PER_APP_CAP = 2;
+// 5 since #3576: 2 left most of a backlog held, a slot freeing only when
+// the group voted.
+const PROPOSALS_PER_APP_CAP = 5;
 // Questions and `empty` verdicts share this one allowance, so the bot
 // cannot answer a quiet board with ten questions AND ten close proposals in
 // the same day. Both are a demand on somebody's attention.
@@ -868,7 +870,7 @@ async function refreshQueue(pool, settings, deps = {}) {
     summary.apps += 1;
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
-        ? await capRoomFor(pool, deps.bot, app.id) : null;
+        ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
       const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
@@ -891,7 +893,7 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
     summary.apps += 1;
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
-        ? await capRoomFor(pool, deps.bot, app.id) : null;
+        ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
       const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
@@ -1079,14 +1081,29 @@ async function insertRun(pool, run) {
 }
 
 /**
- * Which live cap would have stopped this verdict from being posted. Both
+ * The most proposals the bot may have up for a vote at once, across every
+ * app (#3576): the per-app cap on each live app. It stands in for the
+ * platform's per-user cap (session-caps.js, 5), which the bot ran into with
+ * four live apps and found out about only after a paid build could not be
+ * proposed. The Propose route honours it for the bot's own in-process
+ * promote only (promoteAsBot); the bot checks it before it builds.
+ */
+function botProposalCeiling(settings) {
+  return PROPOSALS_PER_APP_CAP * Math.max(1, (settings?.liveApps || []).length);
+}
+
+/**
+ * Which live cap would have stopped this verdict from being posted. The
  * counts are over the bot's own rows, so in shadow mode they read zero
  * until the tripwire on questions trips — which is exactly the number the
- * dashboard exists to show.
+ * dashboard exists to show. A ready verdict is checked against both
+ * proposal caps before anything is built: a hold costs nothing, and the
+ * cap_freed refresh brings the issue back when there is room.
  */
-async function simulateCaps(pool, bot, appId, verdict) {
+async function simulateCaps(pool, bot, appId, verdict, settings = null) {
   if (verdict === 'ready') {
     if (await openBotProposalCount(pool, bot, appId) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
+    if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
     if (await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
@@ -1099,6 +1116,17 @@ async function openBotProposalCount(pool, bot, appId) {
     `SELECT COUNT(*)::int AS cnt FROM chat_sessions
       WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
     [appId, bot.id],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+// The bot's proposals up for a vote on every app, counted as the Propose
+// route counts a user's (#3576).
+async function openBotProposalTotal(pool, bot) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM chat_sessions
+      WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
+    [bot.id],
   );
   return rows[0]?.cnt || 0;
 }
@@ -1119,16 +1147,21 @@ async function tripwireCount(pool, appId) {
 
 /**
  * How many more verdicts each cap would let through on this app now, keyed
- * by the name simulateCaps records (#3152). The same two counts, so a held
- * issue is only brought back when the check it failed would now pass.
+ * by the name simulateCaps records (#3152). The same counts, so a held
+ * issue is only brought back when the check it failed would now pass. The
+ * bot-wide room is the same number for every app; an app refreshed after
+ * another took it may bring one back that is held again, at the price of
+ * one triage and no post.
  */
-async function capRoomFor(pool, bot, appId) {
-  const [proposals, questions] = await Promise.all([
+async function capRoomFor(pool, bot, appId, settings = null) {
+  const [proposals, total, questions] = await Promise.all([
     openBotProposalCount(pool, bot, appId),
+    openBotProposalTotal(pool, bot),
     tripwireCount(pool, appId),
   ]);
   return {
     proposals_per_app: Math.max(0, PROPOSALS_PER_APP_CAP - proposals),
+    proposals_total: Math.max(0, botProposalCeiling(settings) - total),
     question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
   };
 }
@@ -1492,8 +1525,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   const prompt = [
-    seed, triagePrompt(), triageReference(), triageClosing(issueNumber),
-  ].join('\n\n');
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), triageReference(), triageClosing(issueNumber),
+  ].filter(Boolean).join('\n\n');
 
   let session;
   try {
@@ -1740,7 +1773,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       sessionId: session.id, costUsd, ...usage,
     });
   }
-  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict);
+  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
   const runId = await insertRun(pool, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
@@ -1776,6 +1809,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
         seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
         quietHold: item.reason === APP_AGAIN_REASON,
+        proposalCeiling: botProposalCeiling(settings),
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -2526,7 +2560,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         pool, bot, sessionId, spec: session.spec_md || null,
         buildText: plan.result.lastResultText, model: session.agent_model || null,
       });
-      const promoted = await live.promoteAsBot({ config, bot, sessionId, router: liveD.votesRouter });
+      const promoted = await live.promoteAsBot({
+        config, bot, sessionId, router: liveD.votesRouter, ceiling: botProposalCeiling(await readSettings(pool).catch(() => null)),
+      });
       if (promoted.status === 200 && promoted.body?.ok) {
         built = {
           ok: true, sessionId: Number(sessionId), prNumber: promoted.body.prNumber || null,
@@ -3013,7 +3049,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, quietHold = false, deps,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, quietHold = false,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -3031,7 +3068,8 @@ async function actOnVerdict({
       await say(kind, live.heldText({
         cap: capSuppressed,
         verdict: parsed.verdict,
-        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP : QUESTION_TRIPWIRE_PER_DAY,
+        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
+          : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY,
       }));
     }
   } else if (parsed.verdict === 'question') {
@@ -3051,7 +3089,7 @@ async function actOnVerdict({
     };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec,
+      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec, proposalCeiling,
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does not.
       onSession: (session) => pool.query(
@@ -3588,7 +3626,11 @@ async function adminPayload(pool, config, {
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
     runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r) })),
     apps: appRows,
-    caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
+    caps: {
+      proposalsPerApp: PROPOSALS_PER_APP_CAP,
+      proposalsTotal: botProposalCeiling(settings),
+      questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY,
+    },
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
   };
@@ -3880,6 +3922,7 @@ module.exports = {
   classifyIssue,
   BLOCKERS,
   capRoomFor,
+  simulateCaps,
   parseVerdict,
   parseRepo,
   BOT_USERNAME,
@@ -3895,6 +3938,7 @@ module.exports = {
   IDLE_PASS_DELAY_MS,
   BUSY_PASS_DELAY_MS,
   PROPOSALS_PER_APP_CAP,
+  botProposalCeiling,
   QUESTION_TRIPWIRE_PER_DAY,
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;

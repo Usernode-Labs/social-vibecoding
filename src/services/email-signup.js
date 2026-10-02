@@ -131,31 +131,34 @@ const PASSWORD_REQUIRED_MESSAGE =
 const ADMIN_PASSWORD_REQUIRED_MESSAGE =
   'This admin account signs in with a password. Enter it below to continue.';
 
-// How many times a colliding suggestion is replaced before the insert gives
-// up on deriving anything and takes an opaque placeholder.
+// How many times a colliding placeholder is replaced before the insert
+// gives up and lets the error through.
 const USERNAME_INSERT_ATTEMPTS = 3;
 
 /**
  * Create the account an email code just proved the mailbox for (#2563).
  *
- * `username` is a SUGGESTION, never the address. `needs_username_choice`
- * is TRUE, so the shell asks before Home and the person can replace it
- * with anything the platform's rules allow. `needs_communities_choice` is
- * TRUE for the same reason one step later: a new account is asked which
- * communities to join before its first Home (communities, stage 5;
- * src/services/onboarding.js).
+ * `username` is an opaque PLACEHOLDER (`member_<hex>`), never the address
+ * and, since #3575, never a name derived from it either: the person types
+ * their own at the set-password step, which will not finish without one
+ * (completePassword below). `needs_username_choice` is TRUE, which is what
+ * makes that step ask. `needs_communities_choice` is TRUE for the same
+ * reason one step later: a new account is asked which communities to join
+ * before its first Home (communities, stage 5; src/services/onboarding.js).
+ * `getting_started_gate` is TRUE because it is a NEW account: its Getting
+ * started card is the season's First challenges, and the rest of the season
+ * waits on them (the note beside the column in src/db/schema.sql).
  *
- * The retry loop is not belt-and-braces. `suggestAvailableUsernameFromEmail`
- * reads the table and the INSERT writes it, so two people signing up from
- * `ada@` addresses at different domains in the same instant can both be
- * handed `ada`. SAVEPOINT, because a failed statement poisons the whole
- * transaction otherwise and this one still has the consumed OTP in it.
- * A collision on the EMAIL index is a different race with a different
- * answer — a new username would not resolve it — so it is re-thrown.
+ * The retry loop is a backstop for a 72-bit placeholder colliding, which
+ * should never happen; it was load-bearing when the first candidate was a
+ * derived suggestion two simultaneous `ada@` sign-ups could both be handed.
+ * SAVEPOINT, because a failed statement poisons the whole transaction
+ * otherwise and this one still has the consumed OTP in it. A collision on
+ * the EMAIL index is a different race with a different answer — a new
+ * username would not resolve it — so it is re-thrown.
  */
 async function insertEmailUser(client, email, passwordHash) {
-  let candidate = await usernames.suggestAvailableUsernameFromEmail(client, email)
-    || usernames.placeholderUsername();
+  let candidate = usernames.placeholderUsername();
 
   for (let attempt = 0; ; attempt += 1) {
     await client.query('SAVEPOINT email_signup_username');
@@ -163,8 +166,9 @@ async function insertEmailUser(client, email, passwordHash) {
       const { rows } = await client.query(
         `INSERT INTO users
            (username, password, email, email_confirmed, email_confirmed_at,
-            password_set, is_admin, needs_username_choice, needs_communities_choice)
-         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE, TRUE)
+            password_set, is_admin, needs_username_choice, needs_communities_choice,
+            getting_started_gate)
+         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE, TRUE, TRUE)
          RETURNING id, username, is_admin, password_set, needs_username_choice`,
         [candidate, passwordHash, email]
       );
@@ -178,7 +182,7 @@ async function insertEmailUser(client, email, passwordHash) {
         throw error;
       }
       await client.query('ROLLBACK TO SAVEPOINT email_signup_username');
-      log.warn('email-signup', 'Suggested username was taken; retrying', {
+      log.warn('email-signup', 'Placeholder username was taken; retrying', {
         attempt: attempt + 1,
       });
       candidate = usernames.placeholderUsername();
@@ -271,12 +275,12 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       // #2563: the address is NOT the handle. It used to be — `VALUES
       // ($1, …)` with `email` in both slots — so every member who signed
       // up by email code wore their own address in front of everyone else
-      // on the platform. What goes in now is a suggestion derived from the
-      // local part (src/services/usernames.js), or an opaque placeholder
-      // when nothing valid can be derived from it, and the row is marked
-      // `needs_username_choice` so the shell asks before Home.
+      // on the platform. What goes in now is an opaque placeholder (#3575:
+      // not a name derived from the local part either), and the row is
+      // marked `needs_username_choice`, so the set-password step asks for
+      // the handle and refuses to finish without one.
       //
-      // The flag, not the string, is what drives the gate: the server
+      // The flag, not the string, is what drives the ask: the server
       // knows this account has never chosen, and no client has to infer it
       // from what the name looks like.
       user = await insertEmailUser(client, email, unusablePasswordHash);
@@ -292,14 +296,6 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
         [user.id]
       );
     }
-
-    // QA 2026-09-24 Q12: the handle the account still owes a choice of, so
-    // the password step can ask for it (prefilled) instead of the person
-    // meeting a name they never chose in the waiting room. Null when the
-    // account has already chosen.
-    const suggestedUsername = user.needs_username_choice
-      ? await firstRunSuggestion(client, user, email)
-      : null;
 
     const signupToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + SIGNUP_TTL_MS);
@@ -318,8 +314,11 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       expiresAt,
       userId: user.id,
       created,
+      // QA 2026-09-24 Q12: the account still owes a choice of handle, so the
+      // password step asks for it rather than the person meeting a name
+      // they never chose in the waiting room. #3575: asked with an EMPTY
+      // field — there is no suggestion any more (see usernames.js).
       needsUsernameChoice: user.needs_username_choice === true,
-      suggestedUsername,
     };
   });
 
@@ -348,23 +347,6 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
 }
 
 /**
- * What the set-password step prefills for an account that has never chosen
- * a handle. The rule GET /api/me/username/suggestion uses for the first-run
- * gate (routes/profile.js): the handle the row already holds when it is a
- * real suggestion, else one derived from the address. Never the address,
- * and (unlike that route) never an opaque `member_…` placeholder either.
- */
-async function firstRunSuggestion(client, user, email) {
-  const current = String(user.username || '');
-  const isAddress = current.toLowerCase() === String(email).toLowerCase();
-  if (!isAddress && !usernames.isPlaceholderUsername(current)) {
-    const check = usernames.validateUsername(current);
-    if (check.ok) return check.value;
-  }
-  return usernames.suggestAvailableUsernameFromEmail(client, email, user.id);
-}
-
-/**
  * Will this account land in the waiting room? Read AFTER linkUserByEmail,
  * which grants access on the spot to an address the waitlist already
  * released. Best effort: a failed read answers null ("cannot tell"), and the
@@ -385,20 +367,23 @@ async function isWaitlisted(pool, userId) {
 }
 
 /**
- * Set the password, and optionally the first handle, then sign in.
+ * Set the password and the first handle, then sign in.
  *
- * `username` is OPTIONAL and additive (QA 2026-09-24 Q12). The set-password
- * step now asks a brand-new account for its handle, prefilled with the
- * suggestion, so nobody meets a name they never chose in the waiting room;
- * before, it was asked only at release, by the first-run gate. A caller
- * that sends no `username` gets exactly the old behaviour and the gate asks
- * later. It takes the same path POST /api/me/username/choose does
- * (validateUsername, checkAvailability, chooseFirstUsername's
- * `needs_username_choice` guard), and it is ignored for an account that has
- * already chosen.
+ * `username` is REQUIRED for an account that has never chosen one (#3575)
+ * and ignored for an account that has. QA 2026-09-24 Q12 made the
+ * set-password step ask a new account for its handle, prefilled with a
+ * suggestion derived from the address, but left the field optional: a
+ * caller that sent none finished sign-up under that suggestion, and the
+ * first-run gate asked only later, at release. "Do not just generate a
+ * username from their email. They should have to manually set a username"
+ * is a rule about the SERVER, not about one form, so the refusal is here: a
+ * new email account cannot get a session until it has typed a handle. It
+ * takes the same path POST /api/me/username/choose does (validateUsername,
+ * checkAvailability, chooseFirstUsername's `needs_username_choice` guard).
  *
- * A username refusal is thrown BEFORE the signup session is spent, so the
- * person fixes the field and submits again with the same cookie.
+ * Every username refusal — missing, malformed or taken — is raised BEFORE
+ * the signup session is spent, so the person fixes the field and submits
+ * again with the same cookie.
  */
 async function completePassword(pool, { signupToken, password, username = null, createSession }) {
   if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) {
@@ -432,6 +417,13 @@ async function completePassword(pool, { signupToken, password, username = null, 
         return { invalid: true };
       }
 
+      // #3575: an account that has never chosen a handle does not finish
+      // sign-up without one. Returned, not thrown, like the taken case
+      // below: nothing has been written, so the signup session survives
+      // for the submit that carries a name.
+      if (!chosen && signup.needs_username_choice === true) {
+        return { usernameRequired: true };
+      }
       const choosing = chosen && signup.needs_username_choice === true;
       if (choosing) {
         const free = await usernames.checkAvailability(client, chosen, signup.user_id);
@@ -473,6 +465,11 @@ async function completePassword(pool, { signupToken, password, username = null, 
     throw error;
   }
 
+  if (result.usernameRequired) {
+    // The sentence validateUsername gives an empty field, so the step reads
+    // the same whether the browser or the server caught it.
+    throw new EmailSignupError('username_required', usernames.validateUsername('').error);
+  }
   if (result.usernameTaken) {
     throw new EmailSignupError('username_taken', result.usernameTaken);
   }

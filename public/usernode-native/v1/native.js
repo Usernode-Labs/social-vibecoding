@@ -24,7 +24,12 @@
  *                                        resting FULLY below that anchor
  *                                        line with equal space above and
  *                                        below, and lingers briefly once
- *                                        onRefresh settles. Returns
+ *                                        onRefresh settles. Opt-in
+ *                                        opts.pullProperty publishes the
+ *                                        pull as a CSS custom property
+ *                                        instead of moving the scroller,
+ *                                        for chrome inside it that holds
+ *                                        still. Returns
  *                                        { detach(), refresh() }; never
  *                                        throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
@@ -41,7 +46,8 @@
  *                                        play the iOS-homescreen expand /
  *                                        collapse out of a tile ({ el,
  *                                        fromEl | fromRect, after?,
- *                                        fallback? } — fn reveals the
+ *                                        fallback?, duration? } — fn
+ *                                        reveals the
  *                                        incoming screen, `after` conceals
  *                                        the outgoing one; the LIVE el is
  *                                        transform-animated, no snapshot)
@@ -1434,11 +1440,28 @@
   //   opts.topEl  — an Element (typically the fixed/sticky app header)
   //                 whose bottom edge the puck hangs from. Re-measured on
   //                 resize and at the start of every pull, so a collapsing
-  //                 or conditionally-rendered header stays correct.
+  //                 or conditionally-rendered header stays correct. May
+  //                 also be a FUNCTION returning that Element (or null for
+  //                 the default anchor), asked again at every measure: for
+  //                 chrome a re-render replaces, which a node captured at
+  //                 attach time would outlive.
   //   opts.top    — a fixed anchor offset in px, when there is no element
   //                 to measure.
   //   opts.getScrollTop — optional offset reader when the content's scroll
   //                 owner can change without replacing its gesture target.
+  //   opts.pullProperty — element mode, opt-in: a CSS custom property name
+  //                 ('--…'). The pull no longer translates the scroller.
+  //                 The displayed pull is written to that property on the
+  //                 scroller instead (a px length while a pull is out,
+  //                 removed at rest), and the page's own CSS slides whatever
+  //                 it chooses by it: for chrome that lives INSIDE the
+  //                 scroller (a sticky tab strip) and must hold still while
+  //                 only what is under it moves. Anchor the puck at that
+  //                 chrome's bottom edge with opts.topEl. The layer keeps
+  //                 its stacking (level 0, first in tree order), so the puck
+  //                 is still revealed by the content sliding away, which
+  //                 asks the page that the scroller and the sliding
+  //                 content's ancestors paint nothing over the gap.
   //   (default)   — element mode: the scroller's own top edge within its
   //                 parent (i.e. below whatever chrome sits above it);
   //                 window mode: the safe-area top inset.
@@ -1483,8 +1506,24 @@
     }
 
     var anchorEl = opts && opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
+    var anchorFn = opts && typeof opts.topEl === 'function' ? opts.topEl : null;
     var anchorPx = opts && typeof opts.top === 'number' && isFinite(opts.top)
       ? opts.top : null;
+    // opts.pullProperty: where the pull goes instead of the scroller's
+    // transform. Element mode only (window mode slides opts.content), and
+    // only a well-formed custom property name; anything else is the default
+    // pull, exactly as before.
+    var pullProp = !windowMode && opts && typeof opts.pullProperty === 'string' &&
+      /^--[A-Za-z0-9_-]+$/.test(opts.pullProperty) ? opts.pullProperty : null;
+
+    // The anchor Element, asking opts.topEl again when it is a function: a
+    // throw or a non-element is no anchor (the default), never an error.
+    function anchorElement() {
+      if (!anchorFn) return anchorEl;
+      var got = null;
+      try { got = anchorFn(); } catch (_) { got = null; }
+      return got && got.nodeType === 1 ? got : null;
+    }
 
     // The clip layer: an inert box hanging off the anchor. Its overflow
     // clip is what keeps the retracted puck (which sits at -40px) from
@@ -1517,7 +1556,10 @@
       // below the header's resting line — anchoring under it would park
       // the puck on top of the descending bar. Only a header outside the
       // content (a truly fixed one) is a real anchor.
-      var el = anchorEl && !(windowMode && content.contains(anchorEl)) ? anchorEl : null;
+      // (With opts.pullProperty the chrome inside the scroller is exactly
+      // what does NOT ride down, so in element mode it anchors as given.)
+      var anchor = anchorElement();
+      var el = anchor && !(windowMode && content.contains(anchor)) ? anchor : null;
       if (anchorPx != null) {
         top = anchorPx;
       } else if (el) {
@@ -1553,9 +1595,18 @@
       return windowMode ? (window.scrollY || 0) : scrollEl.scrollTop;
     }
 
+    // The pull itself: the scroller's transform, or with opts.pullProperty
+    // the property the page's CSS slides its content by. Removed, not set to
+    // 0, at rest, so the page can tell a pull from none.
+    function slide(y) {
+      if (!pullProp) content.style.transform = y ? 'translateY(' + y + 'px)' : '';
+      else if (y) content.style.setProperty(pullProp, y + 'px');
+      else content.style.removeProperty(pullProp);
+    }
+
     function render(y) {
       display = y;
-      content.style.transform = y ? 'translateY(' + y + 'px)' : '';
+      slide(y);
       var progress = Math.min(1, y / PTR_THRESHOLD);
       puck.style.opacity = String(progress);
       puck.style.transform =
@@ -1741,7 +1792,7 @@
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
         if (activeSpring) activeSpring.stop();
         if (layer.parentNode) layer.parentNode.removeChild(layer);
-        content.style.transform = '';
+        slide(0);
       },
     };
   }
@@ -2936,7 +2987,10 @@
    * rect, then restores it and the document's scroll offset before pinning;
    * without it the zoom would
    * animate to the shared-layout rect and snap at the end. zoom-out
-   * ignores `outEl`. When the zoom can't run (no usable source rect,
+   * ignores `outEl`. `duration` (ms, or a function returning ms or null,
+   * asked once the source is resolved) shortens or lengthens the move; the
+   * fade scales with it, and leaving it out keeps the homescreen timing.
+   * When the zoom can't run (no usable source rect,
    * reduced motion, missing el) it falls back to opts.fallback ('push'
    * for zoom-in, 'pop' for zoom-out, or 'none') with the combined
    * mutation.
@@ -2995,6 +3049,15 @@
       ? src.getBoundingClientRect()
       : src;
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
+  }
+
+  // The move's length for this zoom: the caller's `duration` when it names a
+  // positive number of ms (or a function that returns one), else `fallbackMs`.
+  function zoomDuration(opts, fallbackMs) {
+    var d = opts.duration;
+    try { if (typeof d === 'function') d = d(); } catch (e) { d = null; }
+    d = Number(d);
+    return isFinite(d) && d > 0 ? Math.round(d) : fallbackMs;
   }
 
   function zoomTransition(fn, type, opts) {
@@ -3077,14 +3140,15 @@
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      var inMs = zoomDuration(opts, 380);
+      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + Math.min(220, inMs) + 'ms ease, border-radius ' + inMs + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, inMs + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3102,15 +3166,17 @@
       return promise;
     }
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    var outMs = zoomDuration(opts, 340);
+    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+      + ', opacity ' + Math.round(outMs * 200 / 340) + 'ms ease '
+      + Math.round(outMs * 60 / 340) + 'ms, border-radius ' + outMs + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, outMs + 140); // safety if transitionend never fires
     return promise;
   }
 

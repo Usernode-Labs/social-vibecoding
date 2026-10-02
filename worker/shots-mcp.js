@@ -13,6 +13,7 @@ const { z } = require('/usr/local/lib/node_modules/zod');
 const fs = require('node:fs');
 const path = require('node:path');
 const { hostedAppSlugs } = require('./shots-hosted-origins');
+const boundary = require('./shots-boundary');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.SHOTS_RUN_ID || '');
@@ -83,7 +84,12 @@ function savedScreenshot(file) {
   for (const persona of PERSONA_DIRS) {
     const candidate = path.join(shotsDir, persona, name);
     try {
-      if (fs.lstatSync(candidate).isFile()) return fs.readFileSync(candidate);
+      if (fs.lstatSync(candidate).isFile()) {
+        // The site the browser observer stamped this image with: the page it
+        // was taken on (shots-boundary.js).
+        const image = fs.readFileSync(candidate);
+        return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, persona), name, image) };
+      }
     } catch { /* try the next persona's directory */ }
   }
   throw refused('shot_file_not_found', `No saved screenshot named ${name}. Pass the same filename to browser_take_screenshot first.`);
@@ -118,6 +124,23 @@ function latestClip(persona) {
   return clips[clips.length - 1].file;
 }
 
+// The run's own before and after addresses, from the platform's brief, read
+// once: a shot is published only from the address of its side.
+let runOrigins = null;
+async function pairOrigins() {
+  if (!runOrigins) {
+    const origins = (await request('/context', { timeoutMs: 30_000 })).context?.origins;
+    if (!origins?.base || !origins?.head) throw new Error('The brief has no before and after addresses.');
+    runOrigins = { base: origins.base, head: origins.head };
+  }
+  return runOrigins;
+}
+
+function requireOnApp(side, origins, pair) {
+  const reason = boundary.provenanceRefusal(side, origins, pair);
+  if (reason) throw refused('shot_not_on_app', reason);
+}
+
 const annotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const server = new McpServer(
   { name: 'usernode-before-after-shots', version: '2.0.0' },
@@ -140,7 +163,7 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
@@ -155,9 +178,12 @@ server.registerTool('save_shot', {
   // One upload per file, in order: a model round trip is what costs time,
   // not these requests. A refused file does not stop the others.
   const results = [];
+  let pair = null;
   for (const { change, screen, side, kind = 'screen', file } of shots) {
     try {
-      const image = savedScreenshot(file);
+      const { image, origin } = savedScreenshot(file);
+      pair = pair || await pairOrigins();
+      requireOnApp(side, [origin], pair);
       const query = new URLSearchParams({ change, screen, side, kind });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       results.push({ change, screen, side, kind, file, saved: true, result });
@@ -190,6 +216,11 @@ server.registerTool('save_clip', {
       throw refused('clip_not_needed', `${change} is not declared as motion; save still shots for it.`);
     }
     const file = latestClip(declared.persona);
+    // Every page the recorded session showed must be this side's address,
+    // by the record written as that session closed, after its clip.
+    requireOnApp(side, boundary.sessionOrigins(path.dirname(file), { notBefore: fs.statSync(file).mtimeMs }), {
+      base: context.origins?.base, head: context.origins?.head,
+    });
     const query = new URLSearchParams({ change, screen, side, kind: 'clip' });
     const result = (await request(`/shot?${query}`, { method: 'POST', binary: fs.readFileSync(file) })).result;
     retired.add(file);

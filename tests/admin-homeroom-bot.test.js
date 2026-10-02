@@ -143,7 +143,7 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.queue.depth, 4);
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
-  assert.deepEqual(data.caps, { proposalsPerApp: 2, questionsPerAppPerDay: 10 });
+  assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 5, questionsPerAppPerDay: 10 });
 
   // adminMiddleware sends a non-admin back to the shell (a redirect, since
   // the mounted router sees a path without the /api prefix).

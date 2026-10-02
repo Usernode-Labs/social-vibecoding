@@ -730,18 +730,27 @@ function validSlug(slug?: string | null): string | null {
 export async function loadDiscussion(slug: string): Promise<void> {
   const want = validSlug(slug);
   if (!want) return;
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('app_discussion', { appSlug: want });
+  const attemptId = telemetry?.attempt?.('app_discussion_load', {
+    screen: 'app_discussion', appSlug: want, timeoutMs: 10_000, abandonOnHide: true,
+  });
+  let errorCode = 'network';
   try {
     // `manifest=summary`: the same address AppView and the Improve target read,
     // so the service worker's cached copy is shared rather than kept twice;
     // nothing here reads the manifest's declared tests or platform env.
     const response = await fetch(`/api/apps/${encodeURIComponent(want)}?manifest=summary`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      errorCode = telemetry?.errorCodeFor?.(response.status) || 'unavailable';
+      throw new Error(`HTTP ${response.status}`);
+    }
     const data = await response.json().catch(() => null);
     const app = (data && (data.app || data)) || null;
-    if (!app || !app.slug) throw new Error('No such app');
+    if (!app || !app.slug) { errorCode = 'invalid_response'; throw new Error('No such app'); }
     // A slower request for a thread the reader has already left must not
     // paint over the one they are looking at.
-    if (state.route.appSlug !== want) return;
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     publish({
       discussionContext: {
         slug: app.slug,
@@ -759,8 +768,10 @@ export async function loadDiscussion(slug: string): Promise<void> {
       },
       discussionError: null,
     });
+    telemetry?.outcome?.(attemptId, 'success');
   } catch {
-    if (state.route.appSlug !== want) return;
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
+    telemetry?.outcome?.(attemptId, 'failure', { errorCode });
     publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
   }
 }

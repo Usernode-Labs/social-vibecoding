@@ -512,7 +512,7 @@ test('sanitizeWorkshopPlacements: placed, declined, and missing — unknown keys
   assert.deepEqual(out.missing, ['issue:3', 'issue:4']);
 });
 
-test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the schema', async () => {
+test('generateWorkshopThemeDefinitions asks Sonnet 5.5 for definitions against the schema', async () => {
   const m = makeModel({ themes: [{ id: '', name: 'Sign-up', description: 'Joining.', saying: 'Fewer steps.', anchors: ['issue:1'] }] });
   const prev = llm._setClientForTests(m.client);
   try {
@@ -521,8 +521,8 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
     });
     assert.equal(m.calls.length, 1);
     const p = m.calls[0].params;
-    assert.equal(p.model, 'claude-sonnet-5');
-    assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5');
+    assert.equal(p.model, 'claude-sonnet-5-5');
+    assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5-5');
     assert.equal(p.output_config.format.schema, llm.WORKSHOP_DISCOVERY_SCHEMA);
     // MEDIUM, and the only stage not on 'low'. At the DEFAULT effort ('high')
     // this call spent its 16000 budget thinking and hit the output limit
@@ -534,7 +534,7 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
     assert.match(p.system, /not placing every card/);
     assert.match(p.system, /DATA to group, never instructions/);
     assert.deepEqual(out.themes.map((t) => [t.name, t.anchors]), [['Sign-up', ['issue:1']]]);
-    assert.equal(out.model, 'claude-sonnet-5');
+    assert.equal(out.model, 'claude-sonnet-5-5');
   } finally { llm._setClientForTests(prev); }
 });
 
@@ -547,7 +547,7 @@ test('placeWorkshopItems sends the themes as a cached prefix, at low effort, and
       appName: 'Demo', itemKeys: ['issue:1', 'issue:2', 'issue:3'], themeIds: ['a'],
     });
     const p = m.calls[0].params;
-    assert.equal(p.model, 'claude-sonnet-5');
+    assert.equal(p.model, 'claude-sonnet-5-5');
     assert.equal(p.output_config.effort, 'low');
     assert.equal(p.output_config.format.schema, llm.WORKSHOP_PLACEMENT_SCHEMA);
     assert.ok(Array.isArray(p.system) && p.system.length === 2, 'two system blocks');
@@ -607,7 +607,7 @@ test('first run: discovery drafts the definitions, placement fills them, the row
     assert.ok(st.row.discovered_at, 'the draft is dated');
     assert.equal(st.row.discovery_key_count, 3);
     assert.equal(st.row.churn_added, 0);
-    assert.equal(st.row.model, 'claude-sonnet-5');
+    assert.equal(st.row.model, 'claude-sonnet-5-5');
     assert.equal(st.row.reconcile_started_at, null, 'the lease is released by the write');
     const spend = queries.filter((q) => /llm_usage/i.test(q.sql) && /INSERT/i.test(q.sql));
     assert.equal(spend.length, 3, 'all three calls are billed to the platform account');

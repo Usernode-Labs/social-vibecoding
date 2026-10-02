@@ -22,6 +22,7 @@ const { userDirectoryLimiter } = require('../middleware/rate-limits');
 // Shared with POST /api/apps, which sends a Group's invites at creation
 // (services/collab-invites.js).
 const { acceptInvite, sendInvite } = require('../services/collab-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function collaboratorRoutes(config) {
@@ -215,6 +216,8 @@ function collaboratorRoutes(config) {
       // the inviter and the same "joined" line in the app's chat.
       const result = await acceptInvite(pool, { appId, user: req.user });
       if (!result.ok) return res.status(result.status).json({ error: result.error });
+      // An accepted invite is a join: count its challenge now (#3564).
+      if (!result.alreadyMember) await challengeScorer.scoreOnJoin(pool, config);
       res.json({
         ok: true,
         appSlug: result.appSlug,

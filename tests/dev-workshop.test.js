@@ -4642,12 +4642,17 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // THE ANSWERS ARE ON THE SHEET. The rail's Vote control opens the question
   // and records nothing by itself — a thumbs-up on a rail reads as "like",
   // and a queue answered by reflex is answered carelessly. Yes and No sit
-  // together on the sheet with the tally, and Decide later closes it.
+  // together on the sheet with the tally, and Cancel closes it. #3613: they
+  // are the card's own VotePicker, inline — the switch, the line for the
+  // group under it and the send — not two buttons followed by a prompt card.
   assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
   assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
   assert.match(WORKSHOP, /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the sheet');
-  assert.match(WORKSHOP, /data-ws-answer-btn="yes"[\s\S]{0,160}?onClick=\{\(\) => answer\('yes'\)\}/, 'Yes is on the sheet');
-  assert.match(WORKSHOP, /data-ws-answer-btn="no"[\s\S]{0,160}?onClick=\{\(\) => answer\('no'\)\}/, 'and so is No');
+  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,400}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
+  assert.match(WORKSHOP, /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
+  assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOP), 'the bare Yes/No pair is gone');
+  assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
   // NOTHING ADVANCES ON ITS OWN. The deck used to jump half a second after a
   // vote, which in a feed reads as the card vanishing under the press: the
   // row is pinned in place with its confirmation until you move on.
@@ -4802,9 +4807,11 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // The offset is set AFTER `inset: auto`, or the shorthand resets it and the
   // strip pins to nothing. Measured when it was written above: the strip's top
   // went to -890 on a 900px scroll while the head it travels with stayed.
+  // #3583: the offset is `--ws-pin-top` now, the header's foot, rather than
+  // 0: the order is the same rule.
   const insetAt = rail[1].indexOf('inset: auto;');
-  const topAt = rail[1].indexOf('top: 0;');
-  assert.ok(insetAt > 0 && topAt > insetAt, '`top: 0` comes after `inset: auto`');
+  const topAt = rail[1].indexOf('top: var(--ws-pin-top, 0px);');
+  assert.ok(insetAt > 0 && topAt > insetAt, '`top` comes after `inset: auto`');
   // THE PHONE BAR'S BOX DOES NOT COME UP HERE, and all three of these are
   // regressions, not tidying. `left/right/bottom` place a FIXED pill against
   // the viewport; `position: relative` does not ignore them, it SHIFTS by
@@ -5173,13 +5180,15 @@ test('the tab strip and the head pin as one band (#2339 follow-up)', () => {
   const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(decls);
   assert.ok(rail, 'the rail is restyled for width');
   assert.match(rail[1], /position: sticky;/);
-  assert.ok(rail[1].indexOf('top: 0;') > rail[1].indexOf('inset: auto;'),
-    '`top: 0` is set after `inset: auto`');
+  //    #3583: it pins at the header's foot (`--ws-pin-top`), not at 0.
+  assert.ok(rail[1].indexOf('top: var(--ws-pin-top, 0px);') > rail[1].indexOf('inset: auto;'),
+    '`top` is set after `inset: auto`');
 
   // 2. THE HEAD keeps the base rule's `position: sticky` and only moves where
   //    it rests: under the strip, by the strip's MEASURED height plus the
-  //    column gap. `top: 0` would slide it under the strip.
-  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: var\(--dev-ws-head-top, 0px\)/);
+  //    column gap. `top: 0` would slide it under the strip. #3583: counted
+  //    from where the strip pins, which is no longer the scroller's top.
+  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
   assert.match(WORKSHOP, /const WS_GAP_PX = 10;/);
   assert.match(WORKSHOP,
     /setProperty\('--dev-ws-head-top', `\$\{Math\.round\(n\.height\) \+ WS_GAP_PX\}px`\)/);

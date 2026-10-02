@@ -5,7 +5,6 @@
 //
 //   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
-//   GET    /api/me/username/suggestion  prefill for the first-run step
 //   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
@@ -62,7 +61,10 @@ const {
   MY_COUNT_SQL,
   MY_BLOCKS_SQL,
   ALL_CHALLENGE_WHERE,
+  onboardingDoneExpr,
+  onboardingDoneParams,
 } = require('./home-panels');
+const { loadOnboarding } = require('../services/topochain/challenge-onboarding');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -666,19 +668,39 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
   return fallback[0] || null;
 }
 
+// The viewer's done rule for one season, as Home's Challenges block counts
+// it: DONE_EXPR, with the First challenges' own answer over it where the
+// season has them (home-panels.js onboardingDoneExpr). A First challenge is
+// done from every credit on its TEMPLATE, an earlier season's included, which
+// is also how the Getting started card and the gate read it (2026-10-01), so
+// Me's "N of M done" and Home's "N/M done in Season 2" cannot disagree about
+// one of them. `sql(n)` places the rule's two parameters at $n and $n+1 of
+// the statement it is spliced into; with no First challenges it is DONE_EXPR
+// and takes none.
+async function viewerDoneRule(pool, userId, seasonId) {
+  const onboarding = await loadOnboarding(pool, userId, { seasonId });
+  if (!onboarding) return { sql: () => DONE_EXPR, params: [] };
+  return {
+    sql: (n) => onboardingDoneExpr(`$${n}`, `$${n + 1}`),
+    params: onboardingDoneParams(onboarding),
+  };
+}
+
 // The season's in-scope challenge count and how many of them the viewer has
-// done, by DONE_EXPR. Shared by the completed list's "N of M done" header
-// and Me's challenges stat card, so the two can never disagree. Totals over
-// the WHOLE in-scope set, so a capped row list never makes them lie.
-async function readChallengeTotals(pool, userId, seasonId) {
+// done, by the viewer's done rule (above). Shared by the completed list's "N
+// of M done" header and Me's challenges stat card, so the two can never
+// disagree. Totals over the WHOLE in-scope set, so a capped row list never
+// makes them lie. `rule` is passed by a caller that already read it.
+async function readChallengeTotals(pool, userId, seasonId, rule = null) {
+  const done = rule || await viewerDoneRule(pool, userId, seasonId);
   const { rows: totalRows } = await pool.query(
         `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done
+                COUNT(*) FILTER (WHERE ${done.sql(3)})::int AS done
            FROM challenges c
            JOIN season_events se ON se.id = c.season_event_id
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
           WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
-        [userId, seasonId]
+        [userId, seasonId, ...done.params]
   );
   const row = totalRows[0];
   return row ? { total: Number(row.total) || 0, done: Number(row.done) || 0 } : null;
@@ -891,51 +913,11 @@ function profileRoutes(config) {
     }
   );
 
-  // ── GET /api/me/username/suggestion ──────────────────────────────────
-  //
-  // What the first-run "Choose your username" step prefills (#2563).
-  //
-  // It is a route rather than a field on /api/auth/me because answering it
-  // costs an availability walk over `users` and `username_history`, and
-  // /api/auth/me is fetched on the boot of every tab by every signed-in
-  // member. The BOOLEAN that decides whether to ask rides that payload;
-  // the suggestion is fetched once, by the one screen that needs it.
-  //
-  // Never the email address, on any branch — that is the whole issue.
-  router.get('/api/me/username/suggestion', requireUser, async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        'SELECT username, email FROM users WHERE id = $1',
-        [req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'User not found' });
-      const { username: current, email } = rows[0];
-      const isEmailHandle = !!email
-        && String(current).toLowerCase() === String(email).toLowerCase();
-
-      // An account created since #2563 already HOLDS a derived suggestion
-      // (email-signup.js wrote one) — offering it back is both the best
-      // answer and a stable one across reloads of the gate. Accounts the
-      // migration flagged still wear their address, so theirs is derived
-      // here instead.
-      if (!isEmailHandle) {
-        const check = usernames.validateUsername(current);
-        if (check.ok) return res.json({ suggestion: check.value });
-      }
-
-      const suggestion = await usernames.suggestAvailableUsernameFromEmail(
-        pool, email, req.user.id
-      );
-      // null is a real answer: the field simply starts empty and the person
-      // types their own. Better than prefilling something they must delete.
-      return res.json({ suggestion: suggestion || null });
-    } catch (err) {
-      log.error('profile', 'Username suggestion failed', {
-        userId: req.user.id, err: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // GET /api/me/username/suggestion lived here: the handle, derived from
+  // the email's local part, that the first-run step arrived holding
+  // (#2563). #3575 retired it with the prefill it served — "do not just
+  // generate a username from their email" — and the step now starts empty.
+  // See the block above placeholderUsername in src/services/usernames.js.
 
   // ── POST /api/me/username/choose ─────────────────────────────────────
   //
@@ -951,8 +933,8 @@ function profileRoutes(config) {
   //   • The 30-day cooldown. It prices handle CHURN; a first choice is not
   //     churn, and charging for it would leave a typo in place for a month.
   //   • A `username_history` row. See chooseFirstUsername — what is being
-  //     left behind is an email address, and the ledger is read by every
-  //     handle resolver on the platform.
+  //     left behind is an email address or an opaque placeholder, and the
+  //     ledger is read by every handle resolver on the platform.
   //
   // What replaces the password as the authorization is the flag itself:
   // the UPDATE only fires while `needs_username_choice` is TRUE, so this
@@ -1112,6 +1094,10 @@ function profileRoutes(config) {
         return res.json({ season: null, total: 0, done: 0, completed: [] });
       }
 
+      // The viewer's done rule (viewerDoneRule): DONE_EXPR, with the First
+      // challenges' lifetime answer over it, read once for the list and the
+      // totals both.
+      const rule = await viewerDoneRule(pool, req.user.id, season.id);
       const { rows } = await pool.query(
         `SELECT c.id, c.season_event_id, c.goal, c.task, c.reward,
                 c.schedule_start, c.schedule_end,
@@ -1126,19 +1112,19 @@ function profileRoutes(config) {
                 (SELECT MAX(ua.activity_at) FROM user_activities ua
                   WHERE ua.user_id = $1 AND ua.challenge_id = c.id) AS my_last_activity_at,
                 ${MY_BLOCKS_SQL} AS my_blocks,
-                ${DONE_EXPR} AS my_done
+                ${rule.sql(4)} AS my_done
            FROM challenges c
            JOIN season_events se ON se.id = c.season_event_id
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE} AND (${DONE_EXPR})
+          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE} AND (${rule.sql(4)})
           ORDER BY my_last_activity_at DESC NULLS LAST, c.id DESC
           LIMIT $3`,
-        [req.user.id, season.id, COMPLETED_LIMIT + 1]
+        [req.user.id, season.id, COMPLETED_LIMIT + 1, ...rule.params]
       );
 
       // Totals over the WHOLE in-scope set so the header's "N of M done"
       // is honest even when the row list is capped.
-      const totals = await readChallengeTotals(pool, req.user.id, season.id);
+      const totals = await readChallengeTotals(pool, req.user.id, season.id, rule);
 
       const truncated = rows.length > COMPLETED_LIMIT;
       if (truncated) {

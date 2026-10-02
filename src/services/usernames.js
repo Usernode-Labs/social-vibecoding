@@ -70,6 +70,9 @@ const RESERVED_PREFIXES = ['usernode', 'staging'];
 const SERVICE_IDENTITIES = new Set([
   'usernode-capture',
   'usernode-capture-admin',
+  // Exists only in disposable paired-shots databases, where the browser
+  // needs a real full-admin session to review protected surfaces.
+  'usernode-shots-full-admin',
   'staging-demo-user',
 ]);
 
@@ -118,101 +121,41 @@ function validateUsername(raw) {
   return { ok: true, value };
 }
 
-// ─── Suggesting a handle for somebody who has never had one (#2563) ────
+// ─── The stand-in a new account holds until it chooses (#2563, #3575) ──
 //
 // Email sign-up used to write the address itself into `users.username`, so
 // a member who signed in as `ada.lovelace@example.com` was that string to
-// everyone else on the platform. The address is now never stored as a
-// handle: signup stores a SUGGESTION derived here, marks the account
-// `needs_username_choice`, and the shell asks before Home.
+// everyone else on the platform. #2563 stopped that by storing a SUGGESTION
+// derived from the address's local part (`adalovelace`), marking the account
+// `needs_username_choice`, and prefilling that suggestion wherever the
+// person was asked.
 //
-// `suggestUsernameFromEmail` is the pure half — same input, same answer,
-// no pool — and it returns null rather than a name that would fail
-// `validateUsername`, because a suggestion that cannot be submitted is
-// worse than no suggestion at all.
-//
-// Padding a one- or two-character local part with `_` (`al` -> `al_`)
-// rather than a digit keeps the numeric suffix below meaning exactly one
-// thing: "somebody already has this".
-const MAX_SUGGESTION_ATTEMPTS = 50;
-
-function suggestUsernameFromEmail(rawEmail) {
-  const email = normalize(rawEmail);
-  const at = email.indexOf('@');
-  if (at <= 0) return null;
-  let stem = email
-    .slice(0, at)
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, '')
-    .slice(0, MAX_USERNAME_LEN);
-  if (!stem) return null;
-  while (stem.length < MIN_USERNAME_LEN) stem += '_';
-  // `usernode_*` and `staging_*` are platform infrastructure. An address
-  // whose local part lands there gets NO suggestion — the person types
-  // their own, which the choose endpoint validates the same way.
-  const check = validateUsername(stem);
-  return check.ok ? check.value : null;
-}
-
-// `base` truncated far enough that `base + n` still fits the ceiling.
-function withNumericSuffix(base, n) {
-  const suffix = String(n);
-  return base.slice(0, MAX_USERNAME_LEN - suffix.length) + suffix;
-}
+// #3575 removed the suggestion too. A prefilled field that one press of
+// "Create account" accepts is a username generated from the email in all
+// but name — the thing the request asked us not to do ("They should have to
+// manually set a username") — and the name it generated was a public copy of
+// the private half of the address. So nothing on the platform derives a
+// handle from an email address any more: a new account holds the opaque
+// placeholder below, and every field that asks for the handle starts EMPTY
+// (the set-password step in frontend/src/features/auth/login.tsx, and the
+// first-run gate in frontend/src/features/auth/username-first-run.js).
 
 /**
- * The suggestion a first-run screen actually prefills: derived from the
- * email, then walked past anything already taken with a numeric suffix.
- *
- * `db` is a pool OR an open client — email-signup.js calls this INSIDE the
- * transaction that creates the row, so it must be able to hand over the
- * client it already holds.
- *
- * `userId` is the account asking, when there is one: a handle this same
- * person already holds counts as available to them (see checkAvailability).
- * Returns null when no valid handle could be derived, which is the caller's
- * cue to fall back to an opaque placeholder rather than to the address.
- */
-async function suggestAvailableUsernameFromEmail(db, rawEmail, userId = null) {
-  const base = suggestUsernameFromEmail(rawEmail);
-  if (!base) return null;
-  for (let n = 1; n <= MAX_SUGGESTION_ATTEMPTS; n += 1) {
-    const candidate = n === 1 ? base : withNumericSuffix(base, n);
-    const free = await checkAvailability(db, candidate, userId);
-    if (free.available) return candidate;
-  }
-  // Fifty people share this local part. A random tail beats both a
-  // fifty-first sequential probe and handing back the address.
-  for (let i = 0; i < 5; i += 1) {
-    const candidate = withNumericSuffix(base, crypto.randomInt(1000, 1000000));
-    const free = await checkAvailability(db, candidate, userId);
-    if (free.available) return candidate;
-  }
-  return null;
-}
-
-/**
- * The handle an account gets when no suggestion could be derived at all
- * (an address whose local part is entirely punctuation, or one that lands
- * in the reserved namespace). Opaque ON PURPOSE — the point of #2563 is
- * that the placeholder must not be the email address, and the account
- * carries `needs_username_choice` either way, so nobody wears this for
- * longer than one sign-in.
+ * The handle a new account holds between being created and choosing one.
+ * Opaque ON PURPOSE: it must not be the email address (#2563), must not be
+ * derived from it (#3575), and must not read as anybody's real name. The
+ * account carries `needs_username_choice` alongside it, and the email
+ * sign-up will not finish without a choice (completePassword in
+ * email-signup.js), so a person signing up never enters Homeroom wearing it.
  *
  * Shaped like the `topochain_<hex>` handles admin-created accounts get
  * (src/routes/topochain/admin/users.js), for the same reason: it satisfies
- * a NOT NULL UNIQUE column without doubling as anybody's real name.
+ * a NOT NULL UNIQUE column without doubling as anybody's real name. 72 bits
+ * of randomness, so the retry around email-signup.js's insert is a backstop
+ * that should never run, not a loop that expects to.
  */
 function placeholderUsername() {
   return `member_${crypto.randomBytes(9).toString('hex')}`;
-}
-
-// Is `name` exactly the shape placeholderUsername() mints? A placeholder is
-// a stand-in, never a suggestion: offering it back in a first-run field
-// would ask the person to keep a random string as their name.
-const PLACEHOLDER_RE = /^member_[0-9a-f]{18}$/;
-function isPlaceholderUsername(name) {
-  return typeof name === 'string' && PLACEHOLDER_RE.test(name);
 }
 
 /**
@@ -463,10 +406,7 @@ module.exports = {
   validateUsername,
   isReserved,
   isServiceIdentity,
-  suggestUsernameFromEmail,
-  suggestAvailableUsernameFromEmail,
   placeholderUsername,
-  isPlaceholderUsername,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

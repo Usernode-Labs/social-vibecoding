@@ -541,6 +541,44 @@ test('status rows share the 12px inset of the messages and cards around them (#3
     'the trailing dots keep the same inset and their bounce headroom');
 });
 
+// ── #3559: nothing in the transcript is wider than the transcript ──────
+//
+// #dc-messages scrolls down, so it scrolled sideways as well, and three rows
+// could hold it wider than a phone with one unbroken run of text: a status
+// step naming a link (its sentence was a flex item, held at the width of its
+// longest word), a failure quoting one (the card's body shrank, its text did
+// not), and the agent's summary under a run (a vertical scroller of its own,
+// sliding sideways under a long path in backticks). Measured at 390px with a
+// staging link in each: the transcript was 635px wide.
+
+test('#3559: a status step, a failure and a run summary break a long link inside their own boxes', () => {
+  const url = 'https://example.test/api/apps/demo/workshop/needs-feed?cursor=eyJpZCI6MTIzNDU2Nzg5MCJ9';
+  const plain = rowHtml({ t: 'status', key: 'k', icon: 'check', text: `Status ${url}`, elapsed: null, stamp: '7 1800000000000' });
+  assert.match(plain, /<span class="dc-status-text"> Status https:\/\/example\.test\/api\/apps\/demo\/workshop\/needs-feed\?cursor=eyJpZCI6MTIzNDU2Nzg5MCJ9 <\/span>/,
+    'the sentence is a span of its own, the one part of the row that may break inside a word');
+  const marked = rowHtml({ t: 'status', key: 'k', icon: 'check', text: '', html: `See <a href="${url}">${url}</a>`, elapsed: null, stamp: '' });
+  assert.match(marked, /<span class="dc-status-text"> See <a href=/, 'the trusted-html sentence wears the same class');
+  assert.match(plain, /<span style="font-size:9px;opacity:0.4;margin-left:auto">7 1800000000000<\/span>/,
+    'the stamp beside it is untouched');
+
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-status-text \{ min-width: 0; overflow-wrap: anywhere; \}/,
+    'anywhere, not break-word: it lowers the flex item\'s min-content, so the item can shrink at all');
+  assert.doesNotMatch(css.match(/\.dc-status-line \{[^}]*\}/)[0], /overflow-wrap/,
+    'on the sentence, not the row: the stamp and the clock keep their own words whole');
+  assert.match(css, /\.dc-failure-text \{ display: block; min-width: 0; overflow-wrap: anywhere; \}/,
+    'a failure quoting a link breaks it inside the card');
+  assert.match(css, /\.dc-cc-attached-md \{[^}]*overflow-wrap: anywhere;[^}]*overflow-y: auto;/,
+    'the agent\'s summary breaks its long paths rather than sliding sideways');
+
+  // What must still scroll sideways does, inside its own box: a fenced block
+  // and a table. overflow-wrap cannot reach a <pre>, which never wraps.
+  const code = css.match(/\.dc-code-block \{[^}]*\}/)[0];
+  assert.match(code, /overflow-x: auto;/, 'a long code line scrolls inside the block');
+  assert.doesNotMatch(code, /white-space|overflow-wrap/, 'and is never wrapped');
+  assert.match(css, /\.dc-table \{[^}]*display: block; overflow-x: auto; \}/, 'a wide table scrolls inside itself');
+});
+
 test('only "<venue> is running" is rewritten', () => {
   const h = makeDevChat();
   const untouched = [

@@ -31,6 +31,7 @@ const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -3550,6 +3551,13 @@ function voteRoutes(config) {
           metadata: { vote, voterId: req.user.id },
         });
       }
+      // "Vote on a change" counts this vote now, not on the rule's next pass
+      // (#3569; challengeScorer.scoreOnVote), so somebody who votes and goes
+      // back to Home finds the step done. On a real vote only, the same gate
+      // every side effect above has: a same-side re-cast returned earlier and
+      // moved nothing, and the schedule counts the rare one that matters.
+      // Never throws, so the vote answers the same either way.
+      await challengeScorer.scoreOnVote(pool, config);
       res.json({ ok: true, merged: false });
 
       // The live head read the response no longer waits on, then the

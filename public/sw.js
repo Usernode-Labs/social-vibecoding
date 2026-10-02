@@ -323,6 +323,7 @@ const SHELL_ASSETS = [
   // module in index.html, so a cache miss here breaks the whole shell.
   '/js/nav-link.js',
   '/js/platform-ui.js',
+  '/js/ui-telemetry.js',
   '/js/app-view.js',
   '/js/app.js',
   '/js/build-log.js',
@@ -526,6 +527,14 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
     // export saved the app page as export.csv. The chat-attachments rule
     // above was the first case of this; this is all of them.
     if (p.startsWith('/api/')) return 'bypass';
+    // #3585: the same holds for the server's file routes outside /api/. An
+    // issue's screenshot (/issue-images/<id>) opens in a new tab when it is
+    // clicked, and the shell answered that navigation with the home screen.
+    // Only the navigation is exempted: as subresources these stay
+    // 'immutable' below.
+    if (/^\/(?:issue-images|visuals|app-icons|avatars|app-files)\/[a-f0-9]{32}$/.test(p)) {
+      return 'bypass';
+    }
     return 'navigate';
   }
 
