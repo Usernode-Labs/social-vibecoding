@@ -21,6 +21,11 @@
 //     the description as the project's first-version request once the
 //     project is running, and the loop above takes it from there.
 //
+// Stage 2 (homeroom-bot-mayor.js): anything else a person writes in the DM
+// is read by the bot's model, which can say what the bot is working on for
+// them, pass an answer on, or offer to file a new request (filed only on a
+// tap). The bot's news carries cards for its request or proposal.
+//
 // Who it talks to is a list an admin keeps (`homeroom_bot_dm_users`), so it
 // can be tried one person at a time. What each person's requests may cost
 // the platform in a week is capped (`homeroom_bot_user_weekly_cents`, $50
@@ -119,6 +124,25 @@ async function firstVersionAppSlugs(pool, settings) {
 
 // ── Sending ──────────────────────────────────────────────────────────────
 
+// Cards under one bot message (Messages allows six; three is plenty).
+const MAX_CARDS = 3;
+
+/**
+ * #3624 stage 2: the card a post's news is about. The proposal once there
+ * is one (built, revised, merged), else the request itself.
+ */
+function cardsFor(kind, dm, app, issueNumber) {
+  const appId = Number(app?.id);
+  if (!Number.isInteger(appId) || appId <= 0) return [];
+  const sessionId = Number(dm?.sessionId);
+  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged')
+      && Number.isInteger(sessionId) && sessionId > 0) {
+    return [{ type: 'proposal', appId, sessionId }];
+  }
+  const n = Number(issueNumber);
+  return Number.isInteger(n) && n > 0 ? [{ type: 'issue', appId, issueNumber: n }] : [];
+}
+
 // What routes/conversations.js does after a send, done here because the
 // service pushes nothing (the welcome DM does the same).
 async function pushLive(pool, result, conversationId, { opened = false } = {}) {
@@ -137,19 +161,30 @@ async function pushLive(pool, result, conversationId, { opened = false } = {}) {
 /**
  * One message from the bot to a person, in their DM with it (opened if it
  * is not yet). `metadata` is the message's structured part, shown to the
- * reader as `metadata.homeroomBot`. Resolves { conversationId, messageId,
- * duplicate } or null when the person blocked the bot or left the chat.
+ * reader as `metadata.homeroomBot`. `objects` are cards under it (#3624
+ * stage 2): the request or proposal it is about, as Messages' shared
+ * objects ({ type: 'issue', appId, issueNumber } / { type: 'proposal',
+ * appId, sessionId }). A card the bot cannot attach (a private project it
+ * is not in) never costs the message: it is sent without its cards.
+ * Resolves { conversationId, messageId, duplicate } or null when the person
+ * blocked the bot or left the chat.
  */
-async function sendDm(pool, { bot, userId, content, metadata = null, idempotencyKey = null }) {
+async function sendDm(pool, { bot, userId, content, metadata = null, idempotencyKey = null, objects = null }) {
   if (!bot?.id || !userId) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
   if (!opened) return null;
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
   const key = conversations.normalizeIdempotencyKey(idempotencyKey);
   if (key) input.idempotency_key = key;
-  const result = await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, input, {
-    metadata: metadata ? { [META]: metadata } : null,
-  });
+  const cards = Array.isArray(objects) ? objects.filter(Boolean).slice(0, MAX_CARDS) : [];
+  const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
+    withCards.length ? { ...input, objects: withCards } : input,
+    { metadata: metadata ? { [META]: metadata } : null });
+  let result = await send(cards);
+  if (!result && cards.length) {
+    log.info('homeroom-bot-dm', 'Cards refused; sending the message without them', { userId, cards: cards.length });
+    result = await send([]);
+  }
   if (!result || result.error) {
     log.warn('homeroom-bot-dm', 'DM refused', { userId, error: result?.error || 'refused' });
     return null;
@@ -230,11 +265,18 @@ async function requesterOf(pool, appId, issueNumber) {
  * theirs. The week is the platform's (date_trunc('week'), as limits.js).
  */
 async function weeklySpentCents(pool, userId) {
+  // #3624 stage 2: and what the bot's answers in their DM cost.
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)::float8 AS usd
-       FROM homeroom_bot_runs r
-       JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-      WHERE q.user_id = $1 AND r.created_at >= date_trunc('week', NOW())`,
+    `SELECT (
+       SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
+         FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE q.user_id = $1 AND r.created_at >= date_trunc('week', NOW())
+     ) + (
+       SELECT COALESCE(SUM(t.cost_usd), 0)
+         FROM homeroom_bot_dm_turns t
+        WHERE t.user_id = $1 AND t.created_at >= date_trunc('week', NOW())
+     ) AS usd`,
     [userId],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);
@@ -402,6 +444,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     content,
     metadata,
     idempotencyKey: postId ? `hrbot-post-${postId}` : null,
+    objects: cardsFor(kind, dm, app, issueNumber),
   });
   if (!sent?.messageId) return null;
   // The same post relayed again (a retry) was already sent and recorded.
@@ -450,6 +493,7 @@ async function noteProposalMerged(pool, session) {
     idempotencyKey: `hrbot-merged-${session.id}`,
     content: `${requestLine(context)}\n\nIt was approved and is live now.`,
     metadata: { kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number },
+    objects: cardsFor('merged', { sessionId: session.id }, { id: run.app_id }, run.issue_number),
   });
 }
 
@@ -475,27 +519,27 @@ async function isBotDirect(pool, conversationId, botId, userId) {
   return rows.length > 0;
 }
 
-/**
- * Which request a person's message is about: the bot message it quotes,
- * when it quotes one about a request, else the newest question still open.
- */
-async function targetFor(pool, userId, message) {
-  const quoted = message?.reply?.id;
-  if (quoted) {
-    const { rows } = await pool.query(
-      `SELECT message_id, conversation_id, app_id, issue_number, kind, question_status
-         FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2`,
-      [quoted, userId],
-    );
-    if (rows.length) return rows[0];
-  }
+/** The bot message a person quoted, when it was about a request of theirs. */
+async function quotedTarget(pool, userId, quotedId) {
+  if (!quotedId) return null;
+  const { rows } = await pool.query(
+    `SELECT message_id, conversation_id, app_id, issue_number, kind, question_status
+       FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2`,
+    [quotedId, userId],
+  );
+  return rows[0] || null;
+}
+
+/** The newest question the bot asked this person that is still open. */
+async function newestOpenQuestion(pool, userId, { appId = null, issueNumber = null } = {}) {
   const { rows } = await pool.query(
     `SELECT message_id, conversation_id, app_id, issue_number, kind, question_status
        FROM homeroom_bot_dm_messages
       WHERE user_id = $1 AND question_status = 'open'
+        AND ($2::int IS NULL OR app_id = $2) AND ($3::int IS NULL OR issue_number = $3)
       ORDER BY created_at DESC, message_id DESC
       LIMIT 1`,
-    [userId],
+    [userId, appId, issueNumber],
   );
   return rows[0] || null;
 }
@@ -506,39 +550,17 @@ function mirroredText(content, { question = false } = {}) {
 }
 
 /**
- * Called after a person's message lands in a conversation
- * (routes/conversations.js). When it is their DM with the bot: an answer to
- * a question, or a reply about a request, is posted on that request's
- * discussion as their message (which wakes the bot), and the bot says
- * where it went. Anything else gets the bot's short help.
+ * Post a person's words on a request's discussion, as their own message:
+ * an answer to the bot's open question there, or a reply about the request.
+ * That is what wakes the bot, and the request goes to the front of its
+ * queue (#3624 stage 2) so the answer is looked at next. Resolves
+ * { ok, app, line, question } or { ok: false, why, app, line }.
  */
-async function noteUserMessage(pool, config, { user, conversationId, message, deps = {} }) {
-  if (!user?.id || !message?.id || user.isSynthetic) return null;
-  const bot = deps.bot || await botAccount(pool);
-  if (!bot || bot.id === user.id) return null;
-  if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
-  const settings = await settingsModule().readSettings(pool);
-  if (!isDmUser(settings, user.username)) {
-    const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
-    return sendDm(pool, { bot, userId: user.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}` });
-  }
-  const target = await targetFor(pool, user.id, message);
-  if (!target) {
-    // Once in a while, not after every message.
-    const window = Math.floor(Date.now() / HELP_EVERY_MS);
-    return sendDm(pool, { bot, userId: user.id, content: HELP_TEXT, idempotencyKey: `hrbot-help-${user.id}-${window}` });
-  }
+async function postOnRequest(pool, { user, target, text, deps = {} }) {
   const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
   const app = apps[0];
-  if (!app) return null;
+  if (!app) return { ok: false, why: 'gone', app: null, line: null };
   const line = `${app.name || app.slug} request #${target.issue_number}`;
-  const text = String(message.content || '').trim();
-  if (!text) {
-    return sendDm(pool, {
-      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
-      content: `I can only pass words on to ${line} for now. Write your answer as a message.`,
-    });
-  }
   const question = target.question_status === 'open';
   const ws = deps.ws || require('./ws');
   const posted = await ws.handleMessage(
@@ -553,32 +575,104 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
     const why = posted?.code === 'not_collaborator' || posted?.code === 'join_required'
       ? `you need to be a member of ${app.name || app.slug} to take part in its requests`
       : 'something went wrong on my side';
-    return sendDm(pool, {
-      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
-      content: `I couldn't post that on ${line}: ${why}. Nothing was sent.`,
-    });
+    return { ok: false, why, app, line, question };
   }
   if (question) {
     await pool.query(
       `UPDATE homeroom_bot_dm_messages
           SET question_status = 'answered', answered_at = NOW(), answer_message_id = $2
         WHERE message_id = $1`,
-      [target.message_id, message.id],
+      [target.message_id, deps.answerMessageId || null],
     );
     await setQuestionState(pool, target.message_id, { status: 'answered', answer: clip(text, 300) }, {
       ws, conversationId: target.conversation_id, userId: user.id,
     });
   }
+  try {
+    await settingsModule().enqueueFront(pool, {
+      appId: app.id, issueNumber: Number(target.issue_number), userId: user.id, reason: 'dm_answer',
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not put the answered request first', { app: app.slug, err: err.message });
+  }
   log.info('homeroom-bot-dm', 'Posted a DM reply on its request', {
     app: app.slug, issueNumber: target.issue_number, userId: user.id, question,
   });
+  return { ok: true, app, line, question };
+}
+
+/** The deterministic path: words posted on the request, and the bot says where. */
+async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) {
+  const text = String(message.content || '').trim();
+  const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
+  if (!apps[0]) return null;
+  const line = `${apps[0].name || apps[0].slug} request #${target.issue_number}`;
+  if (!text) {
+    return sendDm(pool, {
+      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
+      content: `I can only pass words on to ${line} for now. Write your answer as a message.`,
+    });
+  }
+  const posted = await postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: message.id } });
+  if (!posted.ok) {
+    return sendDm(pool, {
+      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
+      content: `I couldn't post that on ${line}: ${posted.why}. Nothing was sent.`,
+    });
+  }
   return sendDm(pool, {
     bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
-    content: question
+    content: posted.question
       ? `Thanks. I posted your answer on ${line}'s public discussion and I'm looking at it again now.`
       : `I posted that on ${line}'s public discussion. I'll look at it again now.`,
-    metadata: { kind: 'ack', appSlug: app.slug, appName: app.name || app.slug, issueNumber: Number(target.issue_number) },
+    metadata: {
+      kind: 'ack', appSlug: posted.app.slug, appName: posted.app.name || posted.app.slug,
+      issueNumber: Number(target.issue_number),
+    },
   });
+}
+
+/**
+ * Called after a person's message lands in a conversation
+ * (routes/conversations.js). When it is their DM with the bot:
+ *   - a tap on File it / Not now under something the bot offered decides it
+ *     (homeroom-bot-mayor.js);
+ *   - a reply quoting one of the bot's messages about a request is posted on
+ *     that request's discussion as their message (which wakes the bot), and
+ *     the bot says where it went: a tapped answer always takes this path;
+ *   - anything else is read by the bot's model (#3624 stage 2), which can
+ *     say what it is working on for them, pass an answer on, or offer to
+ *     file a new request. With that switched off, it is the answer to the
+ *     newest open question, or else the bot's short help.
+ */
+async function noteUserMessage(pool, config, { user, conversationId, message, deps = {} }) {
+  if (!user?.id || !message?.id || user.isSynthetic) return null;
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot || bot.id === user.id) return null;
+  if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
+  const settings = await settingsModule().readSettings(pool);
+  if (!isDmUser(settings, user.username)) {
+    const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
+    return sendDm(pool, { bot, userId: user.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}` });
+  }
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  const quoted = message?.reply?.id || null;
+  if (quoted) {
+    const decided = await mayor.decideOffer(pool, config, { bot, user, settings, conversationId, message, deps });
+    if (decided) return decided;
+    const target = await quotedTarget(pool, user.id, quoted);
+    if (target) return answerOnRequest(pool, { bot, user, target, message, deps });
+  }
+  if (settings.dmChat !== false) {
+    return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps });
+  }
+  const target = await newestOpenQuestion(pool, user.id);
+  if (!target) {
+    // Once in a while, not after every message.
+    const window = Math.floor(Date.now() / HELP_EVERY_MS);
+    return sendDm(pool, { bot, userId: user.id, content: HELP_TEXT, idempotencyKey: `hrbot-help-${user.id}-${window}` });
+  }
+  return answerOnRequest(pool, { bot, user, target, message, deps });
 }
 
 // ── A project built from its description ─────────────────────────────────
@@ -784,9 +878,12 @@ module.exports = {
   closeOpenQuestions,
   setQuestionState,
   relayIssuePost,
+  cardsFor,
+  quotedTarget,
+  newestOpenQuestion,
+  postOnRequest,
   noteProposalMerged,
   isBotDirect,
-  targetFor,
   mirroredText,
   noteUserMessage,
   normalizeBrief,

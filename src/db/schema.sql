@@ -9577,6 +9577,53 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
   ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
 
+-- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
+-- One row per answer it wrote: what it cost (counted in the person's weekly
+-- allowance with their requests' runs), how many model calls and which
+-- tools it took, and why it failed when it did. Never the words: those are
+-- the conversation's.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_turns (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  message_id      INTEGER REFERENCES conversation_messages(id) ON DELETE SET NULL,
+  model           TEXT,
+  rounds          INTEGER NOT NULL DEFAULT 0,
+  tools           TEXT[] NOT NULL DEFAULT '{}',
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  cost_usd        NUMERIC(12, 6),
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_turns_user
+  ON homeroom_bot_dm_turns(user_id, created_at DESC);
+COMMENT ON TABLE homeroom_bot_dm_turns IS 'staging:private';
+
+-- #3624 stage 2: something the bot offered to do in a DM, done only when
+-- the person taps to confirm (today: file a new request on a project). The
+-- offer is a bot message with File it / Not now under it; the tap decides
+-- it once.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'file_request',
+  title           TEXT NOT NULL,
+  details         TEXT,
+  status          TEXT NOT NULL DEFAULT 'open',
+  issue_number    INTEGER,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request')),
+  CONSTRAINT homeroom_bot_dm_actions_status_check
+    CHECK (status IN ('open', 'done', 'declined', 'failed'))
+);
+COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9594,7 +9641,11 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_shadow_build_platform', 'off'),
   -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
   ('homeroom_bot_dm_users', '[]'),
-  ('homeroom_bot_user_weekly_cents', '5000')
+  ('homeroom_bot_user_weekly_cents', '5000'),
+  -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
+  ('homeroom_bot_live_at_once', '6'),
+  ('homeroom_bot_per_person', '2'),
+  ('homeroom_bot_dm_chat', 'on')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have
