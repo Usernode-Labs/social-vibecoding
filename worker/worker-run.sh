@@ -212,18 +212,30 @@ if [ ! -d /home/node/workspace/.git ]; then
   # in it: an agent unsure where its edits had gone once found one with
   # `git branch -a` and copied its commit into its own proposal
   # (usernode-bot/sheep-countrr-a08857#34).
-  if ! CLONE_OUT="$(git clone --single-branch --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
-    die "clone failed: $(clip "$CLONE_OUT")"
-  fi
-  if ! FETCH_OUT="$(usernode_fetch_session_refs)"; then
-    echo "__USERNODE_WARN__ fetch failed: $(clip "$FETCH_OUT")"
-  fi
+  #
+  # A benchmark trial (USERNODE_PINNED_BASE set) gets a sealed checkout
+  # instead: its session branch alone, nothing past the pinned base, and no
+  # fetch URL (session-branch.sh, "Benchmark trials"). Its submodules come
+  # from the update below.
+  if usernode_pinned; then
+    if ! CLONE_OUT="$(usernode_clone_sealed "$CLONE_URL")"; then
+      die "clone failed: $(clip "$CLONE_OUT")"
+    fi
+    echo "__USERNODE_PHASE__ checkout (sealed at the pinned base)"
+  else
+    if ! CLONE_OUT="$(git clone --single-branch --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
+      die "clone failed: $(clip "$CLONE_OUT")"
+    fi
+    if ! FETCH_OUT="$(usernode_fetch_session_refs)"; then
+      echo "__USERNODE_WARN__ fetch failed: $(clip "$FETCH_OUT")"
+    fi
 
-  echo "__USERNODE_PHASE__ checkout"
-  # GitHub's copy of the session branch when it has one, otherwise a new
-  # branch from main (session-branch.sh).
-  if ! CHECKOUT_OUT="$(usernode_checkout_session_branch)"; then
-    die "checkout failed: $(clip "$CHECKOUT_OUT")"
+    echo "__USERNODE_PHASE__ checkout"
+    # GitHub's copy of the session branch when it has one, otherwise a new
+    # branch from main (session-branch.sh).
+    if ! CHECKOUT_OUT="$(usernode_checkout_session_branch)"; then
+      die "checkout failed: $(clip "$CHECKOUT_OUT")"
+    fi
   fi
 else
   # Defensive: another wrapper invocation against an existing checkout.

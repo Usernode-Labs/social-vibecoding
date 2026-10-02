@@ -967,6 +967,9 @@ const ADDED_IDS = {
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.
   'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
+  // ── The settings restructure: Account opens with a Profile part ─────
+  'settings-profile-section': 'The Profile part at the head of Settings\' Account page (features/settings/sections/profile.tsx): who is signed in, and the way to Me\'s Edit profile sheet, where name, photo, bio and the public page are edited. Settings had no route to that sheet, so someone who came to Settings to change their name found only the username form. A settings-pane root with a stable id, like its siblings; it mounts on reveal, never in the prerender.',
+  'settings-profile-card': 'The Profile part\'s one control: an anchor to #profile?edit (features/profile/profile.js opens the Edit profile sheet off that address, as #profile?friends opens Friends), showing the avatar, the name and the @handle. dapp.json selects on it to pin that a bare #settings now opens Account.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

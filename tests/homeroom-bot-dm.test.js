@@ -308,10 +308,17 @@ test('the short description is suggested for everyone making a project, and ever
   // POST /api/apps hands every description (never an import's) to the
   // first-request record, which decides whether the bot builds it.
   const create = routes.slice(routes.indexOf("router.post('/api/apps', "));
-  assert.match(create, /if \(!repoUrlNormalized && typeof req\.body\.brief === 'string' && req\.body\.brief\.trim\(\)\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
-  // The bot's live list and its wake are only for a first version it builds.
+  assert.match(create, /if \(!repoUrlNormalized && homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
+  // #3624: an import, or a project with no description, is recorded for the
+  // bot instead (live when its maker is on the DM list), and so is a fork.
+  assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
+  const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
+  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
+  // The bot's live list and its wake are only for a first version it builds,
+  // or a project somebody on the list made with nothing to build first.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /WHERE f\.bot_builds AND LOWER\(u\.username\) = ANY\(\$1::text\[\]\)/);
+  assert.match(src, /FROM homeroom_bot_first_versions WHERE bot_builds\s+UNION ALL\s+SELECT app_id, user_id, origin, created_at FROM homeroom_bot_dm_projects/);
+  assert.match(src, /WHERE LOWER\(u\.username\) = ANY\(\$1::text\[\]\)/);
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
   // A sweep the bot's mode does not gate, on the leader.

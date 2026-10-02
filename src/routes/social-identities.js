@@ -55,7 +55,7 @@ function callbackUri(config, provider) {
 
 function settingsUrl(config, status, provider) {
   const params = new URLSearchParams({ identity: status, provider });
-  return `${config.cliAuthOrigin}/#settings/connectors?${params.toString()}`;
+  return `${config.cliAuthOrigin}/#settings/linked-accounts?${params.toString()}`;
 }
 
 // The provider's `error` parameter on a callback that carries no code. The

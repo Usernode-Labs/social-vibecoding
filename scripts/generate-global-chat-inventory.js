@@ -608,15 +608,20 @@ function classifyRoute(route) {
 function discoverSettings() {
   const file = path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js');
   const text = fs.readFileSync(file, 'utf8');
-  const sectionBlock = text.match(/\bSECTIONS:\s*\[([\s\S]*?)\n\s*\],\n\n\s*\/\/ The one group/);
+  // The registry is an array of one-line part entries; no entry holds a
+  // nested array, so the first `],` at the object's own indent closes it.
+  const sectionBlock = text.match(/\bSECTIONS:\s*\[([\s\S]*?)\n {4}\],/);
   if (!sectionBlock) throw new Error('Could not locate Settings.SECTIONS');
+  // One entry per PART (a [data-settings-section] wrapper). `page` groups
+  // parts into one nav row; every part's own #settings/<key> still resolves,
+  // so each part stays an inspectable settings group of its own.
   return [...sectionBlock[1].matchAll(
-    /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
+    /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
     label: match[2],
     group: match[3],
-    gate: match[4] || null,
+    gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,
     mobileSupported: true,

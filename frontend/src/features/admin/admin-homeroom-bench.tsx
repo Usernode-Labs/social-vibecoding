@@ -17,7 +17,8 @@ import { AdminUI } from './admin-console.js';
 //            automatic.
 //   Suites   the versioned task sets (frozen core, rotating set), how full
 //            each is against the first version's targets, freeze / new
-//            version, the tasks of the one selected, the stratified
+//            version, delete (only an unfrozen suite with no runs that
+//            is not the default), the tasks of the one selected, the stratified
 //            sampler, and importing a merged pull request as a build task.
 //   Run      the launcher: suite, models (with what the catalog says of
 //            each: context window, price, the stages it is entered for),
@@ -48,6 +49,8 @@ const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'd
 interface Suite {
   id: number; name: string; version: number; kind: 'frozen' | 'rotating'; notes: string | null;
   frozen_at: string | null; counts: Record<string, number>; total: number; labelled: number; created_by: string | null;
+  // What the server would decide on Delete: unfrozen, no runs, not the default.
+  runs?: number; is_default?: boolean; deletable?: boolean;
 }
 interface Task {
   id: number; stage: Stage; issue_number: number | null; app_slug: string | null; tags: Record<string, unknown>;
@@ -86,6 +89,7 @@ interface CoreStatus {
       skipped?: { ref: string; stage: string | null; app: string | null; reason: string; transient?: boolean }[];
     };
     finishedAt: string | null;
+    stale?: boolean;
   } | null;
   suite: { id: number; name: string; version: number; frozen_at: string | null; total: number; labelled: number } | null;
   running: boolean;
@@ -126,6 +130,11 @@ function done(r: Run): number {
 }
 function total(r: Run): number {
   return Object.values(r.counts || {}).reduce((s, n) => s + n, 0);
+}
+/** A DM task whose requester never answered: its answer is written for them when it is labelled. */
+export function scriptedAnswer(t: Pick<Task, 'stage' | 'tags' | 'reference'>): boolean {
+  const script = t.reference?.dm_script as { source?: string } | undefined;
+  return t.stage === 'dm' && (script?.source === 'scripted' || t.tags?.answer_source === 'scripted');
 }
 
 async function send(url: string, method: string, body?: unknown) {
@@ -197,7 +206,10 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   const name = status ? `${status.definition.name} v${status.definition.version}` : 'Core v1';
   const m = status?.materialization || null;
   const suite = status?.suite || null;
-  const running = !!status && (status.running || m?.status === 'running');
+  // The server decides: a row left 'running' by a pass that died mid-way
+  // (a redeploy) is stale, so it is not running and may be tried again.
+  const running = !!status?.running;
+  const interrupted = !running && m?.status === 'running';
   const skipped = m?.summary?.skipped || [];
   const stages = m?.summary?.stages || {};
   const allLabelled = !!suite && suite.total > 0 && suite.labelled === suite.total;
@@ -207,6 +219,7 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   else if (!m) state = status.githubEnabled === false
     ? 'Not made: GitHub is not configured here, so its requests cannot be read.'
     : 'Not made yet. It is made from its checked-in definition a little after the platform starts.';
+  else if (interrupted) state = 'The last pass stopped partway (the server restarted while it worked). Try again to finish it.';
   else if (m.status === 'failed') state = `The last attempt failed: ${m.summary?.error || 'unknown error'}.`;
   else state = `${m.summary?.ready ?? suite?.total ?? 0} tasks ready, ${skipped.length} skipped.`;
   return (
@@ -248,9 +261,9 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
           {suite && !suite.frozen_at && allLabelled ? (
             <button type="button" className={AdminUI.btn.primarySm} id="admin-homeroom-bench-core-freeze" onClick={() => onFreeze(suite.id)}>{`Freeze ${name}`}</button>
           ) : null}
-          {status && status.githubEnabled !== false && !running && !suite?.frozen_at && (!m || m.status === 'failed' || skipped.length) ? (
+          {status && status.githubEnabled !== false && !running && !suite?.frozen_at && (!m || m.status === 'failed' || interrupted || skipped.length) ? (
             <button type="button" className={AdminUI.btn.outlineSm} id="admin-homeroom-bench-core-materialize" onClick={onMaterialize}>
-              {m?.status === 'done' ? 'Try the skipped tasks again' : `Materialize ${name} now`}
+              {interrupted ? 'Try again' : m?.status === 'done' ? 'Try the skipped tasks again' : `Materialize ${name} now`}
             </button>
           ) : null}
         </div>
@@ -259,7 +272,7 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   );
 }
 
-function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
+export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
   canWrite: boolean; suites: Suite[]; coreSuiteId: number | null; onChanged: () => void; say: (text: string, tone?: Tone) => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
@@ -283,6 +296,24 @@ function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
 
   const act = async (fn: () => Promise<unknown>, ok: string) => {
     try { await fn(); say(ok); onChanged(); if (selected) loadTasks(selected); } catch (err: any) { say(err.message, 'err'); }
+  };
+  // Delete a suite made by mistake, after the console's own confirm. The
+  // server re-checks every rule; its refusal is shown as it gave it.
+  const remove = async (s: Suite) => {
+    const label = `${s.name} v${s.version}`;
+    const ok = await (window as any).AdminConsole?._confirm({
+      title: `Delete ${label}?`,
+      message: `This deletes the suite and its ${s.total === 1 ? '1 task' : `${s.total} tasks`}. It cannot be undone.`,
+      confirmLabel: 'Delete suite',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await send(`${BASE}/suites/${s.id}`, 'DELETE');
+      if (selected === s.id) setSelected(null);
+      say(`${label} is deleted.`);
+      onChanged();
+    } catch (err: any) { say(err.message, 'err'); }
   };
   const target = (s: Suite, stage: string, want: number) => `${STAGE_LABEL[stage as Stage] || stage} ${s.counts?.[stage] || 0} of ${want}`;
 
@@ -327,6 +358,10 @@ function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                       ) : null}
                       <button type="button" className={AdminUI.btn.outlineSm}
                         onClick={() => act(() => send(`${BASE}/suites/${s.id}/version`, 'POST', {}), `A new version of ${s.name}, open for edits.`)}>New version</button>
+                      {s.deletable ? (
+                        <button type="button" className={AdminUI.btn.destructiveSm} data-bench-suite-delete={s.id}
+                          onClick={() => remove(s)}>Delete</button>
+                      ) : null}
                     </span>
                   ) : null}
                 </td>
@@ -376,10 +411,10 @@ function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   {tasks.map((t) => (
                     <tr className={AdminUI.trHover} key={t.id} data-bench-task={t.id}>
                       <td className={AdminUI.td}>{STAGE_LABEL[t.stage]}</td>
-                      <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}</td>
+                      <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}{scriptedAnswer(t) ? <span className={`${AdminUI.badge.outline} ml-1`} data-bench-scripted={t.id}>scripted answer</span> : null}</td>
                       <td className={`${AdminUI.td} text-sm`}>{['verdict', 'repo_size', 'request_type', 'difficulty'].map((k) => t.tags?.[k]).filter(Boolean).join(' · ')}</td>
                       <td className={`${AdminUI.td} text-sm`}>
-                        {t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : t.reference_source === 'authored' ? 'the suite\'s author' : 'a person'})` : 'Waiting for its label'}
+                        {!t.reference_source && scriptedAnswer(t) ? 'Waiting for its label and the answer written for the requester' : t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : t.reference_source === 'authored' ? 'the suite\'s author' : 'a person'})` : 'Waiting for its label'}
                         {canWrite && !suite.frozen_at ? (
                           <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`}
                             onClick={() => act(() => send(`${BASE}/tasks/${t.id}`, 'DELETE'), 'Task removed.')}>remove</button>
@@ -543,7 +578,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
           </label>
           <p className={`${AdminUI.muted} mt-2`}>
             Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
-            Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot is using every build slot.
+            Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot's live builds use every build slot.
           </p>
           <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
         </div>
@@ -769,7 +804,7 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
   const [suites, setSuites] = useState<Suite[]>([]);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [models, setModels] = useState<Model[]>([]);
-  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 2 });
+  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 8 });
   const [hiddenChecks, setHiddenChecks] = useState('');
   const [launcher, setLauncher] = useState<LauncherDefaults | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);

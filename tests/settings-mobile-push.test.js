@@ -26,7 +26,7 @@ const CATEGORIES = [
 
 test('settings renders clear user-facing category labels and descriptions', () => {
   assert.match(SETTINGS_SOURCE,
-    /\{ key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' \}/,
+    /\{ key: 'alerts', label: 'Notifications', group: 'Preferences' \}/,
     'the category controls are discoverable from the Settings navigation');
   const block = ALERTS_SOURCE.slice(
     ALERTS_SOURCE.indexOf('id="settings-mobile-push-preferences"')

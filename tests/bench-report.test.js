@@ -75,6 +75,28 @@ test('a row: platform faults out of accuracy, timeouts in it, every attempt\'s c
   assert.deepEqual(row.passK, { k: 3, tasks: 1, passAll: 1, value: 1 });
 });
 
+test('slicing by answer source keeps scripted DM answers apart from real ones', () => {
+  const t = (task, stage, final, extra = {}) => ({ task_id: task, stage, model: 'a/m', final, tags: {}, appSlug: 'x', ...extra });
+  const rows = [
+    t(1, 'dm', 'pass', { dm_answer_source: 'dm' }),
+    t(2, 'dm', 'fail', { dm_answer_source: 'thread', tags: { answer_source: 'thread' } }),
+    t(3, 'dm', 'pass', { dm_answer_source: 'scripted', tags: { answer_source: 'scripted' } }),
+    t(4, 'dm', 'excluded', { dm_answer_source: 'scripted' }),
+    t(5, 'dm', 'pass', { dm_answer_source: null }),
+    t(6, 'triage', 'pass'),
+  ].map((r) => ({ ...r, answerSource: report.answerSource(r) }));
+  assert.deepEqual(rows.map((r) => r.answerSource), ['real', 'real', 'scripted', 'scripted', 'real', null],
+    'a DM made from a run before the tag existed is the requester\'s own answer');
+  assert.ok(report.SLICE_KEYS.includes('answer_source'));
+  assert.deepEqual(report.sliceGroups(rows, 'answer_source').map((g) => [g.stage, g.value, g.n, g.accuracy]), [
+    ['dm', 'real', 3, 2 / 3],
+    ['dm', 'scripted', 1, 1],
+    ['triage', 'none', 1, 1],
+  ]);
+  assert.deepEqual(report.sliceGroups(rows, 'app_slug').map((g) => g.value), ['x', 'x'], 'the other keys as before');
+  assert.ok(report.CSV_COLUMNS.includes('answer_source'));
+});
+
 test('the chart: the frontier filled and joined, each point named in words, a title for each', () => {
   globalThis.window = globalThis.window || globalThis;
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -105,4 +127,30 @@ test('the chart: the frontier filled and joined, each point named in words, a ti
   for (const id of ['admin-homeroom-bench', 'admin-homeroom-bench-intro', 'admin-homeroom-bench-suites', 'admin-homeroom-bench-runs']) {
     assert.match(area, new RegExp(`id="${id}"`));
   }
+});
+
+// #3654: the connector's view of a run (report.runAggregates) groups failure
+// reasons, and a reason must not point back at one trial: numbers, bench
+// branches and SHAs are taken out, so reasons that differ only in those group.
+test('failure reasons group without naming a trial', () => {
+  const { reasonText, statusAndReasons, CONNECTOR_SLICE_KEYS, SLICE_KEYS } = require('../src/services/bench/report');
+  assert.equal(reasonText('branch: could not push bench/r12-t345-x at 4f2c9e1d (HTTP 502) for issue #4242'),
+    'branch: could not push bench/… at <sha> (HTTP N) for issue #N');
+  assert.equal(reasonText('unparseable: no verdict block'), 'unparseable: no verdict block', 'a plain reason is kept as it is');
+  assert.equal(reasonText(null), '(no reason recorded)');
+  assert.equal(reasonText('x'.repeat(500)).length, 200);
+  const out = statusAndReasons([
+    { status: 'ok', error: null },
+    { status: 'infra_fail', error: 'worker: timed out after 30000ms' },
+    { status: 'infra_fail', error: 'worker:  timed out after 45000ms' },
+    { status: 'model_fail', error: 'unparseable: no verdict block' },
+    { status: 'pending', error: null },
+  ]);
+  assert.deepEqual(out.statuses, { ok: 1, infra_fail: 2, model_fail: 1, pending: 1 });
+  assert.deepEqual(out.failureReasons, [
+    { status: 'infra_fail', reason: 'worker: timed out after Nms', count: 2 },
+    { status: 'model_fail', reason: 'unparseable: no verdict block', count: 1 },
+  ]);
+  assert.equal(out.moreReasons, 0);
+  assert.deepEqual(CONNECTOR_SLICE_KEYS, SLICE_KEYS.filter((k) => k !== 'app_slug'));
 });

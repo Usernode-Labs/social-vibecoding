@@ -22,7 +22,11 @@
 //   * keyed by the definition's key and version (bench_materializations);
 //     once `done` it is a no-op, unless an admin asks to retry, which only
 //     tries the tasks that are still missing (each task is keyed by its ref,
-//     stored as tags.core_ref);
+//     stored as tags.core_ref), and re-reads the build tasks' expected files
+//     and hidden checks from their pull requests' own diffs
+//     (suites.refreshPrReferences; never on a frozen suite). A task imported
+//     before that fix is also repaired by the next pass that is otherwise a
+//     no-op (the boot pass after a deploy), once;
 //   * each task resolves to a snapshot: the one its run recorded when there
 //     is one, otherwise rebuilt as of `as_of` (services/bench/backfill.js),
 //     or, for a build, imported from its merged pull request
@@ -30,6 +34,10 @@
 //   * a task that cannot be resolved (the app is gone, the request deleted,
 //     the pull request missing, nobody answered the question) is recorded as
 //     SKIPPED with its reason in the row's summary, never thrown;
+//   * except a DM spec that opts in with "scripted_answer": "if_unanswered":
+//     when its requester is known but never answered the bot's question, it
+//     becomes a PENDING SCRIPTED task instead (see resolveDm), whose answer
+//     the labelling session writes (grading.labelTask's dmAnswer);
 //   * GitHub is read only, through the benchmark's guardedGithub, one task at
 //     a time with a pause between tasks (rateMs).
 //
@@ -55,6 +63,13 @@ const RULES = Object.freeze({
   bot_followups: { stage: 'followup', fallbacks: [] },
 });
 const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty']);
+// What a DM spec may say about an answer nobody gave: script it when the
+// requester never answered (the only value so far).
+const SCRIPTED_ANSWER = Object.freeze(['if_unanswered']);
+// How much of what happened on a request after the bot's question a pending
+// scripted DM task keeps, for whoever writes the answer.
+const LATER_ENTRIES = 8;
+const LATER_ENTRY_CHARS = 600;
 // What a definition must add up to, per stage (static tasks plus dynamic
 // limits): the first version's shape (suites.TARGETS) with some room.
 const STAGE_RANGES = Object.freeze({
@@ -65,7 +80,11 @@ const STAGE_RANGES = Object.freeze({
 });
 const BOOT_DELAY_MS = 90 * 1000;
 const DEFAULT_RATE_MS = 1000;
-const STALE_RUNNING_MINUTES = 120;
+// A pass beats at least this often while it works (see beat()); a running
+// row whose last beat is older than STALE_RUNNING_MINUTES was left by a
+// process that died mid-pass (a redeploy), so it may be claimed again.
+const HEARTBEAT_MS = 30 * 1000;
+const STALE_RUNNING_MINUTES = 10;
 const MAX_CANDIDATES = 500;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -112,6 +131,10 @@ function validateDefinition(def) {
     if (t.tags?.platform != null && typeof t.tags.platform !== 'boolean') errors.push(`${at}: tags.platform must be true or false`);
     if (t.base_sha != null && !SHA_RE.test(t.base_sha)) errors.push(`${at}: base_sha must be a full commit sha`);
     if (t.reference != null && t.reference_source !== 'authored') errors.push(`${at}: an inline reference is reference_source "authored"`);
+    if (t.scripted_answer !== undefined) {
+      if (t.stage !== 'dm') errors.push(`${at}: only a DM task can have a scripted_answer`);
+      else if (!SCRIPTED_ANSWER.includes(t.scripted_answer)) errors.push(`${at}: scripted_answer must be ${SCRIPTED_ANSWER.join(' or ')}`);
+    }
     let identity = null;
     if (t.stage === 'triage' || t.stage === 'dm') {
       if (!posInt(t.issue_number)) errors.push(`${at}: no issue_number`);
@@ -227,6 +250,18 @@ function sleep(msec) {
   return msec > 0 ? new Promise((resolve) => { const t = setTimeout(resolve, msec); if (t.unref) t.unref(); }) : Promise.resolve();
 }
 
+/** Record that this pass is still alive, at most every HEARTBEAT_MS. Never throws. */
+async function beat(ctx) {
+  const now = Date.now();
+  if (!ctx.definition || now - (ctx.lastBeat || 0) < HEARTBEAT_MS) return;
+  ctx.lastBeat = now;
+  await ctx.pool.query(
+    `UPDATE bench_materializations SET heartbeat_at = NOW()
+      WHERE definition = $1 AND version = $2 AND status = 'running'`,
+    [ctx.definition.key, ctx.definition.version],
+  ).catch(() => {});
+}
+
 function skipped(reason, transient = false) {
   return { ok: false, reason, transient };
 }
@@ -247,7 +282,8 @@ async function hasRef(pool, suiteId, ref) {
 async function sourceRun(pool, spec, app) {
   if (!spec.source_run_id) return null;
   const { rows } = await pool.query(
-    `SELECT id, app_id, issue_number, verdict, label_verdict, created_at
+    `SELECT id, app_id, issue_number, verdict, label_verdict, created_at,
+            question, question_default, missing_fact, question_answers
        FROM homeroom_bot_runs WHERE id = $1 AND app_id = $2 AND issue_number = $3`,
     [spec.source_run_id, app.id, spec.issue_number],
   );
@@ -337,7 +373,39 @@ async function resolveTriage(ctx, spec, app, repo) {
   return { ok: true, task, github: snap.origin === 'backfilled' };
 }
 
-/** The requester's real answer to a question run: their DM answer, else their next reply on the request. */
+/**
+ * Who filed a request, by every record the platform keeps of it. A request
+ * filed through Homeroom is authored on GitHub by the bot account, so the
+ * GitHub author alone names nobody: the bot's own requester row (DM era),
+ * the platform's issues row and feedback report (who pressed submit), and
+ * the body's "**Source:** Homeroom user (name)" line (routes/issues.js
+ * creatorFromSourceLine, the same fallback issue edits use) each name the
+ * person. A bare "Homeroom admin" with no name names nobody.
+ */
+async function requesterNames(pool, app, repo, issueNumber, body) {
+  const { rows } = await pool.query(
+    `SELECT u.username FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
+      WHERE q.app_id = $1 AND q.issue_number = $2
+     UNION
+     SELECT u.username FROM issues i JOIN users u ON u.id = i.created_by
+      WHERE i.app_id = $1 AND i.github_issue_number = $2
+     UNION
+     SELECT u.username FROM feedback_reports f JOIN users u ON u.id = f.user_id
+      WHERE f.issue_owner = $3 AND f.issue_repo = $4 AND f.issue_number = $2`,
+    [app.id, issueNumber, repo?.owner || null, repo?.repo || null],
+  );
+  const names = rows.map((r) => r.username).filter(Boolean);
+  const fromSource = require('../../routes/issues').creatorFromSourceLine(body);
+  if (fromSource && fromSource !== 'admin') names.push(fromSource);
+  return [...new Set(names)];
+}
+
+/**
+ * The requester's real answer to a question run: their DM answer, else their
+ * next reply on the request. A requester who is known but never answered is
+ * a skip marked `unanswered`, carrying what was read of the request after the
+ * question (`later`), for a spec that scripts the answer instead.
+ */
 async function trueAnswer(ctx, spec, app, repo, run) {
   const { pool, github } = ctx;
   if (run) {
@@ -352,28 +420,78 @@ async function trueAnswer(ctx, spec, app, repo, run) {
   }
   const read = await backfill.readIssue(github, repo, spec.issue_number);
   if (!read.ok) return read;
-  const { rows: who } = await pool.query(
-    `SELECT u.username FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
-      WHERE q.app_id = $1 AND q.issue_number = $2`,
-    [app.id, spec.issue_number],
-  );
+  const names = await requesterNames(pool, app, repo, spec.issue_number, read.issue.body);
   const botLogin = await require('../homeroom-bot-live').botUsernameOf(github);
   const author = read.issue.user || null;
-  const names = [who[0]?.username || null];
   if (author && (!botLogin || author.toLowerCase().replace(/\[bot\]$/, '') !== botLogin.toLowerCase().replace(/\[bot\]$/, ''))) names.push(author);
   if (!names.some(Boolean)) return skipped('the requester is not known, so their answer cannot be told from anyone else\'s');
   const thread = await backfill.threadMessagesAfter(pool, app.id, spec.issue_number, spec.as_of);
   const reply = backfill.nextReplyAfter({ comments: read.comments, threadMessages: thread, after: spec.as_of, requester: names });
-  if (!reply) return skipped('the requester never answered the question (no DM answer, and no reply of theirs on the request after it)');
+  if (!reply) {
+    return {
+      ...skipped('the requester never answered the question (no DM answer, and no reply of theirs on the request after it)'),
+      unanswered: true,
+      later: { issue: read.issue, comments: read.comments, thread },
+    };
+  }
   return { ok: true, text: reply.text, source: reply.source };
+}
+
+/** The question a run asked, as far as the run recorded it; null when it recorded none. */
+function askedQuestion(run) {
+  if (!run) return null;
+  const q = {};
+  if (run.question) q.text = String(run.question).slice(0, 2000);
+  if (run.question_default) q.default = String(run.question_default).slice(0, 1000);
+  if (run.missing_fact) q.missing_fact = String(run.missing_fact).slice(0, 1000);
+  if (Array.isArray(run.question_answers) && run.question_answers.length) {
+    q.answers = run.question_answers.filter((a) => typeof a === 'string').map((a) => a.slice(0, 200)).slice(0, 6);
+  }
+  return q.text || q.missing_fact ? q : null;
+}
+
+/**
+ * What happened on a request after the bot's question, for whoever scripts
+ * the requester's answer: the request's state now, the first few comments and
+ * thread messages after as_of (anyone's but the requester's, who wrote none),
+ * and the proposals that merged for it. Never shown to a grader.
+ */
+async function laterOnRequest(pool, app, spec, { issue, comments = [], thread = [] }) {
+  const cutoff = Date.parse(spec.as_of);
+  const entries = [
+    ...comments.map((c) => ({ ...c, where: 'github' })),
+    ...thread.map((m) => ({ ...m, where: 'thread' })),
+  ]
+    .filter((e) => Date.parse(e.createdAt) > cutoff && String(e.body || '').trim())
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .slice(0, LATER_ENTRIES)
+    .map((e) => ({ author: e.author || 'unknown', at: e.createdAt, where: e.where, body: String(e.body).trim().slice(0, LATER_ENTRY_CHARS) }));
+  const { rows } = await pool.query(
+    `SELECT pr_number, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND $2 = ANY(linked_issues) AND status = 'merged' AND pr_number IS NOT NULL
+      ORDER BY id LIMIT 3`,
+    [app.id, spec.issue_number],
+  );
+  return {
+    request_state: issue?.state || null,
+    comments: entries,
+    merged: rows.map((r) => ({ pr: r.pr_number, title: r.pr_title || null })),
+  };
 }
 
 async function resolveDm(ctx, spec, app, repo) {
   const run = await sourceRun(ctx.pool, spec, app);
   // The answer first: a question nobody answered is skipped before any
-  // snapshot is written for it.
+  // snapshot is written for it, unless the spec scripts the answer and the
+  // run recorded the question to script it to.
   const answer = await trueAnswer(ctx, spec, app, repo, run);
-  if (!answer.ok) return { ...answer, github: true };
+  const question = answer.unanswered && spec.scripted_answer === 'if_unanswered' ? askedQuestion(run) : null;
+  if (!answer.ok && !question) {
+    const reason = answer.unanswered && spec.scripted_answer === 'if_unanswered'
+      ? `${answer.reason}; its run recorded no question to script an answer to`
+      : answer.reason;
+    return { ...answer, reason, github: true };
+  }
   const snap = await triageSnapshot(ctx, spec, app, repo, run);
   if (!snap.ok) return snap;
   const tags = baseTags(ctx, spec, app, {
@@ -381,11 +499,20 @@ async function resolveDm(ctx, spec, app, repo) {
     request_type: spec.tags?.request_type || suites.requestType(snap.issue?.title, snap.issue?.body),
     prompt_chars: snap.promptChars || await promptChars(ctx.pool, snap.snapshotId),
     snapshot_origin: snap.origin,
+    answer_source: answer.ok ? answer.source : 'scripted',
   });
+  // A pending scripted task has no answer yet: it is labelled with one
+  // (grading.labelTask's dmAnswer) and never runs until it has.
+  const dmScript = answer.ok
+    ? { true_answer: answer.text, accepted: [], max_turns: 3, source: answer.source }
+    : {
+      true_answer: null, accepted: [], max_turns: 3, source: 'scripted', pending: true,
+      question, later: await laterOnRequest(ctx.pool, app, spec, answer.later || {}),
+    };
   const task = await suites.insertTask(ctx.pool, {
     suiteId: ctx.suite.id, stage: 'dm', sourceRunId: run?.id || null, snapshotId: snap.snapshotId,
     appId: app.id, issueNumber: spec.issue_number, tags,
-    reference: { dm_script: { true_answer: answer.text, accepted: [], max_turns: 3, source: answer.source } },
+    reference: { dm_script: dmScript },
     referenceSource: null,
   });
   return { ok: true, task, github: true };
@@ -474,6 +601,7 @@ async function resolveRecordedRun(ctx, spec, app, stage) {
 
 /** One task of the definition: resolved and inserted, or the reason it was not. Never throws. */
 async function materializeOne(ctx, spec) {
+  await beat(ctx);
   if (await hasRef(ctx.pool, ctx.suite.id, spec.ref)) return { ok: true, existed: true };
   let out;
   try {
@@ -572,6 +700,7 @@ async function materializeRule(ctx, rule) {
 /** A fallback build task from a shadow build, when its request is closed now. */
 async function shadowBuildTask(ctx, rule, r) {
   const ref = `${rule.ref}:shadow:${r.app_slug}#${r.issue_number}`;
+  await beat(ctx);
   if (await hasRef(ctx.pool, ctx.suite.id, ref)) return { ok: true, existed: true };
   const repo = require('../homeroom-bot').parseRepo(r.repo_url);
   if (!repo) return 'not_closed';
@@ -641,14 +770,16 @@ async function summarize(pool, suiteId, definition, skippedList) {
 /** Claim this definition's row, or null when there is nothing to do. */
 async function claim(pool, definition, force) {
   const { rows } = await pool.query(
-    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at)
-     VALUES ($1, $2, 'running', 1, NOW())
+    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at, heartbeat_at)
+     VALUES ($1, $2, 'running', 1, NOW(), NOW())
      ON CONFLICT (definition, version) DO UPDATE
-       SET status = 'running', attempts = bench_materializations.attempts + 1, started_at = NOW(), finished_at = NULL
+       SET status = 'running', attempts = bench_materializations.attempts + 1, started_at = NOW(),
+           heartbeat_at = NOW(), finished_at = NULL
      WHERE bench_materializations.status = 'failed'
         OR ($3::boolean AND bench_materializations.status = 'done')
         OR (bench_materializations.status = 'running'
-            AND bench_materializations.started_at < NOW() - make_interval(mins => $4))
+            AND COALESCE(bench_materializations.heartbeat_at, bench_materializations.started_at)
+                < NOW() - make_interval(mins => $4))
      RETURNING *`,
     [definition.key, definition.version, !!force, STALE_RUNNING_MINUTES],
   );
@@ -673,8 +804,33 @@ async function ensureSuite(pool, definition, row, actorId) {
 }
 
 /**
+ * A done suite's build tasks whose references were never re-read from their
+ * pull requests' own diffs (imported before that fix), repaired on the next
+ * pass (the boot pass) with nobody pressing anything. Once each has been,
+ * this reads nothing. Never on a frozen suite; never throws.
+ */
+async function repairUnrepaired(pool, suiteId, deps, rateMs) {
+  if (!suiteId) return null;
+  try {
+    const suite = await suites.suiteRow(pool, suiteId);
+    if (!suite || suite.frozen_at) return null;
+    const github = deps.github || require('./runner').guardedGithub(require('../github'));
+    if (!github.isEnabled()) return null;
+    const out = await suites.refreshPrReferences(pool, {
+      suiteId, github, onlyUnrepaired: true, pause: () => sleep(Number(rateMs) || 0),
+    });
+    return out.checked ? out : null;
+  } catch (err) {
+    log.warn('bench', 'Repairing the build references failed', { suiteId, err: err.message });
+    return null;
+  }
+}
+
+/**
  * Materialize a definition: its suite and every task it can resolve. A
- * no-op once done (unless `force`, which retries only what is missing).
+ * no-op once done (unless `force`, which retries only what is missing),
+ * except that build tasks imported before their references were read from
+ * their pull requests' own diffs are repaired (repairUnrepaired).
  * Resolves { ok, noop?, suiteId, summary }. Never throws.
  */
 async function materialize(pool, config = {}, {
@@ -688,7 +844,11 @@ async function materialize(pool, config = {}, {
   const row = await claim(pool, definition, force);
   if (!row) {
     const current = await statusRow(pool, definition);
-    return { ok: true, noop: true, status: current?.status || null, suiteId: current?.suite_id || null, summary: current?.summary || null };
+    const references = current?.status === 'done' ? await repairUnrepaired(pool, current.suite_id, deps, rateMs) : null;
+    return {
+      ok: true, noop: true, status: current?.status || null, suiteId: current?.suite_id || null, summary: current?.summary || null,
+      ...(references ? { references } : {}),
+    };
   }
   const startedMs = Date.now();
   try {
@@ -697,9 +857,20 @@ async function materialize(pool, config = {}, {
     const suite = await ensureSuite(pool, definition, row, actorId);
     const ctx = { pool, config, github, deps, definition, suite, skipped: [], rateMs: Number(rateMs) || 0 };
     const rules = [];
+    let references = null;
     if (suite.frozen_at) {
       ctx.skipped.push({ ref: definition.key, stage: null, app: null, reason: 'the suite is frozen: nothing more can be added to it' });
     } else {
+      // A retry also re-reads the build tasks' references from their pull
+      // requests' own diffs (suites.refreshPrReferences): the repair for
+      // tasks imported when their files and checks were read from the task's
+      // base to the merge, which swept in everything merged in between.
+      // Before the missing tasks, which are imported right already.
+      if (force) {
+        references = await suites.refreshPrReferences(pool, {
+          suiteId: suite.id, github, pause: () => sleep(ctx.rateMs),
+        });
+      }
       for (const spec of definition.tasks) {
         // eslint-disable-next-line no-await-in-loop
         await materializeOne(ctx, spec);
@@ -709,7 +880,11 @@ async function materialize(pool, config = {}, {
         rules.push(await materializeRule(ctx, rule));
       }
     }
-    const summary = { ...(await summarize(pool, suite.id, definition, ctx.skipped)), rules, durationMs: Date.now() - startedMs };
+    const summary = {
+      ...(await summarize(pool, suite.id, definition, ctx.skipped)), rules,
+      ...(references ? { references } : {}),
+      durationMs: Date.now() - startedMs,
+    };
     await pool.query(
       `UPDATE bench_materializations SET status = 'done', summary = $3::jsonb, finished_at = NOW()
         WHERE definition = $1 AND version = $2`,
@@ -762,13 +937,19 @@ async function coreStatus(pool, { definition = loadDefinition() } = {}) {
     );
     suite = s || null;
   }
+  // A running row nobody has beaten for STALE_RUNNING_MINUTES was left by a
+  // process that died mid-pass: it is not running, and may be tried again.
+  const lastBeat = row ? new Date(row.heartbeat_at || row.started_at).getTime() : 0;
+  const stale = !!row && row.status === 'running' && !inProcess
+    && Date.now() - lastBeat > STALE_RUNNING_MINUTES * 60 * 1000;
   return {
     definition: { key: definition.key, name: definition.name, version: definition.version, expected: v.counts, valid: v.ok },
     materialization: row ? {
       status: row.status, summary: row.summary || {}, attempts: row.attempts, startedAt: row.started_at, finishedAt: row.finished_at,
+      heartbeatAt: row.heartbeat_at || null, stale,
     } : null,
     suite,
-    running: !!inProcess,
+    running: !!inProcess || (row?.status === 'running' && !stale),
   };
 }
 
@@ -811,6 +992,8 @@ module.exports = {
   DEFINITION_FILE,
   RULES,
   STAGE_RANGES,
+  SCRIPTED_ANSWER,
+  STALE_RUNNING_MINUTES,
   loadDefinition,
   validateDefinition,
   pickDistinctApps,

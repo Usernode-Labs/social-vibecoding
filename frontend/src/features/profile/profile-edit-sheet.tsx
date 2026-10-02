@@ -609,7 +609,7 @@ export function ProfileEditSheet({
               )}
             </div>
             <a
-              href="#settings/connectors"
+              href="#settings/linked-accounts"
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => Profile._dismissSheet()}
             >

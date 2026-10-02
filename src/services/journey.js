@@ -102,6 +102,15 @@ function parseWeek(raw, now = new Date()) {
   };
 }
 
+// "All time": from before the platform's first record to now. Shaped like a
+// week so the window readings take it unchanged; `all` tells the two that
+// differ (Stay, and the trend) that it is not one.
+const ALL_TIME_START = new Date('2020-01-01T00:00:00Z');
+
+function allTime(now = new Date()) {
+  return { start: ALL_TIME_START, end: new Date(now), label: 'all', finished: false, all: true };
+}
+
 /** The week before `week`. */
 function previousWeek(week) {
   const start = new Date(week.start.getTime() - WEEK_MS);
@@ -671,19 +680,46 @@ const STAGES_SQL = `WITH real AS (
 
 const STAGES = Object.freeze(['arrive', 'explore', 'activate', 'belong', 'use', 'stay', 'invite']);
 
+// Stay over all time: the people in $1 who arrived in two weeks in a row at
+// any point, from the same records as ARRIVE_THIS_WEEK.
+const STAY_EVER_SQL = `WITH a AS (
+    SELECT aa.user_id, date_trunc('week', aa.date::timestamp) AS wk FROM app_activity aa WHERE aa.user_id = ANY($1::int[])
+    UNION SELECT cmx.user_id, date_trunc('week', cmx.created_at AT TIME ZONE 'UTC') FROM chat_messages cmx
+     WHERE cmx.user_id = ANY($1::int[])
+    UNION SELECT cvx.sender_id, date_trunc('week', cvx.created_at AT TIME ZONE 'UTC') FROM conversation_messages cvx
+     WHERE cvx.sender_id = ANY($1::int[])
+    UNION SELECT csx.user_id, date_trunc('week', smx.created_at AT TIME ZONE 'UTC')
+      FROM chat_session_messages smx JOIN chat_sessions csx ON csx.id = smx.session_id
+     WHERE smx.role = 'user' AND csx.user_id = ANY($1::int[])
+    UNION SELECT pvx.user_id, date_trunc('week', pvx.created_at AT TIME ZONE 'UTC') FROM pr_votes pvx WHERE pvx.user_id = ANY($1::int[])
+    UNION SELECT ivx.user_id, date_trunc('week', ivx.created_at AT TIME ZONE 'UTC') FROM issue_votes ivx WHERE ivx.user_id = ANY($1::int[])
+    UNION SELECT frx.user_id, date_trunc('week', frx.created_at AT TIME ZONE 'UTC') FROM feedback_reports frx
+     WHERE frx.user_id = ANY($1::int[])
+    UNION SELECT ex.user_id, date_trunc('week', ex.created_at AT TIME ZONE 'UTC') FROM events ex
+     WHERE ex.event_type = 'ui_experience' AND ex.user_id = ANY($1::int[])
+  )
+  SELECT DISTINCT a1.user_id FROM a a1 JOIN a a2 ON a2.user_id = a1.user_id AND a2.wk = a1.wk + INTERVAL '7 days'`;
+
 /**
  * The week's stages. Stay needs the following week to have ended: until it
  * has, it is notRecorded ("known next Monday"), never a count.
  */
-async function stages(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
-  const nextEnd = new Date(week.end.getTime() + WEEK_MS);
-  const stayKnown = nextEnd.getTime() <= new Date(now).getTime();
-  const { rows } = await pool.query(STAGES_SQL,
+async function stages(pool, { week, now = new Date(), leftOutIds = [], memberIds = null } = {}) {
+  // All time: each stage is "ever", and Stay is "arrived two weeks in a row,
+  // at any time", read from STAY_EVER_SQL.
+  const nextEnd = week.all ? new Date(week.end) : new Date(week.end.getTime() + WEEK_MS);
+  const stayKnown = week.all || nextEnd.getTime() <= new Date(now).getTime();
+  const { rows: all } = await pool.query(STAGES_SQL,
     [week.start, week.end, ...realPersonParams(leftOutIds), nextEnd]);
+  const rows = memberIds ? all.filter((r) => memberIds.has(Number(r.user_id))) : all;
+  const stayedEver = week.all && rows.length
+    ? new Set((await pool.query(STAY_EVER_SQL, [rows.map((r) => Number(r.user_id))])).rows.map((r) => Number(r.user_id)))
+    : null;
   const people = rows.map((r) => {
+    const stay = stayedEver ? stayedEver.has(Number(r.user_id)) : (r.arrive && r.arrive_next);
     const flags = {
       arrive: r.arrive, explore: r.explore, activate: r.activate, belong: r.belong,
-      use: r.use, stay: stayKnown ? (r.arrive && r.arrive_next) : null, invite: r.invite,
+      use: r.use, stay: stayKnown ? stay : null, invite: r.invite,
     };
     // Where they stopped: the furthest stage reached this week, in order.
     let furthest = null;
@@ -753,6 +789,12 @@ const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, cs.user_id AS author_id, u.
                         AND NOT (uy.id = ANY($4::int[])))
    ORDER BY cs.promoted_at`;
 
+// How many weeks of active-group counts come back with each week, oldest
+// first and ending with that week: the trend beside the North Star. "All
+// time" goes back to the first live change, two years at most.
+const TREND_WEEKS = 8;
+const TREND_WEEKS_MAX = 104;
+
 /** Group the live changes of one week by project. */
 function groupsForWeek(changes, week) {
   const byProject = new Map();
@@ -783,12 +825,15 @@ function groupsForWeek(changes, week) {
  * before and every earlier week; Homeroom's own project on a line of its own,
  * never counted; and the groups one short.
  */
-async function activeGroups(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+async function activeGroups(pool, { week, now = new Date(), leftOutIds = [], memberIds = null, trendAll = false } = {}) {
   const params = [week.end, now, ...realPersonParams(leftOutIds)];
   const { rows: changes } = await pool.query(LIVE_CHANGES_SQL, params);
+  // Narrowed to a cohort: only the groups one of its members was part of.
+  const keep = (g) => !memberIds || g.people.some((p) => memberIds.has(Number(p.userId)));
+  const weekGroups = (span) => groupsForWeek(changes, span).filter(keep);
   const before = previousWeek(week);
-  const thisWeek = groupsForWeek(changes, week);
-  const lastWeek = new Set(groupsForWeek(changes, before).filter((g) => g.active).map((g) => g.slug));
+  const thisWeek = weekGroups(week);
+  const lastWeek = new Set(weekGroups(before).filter((g) => g.active).map((g) => g.slug));
   // Every week before the one before: was the project an active group then?
   const earlierWeeks = new Map();
   for (const c of changes) {
@@ -800,28 +845,44 @@ async function activeGroups(pool, { week, now = new Date(), leftOutIds = [] } = 
   const earlier = new Set();
   for (const [key, list] of earlierWeeks) {
     groupsForWeek(list, { start: new Date(key), end: new Date(key + WEEK_MS) })
-      .filter((g) => g.active).forEach((g) => earlier.add(g.slug));
+      .filter((g) => g.active && keep(g)).forEach((g) => earlier.add(g.slug));
   }
   const active = thisWeek.filter((g) => g.active).map((g) => ({
     ...g, lifecycle: groupLifecycle({ thisWeek: true, lastWeek: lastWeek.has(g.slug), earlier: earlier.has(g.slug) }),
   }));
   const wentQuiet = [...lastWeek].filter((slug) => !active.some((g) => g.slug === slug))
     .map((slug) => {
-      const g = groupsForWeek(changes, before).find((x) => x.slug === slug);
+      const g = weekGroups(before).find((x) => x.slug === slug);
       return { slug, name: g ? g.name : slug, people: g ? g.people : [], lifecycle: 'went_quiet' };
     });
   const homeroom = thisWeek.find((g) => g.selfHosted) || null;
+  // The North Star over the weeks before, from the same rows: every live
+  // change up to the end of `week` is already loaded, so this costs no query.
+  // With `trendAll`, every week back to the first live change (at most
+  // TREND_WEEKS_MAX), for the page's "all time".
+  let weeksBack = TREND_WEEKS;
+  if (trendAll && changes.length) {
+    const first = weekStart(changes.reduce((m, c) => (new Date(c.merged_at) < m ? new Date(c.merged_at) : m), new Date(now)));
+    weeksBack = Math.min(TREND_WEEKS_MAX, Math.max(1, Math.round((week.start.getTime() - first.getTime()) / WEEK_MS) + 1));
+  }
+  const trend = [];
+  for (let k = weeksBack - 1; k >= 0; k -= 1) {
+    const start = new Date(week.start.getTime() - k * WEEK_MS);
+    const span = { start, end: new Date(start.getTime() + WEEK_MS) };
+    trend.push({ week: isoDay(start), count: weekGroups(span).filter((g) => g.active).length });
+  }
   const { rows: waiting } = await pool.query(WAITING_SQL, params);
   const oneShort = [
     ...thisWeek.filter((g) => !g.selfHosted && !g.active && g.people.length === 1)
       .map((g) => ({ slug: g.slug, name: g.name, people: g.people, why: 'one person had a change go live alone' })),
     ...waiting.map((w) => ({ slug: w.slug, name: w.name, people: [{ userId: Number(w.author_id), name: w.author }],
       why: 'a change is waiting for a yes from someone else', since: w.promoted_at })),
-  ];
+  ].filter(keep);
   return {
     week: week.label,
     finished: week.finished,
     count: active.length,
+    trend,
     groups: active,
     wentQuiet,
     homeroom: homeroom ? { changes: homeroom.changes, people: homeroom.people.length } : null,
@@ -937,8 +998,10 @@ function turnStep(row) {
   return 'notice';
 }
 
-async function changeLoop(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
-  const { rows } = await pool.query(CHANGE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+async function changeLoop(pool, { week, now = new Date(), leftOutIds = [], memberIds = null } = {}) {
+  const { rows: all } = await pool.query(CHANGE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+  // Narrowed to a cohort: the turns its members raised.
+  const rows = memberIds ? all.filter((r) => memberIds.has(Number(r.reporter_id))) : all;
   const nowMs = new Date(now).getTime();
   const turns = rows.map((r) => {
     const step = turnStep(r);
@@ -1012,8 +1075,11 @@ const INVITE_LOOP_SQL = `SELECT inv.id AS invitee_id, inv.username AS invitee, h
      AND ${REAL_PERSON_SQL}
    ORDER BY inv.platform_access_granted_at`;
 
-async function inviteLoop(pool, { week, leftOutIds = [] } = {}) {
-  const { rows } = await pool.query(INVITE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+async function inviteLoop(pool, { week, leftOutIds = [], memberIds = null } = {}) {
+  const { rows: all } = await pool.query(INVITE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+  // Narrowed to a cohort: pairs where its member brought someone or was brought.
+  const rows = memberIds
+    ? all.filter((r) => memberIds.has(Number(r.host_id)) || memberIds.has(Number(r.invitee_id))) : all;
   const pairs = rows.map((r) => ({
     host: { userId: Number(r.host_id), name: r.host },
     invitee: { userId: Number(r.invitee_id), name: r.invitee },
@@ -1312,12 +1378,12 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
 // finished week (with this week so far as a count only), one stuck list for
 // newcomers across their cohorts, the open turns, the trust checks and the
 // coverage line.
-async function summary(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+async function summary(pool, { week, now = new Date(), leftOutIds = [], memberIds = null, trendAll = false } = {}) {
   const current = parseWeek(isoDay(weekStart(now)), now);
   const nowMs = new Date(now).getTime();
   const [groups, soFar, list, loop, trust, cover] = await Promise.all([
-    activeGroups(pool, { week, now, leftOutIds }),
-    activeGroups(pool, { week: current, now, leftOutIds }),
+    activeGroups(pool, { week, now, leftOutIds, memberIds, trendAll }),
+    activeGroups(pool, { week: current, now, leftOutIds, memberIds }),
     cohorts(pool, { now, leftOutIds }),
     changeLoop(pool, { week, now, leftOutIds }),
     trustChecks(pool, { week, leftOutIds }),
@@ -1330,12 +1396,13 @@ async function summary(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
     ...recentDays.map((day) => firstMile(pool, { day, now, leftOutIds })),
     firstMile(pool, { day: 'other_way', now, leftOutIds }),
   ]);
-  const stuck = miles.flatMap((m) => m.people.filter((p) => p.stuckAt).map((p) => ({
+  const stuck = miles.flatMap((m) => m.people.filter((p) => p.stuckAt && (!memberIds || memberIds.has(Number(p.userId)))).map((p) => ({
     userId: p.userId, name: p.name, cohort: m.cohort, stuckAt: p.stuckAt, reason: p.stuckReason,
     days: p.daysSince, failedAttempts: p.failedAttempts,
   }))).sort((a, b) => (b.days || 0) - (a.days || 0));
   return {
     week: week.label,
+    allTime: trendAll,
     thisWeekSoFar: { week: current.label, count: soFar.count },
     groups,
     stuck,
@@ -1366,10 +1433,13 @@ module.exports = {
   FIRST_MILE_STEPS,
   STAGES,
   STAGES_SQL,
+  STAY_EVER_SQL,
   TRUST_SQL,
   FEW_MOVES,
   GROUP_MAX,
   GROUP_MIN,
+  TREND_WEEKS,
+  TREND_WEEKS_MAX,
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
   REAL_PERSON_SQL,
@@ -1377,6 +1447,7 @@ module.exports = {
   VISIT_GAP_MS,
   WEEK_MS,
   activeGroups,
+  allTime,
   changeLoop,
   cohorts,
   coverage,

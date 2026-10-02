@@ -53,7 +53,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
             : (
               <>
                 {'No AI payer is available yet. '}
-                <a className="underline font-medium" href="#settings/connectors">Connect GitHub or X</a>
+                <a className="underline font-medium" href="#settings/linked-accounts">Connect GitHub or X</a>
                 {' to unlock $10/day, or '}
                 <a className="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>
                 {'.'}

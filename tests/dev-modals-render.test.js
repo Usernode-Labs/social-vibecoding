@@ -350,7 +350,9 @@ test('no payer replaces the whole field with the amber box and disables Allow', 
   assert.equal(view.capacity.t, 'blocked');
   const html = consentHtml(view);
   assert.match(html, /No AI payer is available yet/);
-  assert.match(html, /href="#settings\/connectors"/);
+  // "Connect GitHub or X" goes to Linked accounts, the GitHub/X rows' own
+  // page since the settings restructure split them out of the connectors pane.
+  assert.match(html, /href="#settings\/linked-accounts"/);
   assert.match(html, /href="#settings\/api-key"/);
   assert.doesNotMatch(html, /id="llm-consent-cap"/, 'no cap field to fill in');
   assert.match(html, /id="llm-consent-allow"[^>]*disabled/);

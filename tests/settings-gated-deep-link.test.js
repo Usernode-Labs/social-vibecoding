@@ -43,7 +43,9 @@ function sliceMethod(src, name) {
 // The real registry, and a gate node the test controls — standing in for
 // #settings-usernode-section, whose `hidden` lags the model by a commit.
 function makeSettings({ nodeHidden = true, hash = '#settings/usernode' } = {}) {
-  const block = settingsJs.slice(settingsJs.indexOf('    SECTIONS: ['), settingsJs.indexOf('    ADVANCED_GROUP:'));
+  // SECTIONS, PAGES and KEYWORDS: everything between the registry's head and
+  // DEFAULT_SECTION, which is what _visiblePages() reads.
+  const block = settingsJs.slice(settingsJs.indexOf('    SECTIONS: ['), settingsJs.indexOf('    DEFAULT_SECTION:'));
   const node = { hidden: nodeHidden };
   const document = {
     getElementById: (id) => (id === 'settings-usernode-section'
@@ -51,7 +53,7 @@ function makeSettings({ nodeHidden = true, hash = '#settings/usernode' } = {}) {
       : null),
   };
   const location = { hash };
-  const methods = ['_visibleSections', '_notePendingSection', '_renderNavIfOpen']
+  const methods = ['_visibleSections', '_pageKey', '_visiblePages', '_notePendingSection', '_renderNavIfOpen']
     .map((n) => sliceMethod(settingsJs, n)).join(',\n');
   const Settings = new Function('document', 'location', `
     const Settings = {
@@ -59,7 +61,6 @@ function makeSettings({ nodeHidden = true, hash = '#settings/usernode' } = {}) {
       _open: true,
       _pendingSection: null,
       calls: [],
-      _ensureActiveGroupExpanded() { this.calls.push('expand'); },
       _renderNav() { this.calls.push('nav'); },
       setSection(k) { this.calls.push('setSection:' + k); },
       route(k) { this.calls.push('route:' + k); },
@@ -95,7 +96,7 @@ test('the synchronous prelude decides the gate before its first await', () => {
     && fn.indexOf('this._usernodeGated = true;') < firstAwait,
   'open() calls this without awaiting it, so the gate must be set synchronously');
   assert.match(sliceMethod(settingsJs, 'open'),
-    /_renderAllSections\(\);\s*\n\s*\n\s*const visible = Settings\._visibleSections\(\);/,
+    /_renderAllSections\(\);\s*\n\s*\n\s*const visible = Settings\._visiblePages\(\);/,
     'open() resolves the section only after the sections (and the gate) have rendered');
 });
 

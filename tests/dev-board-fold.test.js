@@ -1421,16 +1421,31 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // (the row was a dimmed Soon). Reached by ?shot=create-template. 835
   // leaves 25 slots against MAX_DECLARED_TESTS (860).
   //
-  // 835 → 836: +1 (#3654): the Homeroom bot console's Benchmark area. It
+  // 835 → 836: +1 (#3369): Admin › Journey, the user journey and North
+  // Star page, on its demo route (/?demo=1#admin/journey). A new section
+  // has a route of its own, so it could not share another check's. 836
+  // leaves 24 slots against MAX_DECLARED_TESTS (860).
+  //
+  // 836 → 837: +1 (#3654): the Homeroom bot console's Benchmark area. It
   // has a route of its own (#admin/homeroom-bot/benchmark, a tab the section
   // reads from the address), so it could not fold into the bot console's two
   // checks on #admin/homeroom-bot; one check with :has() covers its suites,
   // its runs, the results table and the cost-vs-quality chart on the
-  // staging demo run. 836 leaves 24 slots against MAX_DECLARED_TESTS (860).
+  // staging demo run. 837 leaves 23 slots against MAX_DECLARED_TESTS (860).
+  //
+  // 837 → 838: +1 (the settings restructure): `#profile?edit`, the address
+  // Settings' new Profile card links to, which opens Me with the Edit profile
+  // sheet up. A new route, so it could not share a check. Everything else
+  // the restructure needed to pin (the Account page's parts, AI usage &
+  // models' order, App permissions' three parts, the connectors page without
+  // the GitHub rows) folded into the existing checks on those routes with
+  // `+` and :has(), and the two checks that pinned the retired Advanced group
+  // were retargeted rather than kept. 838 leaves 22 slots against
+  // MAX_DECLARED_TESTS (860).
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 836);
+  checkCap.assertPinned(DAPP.tests.length, 838);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

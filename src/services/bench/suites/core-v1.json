@@ -733,6 +733,7 @@
       "issue_number": 50,
       "as_of": "2026-10-01T23:29:28.614Z",
       "source_run_id": 649,
+      "scripted_answer": "if_unanswered",
       "tags": {
         "verdict_bot": "question",
         "platform": false
@@ -745,6 +746,7 @@
       "issue_number": 63,
       "as_of": "2026-09-25T04:13:04.880Z",
       "source_run_id": 267,
+      "scripted_answer": "if_unanswered",
       "tags": {
         "verdict_bot": "question",
         "platform": false
@@ -757,6 +759,7 @@
       "issue_number": 1,
       "as_of": "2026-09-22T07:01:24.634Z",
       "source_run_id": 172,
+      "scripted_answer": "if_unanswered",
       "tags": {
         "verdict_bot": "question",
         "platform": false
@@ -769,6 +772,7 @@
       "issue_number": 25,
       "as_of": "2026-09-21T14:45:03.928Z",
       "source_run_id": 8,
+      "scripted_answer": "if_unanswered",
       "tags": {
         "verdict_bot": "question",
         "platform": false
@@ -781,6 +785,7 @@
       "issue_number": 3517,
       "as_of": "2026-09-30T20:32:13.860Z",
       "source_run_id": 590,
+      "scripted_answer": "if_unanswered",
       "tags": {
         "verdict_bot": "question",
         "platform": true

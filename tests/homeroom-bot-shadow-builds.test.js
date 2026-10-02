@@ -548,3 +548,19 @@ test('the backfill route is admin-write only and hands off to the service', () =
   assert.match(src, /router\.post\('\/api\/admin\/homeroom-bot\/shadow-builds\/backfill', requireAdminWrite, drainGuard,/);
   assert.match(src, /homeroomBot\.queueShadowBackfill\(pool, config\)/);
 });
+
+// #3654: the benchmark yields only to live builds, the ones a person is
+// waiting for. A full shadow lane must not hold it back: both are
+// experiments, and counting shadow builds starved the benchmark whenever
+// the shadow bot was busy.
+test('the benchmark waits for live builds only, never for shadow builds', () => {
+  const settings = { buildConcurrency: 2 };
+  assert.equal(bot.isLiveLaneSaturated(settings, { live: 0 }), false, 'nothing live: the bench may run');
+  assert.equal(bot.isLiveLaneSaturated(settings, { live: 1 }), false);
+  assert.equal(bot.isLiveLaneSaturated(settings, { live: 2 }), true, 'every slot taken by live builds');
+  assert.equal(bot.isLiveLaneSaturated({ buildConcurrency: 4 }, { live: 3 }), false);
+  // With no live builds under way in this process, a busy shadow lane
+  // does not saturate it.
+  assert.equal(bot.isLiveLaneSaturated(settings), false);
+  assert.doesNotMatch(String(bot.isLiveLaneSaturated), /buildsInFlight\.size \+/, 'shadow builds are not counted');
+});

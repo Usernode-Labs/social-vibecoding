@@ -8,10 +8,17 @@
 //   * Leader only, on a timer of its own, woken when a run is launched or a
 //     trial ends. In-flight trials live in this process; the claim is a
 //     conditional UPDATE, so a second drainer could never take the same one.
-//   * A run's `concurrency` (1 or 2) trials at once, the oldest run first.
-//   * Never while the live bot is using every build slot it has
-//     (homeroom-bot isLiveLaneSaturated): the benchmark waits for the bot,
-//     not the other way round.
+//   * A run's `concurrency` (1 to 8) trials at once, the oldest run first;
+//     of them at most three heavy ones (a build, a checks fix or a spec,
+//     each a container turn of many minutes): when the run's next trial is
+//     heavy and three of its heavy trials are under way, the lane takes its
+//     next light one (triage, DM, follow-up) instead of holding the run.
+//     And at most eight trials in flight across every run, counting the ones
+//     restart recovery is finishing.
+//   * Never while the live bot's live builds (ones a person is waiting for)
+//     use every build slot it has (homeroom-bot isLiveLaneSaturated): the
+//     benchmark waits for them, not the other way round. Shadow builds do
+//     not hold it back; they are experiments too.
 //   * The cap. Before a trial is claimed, what the run has spent, plus the
 //     estimate of every trial still under way, plus this trial's estimate
 //     (catalog.estimateTrialCost, deliberately pessimistic), must stay inside
@@ -21,10 +28,24 @@
 //     a trial already under way spends cannot be stopped mid-turn (usage is
 //     only known when the turn ends), so the cap can be overrun by at most
 //     the overrun of the trials in flight at that moment.
-//   * Resumable. Trials are rows; a restart leaves its trials `running`,
-//     and once they are older than the longest a trial can take they go
-//     back to `pending` (or, after a second interruption, `infra_fail`).
-//     Their sessions are abandoned by restart recovery (server.js).
+//   * Resumable. Trials are rows, and a trial's session is on its row from
+//     the moment it opens. A restart that interrupts a trial does one of
+//     two things (server.js adoptOrphanWorker):
+//       - its turn is the last one the trial needs (a triage, a follow-up,
+//         a checks fix, or a build's build turn) and its worker is still
+//         running it: recovery follows the turn's journal to its end and
+//         the trial is finished here (finishRecoveredTrial), through the
+//         same finisher a trial run start to end uses (recordTrial), held
+//         in this lane's slots while it runs;
+//       - anything else (a build's spec turn, a DM conversation, a worker
+//         that is gone): the turn is abandoned and the trial goes back to
+//         `pending` at once (releaseTrial), what the interrupted attempt
+//         spent charged to the run, or, after a second interruption, it is
+//         `infra_fail`.
+//     A trial nothing in this process holds and whose session has no turn
+//     left is released on the lane's next pass (releaseOrphaned), and one
+//     older than the longest a trial can take on the pass after that
+//     (releaseStale), whatever else happened.
 //   * Cancellable. A cancelled run claims nothing more, its pending trials
 //     are `cancelled`, and its trials under way are stopped.
 //
@@ -36,9 +57,15 @@ const crypto = require('crypto');
 const log = require('../logger');
 const catalog = require('./catalog');
 const runner = require('./runner');
+const dmSim = require('./dm-sim');
 const snapshots = require('../homeroom-bot-snapshots');
 
-const MAX_CONCURRENCY = 2;
+const MAX_CONCURRENCY = 8;
+// Heavy stages: at most this many of one run's at once.
+const HEAVY_STAGES = Object.freeze(['build', 'checks_fix', 'spec']);
+const MAX_HEAVY_PER_RUN = 3;
+// Every trial in flight in this process, across runs.
+const MAX_IN_FLIGHT = 8;
 const MAX_MODELS = 10;
 const MAX_REPEATS = 5;
 const MIN_CAP_USD = 0.5;
@@ -52,8 +79,14 @@ const MAX_CLAIMS = 2;
 const BRANCH_KEEP_DAYS = 7;
 const IDLE_MS = 60 * 1000;
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
+// How long a claimed trial may go without this process holding it before
+// the lane counts it an earlier process's. Only the leader runs trials, and
+// a new leader is elected only once the old one has exited, so any trial it
+// does not hold is orphaned; the grace is a margin, not the mechanism.
+const ORPHAN_GRACE_SECONDS = 120;
+const TWICE_INTERRUPTED = 'interrupted: the platform restarted during it twice';
 
-const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise }
+const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise, heavy, recovered? }
 let laneOn = false;
 let laneConfig = null;
 let timer = null;
@@ -94,7 +127,7 @@ function validateLaunch(body) {
   }
   const concurrency = body.concurrency == null ? 1 : Number(body.concurrency);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
-    return httpError(400, `concurrency must be 1 or ${MAX_CONCURRENCY}`);
+    return httpError(400, `concurrency must be 1 to ${MAX_CONCURRENCY}`);
   }
   // Core v1's launcher: which stages take `repeats` (the rest run once).
   // Left out, every stage but a build or a spec repeats, as before.
@@ -177,7 +210,7 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
   const { rows: [suite] } = await pool.query('SELECT id, frozen_at FROM bench_suites WHERE id = $1', [v.suiteId]);
   if (!suite) return httpError(404, 'Suite not found');
   const { rows: tasks } = await pool.query(
-    'SELECT id, stage, tags FROM bench_tasks WHERE suite_id = $1 AND stage = ANY($2::text[]) ORDER BY id',
+    'SELECT id, stage, tags, reference FROM bench_tasks WHERE suite_id = $1 AND stage = ANY($2::text[]) ORDER BY id',
     [v.suiteId, v.stages],
   );
   if (!tasks.length) return httpError(409, 'The suite has no tasks at those stages');
@@ -190,7 +223,7 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
     const attempts = attemptsFor(task.stage, v);
     for (const id of v.models) {
       const info = catalog.modelInfo(models, id);
-      const reason = catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
+      const reason = dmSim.noAnswerReason(task) || catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
       const est = catalog.estimateTrialCost(info, task.stage, history.get(`${id}|${task.stage}`) || []);
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         plan.task.push(task.id);
@@ -289,6 +322,20 @@ async function loadTrialContext(pool, trialId) {
   return row || null;
 }
 
+/** The trial's session (and branch and base), on its row as soon as they exist. */
+async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = null } = {}) {
+  try {
+    await pool.query(
+      `UPDATE bench_trials
+          SET session_id = $2, base_sha = COALESCE($3, base_sha), build_branch = COALESCE($4, build_branch)
+        WHERE id = $1 AND status = 'running'`,
+      [Number(trialId), Number(sessionId), baseSha || null, branch || null],
+    );
+  } catch (err) {
+    log.warn('bench', 'Could not record a trial\'s session', { trialId, sessionId, err: err.message });
+  }
+}
+
 /**
  * Run one claimed trial and record it. Resolves its final status. Never
  * throws: whatever goes wrong is recorded on the trial.
@@ -315,12 +362,33 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
       trial: { id: row.id, run_id: row.run_id, attempt: row.attempt },
       deps: d, budgets: runner.budgetsFor(settings, app, config, row.stage),
       title: `Homeroom benchmark: run ${row.run_id}, trial ${row.id}`,
-      onSession: (sessionId) => { const f = inFlight.get(row.id); if (f) f.sessionId = sessionId; },
+      // Written before the turn runs: restart recovery finds the trial
+      // through its session.
+      onSession: async (sessionId, where) => {
+        const f = inFlight.get(row.id);
+        if (f) f.sessionId = sessionId;
+        await noteSession(pool, row.id, sessionId, where);
+      },
     });
   } catch (err) {
     patch = { status: 'infra_fail', error: `setup: ${err.message}` };
   }
+  return recordTrial(pool, { trialRow, row, patch, user, d });
+}
 
+/**
+ * A trial's turns are over: record what they did. Shared by a trial run
+ * start to end (executeTrial) and one whose last turn restart recovery
+ * followed (finishRecoveredTrial), so the two cannot drift: the ledger cost,
+ * the trial's row, the run's spend and the allowance debit, the sessions put
+ * away, an empty branch deleted, and the deterministic grade.
+ *
+ * `recovered` also requires the trial to still be on `sessionId`, charges
+ * the run only when this recorded the trial (a release may already have
+ * charged it), stamps recovered_at, and leaves the worker to recovery, which
+ * still has the turn record to clear in it.
+ */
+async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = false, sessionId = null }) {
   // What the trial's own session spent, from the ledger: exact, and it
   // counts every attempt the turn made, failed ones included.
   const sessionIds = [...new Set([patch.session_id, ...(patch.session_ids || [])].filter(Boolean))];
@@ -354,9 +422,11 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
             raw_output = $3, parsed = $4::jsonb, cost_usd = $5, input_tokens = $6, output_tokens = $7,
             duration_ms = $8, session_id = $9, base_sha = $10, build_branch = $11, build_sha = $12,
             build_commits = $13, diff = $14, changed_files = $15::jsonb, checks = $16::jsonb, error = $17,
+            recovered_at = CASE WHEN $18::boolean THEN NOW() ELSE tr.recovered_at END,
             finished_at = NOW()
        FROM bench_runs r
       WHERE tr.id = $1 AND r.id = tr.run_id AND tr.status = 'running'
+        AND ($19::int IS NULL OR tr.session_id = $19)
       RETURNING tr.status, tr.run_id`,
     [trialRow.id, patch.status, patch.raw_output ?? null, parsed ? JSON.stringify(parsed) : null,
       cost, inputTokens, outputTokens, patch.duration_ms ?? null, sessionIds[0] || null,
@@ -364,9 +434,10 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
       Number.isFinite(patch.build_commits) ? patch.build_commits : null,
       patch.diff ?? null, patch.changed_files ? JSON.stringify(patch.changed_files) : null,
       patch.checks ? JSON.stringify(patch.checks) : null,
-      patch.error ? String(patch.error).slice(0, 1000) : null],
+      patch.error ? String(patch.error).slice(0, 1000) : null,
+      !!recovered, recovered && sessionId ? Number(sessionId) : null],
   );
-  if (cost > 0) {
+  if (cost > 0 && (!recovered || after)) {
     await pool.query('UPDATE bench_runs SET spent_usd = spent_usd + $2 WHERE id = $1', [trialRow.run_id, cost]);
     try {
       if (user && await d.managedOpenRouter.usesIncludedKey(pool, user.id)) {
@@ -383,7 +454,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         WHERE id = ANY($1::int[]) AND user_id = $2 AND status IN ('active', 'paused')`,
       [sessionIds, user.id],
     ).catch(() => {});
-    for (const id of sessionIds) Promise.resolve(d.worker.evictWorker?.(id)).catch(() => {});
+    if (!recovered) for (const id of sessionIds) Promise.resolve(d.worker.evictWorker?.(id)).catch(() => {});
   }
   // A branch with nothing on it is not kept.
   if (patch.build_branch && !(patch.build_commits > 0) && row?.repo_url) {
@@ -395,7 +466,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
   await Promise.resolve(grade(pool, trialRow.id)).catch((err) => {
     log.warn('bench', 'After-trial grading failed', { trialId: trialRow.id, err: err.message });
   });
-  log.info('bench', 'Trial finished', {
+  log.info('bench', recovered ? 'Trial finished after a restart' : 'Trial finished', {
     trialId: trialRow.id, runId: trialRow.run_id, stage: row?.stage, status: after?.status || patch.status, costUsd: cost,
   });
   return after?.status || patch.status;
@@ -453,16 +524,227 @@ async function releaseStale(pool, settings) {
   const { rows } = await pool.query(
     `UPDATE bench_trials
         SET status = CASE WHEN claims < $3 THEN 'pending' ELSE 'infra_fail' END,
-            error = CASE WHEN claims < $3 THEN NULL ELSE 'interrupted: the platform restarted during it twice' END,
+            error = CASE WHEN claims < $3 THEN NULL ELSE $4::text END,
             started_at = CASE WHEN claims < $3 THEN NULL ELSE started_at END,
             finished_at = CASE WHEN claims < $3 THEN NULL ELSE NOW() END
       WHERE status = 'running' AND started_at < NOW() - make_interval(secs => $1)
         AND NOT (id = ANY($2::int[]))
       RETURNING id, status`,
-    [seconds, [...inFlight.keys()], MAX_CLAIMS],
+    [seconds, [...inFlight.keys()], MAX_CLAIMS, TWICE_INTERRUPTED],
   );
   if (rows.length) log.info('bench', 'Released trials an earlier process never finished', { trials: rows.length });
   return rows.length;
+}
+
+/**
+ * A trial a restart interrupted, put back: `pending` for the lane to run
+ * again from the start, or `infra_fail` after a second interruption (or
+ * `cancelled` / `skipped_cap` when its run has stopped meanwhile). What the
+ * interrupted attempt spent, as its session's ledger has it, is charged to
+ * the run (spent_usd, so the cap stays honest) and to the bench allowance,
+ * and kept on the trial in interrupted_cost_usd: the attempt that finishes
+ * the trial records only its own session's cost, so nothing is counted
+ * twice. Conditional on the trial still being `running` on `sessionId`, so a
+ * second caller for the same interruption changes and charges nothing.
+ * Resolves the trial's new status, or null when it was not released.
+ */
+async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupted', deps = {} }) {
+  const usage = sessionId ? await runner.sessionUsage(pool, sessionId).catch(() => null) : null;
+  const cost = usage && Number(usage.priced) > 0 ? Math.max(Number(usage.cost) || 0, 0) : 0;
+  const { rows: [out] } = await pool.query(
+    `WITH released AS (
+       UPDATE bench_trials tr
+          SET status = CASE WHEN r.status = 'cancelled' THEN 'cancelled'
+                            WHEN r.status = 'capped' THEN 'skipped_cap'
+                            WHEN tr.claims < $3 THEN 'pending'
+                            ELSE 'infra_fail' END,
+              error = CASE WHEN r.status IN ('cancelled', 'capped') OR tr.claims < $3 THEN NULL ELSE $5::text END,
+              started_at = CASE WHEN r.status NOT IN ('cancelled', 'capped') AND tr.claims < $3 THEN NULL ELSE tr.started_at END,
+              finished_at = CASE WHEN r.status NOT IN ('cancelled', 'capped') AND tr.claims < $3 THEN NULL ELSE NOW() END,
+              session_id = CASE WHEN r.status NOT IN ('cancelled', 'capped') AND tr.claims < $3 THEN NULL ELSE tr.session_id END,
+              interrupted_cost_usd = tr.interrupted_cost_usd + $4::numeric
+         FROM bench_runs r
+        WHERE tr.id = $1 AND r.id = tr.run_id AND tr.status = 'running'
+          AND tr.session_id IS NOT DISTINCT FROM $2::int
+        RETURNING tr.id, tr.run_id, tr.status
+     ), charged AS (
+       UPDATE bench_runs SET spent_usd = spent_usd + $4::numeric
+        WHERE $4::numeric > 0 AND id IN (SELECT run_id FROM released)
+        RETURNING id
+     )
+     SELECT released.id, released.run_id, released.status, (SELECT COUNT(*)::int FROM charged) AS charged
+       FROM released`,
+    [Number(trialId), sessionId == null ? null : Number(sessionId), MAX_CLAIMS, cost, TWICE_INTERRUPTED],
+  );
+  if (!out) return null;
+  if (cost > 0) {
+    try {
+      const limits = deps.limits || require('../limits');
+      const managedOpenRouter = deps.managedOpenRouter || require('../openrouter-managed-keys');
+      const { rows: [s] } = await pool.query('SELECT user_id FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+      if (s?.user_id && await managedOpenRouter.usesIncludedKey(pool, s.user_id)) {
+        await limits.recordSpend(pool, s.user_id, Math.round(cost * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('bench', 'Benchmark spend debit failed', { trialId, err: err.message });
+    }
+  }
+  log.info('bench', 'Released a trial a restart interrupted', {
+    trialId: out.id, runId: out.run_id, status: out.status, costUsd: cost, why,
+  });
+  wake();
+  return out.status;
+}
+
+/** The running trial on a session, released (releaseTrial). Never throws. */
+async function releaseTrialOfSession(pool, sessionId, { why = 'interrupted', deps = {} } = {}) {
+  try {
+    const { rows: [t] } = await pool.query(
+      "SELECT id FROM bench_trials WHERE session_id = $1 AND status = 'running' ORDER BY id DESC LIMIT 1",
+      [Number(sessionId)],
+    );
+    if (!t) return null;
+    return await releaseTrial(pool, { trialId: t.id, sessionId, why, deps });
+  } catch (err) {
+    log.warn('bench', 'Could not release a trial a restart interrupted', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Trials an earlier process left running whose session has nothing left to
+ * follow: never opened, gone, archived, or with no turn on record (its
+ * worker was gone at the restart, or the turn was cleared). Restart recovery
+ * owns a session while it has a turn record, and a trial recovery is
+ * finishing is held in `inFlight`, so neither is touched. Released at once
+ * rather than after the hour and a half releaseStale waits.
+ */
+async function releaseOrphaned(pool, deps = {}) {
+  const { rows } = await pool.query(
+    `SELECT tr.id, tr.session_id
+       FROM bench_trials tr
+       LEFT JOIN chat_sessions cs ON cs.id = tr.session_id
+      WHERE tr.status = 'running'
+        AND NOT (tr.id = ANY($1::int[]))
+        AND tr.started_at < NOW() - make_interval(secs => $2)
+        AND (cs.id IS NULL OR cs.active_turn IS NULL OR cs.status = 'archived')
+      ORDER BY tr.id
+      LIMIT 50`,
+    [[...inFlight.keys()], ORPHAN_GRACE_SECONDS],
+  );
+  let n = 0;
+  for (const r of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await releaseTrial(pool, { trialId: r.id, sessionId: r.session_id, why: 'no process or turn holds it', deps })) n += 1;
+  }
+  return n;
+}
+
+// ── After a restart ──────────────────────────────────────────────────────
+//
+// server.js adoptOrphanWorker hands a benchmark session's surviving worker
+// here (recoveryPlan): a turn that is the trial's last is followed to its
+// end by resumeDetachedTurn and finished by finishRecoveredTrial; any other
+// is abandoned and its trial released.
+
+/** The running trial a session belongs to, and whether its turn can be finished. */
+async function recoveryPlan(pool, session, activeTurn) {
+  const { rows: [t] } = await pool.query(
+    `SELECT tr.id, r.status AS run_status
+       FROM bench_trials tr JOIN bench_runs r ON r.id = tr.run_id
+      WHERE tr.session_id = $1 AND tr.status = 'running'
+      ORDER BY tr.id DESC LIMIT 1`,
+    [Number(session.id)],
+  );
+  if (!t) return null;
+  const trial = await loadTrialContext(pool, t.id);
+  if (!trial) return null;
+  // A cancelled run's turn is stopped, not followed.
+  const resumable = t.run_status !== 'cancelled' && runner.resumableTurn(trial.stage, activeTurn);
+  return { trial, resumable };
+}
+
+/**
+ * Hold a lane slot for a trial recovery is finishing, the bot's
+ * holdSlotDuringRecovery for the benchmark: the run's concurrency counts
+ * it, the cap counts its estimate, releaseStale and releaseOrphaned skip it,
+ * and a cancel stops it. Resolves (or rejects) with the recovery.
+ */
+function holdRecoveredTrial(trial, sessionId, recovery) {
+  if (!trial || inFlight.has(trial.id)) return Promise.resolve(recovery);
+  const entry = {
+    runId: trial.run_id, est: Number(trial.est_cost_usd) || 0, sessionId, promise: null,
+    heavy: HEAVY_STAGES.includes(trial.stage), recovered: true,
+  };
+  const promise = Promise.resolve(recovery).finally(() => {
+    if (inFlight.get(trial.id) === entry) inFlight.delete(trial.id);
+    wake();
+  });
+  entry.promise = promise.catch(() => null);
+  inFlight.set(trial.id, entry);
+  return promise;
+}
+
+/**
+ * When the trial's own clock ends a recovered turn: the turn's start plus
+ * the budget the live path gave it (a build turn's for a build, a turn's
+ * otherwise), or null to leave it unbounded.
+ */
+async function recoveryDeadline(pool, config, session, activeTurn) {
+  const startedMs = Date.parse(activeTurn?.startedAt || '');
+  if (!Number.isFinite(startedMs)) return null;
+  const plan = await recoveryPlan(pool, session, activeTurn);
+  if (!plan) return null;
+  const bot = require('../homeroom-bot');
+  const settings = await bot.readSettings(pool);
+  const app = { repo_url: plan.trial.repo_url, self_hosted: plan.trial.self_hosted };
+  const budgets = runner.budgetsFor(settings, app, config, plan.trial.stage);
+  return startedMs + (plan.trial.stage === 'build' ? budgets.buildMs : budgets.turnMs);
+}
+
+/**
+ * A trial's last turn, followed to its end by restart recovery: read the
+ * way the live stage reads it (runner.recoverStage) and recorded through
+ * the same finisher (recordTrial). `result` is what the journal replay
+ * returned; `timedOut` says the trial's clock, re-armed by recovery, ended
+ * it. Never throws: whatever goes wrong puts the trial back in the queue
+ * (releaseTrial), as though recovery had abandoned it.
+ */
+async function finishRecoveredTrial({ pool, config, session, activeTurn, result = {}, timedOut = false, deps = {} }) {
+  try {
+    const plan = await recoveryPlan(pool, session, activeTurn);
+    if (!plan) {
+      log.info('bench', 'A recovered benchmark turn has no running trial; nothing to record', { sessionId: session.id });
+      return 'gone';
+    }
+    const row = plan.trial;
+    if (!plan.resumable) throw new Error(`a ${row.stage} trial's ${activeTurn?.mode || 'unknown'} turn is not its last`);
+    const d = liveDeps(deps);
+    const bot = require('../homeroom-bot');
+    const repo = bot.parseRepo(row.repo_url);
+    if (!repo) throw new Error('the app has no GitHub repository');
+    const snapshot = await snapshots.readSnapshot(pool, row.snapshot_id);
+    if (!snapshot) throw new Error('the task\'s snapshot is gone');
+    const task = { id: row.task_id, stage: row.stage, reference: row.reference || {}, tags: row.tags || {} };
+    const patch = await runner.recoverStage({
+      stage: row.stage, snapshot, task, session, activeTurn, result, timedOut, repo, deps: d,
+      trial: { id: row.id, run_id: row.run_id, attempt: row.attempt },
+      baseSha: row.base_sha || null, branch: row.build_branch || null,
+    });
+    if (!patch) throw new Error('nothing to finish');
+    const startedMs = row.started_at ? new Date(row.started_at).getTime() : NaN;
+    patch.duration_ms = Number.isFinite(startedMs) ? Math.max(Date.now() - startedMs, 0) : null;
+    return await recordTrial(pool, {
+      trialRow: { id: row.id, run_id: row.run_id }, row, patch, user: { id: session.user_id }, d,
+      recovered: true, sessionId: session.id,
+    });
+  } catch (err) {
+    log.warn('bench', 'Could not finish a recovered trial; putting it back in the queue', {
+      sessionId: session?.id, err: err.message,
+    });
+    await releaseTrialOfSession(pool, session.id, { why: `recovery: ${err.message}`, deps });
+    return 'released';
+  }
 }
 
 /** End a run's scheduling at its cap: what is left is skipped. */
@@ -498,6 +780,7 @@ async function tick(pool, config, deps = {}) {
     const bot = require('../homeroom-bot');
     const settings = await bot.readSettings(pool);
     await releaseStale(pool, settings);
+    await releaseOrphaned(pool, deps).catch((err) => log.warn('bench', 'Orphaned-trial sweep failed', { err: err.message }));
     await sweepBranches(pool, deps).catch(() => {});
     const { rows: runs } = await pool.query(
       "SELECT * FROM bench_runs WHERE status IN ('queued', 'running') ORDER BY id",
@@ -520,6 +803,7 @@ async function tick(pool, config, deps = {}) {
       }
       let free = Math.min(run.concurrency, MAX_CONCURRENCY) - mine.length;
       while (free > 0) {
+        if (inFlight.size >= MAX_IN_FLIGHT) { out.paused = out.paused || 'lane_full'; break; }
         if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings)) { out.paused = 'live_bot_busy'; break; }
         // eslint-disable-next-line no-await-in-loop
         user = user || deps.user || await runner.ensureBenchUser(pool, config);
@@ -527,10 +811,16 @@ async function tick(pool, config, deps = {}) {
         const budget = await limits.checkBudget(pool, user.id);
         if (budget.error) { out.paused = 'bench_allowance'; break; }
         // eslint-disable-next-line no-await-in-loop
+        // Its next trial in order, passing over heavy ones while three of
+        // its heavy trials are under way.
+        const heavyNow = [...inFlight.values()].filter((f) => f.runId === run.id && f.heavy).length;
         const { rows: [next] } = await pool.query(
-          `SELECT id, est_cost_usd::float8 AS est FROM bench_trials
-            WHERE run_id = $1 AND status = 'pending' ORDER BY attempt, id LIMIT 1`,
-          [run.id],
+          `SELECT tr.id, tr.est_cost_usd::float8 AS est, t.stage
+             FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id
+            WHERE tr.run_id = $1 AND tr.status = 'pending'
+              AND ($2::boolean OR NOT (t.stage = ANY($3::text[])))
+            ORDER BY tr.attempt, tr.id LIMIT 1`,
+          [run.id, heavyNow < MAX_HEAVY_PER_RUN, HEAVY_STAGES],
         );
         if (!next) break;
         const { rows: [money] } = await pool.query(
@@ -556,7 +846,7 @@ async function tick(pool, config, deps = {}) {
           "UPDATE bench_runs SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND status = 'queued'",
           [run.id],
         );
-        const entry = { runId: run.id, est: claim.est || 0, sessionId: null, promise: null };
+        const entry = { runId: run.id, est: claim.est || 0, sessionId: null, promise: null, heavy: HEAVY_STAGES.includes(next.stage) };
         inFlight.set(claim.id, entry);
         entry.promise = executeTrial(pool, config, claim, { ...deps, user })
           .catch(async (err) => {
@@ -649,6 +939,9 @@ function laneStatus() {
 
 module.exports = {
   MAX_CONCURRENCY,
+  HEAVY_STAGES,
+  MAX_HEAVY_PER_RUN,
+  MAX_IN_FLIGHT,
   MAX_MODELS,
   MAX_REPEATS,
   DEFAULT_CAP_USD,
@@ -661,9 +954,19 @@ module.exports = {
   launcherDefaults,
   launchRun,
   cancelRun,
+  ORPHAN_GRACE_SECONDS,
   executeTrial,
+  recordTrial,
+  noteSession,
   sweepBranches,
   releaseStale,
+  releaseTrial,
+  releaseTrialOfSession,
+  releaseOrphaned,
+  recoveryPlan,
+  holdRecoveredTrial,
+  recoveryDeadline,
+  finishRecoveredTrial,
   capRun,
   fitsCap,
   tick,

@@ -69,6 +69,10 @@ test('the checked-in Core v1 definition is valid and shaped like the first versi
   assert.ok(builds.filter((t) => t.pr_number !== 3647).every((t) => t.base_sha === 'ac67fac30de91d0dd969f72b2cd73633d4719dd9'));
   assert.deepEqual(def.tasks.filter((t) => t.stage === 'checks_fix').map((t) => t.proposal_session_id), [5754, 5755]);
   assert.deepEqual(def.tasks.filter((t) => t.stage === 'dm').map((t) => t.source_run_id), [649, 267, 172, 8, 590]);
+  // Every DM came from a shadow run whose question was never delivered: each
+  // opts in to a scripted answer when its requester never answered.
+  assert.ok(def.tasks.filter((t) => t.stage === 'dm').every((t) => t.scripted_answer === 'if_unanswered'));
+  assert.ok(def.tasks.filter((t) => t.stage !== 'dm').every((t) => t.scripted_answer === undefined));
   assert.deepEqual(def.dynamic.map((r) => [r.rule, r.limit]), [['merged_bot_proposals', 10], ['bot_followups', 3]]);
   assert.deepEqual(v.counts, { triage: 44, build: 20, followup: 3, checks_fix: 2, dm: 5, spec: 0 });
 });
@@ -88,6 +92,13 @@ test('the definition\'s schema refuses what would make a bad suite', () => {
   assert.match(errs((d) => { d.dynamic[0].rule = 'everything'; }), /unknown rule/);
   assert.match(errs((d) => { d.dynamic[0].limit = 50; }), /limit must be 1 to 20/);
   assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').synthetic = { title: 'x', body: 'y' }; }), /only a triage task can be synthetic/);
+  // A scripted answer: a DM task's only, and only "if_unanswered".
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'triage').scripted_answer = 'if_unanswered'; }), /only a DM task can have a scripted_answer/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'build').scripted_answer = 'if_unanswered'; }), /only a DM task can have a scripted_answer/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = 'always'; }), /scripted_answer must be if_unanswered/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = true; }), /scripted_answer must be if_unanswered/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = null; }), /scripted_answer must be if_unanswered/);
+  assert.equal(errs((d) => { for (const x of d.tasks) if (x.stage === 'dm') delete x.scripted_answer; }), '', 'leaving it out is fine');
 });
 
 test('a dynamic rule picks distinct apps in the order given, leaving out apps already used', () => {
@@ -179,6 +190,18 @@ test('a DM task\'s hidden answer is the requester\'s own next reply after the qu
   assert.equal(backfill.nextReplyAfter({ comments, after: '2026-10-01T00:00:00Z', requester: ['amy'] }), null);
 });
 
+test('a suite\'s task list reads a scripted DM task as one', () => {
+  globalThis.window = globalThis.window || globalThis;
+  const { loadTsx } = require('./lib/render-tsx');
+  const { scriptedAnswer } = loadTsx('frontend/src/features/admin/admin-homeroom-bench.tsx', {
+    stubs: { './admin-console.js': { AdminUI: new Proxy({}, { get: (_t, key) => String(key) }) } },
+  });
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: { answer_source: 'scripted' }, reference: { dm_script: { true_answer: null, source: 'scripted', pending: true } } }), true);
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: {}, reference: { dm_script: { true_answer: 'A door', source: 'scripted' } } }), true, 'still scripted once written');
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: { answer_source: 'thread' }, reference: { dm_script: { true_answer: 'Yes', source: 'thread' } } }), false);
+  assert.equal(scriptedAnswer({ stage: 'triage', tags: {}, reference: {} }), false);
+});
+
 test('the launcher starts on Core v1 with the candidate models, triage repeated, $50', () => {
   const suites = [
     { id: 3, name: 'scratch', frozen_at: null, counts: { triage: 2 } },
@@ -255,6 +278,11 @@ test('the Core card says where the suite stands, and offers Freeze only when eve
   const frozen = render({ ...done, suite: { ...done.suite, labelled: 60, frozen_at: '2026-10-02' } });
   assert.doesNotMatch(frozen, /core-freeze|core-materialize/);
   assert.match(render({ ...done, running: true }), /Being made now/);
+  // A pass that died mid-way: the row still says running, the server says it is not.
+  const stopped = render({ ...done, materialization: { ...done.materialization, status: 'running', stale: true }, running: false });
+  assert.match(stopped, /stopped partway/);
+  assert.match(stopped, /id="admin-homeroom-bench-core-materialize"[^>]*>Try again</);
+  assert.doesNotMatch(render({ ...done, materialization: { ...done.materialization, status: 'running' }, running: true }), /core-materialize/, 'no button while a pass works');
   assert.match(render({ ...done, materialization: { status: 'failed', summary: { error: 'GitHub is not configured' }, finishedAt: null } }), /The last attempt failed: GitHub is not configured/);
 
   // The launcher, from its defaults: Core picked, every model ticked.
@@ -262,8 +290,12 @@ test('the Core card says where the suite stands, and offers Freeze only when eve
   const html = renderToHtml(createElement(Launcher, {
     suites: [{ id: 4, name: 'other', version: 1, kind: 'frozen', frozen_at: 'x', counts: {}, total: 0, labelled: 0 }, { id: 5, name: 'Core', version: 1, kind: 'frozen', frozen_at: null, counts: { triage: 44 }, total: 44, labelled: 0 }],
     models: [{ id: 'z-ai/glm-5.3-flash', label: 'GLM' }, { id: 'moonshotai/kimi-k2.7-code', label: 'Kimi', stages: ['build', 'spec'] }, { id: 'x/other', label: 'Other' }],
-    defaults: { capUsd: 50, repeats: 3, maxConcurrency: 2 }, launcher, hiddenChecks: '', onLaunched() {}, say() {},
+    defaults: { capUsd: 50, repeats: 3, maxConcurrency: 8 }, launcher, hiddenChecks: '', onLaunched() {}, say() {},
   }));
+  const atOnce = html.match(/<select id="admin-homeroom-bench-launch-concurrency"[^>]*>(.*?)<\/select>/);
+  assert.ok(atOnce, 'the At once select keeps its id');
+  assert.deepEqual([...atOnce[1].matchAll(/<option value="(\d+)"/g)].map((m) => m[1]), ['1', '2', '3', '4', '5', '6', '7', '8'],
+    'At once offers one to eight');
   assert.match(html, /<option value="5" selected="">Core v1 \(not frozen\)<\/option>/);
   assert.equal((html.match(/data-bench-model="[^"]+"><input type="checkbox" class="mt-1" checked=""/g) || []).length, 2, 'the two default models ticked, the other not');
   assert.match(html, /id="admin-homeroom-bench-launch-cap"[^>]*value="50"/);

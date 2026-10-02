@@ -154,9 +154,9 @@ const DEFAULTS = Object.freeze({
   liveAtOnce: 6,
   perPerson: 2,
   dmChat: true,
-  // Not a stored setting: the projects the bot is building for a DM user
-  // (homeroom-bot-dm.js), live like the apps in liveApps. readSettings
-  // fills it in.
+  // Not a stored setting: the projects somebody on the DM list made
+  // (homeroom-bot-dm.js projectsMadeFor), live like the apps in liveApps.
+  // readSettings fills it in.
   firstVersionApps: [],
 });
 const MAX_CONCURRENCY = 4;
@@ -428,8 +428,9 @@ async function readSettings(pool) {
       [SETTING_KEYS],
     );
     const settings = parseSettings(rows);
-    // #3624: a project the bot builds for a DM user is live while that
-    // person is still on the list.
+    // #3624: a project somebody on the DM list made (one the bot builds
+    // from its description, or one they imported, forked or created
+    // without one) is live while that person is still on the list.
     try {
       settings.firstVersionApps = await require('./homeroom-bot-dm').firstVersionAppSlugs(pool, settings);
     } catch (err) {
@@ -1019,12 +1020,19 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   // #3264: on a live app (capRoom is set only there) a person's reply in the
   // discussion of the bot's own open proposal is activity on its issue, so
   // it comes back for a follow-up.
-  const [busy, threads, lastRuns, proposalThreads] = await Promise.all([
+  // #3624: a project somebody on the DM list imported is live from the
+  // start, but the issues it arrived with are new to nobody: each is judged
+  // as if the bot had seen it at the import, so it waits until something
+  // happens on it, rather than the whole backlog being worked at once.
+  // "Triage again" on the admin screen takes all of them.
+  const [busy, threads, lastRuns, proposalThreads, importedAt] = await Promise.all([
     busyIssueNumbers(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
     capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
+    capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
+  const backlogUntil = toMs(importedAt);
 
   const eligible = [];
   const held = [];
@@ -1032,7 +1040,8 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   const quiet = [];
   for (const issue of issues) {
     const n = Number(issue.number);
-    const lastRun = lastRuns.get(n) || null;
+    const lastRun = lastRuns.get(n)
+      || (backlogUntil && toMs(issue.createdAt) <= backlogUntil ? { thread_seen_at: importedAt } : null);
     const verdict = classifyIssue({
       issue,
       threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
@@ -3182,14 +3191,18 @@ async function queueShadowBackfill(pool, config = {}) {
  * outcome is recorded in the same columns (#3509), never is.
  */
 /**
- * #3654: whether the live bot is using every build slot it has right now:
- * shadow builds in the lane and live builds of ready verdicts, in this
- * process. The benchmark's lane (services/bench/lane.js) starts nothing
- * while it is, so a benchmark never takes a worker the bot is waiting for.
+ * #3654: whether the bot's live builds (ready verdicts on an app it is live
+ * on, which a person is waiting for) fill every build slot it has right now,
+ * in this process. The benchmark's lane (services/bench/lane.js) starts
+ * nothing while they do, so a benchmark never takes a worker a person is
+ * waiting on. Shadow builds in the lane do not count: like a benchmark trial
+ * they are an experiment nobody waits for, and counting them let a busy
+ * shadow lane hold the benchmark back indefinitely. `counts` is for tests.
  */
-function isLiveLaneSaturated(settings = null) {
+function isLiveLaneSaturated(settings = null, counts = null) {
   const limit = clampInt(settings?.buildConcurrency, DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY);
-  return buildsInFlight.size + liveBuildsInFlight.size >= limit;
+  const live = counts && Number.isFinite(counts.live) ? counts.live : liveBuildsInFlight.size;
+  return live >= limit;
 }
 
 async function buildLaneSummary(pool) {
@@ -4842,10 +4855,26 @@ async function adminPayload(pool, config, {
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
     dmUsers: await dmUserList(pool, settings),
+    // #3624: the projects it acts on for real because somebody on that list
+    // made them, and who, shown in the live list beside the stored ones.
+    builtFor: await builtForList(pool, settings),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: await workingNow(pool, settings),
     dmChat: await dmChatSummary(pool),
   };
+}
+
+/** #3624: projectsMadeFor, as the dashboard lists them. */
+async function builtForList(pool, settings) {
+  try {
+    const rows = await require('./homeroom-bot-dm').projectsMadeFor(pool, settings);
+    const seen = new Set();
+    return rows.filter((r) => !seen.has(r.slug) && seen.add(r.slug))
+      .map((r) => ({ slug: r.slug, name: r.name || r.slug, username: r.username, origin: r.origin }));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Built-for list failed', { err: err.message });
+    return [];
+  }
 }
 
 /** The bot's answers in DMs this week: how many, what they cost, how many failed. */
@@ -5021,14 +5050,17 @@ async function retriageQuestions(pool, { actorId = null } = {}) {
  * as Run now's do, because the refresh drops an unchanged issue's row
  * otherwise. What the regular refresh leaves out stays out: a closed issue,
  * and one somebody is working on (busyIssueNumbers). A row the bot is on
- * right now is left alone. Live apps only, and not while paused.
+ * right now is left alone. Live apps only (the list, or a project somebody
+ * on the DM list made), and not while paused.
  */
 async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
   if (typeof slug !== 'string' || !/^[a-z0-9-]{1,120}$/.test(slug)) {
     return { ok: false, status: 400, error: 'Invalid app slug' };
   }
   const settings = await readSettings(pool);
-  if (!(settings.liveApps || []).includes(slug)) {
+  // #3624: a project somebody on the DM list made is live too, and an
+  // import's backlog waits for exactly this.
+  if (![...(settings.liveApps || []), ...(settings.firstVersionApps || [])].includes(slug)) {
     return { ok: false, status: 409, error: 'The bot does not act on this app for real: add it to the live apps first' };
   }
   if ((settings.pausedApps || []).includes(slug)) {

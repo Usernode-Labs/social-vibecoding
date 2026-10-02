@@ -20,6 +20,27 @@ const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
   classifyRequest(method, ORIGIN + path, accept, mode, ORIGIN);
 
+test('an explicit session confirmation cannot fall back to the cached offline identity', () => {
+  const handlers = {};
+  let intercepted = false;
+  let cacheReads = 0;
+  let fetches = 0;
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener(name, fn) { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open() { cacheReads++; throw new Error('must not read another user’s cached /me'); } },
+    fetch() { fetches++; throw new Error('leave this request to the browser'); },
+    setTimeout() {}, clearTimeout() {},
+  });
+  handlers.fetch({
+    request: { method: 'GET', url: ORIGIN + '/api/auth/me', cache: 'no-store', headers: new Headers() },
+    respondWith() { intercepted = true; },
+  });
+  assert.equal(intercepted, false);
+  assert.equal(cacheReads, 0);
+  assert.equal(fetches, 0);
+});
+
 test('non-GET requests are never intercepted', () => {
   assert.equal(classify('POST', '/api/apps/foo/messages'), 'bypass');
   assert.equal(classify('DELETE', '/api/apps/foo'), 'bypass');

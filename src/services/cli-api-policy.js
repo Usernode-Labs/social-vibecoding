@@ -207,6 +207,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/bot-bench/items/:token' },
   { method: 'POST', pattern: '/api/bot-bench/items/:token/grade' },
   { method: 'POST', pattern: '/api/bot-bench/tasks/:token/label' },
+  // #3654: running the benchmark from the same admin's session. The same
+  // gate, first on every handler (requireAdminWrite); the read is a run's
+  // aggregates only, never a trial; the two writes launch a run within a
+  // cap the caller must name, or cancel one, and touch no app.
+  { method: 'GET', pattern: '/api/bot-bench/runs' },
+  { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
+  { method: 'POST', pattern: '/api/bot-bench/runs' },
+  { method: 'POST', pattern: '/api/bot-bench/runs/:id/cancel' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

@@ -5,9 +5,10 @@
 // gets a snapshot (the one its run recorded, or one rebuilt as of as_of:
 // comments after as_of left out, the commit at as_of), a build from a merged
 // pull request, a checks fix from the bot's red proposal, a DM with the
-// requester's real answer; what cannot be resolved is skipped with its
-// reason; a second pass is a no-op and a retry adds only what is missing;
-// the suite freezes only once every task is labelled.
+// requester's real answer, or, when the requester never answered, a pending
+// scripted DM whose answer the labeller writes; what cannot be resolved is
+// skipped with its reason; a second pass is a no-op and a retry adds only
+// what is missing; the suite freezes only once every task is labelled.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -67,7 +68,11 @@ function stubGithub({ calls }) {
       const closed = repo === 'clearskies-924851';
       return {
         issue: {
-          number: n, title: `Request ${n} is broken`, body: `The body of request ${n}.`, user: 'homeroom-bot[bot]',
+          number: n, title: `Request ${n} is broken`,
+          // #3517 was filed through Homeroom: the bot account is the GitHub
+          // author, and only the Source line names the person.
+          body: n === 3517 ? `**Source:** Homeroom user (amy)\n\nThe body of request ${n}.` : `The body of request ${n}.`,
+          user: 'homeroom-bot[bot]',
           createdAt: '2026-09-01T00:00:00Z', updatedAt: LATE, state: closed ? 'closed' : 'open', closedAt: null,
         },
       };
@@ -89,7 +94,7 @@ function stubGithub({ calls }) {
       calls.push(['pr', repo, pr]);
       if (pr === 3634) { const err = new Error('Not Found'); err.status = 404; throw err; }
       return {
-        number: pr, merged_at: '2026-10-01T10:00:00Z', merge_commit_sha: sha(`merge${pr}`), base: { sha: 'b'.repeat(40) },
+        number: pr, merged_at: '2026-10-01T10:00:00Z', merge_commit_sha: sha(`merge${pr}`), base: { sha: 'b'.repeat(40) }, head: { sha: sha(`head${pr}`) },
         created_at: '2026-10-01T00:00:00Z', title: `Change ${pr}`, body: `What PR ${pr} does, as its description.`, user: { login: 'homeroom-bot[bot]' },
       };
     },
@@ -98,6 +103,11 @@ function stubGithub({ calls }) {
         ? '{"tests":[]}' : '{"tests":[{"name":"new check","path":"/"}]}';
     },
     async listChangedFiles() { return ['public/app.js']; },
+    // The pull request's own diff: from its merge base to its head.
+    async compareRefs(owner, repo, basehead) {
+      calls.push(['compare', repo, basehead]);
+      return { mergeBaseSha: 'b'.repeat(40), files: ['public/app.js'], filesComplete: true };
+    },
     // A write the materializer must never make: the guard refuses it anyway.
     async createIssueComment() { calls.push(['WRITE']); },
   };
@@ -135,10 +145,22 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
        ($1, $2, 'THREAD AFTER', 'message', 'issue', 3555, '2026-10-01T12:00:00Z')`,
     [await app(PLATFORM), amy.id],
   );
-  // DMs: run 649's requester answered on the thread, run 267's on GitHub;
-  // 172 and 590 have no known requester; 8's app is gone.
-  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 50, $3), ($2, 63, $3)',
-    [await app('my-cool-app-460fe8'), await app('recipebot-33b169'), amy.id]);
+  // DMs: run 649's requester answered on the thread, run 267's on GitHub,
+  // 590's (named only by its Source line) on GitHub; 172's requester, bob,
+  // never answered (only amy commented after it), so it is scripted; 8's app
+  // is gone, and once back its requester is not known.
+  const { rows: [bob] } = await pool.query("INSERT INTO users (username, password) VALUES ('bob', 'x') RETURNING id");
+  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 50, $3), ($2, 63, $3), ($4, 1, $5)',
+    [await app('my-cool-app-460fe8'), await app('recipebot-33b169'), amy.id, await app('workquest-escape-from-the-underclass-831ec5'), bob.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (id, app_id, issue_number, mode, verdict, question, question_default, missing_fact, question_answers, created_at)
+     VALUES (172, $1, 1, 'shadow', 'question', 'Should the escape be a door or a timer?', 'A door', 'how the player escapes', $2::jsonb, '2026-09-22T07:01:24.634Z')`,
+    [await app('workquest-escape-from-the-underclass-831ec5'), JSON.stringify(['A door', 'A timer'])],
+  );
+  await pool.query(
+    "INSERT INTO chat_sessions (app_id, pr_number, status, pr_title, linked_issues) VALUES ($1, 9, 'merged', 'Add a door out of the office', '{1}')",
+    [await app('workquest-escape-from-the-underclass-831ec5')],
+  );
   await pool.query(
     `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
      VALUES ($1, $2, 'People who picked interested', 'message', 'issue', 50, '2026-10-01T23:40:00Z')`,
@@ -209,8 +231,12 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.match(reasons[`dm:${GONE_APP}#25`], /is gone/);
     assert.match(reasons['triage:usernode-2d5619#2995'], /could not be read \(not found\)/);
     assert.match(reasons['build:usernode-2d5619#3620:pr3634'], /Could not read PR #3634/);
-    assert.match(reasons['dm:workquest-escape-from-the-underclass-831ec5#1'], /requester is not known/);
-    assert.match(reasons['dm:usernode-2d5619#3517'], /requester is not known/);
+    assert.equal(reasons['dm:workquest-escape-from-the-underclass-831ec5#1'], undefined, 'never answered, so scripted, not skipped');
+    assert.equal(reasons['dm:usernode-2d5619#3517'], undefined, 'a request filed through Homeroom names its requester in its Source line');
+    const { rows: [viaSource] } = await pool.query(
+      "SELECT reference FROM bench_tasks WHERE stage = 'dm' AND tags->>'core_ref' = 'dm:usernode-2d5619#3517'",
+    );
+    assert.equal(viaSource.reference.dm_script.true_answer, 'LATE ANSWER 3517', "the person's own reply after the question");
     assert.match(reasons['build:merged_bot_proposals'], /only 3 of 10/);
     assert.match(reasons['followup:bot_followups'], /only 1 of 3/);
     assert.deepEqual(summary.stages, {
@@ -218,7 +244,7 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
       build: { ready: 12, skipped: 2 },
       followup: { ready: 1, skipped: 1 },
       checks_fix: { ready: 2, skipped: 0 },
-      dm: { ready: 2, skipped: 3 },
+      dm: { ready: 4, skipped: 1 },
     });
     const { rows: [m] } = await pool.query("SELECT status, suite_id, attempts FROM bench_materializations WHERE definition = 'core-v1'");
     assert.deepEqual([m.status, m.suite_id, m.attempts], ['done', first.suiteId, 1]);
@@ -279,6 +305,9 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(task.reference_source, 'merged_pr');
     assert.equal(task.reference.base_sha, 'ac67fac30de91d0dd969f72b2cd73633d4719dd9', 'the work order\'s base, not GitHub\'s base.sha');
     assert.deepEqual(task.reference.hidden_checks, [{ name: 'new check', path: '/' }]);
+    assert.deepEqual(task.reference.expected_files, ['public/app.js']);
+    assert.equal(task.reference.reference_diff.base, 'b'.repeat(40), 'read from the pull request\'s own diff, not from the task\'s base');
+    assert.ok(calls.some((c) => c[0] === 'compare' && c[2] === `${'b'.repeat(40)}...${task.reference.reference_diff.head}`));
     const pr = await taskByRef('build:usernode-2d5619:pr3647');
     const snap = await snapshots.readSnapshot(pool, pr.snapshot_id);
     assert.equal(snap.texts.seed, 'Please work on this request: "Change 3647".\n\nWhat PR 3647 does, as its description.');
@@ -311,6 +340,64 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(gh.reference.dm_script.true_answer, 'LATE ANSWER 63');
     const dmSnap = await snapshots.readSnapshot(pool, gh.snapshot_id);
     assert.doesNotMatch(dmSnap.texts.seed, /LATE ANSWER/, 'the answer is hidden from the request the bot reads');
+    // A real answer says where it came from.
+    assert.equal(thread.tags.answer_source, 'thread');
+    assert.equal(gh.tags.answer_source, 'github');
+  });
+
+  await t.test('a DM its requester never answered becomes a pending scripted task: the bot\'s question, no answer yet, unlabelled', async () => {
+    const task = await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1');
+    assert.ok(task, 'made, not skipped');
+    assert.equal(task.source_run_id, 172);
+    assert.equal(task.reference_source, null, 'unlabelled');
+    assert.equal(task.tags.answer_source, 'scripted');
+    assert.equal(task.tags.verdict, 'question');
+    const script = task.reference.dm_script;
+    assert.deepEqual(
+      [script.true_answer, script.accepted, script.max_turns, script.source, script.pending],
+      [null, [], 3, 'scripted', true],
+    );
+    assert.deepEqual(script.question, {
+      text: 'Should the escape be a door or a timer?', default: 'A door', missing_fact: 'how the player escapes', answers: ['A door', 'A timer'],
+    }, 'the question the run asked, as far as it recorded it');
+    assert.equal(script.later.request_state, 'open');
+    assert.deepEqual(script.later.comments.map((c) => [c.author, c.body, c.where]), [['amy', 'LATE ANSWER 1', 'github']],
+      'what happened on the request after the question, for whoever writes the answer');
+    assert.deepEqual(script.later.merged, [{ pr: 9, title: 'Add a door out of the office' }]);
+    const snap = await snapshots.readSnapshot(pool, task.snapshot_id);
+    assert.doesNotMatch(snap.texts.seed, /LATE ANSWER/, 'the request the bot reads is as of as_of');
+  });
+
+  await t.test('a pending scripted task never runs: not applicable at launch; the report keeps scripted DMs apart from real ones', async () => {
+    const report = require('../src/services/bench/report');
+    const launched = await lane.launchRun(pool, { suiteId: first.suiteId, models: ['z-ai/glm-5.3-flash'], stages: ['dm'], repeats: 1 });
+    assert.equal(launched.ok, true, launched.error);
+    const { rows: trials } = await pool.query(
+      `SELECT tr.id, tr.status, tr.error, tk.tags->>'core_ref' AS ref
+         FROM bench_trials tr JOIN bench_tasks tk ON tk.id = tr.task_id WHERE tr.run_id = $1 ORDER BY tr.id`,
+      [launched.run.id],
+    );
+    const pendingTrial = trials.find((x) => x.ref === 'dm:workquest-escape-from-the-underclass-831ec5#1');
+    assert.equal(pendingTrial.status, 'not_applicable', 'never a model failure');
+    assert.match(pendingTrial.error, /never answered, and the answer written for them is not there yet/);
+    assert.deepEqual(trials.filter((x) => x !== pendingTrial).map((x) => x.status), ['pending', 'pending', 'pending']);
+    assert.equal(launched.notApplicable, 1);
+    // The real ones ran and passed (settled here by hand).
+    await pool.query(
+      `UPDATE bench_trials SET status = 'ok', deterministic = '{"pass":true}'::jsonb, finished_at = NOW()
+        WHERE run_id = $1 AND status = 'pending'`,
+      [launched.run.id],
+    );
+    const r = await report.runReport(pool, launched.run.id, { slice: 'answer_source' });
+    assert.ok(r.slice.keys.includes('answer_source'));
+    assert.deepEqual(r.slice.groups.map((g) => [g.stage, g.value, g.n, g.accuracy]), [
+      ['dm', 'real', 3, 1],
+      ['dm', 'scripted', 0, null],
+    ], 'a scripted DM is never folded into the real ones');
+    assert.equal(r.rows[0].notApplicable, 1);
+    const csv = await report.csvRows(pool, launched.run.id);
+    const col = report.CSV_COLUMNS.indexOf('answer_source');
+    assert.deepEqual(csv.map((row) => row[col]).sort(), ['real', 'real', 'real', 'scripted']);
   });
 
   await t.test('a second pass is a no-op; a retry adds only what is missing', async () => {
@@ -334,6 +421,43 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(snapsAfter, snapsBefore + 1, 'no task already made is backfilled again');
     const { rows: [m] } = await pool.query("SELECT attempts FROM bench_materializations WHERE definition = 'core-v1'");
     assert.equal(m.attempts, 2);
+    // The retry re-read every build task's reference from its pull
+    // request's own diff; each was imported from it already, so none moved.
+    const builds = (await pool.query(
+      "SELECT COUNT(*)::int AS n FROM bench_tasks WHERE suite_id = $1 AND stage = 'build' AND reference ? 'reference_pr'", [first.suiteId],
+    )).rows[0].n;
+    assert.ok(builds > 0);
+    assert.deepEqual([retry.summary.references.checked, retry.summary.references.updated, retry.summary.references.unchanged],
+      [builds, 0, builds]);
+  });
+
+  await t.test('a build task imported before references came from the PR\'s own diff is repaired by the next pass, once', async () => {
+    const task = await taskByRef('build:usernode-2d5619#3138:pr3625');
+    const good = task.reference;
+    const stale = { ...good, expected_files: ['src/services/mayor.js', 'public/app.js'], hidden_checks: [{ name: 'rail', path: '/' }, { name: 'new check', path: '/' }] };
+    delete stale.reference_diff;
+    const write = (ref) => pool.query('UPDATE bench_tasks SET reference = $2::jsonb WHERE id = $1', [task.id, JSON.stringify(ref)]);
+    const suiteId = first.suiteId;
+
+    // Frozen: the pass changes nothing.
+    await write(stale);
+    await pool.query('UPDATE bench_suites SET frozen_at = NOW() WHERE id = $1', [suiteId]);
+    const frozen = await core.materialize(pool, {}, opts);
+    assert.equal(frozen.noop, true);
+    assert.equal(frozen.references, undefined);
+    assert.deepEqual((await taskByRef('build:usernode-2d5619#3138:pr3625')).reference, stale);
+    await pool.query('UPDATE bench_suites SET frozen_at = NULL WHERE id = $1', [suiteId]);
+
+    // Unfrozen: repaired, and only that task is read.
+    const before = calls.filter((c) => c[0] === 'compare').length;
+    const pass = await core.materialize(pool, {}, opts);
+    assert.equal(pass.noop, true, 'nothing else is materialized');
+    assert.deepEqual([pass.references.checked, pass.references.updated], [1, 1]);
+    assert.equal(calls.filter((c) => c[0] === 'compare').length, before + 1);
+    assert.deepEqual((await taskByRef('build:usernode-2d5619#3138:pr3625')).reference, good);
+    const quiet = await core.materialize(pool, {}, opts);
+    assert.equal(quiet.references, undefined, 'once repaired, a pass reads nothing');
+    assert.equal(calls.filter((c) => c[0] === 'compare').length, before + 1);
   });
 
   await t.test('the label queue hands out Core\'s unlabelled tasks; it freezes only once every one is labelled', async () => {
@@ -349,16 +473,71 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(refused.status, 409);
     assert.match(refused.error, new RegExp(`${unlabelled} of ${status.suite.total} tasks have no reference yet`));
 
-    const { rows: open } = await pool.query('SELECT id, stage FROM bench_tasks WHERE suite_id = $1 AND reference_source IS NULL', [first.suiteId]);
-    for (const task of open.slice(1)) {
+    // The pending scripted DM: its item shows the bot's question and asks for
+    // the requester's answer; it cannot be labelled without one.
+    const scripted = await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1');
+    const { item } = await grading.getItem(pool, scripted.label_token);
+    assert.equal(item.kind, 'label');
+    assert.equal(item.task.botQuestion.text, 'Should the escape be a door or a timer?');
+    assert.deepEqual(item.task.laterOnTheRequest.merged, [{ pr: 9, title: 'Add a door out of the office' }]);
+    assert.match(item.instructions, /write it as dmAnswer, the requester's own reply to that question/);
+    assert.match(item.instructions, /First person, short, in the requester's voice/);
+    assert.match(item.instructions, /never mention that it is written for them or simulated/);
+    assert.equal(item.reference.dm_script.true_answer, null);
+    const judge = { id: amy.id, username: 'amy' };
+    const noAnswer = await grading.labelTask(pool, { itemId: scripted.label_token, verdict: 'ready', source: 'opus', user: judge });
+    assert.equal(noAnswer.status, 400);
+    assert.match(noAnswer.error, /dmAnswer/);
+    const viaConsole = await suites.setReference(pool, { taskId: scripted.id, patch: { verdict: 'ready' }, source: 'human' });
+    assert.equal(viaConsole.status, 400, 'the console cannot label it without the answer either');
+    assert.equal((await grading.labelTask(pool, { itemId: scripted.label_token, verdict: 'ready', dmAnswer: '   ', source: 'opus', user: judge })).status, 400);
+    assert.equal((await grading.labelTask(pool, { itemId: scripted.label_token, verdict: 'ready', dmAnswer: 'x'.repeat(2001), source: 'opus', user: judge })).status, 400);
+    // dmAnswer is refused on a DM with a real answer, and on any other task.
+    const real = await taskByRef('dm:my-cool-app-460fe8#50');
+    const replaced = await grading.labelTask(pool, { itemId: real.label_token, verdict: 'ready', dmAnswer: 'Something else', source: 'opus', user: judge });
+    assert.equal(replaced.status, 409);
+    assert.match(replaced.error, /real answer, which is never replaced/);
+    const viaConsoleReal = await suites.setReference(pool, { taskId: real.id, patch: { dm_script: { true_answer: 'Something else' } }, source: 'human' });
+    assert.equal(viaConsoleReal.status, 409);
+    assert.equal((await taskByRef('dm:my-cool-app-460fe8#50')).reference.dm_script.true_answer, 'People who picked interested', 'untouched');
+    const triage = await taskByRef('triage:usernode-2d5619#3555');
+    const notDm = await grading.labelTask(pool, { itemId: triage.label_token, verdict: 'ready', dmAnswer: 'A door', source: 'opus', user: judge });
+    assert.equal(notDm.status, 400);
+    assert.match(notDm.error, /only for a DM task/);
+    assert.equal((await taskByRef('triage:usernode-2d5619#3555')).reference_source, null, 'nothing was written');
+
+    // Everything else labelled: the pending scripted task alone holds the freeze.
+    const { rows: open } = await pool.query('SELECT id, stage FROM bench_tasks WHERE suite_id = $1 AND reference_source IS NULL AND id <> $2', [first.suiteId, scripted.id]);
+    for (const task of open) {
       // eslint-disable-next-line no-await-in-loop
       const out = await suites.setReference(pool, {
         taskId: task.id, patch: task.stage === 'triage' || task.stage === 'dm' ? { verdict: 'ready' } : { notes: 'right answer' }, source: 'opus',
       });
       assert.equal(out.ok, true);
     }
-    assert.equal((await suites.freezeSuite(pool, first.suiteId)).status, 409, 'one task left');
-    await suites.setReference(pool, { taskId: open[0].id, patch: { verdict: 'question', notes: 'x' }, source: 'human' });
+    const held = await suites.freezeSuite(pool, first.suiteId);
+    assert.equal(held.status, 409, 'a pending scripted task holds the freeze');
+    assert.match(held.error, new RegExp(`1 of ${status.suite.total} tasks have no reference yet`));
+
+    // Its answer, written in the requester's voice: still scripted, no longer pending.
+    const answered = await grading.labelTask(pool, {
+      itemId: scripted.label_token, verdict: 'ready', dmAnswer: '  A door, the one by the coffee machine.  ', source: 'opus', user: judge,
+    });
+    assert.equal(answered.ok, true, answered.error);
+    const after1 = await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1');
+    assert.equal(after1.reference_source, 'opus');
+    assert.equal(after1.reference.verdict, 'ready');
+    const script = after1.reference.dm_script;
+    assert.deepEqual([script.true_answer, script.source, script.scripted_by, 'pending' in script, script.max_turns],
+      ['A door, the one by the coffee machine.', 'scripted', 'opus', false, 3]);
+    assert.equal(script.question.text, 'Should the escape be a door or a timer?', 'the question it answers is kept');
+    assert.equal(after1.tags.answer_source, 'scripted');
+    assert.equal(answered.reference.dm_script.true_answer, 'A door, the one by the coffee machine.');
+    // A written answer can be rewritten before the freeze (it was never the requester's own).
+    const rewritten = await grading.labelTask(pool, { itemId: scripted.label_token, verdict: 'ready', dmAnswer: 'A door.', source: 'human', user: judge });
+    assert.equal(rewritten.ok, true);
+    assert.deepEqual([(await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1')).reference.dm_script.true_answer, (await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1')).reference.dm_script.scripted_by], ['A door.', 'human']);
+    assert.equal(require('../src/services/bench/dm-sim').noAnswerReason(await taskByRef('dm:workquest-escape-from-the-underclass-831ec5#1')), null, 'now it can run');
     const frozen = await suites.freezeSuite(pool, first.suiteId);
     assert.equal(frozen.ok, true);
     assert.equal((await grading.queue(pool, { kind: 'label' })).total, 0);
@@ -411,4 +590,38 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.equal(runs.body.launcher.suiteId, first.suiteId);
     assert.deepEqual([runs.body.launcher.capUsd, runs.body.launcher.repeatStages], [50, ['triage']]);
   });
+});
+
+// A pass that died mid-way (a redeploy) leaves its row 'running'. Its last
+// heartbeat says so: once it is older than STALE_RUNNING_MINUTES the status
+// stops saying "being made" and the next pass may claim the row; a row that
+// beat lately is still a pass at work and is left alone.
+test('Core v1: a running row with an old heartbeat is stale and may be claimed again', async (t) => {
+  const pool = await freshDb(t, 'bench_core_stale');
+  if (!pool) return;
+  const def = core.loadDefinition();
+  const offline = { github: { isEnabled: () => false } };
+  const setRow = (minutesAgo) => pool.query(
+    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at, heartbeat_at)
+     VALUES ($1, $2, 'running', 1, NOW() - INTERVAL '3 hours', NOW() - make_interval(mins => $3))
+     ON CONFLICT (definition, version) DO UPDATE
+       SET status = 'running', attempts = 1, heartbeat_at = EXCLUDED.heartbeat_at, finished_at = NULL`,
+    [def.key, def.version, minutesAgo],
+  );
+
+  await setRow(1);
+  const live = await core.coreStatus(pool, { definition: def });
+  assert.equal(live.running, true, 'a row that beat a minute ago is a pass at work');
+  assert.equal(live.materialization.stale, false);
+  const noop = await core.materialize(pool, {}, { definition: def, deps: offline, force: true, rateMs: 0 });
+  assert.equal(noop.noop, true, 'not claimed from under a live pass, even though it started hours ago');
+
+  await setRow(core.STALE_RUNNING_MINUTES + 1);
+  const dead = await core.coreStatus(pool, { definition: def });
+  assert.equal(dead.running, false);
+  assert.equal(dead.materialization.stale, true);
+  const retried = await core.materialize(pool, {}, { definition: def, deps: offline, rateMs: 0 });
+  assert.equal(retried.ok, false, 'claimed, then stopped by the offline stub');
+  const { rows: [m] } = await pool.query('SELECT status, attempts FROM bench_materializations WHERE definition = $1', [def.key]);
+  assert.deepEqual([m.status, m.attempts], ['failed', 2], 'the stale row was claimed without force');
 });

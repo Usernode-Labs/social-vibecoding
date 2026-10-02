@@ -705,9 +705,9 @@
       "expectText": "someone is on it"
     },
     {
-      "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
+      "name": "Edit profile keeps social accounts proof-backed and sends management to Linked accounts (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
-      "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",
+      "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/linked-accounts']",
       "expectText": "Connect or change social accounts"
     },
     {
@@ -1141,32 +1141,32 @@
     },
     {
       "name": "GitHub linking asks for no repository access, and holds no token",
-      "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
+      "path": "/?demo=1#settings/linked-accounts",
+      "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-link-section #github-link-no-token",
       "expectText": "no access to your repositories"
     },
     {
       "name": "Identity credits show the actionable zero-credit state before verification (#538)",
-      "path": "/?demo=identity-unverified#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-body",
+      "path": "/?demo=identity-unverified#settings/linked-accounts",
+      "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-link-body",
       "expectText": "$0 / day"
     },
     {
       "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
-      "path": "/?demo=identity-legacy#settings/connectors",
+      "path": "/?demo=identity-legacy#settings/linked-accounts",
       "expectSelector": "#github-link-body #github-link-no-token",
       "expectText": "reconnect once"
     },
     {
       "name": "X misconfiguration self-diagnoses: stranded-attempt note and admin config panel (#1291)",
-      "path": "/?demo=identity-x-misconfigured#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #x-link-diagnostics #x-link-check",
+      "path": "/?demo=identity-x-misconfigured#settings/linked-accounts",
+      "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #x-link-diagnostics #x-link-check",
       "expectText": "connection attempt didn't complete"
     },
     {
       "name": "A verified social replacement waits for explicit confirmation (#2260)",
-      "path": "/?demo=identity-replacement#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-replacement-confirmation #github-replacement-visible",
+      "path": "/?demo=identity-replacement#settings/linked-accounts",
+      "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-replacement-confirmation #github-replacement-visible",
       "expectText": "Nothing changes until you confirm"
     },
     {
@@ -3055,10 +3055,10 @@
       "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
     },
     {
-      "name": "Theme is the first setting, and a bare #settings opens it",
+      "name": "A bare #settings opens the Account page, led by the Profile card",
       "path": "/#settings",
-      "expectSelector": "#settings-section-content [data-settings-section=\"theme\"]:not(.hidden) #drawer-theme-track",
-      "expectText": "Theme"
+      "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden) a#settings-profile-card[href=\"#profile?edit\"]",
+      "expectText": "Edit profile"
     },
     {
       "name": "Settings offers the way back into the welcome tour (#2255)",
@@ -3452,27 +3452,33 @@
       "name": "Settings groups its menu under headings and offers the test alert (#1795)",
       "path": "/#settings/alerts",
       "expectSelector": "#settings-root:has(#settings-nav-desktop h2) [data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
-      "expectText": "AI & agents"
+      "expectText": "AI & building"
     },
     {
-      "name": "Settings ships Advanced collapsed (#1554)",
+      "name": "Settings opens with a filter box over an uncollapsed menu, Account current",
       "path": "/#settings",
-      "expectSelector": "#settings-nav-desktop h2:has([data-settings-group-toggle=\"Advanced\"][aria-expanded=\"false\"]) + #settings-nav-group-advanced.hidden"
+      "expectSelector": "#settings-nav-desktop:has(input#settings-filter-desktop[type=\"search\"]):not(:has([aria-expanded])) [data-settings-nav=\"account\"][aria-current=\"page\"]"
     },
     {
-      "name": "A deep link into Advanced opens the group it lives in (#1554)",
+      "name": "An old part address opens the page that holds it: #settings/cli marks Connectors & CLI current",
       "path": "/?demo=cli-empty#settings/cli",
-      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-current=\"page\"]"
+      "expectSelector": "#settings-nav-desktop [data-settings-nav=\"connectors\"][aria-current=\"page\"]"
     },
     {
-      "name": "The Anthropic API key section renders at its deep link",
+      "name": "#profile?edit opens Me with the Edit profile sheet up, the way Settings' Profile card goes",
+      "path": "/#profile?edit",
+      "expectSelector": "#profile-edit-sheet",
+      "expectText": "Edit profile"
+    },
+    {
+      "name": "The Anthropic API key renders at its deep link, on AI usage & models after Usage and OpenRouter",
       "path": "/#settings/api-key",
-      "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+      "expectSelector": "[data-settings-section=\"usage\"]:not(.hidden):has(#drawer-row-ai-budget) + [data-settings-section=\"openrouter\"]:not(.hidden) + [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
     },
     {
-      "name": "The Username section renders at its deep link",
+      "name": "The Username part renders at its deep link, inside the whole Account page from Profile to Delete account",
       "path": "/#settings/username",
-      "expectSelector": "#settings-section-content [data-settings-section=\"username\"]:not(.hidden) #change-username-section #cu-new"
+      "expectSelector": "#settings-section-content:has([data-settings-section=\"delete-account\"]:not(.hidden)) [data-settings-section=\"profile\"]:not(.hidden) + [data-settings-section=\"username\"]:not(.hidden) #cu-new"
     },
     {
       "name": "Changing a username asks for the current password",
@@ -3626,7 +3632,7 @@
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
-      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
+      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"profile\"]:not(.hidden)"
     },
     {
       "name": "Settings deep-links the Password section with clear password-creation copy (#2282)",
@@ -3660,7 +3666,7 @@
     {
       "name": "A Language deep link falls back to the default section (#1556)",
       "path": "/#settings/language",
-      "expectSelector": "#settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
+      "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden)"
     },
     {
       "name": "Settings shows Admin preview to a real admin",
@@ -4146,6 +4152,12 @@
       "expectSelector": "#admin-support-points"
     },
     {
+      "name": "Admin Journey leads with the week's active groups (#3369)",
+      "path": "/?demo=1#admin/journey",
+      "expectSelector": "#admin-journey-north-star",
+      "expectText": "Active groups"
+    },
+    {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
       "path": "/?demo=1#admin/analytics",
       "expectText": "LLM spend this week"
@@ -4497,9 +4509,9 @@
       "expectText": "Open Claude Code"
     },
     {
-      "name": "Settings can answer the build-flow question for good (#1049)",
+      "name": "Settings can answer the build-flow question for good (#1049), after the connectors on Connectors & CLI, with no GitHub rows",
       "path": "/#settings/connectors",
-      "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",
+      "expectSelector": "#settings-section-content:not(:has([data-settings-section=\"linked-accounts\"]:not(.hidden))) [data-settings-section=\"connectors\"]:not(.hidden) + [data-settings-section=\"build-venue\"]:not(.hidden):has(option[value=\"claude-code\"])",
       "expectText": "Where changes get built"
     },
     {
@@ -5136,9 +5148,9 @@
       "expectText": "Allow and reopen"
     },
     {
-      "name": "#2219: granted device permissions are listed per app in Settings, with a way back",
+      "name": "#2219: granted device permissions are listed per app in Settings, with a way back, beside AI spending and blocked apps",
       "path": "/?demo=1#settings/app-permissions",
-      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-list",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden):has(#app-permissions-list) + [data-settings-section=\"app-ai\"]:not(.hidden) + [data-settings-section=\"blocked-apps\"]:not(.hidden)",
       "expectText": "Staging demo app A"
     },
     {

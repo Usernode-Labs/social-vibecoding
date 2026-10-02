@@ -453,9 +453,17 @@ export async function fetchSessionMint(
  * hands over to `App.enterAuthed` — so it is reached by name, like every other
  * hook on that object, until the router itself crosses over.
  */
-export function finishLogin(): void {
-  const fn = legacy().AuthScreens?.finishLogin as undefined | (() => unknown);
-  if (fn) void fn();
+export interface LoginCompletionFailure {
+  stage: 'session-check' | 'session-response' | 'open-session';
+  status: number | null;
+  code: 'session-rejected' | 'server-response' | 'network-error' | 'timeout' | 'invalid-response' | 'client-error';
+}
+
+export async function finishLogin(): Promise<LoginCompletionFailure | null> {
+  const fn = legacy().AuthScreens?.finishLogin as undefined |
+    (() => Promise<LoginCompletionFailure | null>);
+  if (!fn) return { stage: 'open-session', status: null, code: 'client-error' };
+  return fn();
 }
 
 /**

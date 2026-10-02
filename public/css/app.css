@@ -4197,13 +4197,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    after ~12 characters; at this size and two lines a tile shows roughly
    three times as much of a long name.
 
-   The lane is a FIXED 26px (2 x 13), not min-height: a one-line title and
-   a two-line title must occupy exactly the same box or the caption below
-   it — and the tile's whole content height — would shift per tile, and
-   the grid's rows are a fixed --home-cell-h with the cards top-aligned
-   (`align-self: start`), so a taller card paints over its neighbour.
-   Together with the tightened caption lane below, the 124px budget in
-   the --home-cell-h derivation is unchanged.
+   The lane measures exactly two lines (26px, 2 x 13) as a MIN-height, not
+   a fixed height: a one-line title and a two-line title still occupy the
+   same box at the design size, so the caption below a tile — and the
+   tile's whole content height — does not shift per tile, and the 124px
+   budget in the --home-cell-h derivation is unchanged. But the box now
+   GROWS when a device renders the font larger than the design size (#3661):
+   Android's text scaling / font boosting inflates this label's font-size
+   and line-height (~14px on ~17px lines) while rem-based lengths stay put,
+   and the old fixed 26px height clipped that second line mid-glyph. With
+   the floor the inflated text simply takes its two lines' worth of room —
+   at most a few pixels into the row gap on such a device, never a cut-off
+   word. The grid's rows themselves stay fixed; only the label's own box
+   is content-sized beyond its floor.
+
+   line-height is unitless (13px at the design size, 13/11) for the same
+   reason: it tracks whatever font-size the device actually renders, so
+   the two line boxes scale with the glyphs instead of staying 13px under
+   them.
 
    -webkit-line-clamp is the only cross-browser way to ellipsise at a
    line COUNT (the standard `line-clamp` is listed alongside it for the
@@ -4218,9 +4229,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   line-clamp: 2;
   overflow: hidden;
   width: 100%;
-  height: 1.625rem; /* 26px — exactly two lines */
+  min-height: 1.625rem; /* 26px — exactly two lines at the design size */
   font-size: 0.6875rem; /* 11px */
-  line-height: 0.8125rem; /* 13px */
+  line-height: 1.18; /* 13px at the design size; unitless so it tracks the font */
   font-weight: 500;
   text-align: center;
   overflow-wrap: anywhere;
@@ -10107,6 +10118,24 @@ html.un-kb #settings-content-col > .settings-sheet {
   padding-bottom: 32px;
 }
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
+/* A PAGE shows several parts at once since the settings restructure
+   (Account is Profile, Username, Email & recovery, Password and Delete
+   account). Every part after the first visible one starts below a hairline,
+   so each heading reads as the start of its own block rather than as a line
+   in the previous part's form. A gated part whose inner node is hidden
+   (Language for most viewers) is an empty wrapper, and an empty wrapper
+   draws no rule: `:has(> :not(.hidden))` is false for it. */
+.settings-sheet > [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--app-sheet-line);
+}
+/* Delete account closes the Account page: more room above it, so it never
+   reads as the next field of the password form. Spelled with the same
+   sibling chain as the rule above so it outranks that rule's margin. */
+.settings-sheet > [data-settings-section]:not(.hidden) ~ [data-settings-section="delete-account"]:not(.hidden):has(> *) {
+  margin-top: 40px;
+}
 .settings-sheet h3 {
   font-size: 22px;
   line-height: 1.2;

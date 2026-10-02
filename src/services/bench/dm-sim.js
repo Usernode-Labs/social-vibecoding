@@ -21,6 +21,11 @@
 //   4. again, until the bot stops asking or the turn limit (the script's
 //      max_turns, 3 by default) is reached.
 //
+// The answer is the requester's real one, or, when they never gave one, one
+// the labelling session wrote in their voice (dm_script.source 'scripted',
+// services/bench/core.js resolveDm). A task with no answer yet never runs:
+// it is not applicable (noAnswerReason), never a failure of the model.
+//
 // Nothing is sent: no DM, no post, no thread message. The DM text the person
 // would have seen (dm.dmText) is recorded in the conversation for the judge,
 // and the real send paths are never called (tests/bench-dm-sim.test.js spies
@@ -81,6 +86,20 @@ function chooseReply({ answers = [], trueAnswer, accepted = [] }) {
   return { kind: 'other', text: String(trueAnswer || '').trim(), index: -1, score: best.score };
 }
 
+/**
+ * Why a DM task cannot be run yet, or null when it can: with no answer for
+ * the simulated requester to give (a pending scripted task, whose answer the
+ * labelling session has not written), there is no conversation to replay.
+ * Never a failure of the model: lane.launchRun records such a trial
+ * `not_applicable` up front, and dmStage refuses it the same way. Pure.
+ */
+function noAnswerReason(task) {
+  if (task?.stage !== 'dm' || task.reference?.dm_script?.true_answer) return null;
+  return task.reference?.dm_script?.source === 'scripted'
+    ? 'the requester never answered, and the answer written for them is not there yet: label the task first'
+    : 'the DM task has no answer for the simulated requester to give';
+}
+
 /** The trial: a conversation of triage turns. See the header. */
 async function dmStage(ctx) {
   const { snapshot, task, repo, trial, deps, pool, config, user, app, model, title } = ctx;
@@ -89,7 +108,8 @@ async function dmStage(ctx) {
   const dm = require('../homeroom-bot-dm');
   const buildSeed = deps.sessions?.buildHeadlessSeed || require('../../routes/sessions').buildHeadlessSeed;
   const script = task.reference?.dm_script || {};
-  if (!script.true_answer) return { status: 'infra_fail', error: 'the DM task has no scripted answer' };
+  const unanswered = noAnswerReason(task);
+  if (unanswered) return { status: 'not_applicable', error: unanswered };
   if (!snapshot.thread?.issue) return { status: 'infra_fail', error: 'the snapshot has no frozen thread' };
   const maxTurns = Math.min(Math.max(Number(script.max_turns) || DEFAULT_MAX_TURNS, 1), MAX_TURNS);
   const thread = snapshot.thread;
@@ -108,7 +128,7 @@ async function dmStage(ctx) {
     return { status: 'infra_fail', error: `branch: ${err.message}` };
   }
   const session = await runner.openSession(pool, config, { user, app, model, branch, title });
-  ctx.onSession?.(session.id);
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
 
   const conversation = [];
   const totals = { cost: null, input: null, output: null, raw: [] };
@@ -197,6 +217,7 @@ module.exports = {
   normalize,
   similarity,
   chooseReply,
+  noAnswerReason,
   dmStage,
   dmGrade,
 };

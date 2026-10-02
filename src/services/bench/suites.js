@@ -28,7 +28,10 @@
 //   a merged pull request  importTaskFromPr, for build tasks: the request
 //             as it stood when the pull request was opened, the commit the
 //             pull request was based on, and the checks it added to
-//             dapp.json as the task's hidden checks.
+//             dapp.json as the task's hidden checks. Its files and checks are
+//             read from the pull request's OWN diff (prOwnChange), never from
+//             the task's base to the merge; refreshPrReferences re-reads
+//             them for tasks imported before that was so.
 //
 // The reference starts from what is known for certain (a labeller's verdict
 // on the run, a merged pull request, the answer a person gave in a DM) and
@@ -57,6 +60,9 @@ const TARGETS = Object.freeze({
 });
 const MAX_SAMPLE = 100;
 const MAX_HIDDEN_CHECKS = 25;
+// GitHub's compare lists at most 300 files.
+const MAX_EXPECTED_FILES = 300;
+const SHA_RE = /^[0-9a-f]{40}$/i;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
 
 function token() {
@@ -95,14 +101,20 @@ async function createSuite(pool, { name, kind = 'frozen', notes = null, actorId 
   return { ok: true, suite: rows[0] };
 }
 
+// Each row also says what deleteSuite would decide (`runs`, `is_default`,
+// `deletable`), so the console offers Delete only where it would succeed.
 async function listSuites(pool) {
   const { rows } = await pool.query(
     `SELECT s.id, s.name, s.version, s.kind, s.notes, s.parent_id, s.created_at, s.frozen_at,
             u.username AS created_by,
             COALESCE(c.counts, '{}'::jsonb) AS counts,
             COALESCE(c.labelled, 0) AS labelled,
-            COALESCE(c.total, 0) AS total
+            COALESCE(c.total, 0) AS total,
+            r.runs, d.is_default,
+            (s.frozen_at IS NULL AND r.runs = 0 AND NOT d.is_default) AS deletable
        FROM bench_suites s
+       CROSS JOIN LATERAL (SELECT COUNT(*)::int AS runs FROM bench_runs WHERE suite_id = s.id) r
+       CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM bench_materializations WHERE suite_id = s.id) AS is_default) d
        LEFT JOIN users u ON u.id = s.created_by
        LEFT JOIN LATERAL (
          SELECT jsonb_object_agg(stage, n) AS counts, SUM(n)::int AS total, SUM(l)::int AS labelled
@@ -183,6 +195,50 @@ async function newVersion(pool, id, { actorId = null } = {}) {
     }
     await client.query('COMMIT');
     return { ok: true, suite: next, copied: tasks.length };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Delete a suite and its tasks, for a suite made by mistake. Refused for a
+ * frozen suite (the answer key past runs were graded against), for one with
+ * runs (bench_runs would cascade away with it), and for the default suite a
+ * checked-in definition was materialized into (Core). The checks run under
+ * a lock on the suite row, which a run being launched against it must share
+ * to insert, so no run can slip in between the check and the delete.
+ */
+async function deleteSuite(pool, { suiteId, actorId = null } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [suite] } = await client.query(
+      'SELECT id, name, version, frozen_at FROM bench_suites WHERE id = $1 FOR UPDATE', [Number(suiteId)],
+    );
+    let refusal = null;
+    if (!suite) refusal = httpError(404, 'Suite not found');
+    else if (suite.frozen_at) refusal = httpError(409, 'The suite is frozen: a frozen suite is the answer key past runs were graded against');
+    else {
+      const { rows: [f] } = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM bench_runs WHERE suite_id = $1) AS has_runs,
+                EXISTS (SELECT 1 FROM bench_materializations WHERE suite_id = $1) AS is_default`,
+        [suite.id],
+      );
+      if (f.has_runs) refusal = httpError(409, 'The suite cannot be deleted: it has runs');
+      else if (f.is_default) refusal = httpError(409, 'The suite cannot be deleted: it is the default suite; make a new version instead');
+    }
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return refusal;
+    }
+    const { rowCount: tasks } = await client.query('DELETE FROM bench_tasks WHERE suite_id = $1', [suite.id]);
+    await client.query('DELETE FROM bench_suites WHERE id = $1', [suite.id]);
+    await client.query('COMMIT');
+    log.info('bench', 'Suite deleted', { actorId, suiteId: suite.id, name: suite.name, version: suite.version, tasks });
+    return { ok: true, deleted: { suiteId: suite.id, tasks } };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -364,6 +420,11 @@ const REFERENCE_KEYS = Object.freeze([
 ]);
 const TAG_KEYS = Object.freeze(['verdict', 'request_type', 'difficulty']);
 
+/** Whether a DM script's answer is the requester's own (not one written for them). */
+function isRealAnswer(script) {
+  return !!script?.true_answer && script.source !== 'scripted';
+}
+
 /**
  * Record (part of) a task's reference: a labelling session's verdict and
  * answers, or an admin's. Merged into what is there, refused on a frozen
@@ -376,6 +437,19 @@ async function setReference(pool, { taskId = null, labelToken = null, patch = {}
   if (task.frozen_at) return httpError(409, 'The suite is frozen: label the task on a new version');
   const ref = {};
   for (const key of REFERENCE_KEYS) if (patch[key] !== undefined) ref[key] = patch[key];
+  // A DM task's answer (services/bench/core.js resolveDm): one its requester
+  // never gave is written before the task counts as labelled, and one they
+  // did give is never replaced.
+  if (task.stage === 'dm') {
+    const had = task.reference?.dm_script;
+    const next = ref.dm_script !== undefined ? ref.dm_script : had;
+    if (had && !had.true_answer && !next?.true_answer) {
+      return httpError(400, 'The requester never answered this DM task\'s question: write their answer (dmAnswer) before labelling it');
+    }
+    if (isRealAnswer(had) && ref.dm_script !== undefined && ref.dm_script?.true_answer !== had.true_answer) {
+      return httpError(409, 'This DM task has the requester\'s real answer, which is never replaced');
+    }
+  }
   const tagPatch = {};
   for (const key of TAG_KEYS) if (tags[key] !== undefined) tagPatch[key] = tags[key];
   const { rows } = await pool.query(
@@ -404,6 +478,38 @@ function parseTests(text) {
 function addedChecks(baseText, headText) {
   const before = new Set(parseTests(baseText).map((t) => JSON.stringify(t)));
   return parseTests(headText).filter((t) => !before.has(JSON.stringify(t))).slice(0, MAX_HIDDEN_CHECKS);
+}
+
+/**
+ * What a merged pull request ITSELF changed: its files, and the checks it
+ * added to dapp.json, read from its own diff, from the merge base of its head
+ * and the base it was opened against to its head (what GitHub shows as the
+ * pull request's changes). Never from a task's base to the merge commit: a
+ * Core v1 build task builds on an older commit than its pull request was
+ * opened against, so that range swept in every pull request merged in
+ * between (#3626's task named ~60 files and four checks it never touched).
+ * Throws when the diff cannot be read; `hidden` is null when dapp.json could
+ * not be.
+ */
+async function prOwnChange(github, repo, pull) {
+  const head = String(pull?.head?.sha || '');
+  const base = String(pull?.base?.sha || '');
+  if (!SHA_RE.test(head) || !SHA_RE.test(base)) throw new Error(`PR #${pull?.number} names no base or head commit`);
+  const compared = await github.compareRefs(repo.owner, repo.repo, `${base}...${head}`);
+  const from = compared?.mergeBaseSha || null;
+  if (!from) throw new Error(`PR #${pull.number} has no merge base with the branch it was opened against`);
+  const files = (Array.isArray(compared.files) ? compared.files : []).map(String).slice(0, MAX_EXPECTED_FILES);
+  let hidden = null;
+  try {
+    const [before, after] = await Promise.all([
+      github.getFileContent(repo.owner, repo.repo, 'dapp.json', from),
+      github.getFileContent(repo.owner, repo.repo, 'dapp.json', head),
+    ]);
+    hidden = addedChecks(before, after);
+  } catch (err) {
+    log.warn('bench', 'Could not read the pull request\'s checks', { prNumber: pull.number, err: err.message });
+  }
+  return { files, hidden, diff: { base: from, head } };
 }
 
 /**
@@ -477,21 +583,18 @@ async function importTaskFromPr(pool, {
     seed = sessions.buildHeadlessSeed(n, issue, keptComments, botLogin, keptThread);
   }
 
+  // The files and checks of the pull request's own change, whatever base
+  // the task builds on (prOwnChange).
   let hidden = [];
   let files = [];
+  let ownDiff = null;
   try {
-    const [baseManifest, headManifest] = await Promise.all([
-      github.getFileContent(repo.owner, repo.repo, 'dapp.json', baseSha),
-      github.getFileContent(repo.owner, repo.repo, 'dapp.json', pull.merge_commit_sha),
-    ]);
-    hidden = addedChecks(baseManifest, headManifest);
+    const own = await prOwnChange(github, repo, pull);
+    files = own.files;
+    hidden = own.hidden || [];
+    ownDiff = own.diff;
   } catch (err) {
-    log.warn('bench', 'Could not read the pull request\'s checks', { appSlug, prNumber: pr, err: err.message });
-  }
-  try {
-    files = (await github.listChangedFiles(repo.owner, repo.repo, `${baseSha}...${pull.merge_commit_sha}`)).slice(0, 300);
-  } catch (err) {
-    log.warn('bench', 'Could not list the pull request\'s files', { appSlug, prNumber: pr, err: err.message });
+    log.warn('bench', 'Could not read the pull request\'s own change', { appSlug, prNumber: pr, err: err.message });
   }
 
   const platformRepo = bot.isPlatformRepo(app, config);
@@ -516,6 +619,8 @@ async function importTaskFromPr(pool, {
   const reference = {
     reference_pr: pr, reference_sha: pull.merge_commit_sha, base_sha: baseSha,
     hidden_checks: hidden, expected_files: files, title: String(pull.title || '').slice(0, 300),
+    // The diff expected_files and hidden_checks were read from.
+    ...(ownDiff ? { reference_diff: ownDiff } : {}),
   };
   const { rows } = await pool.query(
     `INSERT INTO bench_tasks (suite_id, stage, source_run_id, snapshot_id, app_id, issue_number,
@@ -525,6 +630,87 @@ async function importTaskFromPr(pool, {
     [suite.id, snapshotId, app.id, n, JSON.stringify(tags), JSON.stringify(reference), token()],
   );
   return { ok: true, task: rows[0], hiddenChecks: hidden.length, snapshotId };
+}
+
+function sameFiles(a, b) {
+  const x = (Array.isArray(a) ? a : []).map(String).sort();
+  const y = (Array.isArray(b) ? b : []).map(String).sort();
+  return x.length === y.length && x.every((f, i) => f === y[i]);
+}
+
+/**
+ * Re-read the files and checks of a suite's build tasks imported from merged
+ * pull requests, from each pull request's own diff (prOwnChange): the repair
+ * for tasks imported when they were read from the task's base to the merge
+ * commit. Only expected_files, hidden_checks and reference_diff change; the
+ * snapshot, base_sha and everything a labeller wrote stay. expected_files a
+ * labeller replaced (a task relabelled, whose list is no longer the one the
+ * old import recorded) are kept and counted. Refuses a frozen suite, and the
+ * write itself re-checks that the suite is still unfrozen. Idempotent: a task
+ * whose reference already matches is not written. Never throws; a task whose
+ * pull request cannot be read is listed and left as it is.
+ */
+async function refreshPrReferences(pool, { suiteId, github, pause = async () => {}, onlyUnrepaired = false } = {}) {
+  const suite = await suiteRow(pool, suiteId);
+  if (!suite) return httpError(404, 'Suite not found');
+  if (suite.frozen_at) return httpError(409, 'The suite is frozen: its references cannot change');
+  // `onlyUnrepaired`: the tasks never re-read (no reference_diff yet), so a
+  // pass that finds none reads nothing from GitHub.
+  const { rows } = await pool.query(
+    `SELECT t.id, t.reference, t.reference_source, a.repo_url
+       FROM bench_tasks t JOIN apps a ON a.id = t.app_id
+      WHERE t.suite_id = $1 AND t.stage = 'build' AND t.reference ? 'reference_pr'
+        AND NOT ($2::boolean AND t.reference ? 'reference_diff')
+      ORDER BY t.id`,
+    [suite.id, !!onlyUnrepaired],
+  );
+  const bot = require('../homeroom-bot');
+  const out = { ok: true, checked: 0, updated: 0, unchanged: 0, keptLabelledFiles: [], failed: [] };
+  for (const task of rows) {
+    const ref = task.reference || {};
+    const pr = Number(ref.reference_pr);
+    const repo = bot.parseRepo(task.repo_url);
+    if (!Number.isInteger(pr) || pr <= 0 || !repo) {
+      out.failed.push({ taskId: task.id, reason: 'no pull request or repository' });
+      continue;
+    }
+    out.checked += 1;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const pull = await github.getPR(repo.owner, repo.repo, pr);
+      // eslint-disable-next-line no-await-in-loop
+      const own = await prOwnChange(github, repo, pull);
+      const patch = { reference_diff: own.diff };
+      if (own.hidden) patch.hidden_checks = own.hidden;
+      let filesStale = task.reference_source === 'merged_pr';
+      if (!filesStale && !ref.reference_diff && SHA_RE.test(String(ref.base_sha || '')) && SHA_RE.test(String(ref.reference_sha || ''))) {
+        // Relabelled: replaced only when the list is still the old import's.
+        // eslint-disable-next-line no-await-in-loop
+        const old = await github.listChangedFiles(repo.owner, repo.repo, `${ref.base_sha}...${ref.reference_sha}`);
+        filesStale = sameFiles(ref.expected_files, (old || []).slice(0, MAX_EXPECTED_FILES));
+      }
+      if (filesStale) patch.expected_files = own.files;
+      else if (!sameFiles(ref.expected_files, own.files)) out.keptLabelledFiles.push(task.id);
+      const changed = Object.entries(patch).some(([k, v]) => JSON.stringify(ref[k]) !== JSON.stringify(v));
+      if (!changed) { out.unchanged += 1; continue; }
+      // eslint-disable-next-line no-await-in-loop
+      const { rowCount } = await pool.query(
+        `UPDATE bench_tasks t SET reference = t.reference || $2::jsonb
+           FROM bench_suites s
+          WHERE t.id = $1 AND s.id = t.suite_id AND s.frozen_at IS NULL`,
+        [task.id, JSON.stringify(patch)],
+      );
+      if (!rowCount) return httpError(409, 'The suite was frozen while its references were being refreshed');
+      out.updated += 1;
+    } catch (err) {
+      out.failed.push({ taskId: task.id, pr, reason: String(err.message || err).slice(0, 300) });
+    } finally {
+      // eslint-disable-next-line no-await-in-loop
+      await pause();
+    }
+  }
+  if (out.updated) log.info('bench', 'Build references re-read from their pull requests\' own diffs', { suiteId: suite.id, updated: out.updated });
+  return out;
 }
 
 // ── The stratified sampler ──────────────────────────────────────────────
@@ -665,6 +851,7 @@ module.exports = {
   suiteRow,
   freezeSuite,
   newVersion,
+  deleteSuite,
   listTasks,
   taskRow,
   startingTask,
@@ -672,8 +859,11 @@ module.exports = {
   insertTask,
   removeTask,
   setReference,
+  isRealAnswer,
   addedChecks,
+  prOwnChange,
   importTaskFromPr,
+  refreshPrReferences,
   prng,
   stratifiedSample,
   candidateRuns,

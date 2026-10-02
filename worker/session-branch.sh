@@ -20,14 +20,91 @@
 #     the session branch, and recovery replayed the empty push ~1,357 times.
 #   - usernode_commit_leftovers: the post-turn commit added every untracked
 #     file, including what an agent had deliberately left out of its commit.
+#   - usernode_clone_sealed / usernode_reseal: a benchmark trial's checkout
+#     held today's main, so a model replaying an old request could read the
+#     answer in `git log origin/main` (a triage plan cited the later pull
+#     request and its commit). See "Benchmark trials" below.
+
+# ── Benchmark trials ────────────────────────────────────────────────────
+#
+# A Homeroom bot benchmark trial (src/services/bench/runner.js) replays a
+# request as it stood at a past commit, on a `bench/` branch cut there. The
+# platform starts its worker with USERNODE_PINNED_BASE set to that commit,
+# and the checkout is then SEALED:
+#
+#   - it is fetched from the session branch alone (never a clone of main),
+#     so the object store holds the base, its ancestors and the trial's own
+#     commits, and nothing later: no tags, no other branch, no reflog entry;
+#   - main and origin/main are the base, so `origin/main..HEAD` still counts
+#     the trial's own commits and nothing names a later one;
+#   - origin's fetch URL points at nothing, so `git fetch` and `git pull`
+#     fail; its push URL is GitHub's, so the platform's push proxy
+#     (worker.js buildPushScript, `git push -u origin "$BRANCH"`) still
+#     lands the trial's branch. A push updates origin/$BRANCH through the
+#     fetch refspec, which names the session branch alone.
+#
+# What this cannot stop: the worker has network access (its model provider,
+# npm), and the repository is public, so a model that fetches GitHub by its
+# URL could still read later history. Nothing in the checkout points it
+# there any more except the push URL.
+USERNODE_SEALED_URL=/dev/null/no-upstream-in-a-benchmark-trial
+
+usernode_pinned() {
+  [ -n "${USERNODE_PINNED_BASE:-}" ]
+}
+
+# Re-assert the seal (every turn, through usernode_fetch_session_refs): the
+# fetch URL, the session branch's refspec, no tags, no remote-tracking ref
+# but the session branch's, and origin/main at the base.
+usernode_reseal() {
+  git config remote.origin.url "$USERNODE_SEALED_URL" || return 1
+  git config --replace-all remote.origin.fetch "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || return 1
+  git config remote.origin.tagOpt --no-tags || return 1
+  git for-each-ref --format='%(refname)' refs/remotes/ refs/tags/ | while read -r ref; do
+    case "$ref" in
+      "refs/remotes/origin/$BRANCH") ;;
+      *) git update-ref --no-deref -d "$ref" ;;
+    esac
+  done
+  git update-ref refs/remotes/origin/main "$USERNODE_PINNED_BASE"
+}
+
+# The sealed checkout, into the (empty) current directory. $1 is the clone
+# URL. Fails when the session branch does not contain the pinned base: a
+# trial whose branch is not where the platform cut it must not run.
+usernode_clone_sealed() {
+  base=${USERNODE_PINNED_BASE:-}
+  case "$base" in
+    ''|*[!0-9a-f]*) echo "the pinned base is not a commit id: $base"; return 1 ;;
+  esac
+  if [ "${#base}" -ne 40 ]; then echo "the pinned base is not a full commit id: $base"; return 1; fi
+  git init --quiet . 2>&1 || return 1
+  git remote add origin "$1" 2>&1 || return 1
+  git fetch --quiet --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>&1 || return 1
+  if ! git merge-base --is-ancestor "$base" "refs/remotes/origin/$BRANCH" 2>/dev/null; then
+    echo "the session branch $BRANCH does not contain the pinned base $base"
+    return 1
+  fi
+  git update-ref refs/heads/main "$base" || return 1
+  git checkout --quiet -b "$BRANCH" "refs/remotes/origin/$BRANCH" 2>&1 || return 1
+  git config remote.origin.pushurl "$1" || return 1
+  usernode_reseal
+}
+
+# ── Every session ───────────────────────────────────────────────────────
 
 # Point `git fetch origin` at main alone, and forget any remote-tracking ref
 # that is neither main nor this session's branch. The session branch is not
 # in the configured refspec because a refspec naming a branch that does not
 # exist yet (a fresh session, before its first push) fails the whole fetch;
-# usernode_fetch_session_refs fetches it explicitly instead.
+# usernode_fetch_session_refs fetches it explicitly instead. A sealed
+# benchmark checkout is re-sealed instead.
 usernode_limit_remote_refs() {
   git remote get-url origin >/dev/null 2>&1 || return 1
+  if usernode_pinned; then
+    usernode_reseal
+    return
+  fi
   git config --replace-all remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main' || return 1
   git for-each-ref --format='%(refname)' refs/remotes/origin/ | while read -r ref; do
     case "$ref" in
@@ -40,8 +117,13 @@ usernode_limit_remote_refs() {
 # Fetch main and, when it exists on GitHub, this session's branch. A missing
 # session branch is not an error here: callers decide what that means. The
 # session branch is fetched even when main's fetch fails. Prints git's output
-# for main's fetch; returns non-zero when that failed.
+# for main's fetch; returns non-zero when that failed. A sealed benchmark
+# checkout fetches nothing: it is re-sealed and works from what it has.
 usernode_fetch_session_refs() {
+  if usernode_pinned; then
+    usernode_reseal 2>&1
+    return
+  fi
   usernode_limit_remote_refs >/dev/null 2>&1 || true
   main_rc=0
   git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' 2>&1 || main_rc=1

@@ -1196,14 +1196,26 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
       // or an older client sends none), and never a reason the create fails.
+      // An import, or a project with no description, has nothing to build
+      // first; made by somebody on the bot's DM list, it is still one the
+      // bot acts on for real (noteProjectMade).
       let homeroomBot = null;
-      if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      if (!repoUrlNormalized && homeroomBotDm.normalizeBrief(req.body.brief)) {
         try {
-          homeroomBot = await require('../services/homeroom-bot-dm').startFirstVersion(pool, config, {
+          homeroomBot = await homeroomBotDm.startFirstVersion(pool, config, {
             app: appRow, user: req.user, brief: req.body.brief,
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+      } else {
+        try {
+          await homeroomBotDm.noteProjectMade(pool, {
+            app: appRow, user: req.user, origin: repoUrlNormalized ? 'import' : 'blank',
+          });
+        } catch (err) {
+          log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
         }
       }
 
@@ -1293,6 +1305,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         appId: appRow.id,
         metadata: { forkedFromAppId: sourceApp.id, forkedFromSlug: sourceApp.slug },
       });
+      // #3624: a fork made by somebody on the Homeroom bot's DM list is one
+      // it acts on for real, as a project they create is. Never a reason the
+      // fork fails.
+      try {
+        await require('../services/homeroom-bot-dm').noteProjectMade(pool, { app: appRow, user: req.user, origin: 'fork' });
+      } catch (err) {
+        log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
+      }
 
       forkApp(config, appRow, sourceApp).catch(async (err) => {
         log.error('apps', 'Async fork failed', { appId: appRow.id, err: err.message });

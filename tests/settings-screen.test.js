@@ -76,6 +76,9 @@ const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
 // it the default, and a hard-coded copy would have silently kept asserting
 // the old one.
 const DEFAULT_SECTION = settingsJs.match(/DEFAULT_SECTION: '([a-z-]+)'/)[1];
+// DEFAULT_SECTION names a PAGE since the settings restructure; what a
+// declared check sees is that page's first wrapper (Account → profile).
+const DEFAULT_PART = registrySections().find((s) => s.page === DEFAULT_SECTION).key;
 const mountTs = read('frontend/src/features/settings/mount.ts');
 const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
 
@@ -93,20 +96,33 @@ const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
 
 // The registry, parsed out of the shipped source so the tests can't drift
-// from it. Matches `{ key: 'x', label: 'Y', group: 'Z'[, gate: 'id'] }`.
+// from it. Matches `{ key: 'x', label: 'Y', group: 'Z'[, page: 'p'][, gate: 'id'] }`
+// — one PART per entry; `page` defaults to the part's own key.
 function registrySections() {
   const block = settingsJs.slice(
     settingsJs.indexOf('    SECTIONS: ['),
-    settingsJs.indexOf('    DEFAULT_SECTION:'),
+    settingsJs.indexOf('    PAGES: {'),
   );
   assert.ok(block, 'SECTIONS registry found in settings.js');
   const out = [];
-  const re = /\{ key: '([a-z-]+)', label: '([^']+)', group: '([^']+)'(?:, gate: '([a-z-]+)')? \}/g;
+  const re = /\{ key: '([a-z-]+)', label: '([^']+)', group: '([^']+)'(?:, page: '([a-z-]+)')?(?:, gate: '([a-z-]+)')? \}/g;
   let m;
   while ((m = re.exec(block))) {
-    out.push({ key: m[1], label: m[2], group: m[3], gate: m[4] || null });
+    out.push({ key: m[1], label: m[2], group: m[3], page: m[4] || m[1], gate: m[5] || null });
   }
   return out;
+}
+
+// The pages the registry describes, in first-appearance order, each with its
+// parts — what Settings._visiblePages() derives when every gate is open.
+function registryPages() {
+  const pages = [];
+  for (const s of registrySections()) {
+    let p = pages.find((x) => x.key === s.page);
+    if (!p) { p = { key: s.page, group: s.group, parts: [] }; pages.push(p); }
+    p.parts.push(s);
+  }
+  return pages;
 }
 
 // ── The screen host ────────────────────────────────────────────────────
@@ -177,10 +193,21 @@ test('every registry section has exactly one wrapper, and vice versa', () => {
     assert.ok(registryKeys.includes(w),
       `wrapper "${w}" has a registry entry (otherwise it is unreachable)`);
   }
-  // Wrappers ship hidden — the router unhides exactly one.
+  // Wrappers ship hidden — the router unhides the parts of exactly one page.
   for (const key of registryKeys) {
     assert.match(html, new RegExp(`data-settings-section="${key}" class="hidden"`),
       `the ${key} wrapper ships hidden`);
+  }
+  // A page shows its parts at once, stacked in DOM order, so the wrappers
+  // must come in registry order and a page's parts must be contiguous —
+  // otherwise Account would read Username, Theme, Password.
+  assert.deepEqual(wrappers, registryKeys, 'the wrappers render in registry order');
+  const seen = [];
+  for (const s of sections) {
+    if (seen[seen.length - 1] !== s.page) {
+      assert.ok(!seen.includes(s.page), `the parts of page "${s.page}" are contiguous`);
+      seen.push(s.page);
+    }
   }
 });
 
@@ -194,153 +221,201 @@ test('every gated section names a real inner node that owns its own hidden', () 
     'menu membership is READ off the gate node, never re-derived');
 });
 
-test('the default section is an ungated key', () => {
+test('the default section is an ungated page, and the first one', () => {
   const m = settingsJs.match(/DEFAULT_SECTION: '([a-z-]+)'/);
   assert.ok(m, 'DEFAULT_SECTION is declared');
-  const hit = registrySections().find((s) => s.key === m[1]);
-  assert.ok(hit, `${m[1]} is a registered section`);
-  assert.equal(hit.gate, null, 'the default section is never behind a gate');
+  const page = registryPages().find((p) => p.key === m[1]);
+  assert.ok(page, `${m[1]} is a registered page`);
+  assert.ok(page.parts.every((s) => s.gate === null), 'the default page is never behind a gate');
+  // DEFAULT_SECTION, the visible[0] fallbacks in open()/route()/setSection()
+  // and the initial `_section` all have to name the same page.
+  assert.equal(registryPages()[0].key, m[1], 'the default page leads the registry');
+  assert.match(settingsJs, new RegExp(`_section: '${m[1]}',`),
+    'and the initial _section is that page, so a fresh tab lands on it');
 });
 
-// ── Grouping and the Advanced disclosure (#1554) ────────────────────────
+// ── Pages and groups (the settings restructure) ─────────────────────────
 
-test('the registry groups into four sections, Advanced last', () => {
+test('the registry groups pages under four headings, Account first', () => {
   const sections = registrySections();
-  // First-appearance order, exactly what _groupedSections() derives.
   const order = [];
   for (const s of sections) if (!order.includes(s.group)) order.push(s.group);
-  assert.deepEqual(order, ['Preferences', 'Account', 'AI & agents', 'Advanced'],
+  assert.deepEqual(order, ['Account', 'AI & building', 'Preferences', 'Help & about'],
     'four groups, in menu order');
   // dapp.json asserts this heading by TEXT, so the spelling is a contract.
-  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & agents'),
-    'the AI & agents heading is a declared check');
+  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & building'),
+    'the AI & building heading is a declared check');
 
-  // Theme leads the registry: DEFAULT_SECTION, the visible[0] fallbacks in
-  // open()/route()/setSection and the "Theme is the first setting" check all
-  // resolve through position, so the regrouping must not have moved it.
-  assert.equal(sections[0].key, 'theme', 'Theme is still the first entry');
-  assert.equal(sections[0].group, 'Preferences');
-  assert.equal(sections[0].gate, null);
+  // A page takes its group from its first part, and never straddles two.
+  for (const page of registryPages()) {
+    for (const part of page.parts) {
+      assert.equal(part.group, page.group, `${part.key} sits in its page's group`);
+    }
+  }
 
-  // Nothing was dropped on the way: every section is still registered, and
-  // the rarely-used ones are the ones that moved.
-  const byKey = Object.fromEntries(sections.map((s) => [s.key, s.group]));
+  // Nothing was dropped on the way: every address that ever reached a pane
+  // is still a registered part, so its deep links still resolve.
+  const byKey = Object.fromEntries(sections.map((s) => [s.key, s]));
   for (const key of [
-    'theme', 'language', 'alerts', 'username', 'password', 'wallet',
-    'openrouter', 'api-key', 'connectors', 'app-ai', 'agent-files', 'cli',
+    'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
+    'password', 'delete-account', 'wallet', 'global-chat', 'openrouter',
+    'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
-  ]) assert.ok(byKey[key], `${key} is still reachable from the menu`);
-  for (const key of [
-    'app-ai', 'agent-files', 'cli', 'dev-console', 'experimental',
-    'usernode', 'admin-preview', 'about',
-  ]) assert.equal(byKey[key], 'Advanced', `${key} sits under Advanced`);
-});
+  ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
-test('Advanced is the ONE collapsible group, and it starts closed', () => {
-  assert.match(settingsJs, /ADVANCED_GROUP: 'Advanced'/,
-    'the collapsible group is named once, not spelled at every reader');
-  const isCollapsible = sliceMethod(settingsJs, '_isCollapsibleGroup');
-  assert.match(isCollapsible, /=== Settings\.ADVANCED_GROUP/,
-    '_isCollapsibleGroup is the single reader of that name');
-
-  // The set stores the EXPANDED names, the inverse of the admin console's
-  // NAV_COLLAPSED_KEY: an empty, cleared or foreign store must resolve to
-  // "Advanced is shut", which is what the declared check asserts.
-  assert.match(settingsJs, /const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';/);
-  const isExpanded = sliceMethod(settingsJs, '_isGroupExpanded');
-  assert.match(isExpanded, /_isCollapsibleGroup\(name\)/,
-    'a group that does not collapse is always expanded');
-  assert.match(isExpanded, /_expanded\(\)\.has\(/,
-    'presence in the set is what opens it');
-  assert.match(isExpanded, /_revealedGroup === key/,
-    'or the group the active section lives in, for this visit only');
-
-  // Closing the group you are standing in has to drop that reveal too, or
-  // the heading is a button that visibly does nothing.
-  assert.match(sliceMethod(settingsJs, '_toggleGroup'),
-    /if \(!open\) Settings\._revealedGroup = null;/);
-
-  // Runs inside a render path, and the prerender pass / vm harnesses have no
-  // localStorage, so the load must neither throw nor touch storage there.
-  const load = sliceMethod(settingsJs, '_loadExpandedGroups');
-  assert.match(load, /if \(typeof window === 'undefined'\) return;/,
-    'the storage read is guarded for Node');
-  assert.match(load, /catch \{/, 'corrupt or unavailable storage is non-fatal');
-  assert.match(load, /_isCollapsibleGroup\(key\)/,
-    'names that are no longer a collapsible group are pruned');
-  assert.match(sliceMethod(settingsJs, '_saveExpandedGroups'), /catch \{/);
-});
-
-test('a disclosure press repaints the menu and nothing else', () => {
-  const fn = sliceMethod(settingsJs, '_toggleGroup');
-  assert.match(fn, /_setGroupExpanded\(/, 'it flips the persisted state');
-  assert.match(fn, /Settings\._renderNav\(\);/, 'and repaints the nav');
-  // The admin console's rule, for the same three reasons: the section on
-  // screen keeps rendering, a phone repaint would tear the menu down
-  // mid-gesture, and focus stays on the heading you just pressed.
-  for (const forbidden of [
-    /setSection\(/, /location\.hash/, /_writeHash\(/, /_renderContent\(/,
-  ]) assert.doesNotMatch(fn, forbidden, `_toggleGroup must not call ${forbidden}`);
-});
-
-test('arriving at a section reveals the group it lives in, transiently', () => {
-  const fn = sliceMethod(settingsJs, '_ensureActiveGroupExpanded');
-  assert.match(fn, /Settings\._revealedGroup =/,
-    'the reveal is derived from the active section');
-  // Persisting it would make one deep link into About or CLI the last time
-  // that viewer ever sees Advanced shut. It would also make "ships
-  // collapsed" depend on route order: the capture container walks the
-  // declared #settings routes as hash cohorts of ONE document, in
-  // declaration order, and #settings/about lands before #settings.
-  for (const forbidden of [/_setGroupExpanded\(/, /_saveExpandedGroups\(/]) {
-    assert.doesNotMatch(fn, forbidden, 'the arrival reveal never persists');
+  // The pages the restructure folded together.
+  const pageOf = (key) => byKey[key].page;
+  assert.deepEqual(['profile', 'username', 'email', 'password', 'delete-account'].map(pageOf),
+    Array(5).fill('account'), 'Account holds who you are and how you sign in');
+  assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
+    'and Delete account closes it');
+  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
+  assert.deepEqual(['connectors', 'build-venue', 'cli'].map(pageOf), Array(3).fill('connectors'));
+  // A page key that is also the key of a LATER part on that page would make
+  // the page's own nav row resolve as a deep link to that part, opening the
+  // page scrolled past everything above it.
+  for (const page of registryPages()) {
+    const later = page.parts.slice(1).map((s) => s.key);
+    assert.ok(!later.includes(page.key), `page ${page.key} is not also the key of a later part`);
   }
-  assert.match(fn, /: null/, 'and it clears when the section leaves the group');
+  assert.deepEqual(['app-permissions', 'app-ai', 'blocked-apps'].map(pageOf),
+    Array(3).fill('app-permissions'), 'what each app may do, on one page');
+  assert.deepEqual(['theme', 'dev-console', 'admin-preview'].map(pageOf), Array(3).fill('theme'),
+    'Appearance: what the shell shows on this device');
+  // No "Admin" group in the nav any more: it sat directly above the footer's
+  // own Admin block, two identical headings in a row.
+  assert.ok(!order.includes('Admin'), 'admin preview shares Appearance rather than a group of its own');
 
-  // On ARRIVAL only — the three paths that resolve a section. A deep link
-  // into Advanced (the out-of-credits card's #settings/cli, the consent
-  // modal's #settings/api-key, a bookmark) must not leave the highlighted
-  // row inside a shut group.
-  const open = sliceMethod(settingsJs, 'open');
-  assert.equal((open.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
-    'open() reveals on both the menu and the section branch');
-  const route = sliceMethod(settingsJs, 'route');
-  assert.equal((route.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
-    'route() reveals on both the desktop and the mobile branch');
-  assert.match(sliceMethod(settingsJs, '_renderNavIfOpen'), /_ensureActiveGroupExpanded\(\)/,
-    'a late-arriving gate re-resolves through the same reveal');
+  // A gated part is a page of its own — so its gate hides exactly one row —
+  // unless it shares a page with ungated parts, where the gate hides only its
+  // block. Admin preview is the one of those, and it is never a page's first
+  // part, so the page's own address and title never depend on it.
+  for (const s of sections.filter((x) => x.gate)) {
+    if (s.key === 'admin-preview') {
+      assert.notEqual(registryPages().find((p) => p.key === s.page).parts[0].key, s.key);
+      continue;
+    }
+    assert.equal(s.page, s.key, `gated ${s.key} is a page of its own`);
+  }
+  // Every page of more than one part has a label in PAGES.
+  const pagesBlock = settingsJs.slice(settingsJs.indexOf('    PAGES: {'), settingsJs.indexOf('    KEYWORDS: {'));
+  for (const page of registryPages().filter((p) => p.parts.length > 1)) {
+    assert.match(pagesBlock, new RegExp(`'?${page.key}'?: '[^']+',`), `PAGES labels ${page.key}`);
+  }
 });
 
-test('both nav descriptors carry the disclosure, with per-surface ids', () => {
-  const disclosure = sliceMethod(settingsJs, '_groupDisclosure');
-  for (const field of ['collapsible', 'expanded', 'domId']) {
-    assert.match(disclosure, new RegExp(`${field}[,:]`), `_groupDisclosure emits ${field}`);
+test('no group collapses: the menu hides nothing behind a disclosure', () => {
+  // #1554 shut seven rarely used panes inside a collapsed "Advanced" group.
+  // Folding parts into pages made the menu short without it, and two of
+  // those seven were privacy controls. The machinery is gone, not idle.
+  for (const gone of [
+    /ADVANCED_GROUP/, /NAV_EXPANDED_KEY/, /_isCollapsibleGroup/, /_toggleGroup/,
+    /_ensureActiveGroupExpanded/, /_revealedGroup/, /_groupDisclosure/,
+  ]) assert.doesNotMatch(settingsCode, gone, `${gone} is gone from settings.js`);
+  assert.doesNotMatch(code(navTsx), /data-settings-group-toggle|aria-expanded/,
+    'the nav renders no disclosure');
+  assert.ok(!manifest.tests.some((t) => /data-settings-group-toggle|settings-nav-group-advanced/.test(t.expectSelector || '')),
+    'no declared check still asserts the collapsed group');
+});
+
+test('a part address resolves to its page, scrolled to the part', () => {
+  const resolve = sliceMethod(settingsJs, '_resolve');
+  assert.match(resolve, /Settings\.SECTIONS\.find\(\(s\) => s\.key === k\)/,
+    'a part key is looked up in the registry');
+  assert.match(resolve, /anchor: first && first\.key !== k \? k : null/,
+    'the anchor is the part, unless it is the page\'s first');
+  assert.match(resolve, /return \{ page: null, anchor: null \};/, 'anything unknown is invalid');
+
+  // Run it against the real registry, as the router does.
+  const block = settingsJs.slice(settingsJs.indexOf('    SECTIONS: ['), settingsJs.indexOf('    DEFAULT_SECTION:'));
+  const S = new Function(`
+    const Settings = {
+      ${block.trim()}
+      ${sliceMethod(settingsJs, '_pageKey')},
+      ${resolve}
+    };
+    return Settings;
+  `)();
+  assert.deepEqual(S._resolve('password'), { page: 'account', anchor: 'password' });
+  assert.deepEqual(S._resolve('profile'), { page: 'account', anchor: null });
+  assert.deepEqual(S._resolve('account'), { page: 'account', anchor: null });
+  assert.deepEqual(S._resolve('cli'), { page: 'connectors', anchor: 'cli' });
+  assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
+    'connectors leads its page, so its address is the page');
+  assert.deepEqual(S._resolve('build-venue'), { page: 'connectors', anchor: 'build-venue' });
+  assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
+  assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
+  assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });
+  assert.deepEqual(S._resolve('nope'), { page: null, anchor: null });
+  assert.deepEqual(S._resolve(null), { page: null, anchor: null });
+
+  // Every entry point goes through it, and the content pane shows every part
+  // of the resolved page.
+  for (const fn of ['open', 'route', 'setSection']) {
+    assert.match(sliceMethod(settingsJs, fn), /Settings\._resolve\(/, `${fn}() resolves the address`);
   }
-  // aria-controls targets have to be unique, and at phone width BOTH hosts
-  // are in the document — hence one id prefix per surface.
-  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1600), /_groupDisclosure\('settings-nav-group'/);
-  const menu = settingsJs.slice(settingsJs.indexOf('    _menuView() {'));
-  assert.match(menu.slice(0, 1600), /_groupDisclosure\('settings-menu-group'/);
+  assert.match(sliceMethod(settingsJs, '_renderContent'),
+    /Settings\._resolve\(el\.dataset\.settingsSection\)\.page/,
+    'a wrapper shows while its page is the current one');
+  const scroll = sliceMethod(settingsJs, '_scrollToAnchor');
+  assert.match(scroll, /scrollIntoView\(/);
+  assert.match(scroll, /Settings\._isMobile\(\) && Settings\._level === 1/,
+    'never on the phone\'s menu level, where no part is on screen');
+});
 
-  // The component renders the button, the pair and the wrapper the declared
-  // checks select on, and leaves every other group's markup alone.
-  assert.match(navTsx, /data-settings-group-toggle=\{group\.name\}/);
-  assert.match(navTsx, /aria-expanded=\{group\.expanded \? 'true' : 'false'\}/);
-  assert.match(navTsx, /aria-controls=\{group\.domId \|\| undefined\}/);
-  assert.match(navTsx, /if \(!group\.collapsible\) \{/,
-    'a non-collapsible group keeps the bare heading it always had');
-  // The only user-facing copy this adds. No em dash, no punctuation: it is
-  // read out by screen readers and shown as the hover title.
-  assert.match(navTsx, /`\$\{group\.expanded \? 'Collapse' : 'Expand'\} \$\{group\.name\}`/,
-    'the toggle labels itself Expand / Collapse <group>');
+test('the nav lists pages and hands the filter its terms', () => {
+  const nav = sliceMethod(settingsJs, '_navView');
+  assert.match(nav, /\.\.\.Settings\._filterTerms\(p\)/, 'the sidebar rows carry filter terms');
+  assert.match(sliceMethod(settingsJs, '_menuView'), /\.\.\.Settings\._filterTerms\(p\)/,
+    'and so do the menu rows');
+  const terms = sliceMethod(settingsJs, '_filterTerms');
+  assert.match(terms, /Settings\.KEYWORDS\[s\.key\]/, 'keywords are matched per part');
+  assert.match(terms, /toLowerCase\(\)/, 'lower-cased once, in the module');
+  // Every part has keywords, so the filter can find it by the words people
+  // type rather than only by its label.
+  const keywords = settingsJs.slice(settingsJs.indexOf('    KEYWORDS: {'), settingsJs.indexOf('    DEFAULT_SECTION:'));
+  for (const s of registrySections()) {
+    assert.match(keywords, new RegExp(`\\n      '?${s.key}'?: '[^']+',`), `KEYWORDS covers ${s.key}`);
+  }
 
-  // The two checks that hold the behaviour in staging.
-  const paths = (t) => manifest.tests.filter((x) => x.path === t);
-  assert.ok(paths('/#settings').some((t) => /group-toggle="Advanced"\]\[aria-expanded="false"/.test(t.expectSelector || '')),
-    'a declared check pins Advanced shipping collapsed');
-  assert.ok(paths('/?demo=cli-empty#settings/cli').some((t) => /#settings-nav-group-advanced:not\(\.hidden\)/.test(t.expectSelector || '')),
-    'a declared check pins the deep-link reveal');
+  // The component: a search field on both hosts, ids distinct because both
+  // hosts are in the document at phone width, rendered only beside a
+  // descriptor so the prerender stays the two empty hosts.
+  assert.match(navTsx, /id="settings-filter-desktop"/);
+  assert.match(navTsx, /id="settings-filter-mobile"/);
+  assert.match(navTsx, /type="search"/);
+  assert.match(navTsx, /\{desktop \? \(/, 'the sidebar field waits for its descriptor');
+  assert.match(navTsx, /\{mobile \? \(/, 'and so does the menu\'s');
+  assert.match(navTsx, /e\.key === 'Enter' && hits\[0\]/, 'Enter opens the first hit');
+  assert.match(navTsx, /e\.key === 'Escape'/, 'Escape clears');
+  assert.match(navTsx, /No settings match/, 'an empty result says so');
+});
+
+test('the filter matches every word, and names the parts that matched', () => {
+  // filterPages is pure; evaluate it from the component's source with its
+  // TypeScript annotations stripped.
+  const at = navTsx.indexOf('function filterPages(');
+  const src = navTsx.slice(at, navTsx.indexOf('\n}\n', at) + 2)
+    .replace('(groups: { items: Filterable[] }[], query: string): FilterHit[]', '(groups, query)')
+    .replace(/const hits: FilterHit\[\] = \[\];/, 'const hits = [];');
+  const filterPages = new Function(`${src}; return filterPages;`)();
+  const part = (key, label, words = '') => ({ key, label, terms: `${label} ${words}`.toLowerCase() });
+  const groups = [{
+    items: [
+      { key: 'account', label: 'Account', terms: 'account', parts: [
+        part('profile', 'Profile', 'name photo'), part('password', 'Password', 'sign in login'),
+      ] },
+      { key: 'theme', label: 'Appearance', terms: 'appearance', parts: [part('theme', 'Theme', 'dark')] },
+    ],
+  }];
+  const hit = (q) => filterPages(groups, q).map((h) => [h.item.key, h.parts.map((p) => p.key)]);
+  assert.deepEqual(hit('login'), [['account', ['password']]], 'a keyword finds the part and names it');
+  assert.deepEqual(hit('ACCOUNT'), [['account', []]], 'a page-label match needs no part names');
+  assert.deepEqual(hit('dark'), [['theme', ['theme']]]);
+  assert.deepEqual(hit('account photo'), [['account', []]],
+    'words may land on the page and a part');
+  assert.deepEqual(hit('zebra'), []);
+  assert.deepEqual(hit('   '), [], 'blank is not a query');
 });
 
 // ── #1556: Language is gated on an already-saved locale ────────────────
@@ -752,7 +827,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // declared check, and the second half is what makes the two differ.
   // QA 2026-09-24 Q20: the sidebar was `role="tab"` + `aria-selected` with no
   // tablist parent (axe aria-required-parent); it is the <nav>'s links now.
-  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('function SettingsLabel('));
+  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('export function SettingsNavDesktop('));
   assert.doesNotMatch(navRowFn, /role="tab"|aria-selected=/, 'the sidebar rows are not orphan tabs');
   assert.match(navRowFn, /aria-current=\{item\.active \? 'page' : undefined\}/,
     'the current section is announced as the current page');
@@ -962,12 +1037,12 @@ test('dapp.json covers the settings screen and its deep links', () => {
     }
   }
   // #1556: the Language deep link still has a check, but it asserts that the
-  // route falls back to the default section rather than rendering a pane.
+  // route falls back to the default page rather than rendering a pane.
   const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
   assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
   assert.match(lang[0].expectSelector || '',
-    /data-settings-section="theme"\]:not\(\.hidden\)/,
-    'the Language deep link lands on the default section, not on a Language pane');
+    new RegExp(`data-settings-section="${DEFAULT_PART}"\\]:not\\(\\.hidden\\)`),
+    'the Language deep link lands on the default page, not on a Language pane');
 
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to
@@ -978,11 +1053,11 @@ test('dapp.json covers the settings screen and its deep links', () => {
   assert.match(back[0].expectSelector || '', /data-settings-route="skipped"/,
     'it asserts the SECOND dispatch was skipped — the marker is the only way to observe an '
     + 'ordering that is otherwise visible for one animation frame only');
-  // The DEFAULT section, whatever it is — THE UI OVERHAUL made that Theme,
-  // moving it out of the hamburger where it was the drawer's first row. Read
-  // from the registry rather than hard-coded, so the two cannot drift.
+  // The DEFAULT page, whatever it is — THE UI OVERHAUL made that Theme; the
+  // settings restructure made it Account, which Profile leads. Read from the
+  // registry rather than hard-coded, so the two cannot drift.
   assert.match(back[0].expectSelector || '',
-    new RegExp(`data-settings-section="${DEFAULT_SECTION}"`),
+    new RegExp(`data-settings-section="${DEFAULT_PART}"`),
     'and that the traversal landed back on the default section rather than the drilled-in one');
 });
 
