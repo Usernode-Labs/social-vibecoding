@@ -112,11 +112,20 @@ const KEY_MODELS = Object.freeze({
 });
 // An OpenRouter model id: `vendor/model`, as the catalog spells them.
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
+// #3624, stage 2: how much live work runs at once (see "How much at once"
+// below). `homeroom_bot_concurrency` is the background lane's: how many
+// apps' shadow triage runs at once, beside the live work, never in its way.
+const KEY_LIVE_AT_ONCE = 'homeroom_bot_live_at_once';
+const KEY_PER_PERSON = 'homeroom_bot_per_person';
+// #3624, stage 2: whether a DM to the bot is read by a model
+// (homeroom-bot-mayor.js). On by default for the people on the DM list; the
+// switch is there to stop it without taking anybody off the list.
+const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
-  KEY_DM_USERS, KEY_USER_WEEKLY_CENTS,
+  KEY_DM_USERS, KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_DM_USERS = 50;
@@ -142,6 +151,9 @@ const DEFAULTS = Object.freeze({
   userWeeklyCents: 5000,
   // #3654: per-stage models; blank is the platform default (stageModel).
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
+  liveAtOnce: 6,
+  perPerson: 2,
+  dmChat: true,
   // Not a stored setting: the projects the bot is building for a DM user
   // (homeroom-bot-dm.js), live like the apps in liveApps. readSettings
   // fills it in.
@@ -149,6 +161,10 @@ const DEFAULTS = Object.freeze({
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
+// Each live turn holds a worker from the pool people's own coding sessions
+// use, so the ceiling stays well under it.
+const MAX_LIVE_AT_ONCE = 16;
+const MAX_PER_PERSON = 4;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
@@ -377,9 +393,13 @@ function parseSettings(rows) {
     const raw = String(map.get(KEY_MODELS[stage]) || '').trim();
     models[stage] = MODEL_ID_RE.test(raw) ? raw : '';
   }
+  const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
+  const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
+  const dmChat = map.get(KEY_DM_CHAT) !== 'off';
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents, models,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
+    liveAtOnce, perPerson, dmChat, models,
     firstVersionApps: [],
   };
 }
@@ -446,6 +466,24 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: `concurrency must be an integer from 1 to ${MAX_CONCURRENCY}` };
     }
     updates.push([KEY_CONCURRENCY, String(n)]);
+  }
+  if (body.liveAtOnce !== undefined) {
+    const n = Number(body.liveAtOnce);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_LIVE_AT_ONCE) {
+      return { ok: false, error: `liveAtOnce must be an integer from 1 to ${MAX_LIVE_AT_ONCE}` };
+    }
+    updates.push([KEY_LIVE_AT_ONCE, String(n)]);
+  }
+  if (body.perPerson !== undefined) {
+    const n = Number(body.perPerson);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_PER_PERSON) {
+      return { ok: false, error: `perPerson must be an integer from 1 to ${MAX_PER_PERSON}` };
+    }
+    updates.push([KEY_PER_PERSON, String(n)]);
+  }
+  if (body.dmChat !== undefined) {
+    if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
+    updates.push([KEY_DM_CHAT, body.dmChat ? 'on' : 'off']);
   }
   if (body.turnSeconds !== undefined) {
     const n = Number(body.turnSeconds);
@@ -573,6 +611,10 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       const limits = require('./limits');
       limits.invalidate();
     } catch {}
+  }
+  // More room for live work is used now, not on the next idle pass.
+  if (valid.updates.some(([key]) => key === KEY_LIVE_AT_ONCE || key === KEY_PER_PERSON || key === KEY_CONCURRENCY)) {
+    wakeAll();
   }
   const modeAfter = valid.updates.find(([key]) => key === KEY_MODE)?.[1];
   if (modeAfter && modeAfter !== 'off' && modeAfter !== modeBefore) {
@@ -1098,12 +1140,16 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
  * looked at again. Passes hold the loop's lock, so nothing live is older
  * than one turn's budget; past that, with a margin, the claim is abandoned.
  */
-async function releaseStaleClaims(pool, settings) {
+async function releaseStaleClaims(pool, settings, { keepIds = [] } = {}) {
   const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  // #3624 stage 2: passes now run while work does, so a row this Pod is
+  // still working on (a long live build) is not handed back under it.
+  const keep = keepIds.map(Number).filter((n) => Number.isInteger(n) && n > 0);
   const { rowCount } = await pool.query(
     `UPDATE homeroom_bot_queue SET started_at = NULL
-      WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)`,
-    [seconds],
+      WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)${
+  keep.length ? '\n        AND NOT (id = ANY($2::int[]))' : ''}`,
+    keep.length ? [seconds, keep] : [seconds],
   );
   if (rowCount) log.info('homeroom-bot', 'Released queue rows an unfinished pass had claimed', { count: rowCount });
   return rowCount || 0;
@@ -1134,16 +1180,19 @@ async function recordThrownTriage(pool, { app, item, settings, err }) {
   }
 }
 
-async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [] }) {
+async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [], liveSlugs = [] }) {
+  // #3624 stage 2: an app the bot acts on for real is the live lane's, and
+  // is left out here like a paused one.
   const { rows: head } = await pool.query(
     `SELECT q.app_id
        FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
       WHERE q.started_at IS NULL
         AND NOT (q.app_id = ANY($1::int[]))
         AND NOT (a.slug = ANY($2::text[]))
+        AND NOT (a.slug = ANY($3::text[]))
       ORDER BY q.priority, q.enqueued_at
       LIMIT 1`,
-    [excludeAppIds, pausedApps],
+    [excludeAppIds, pausedApps, liveSlugs],
   );
   if (!head.length) return null;
   const appId = head[0].app_id;
@@ -3916,6 +3965,326 @@ function liveDeps(deps = {}) {
   };
 }
 
+// ── How much at once (#3624 stage 2) ────────────────────────────────────
+//
+// Two lanes, both run from the loop below.
+//
+// LIVE work is an issue on an app the bot acts on for real, or on a project
+// it is building for somebody (live.isLiveFor). It is started one issue at a
+// time, up to `liveAtOnce` across the platform, up to `perPerson` for any one
+// person, and never two at once on one app: the bot has ONE session per app
+// (ensureBotSession), and two turns in it would fight over it. The person is
+// whoever the request is for (homeroom_bot_requesters), else whoever filed
+// it on Homeroom, else the app itself, so a person with a long list cannot
+// take every slot while somebody else waits.
+//
+// BACKGROUND work is shadow triage of every other app: the calibration
+// sweep. It keeps its old shape, a batch of one app's issues at a time,
+// `concurrency` apps at once, in slots of its own, so it never holds up
+// somebody waiting in a DM.
+//
+// The loop does not wait for the work. A pass refreshes the queue, fills
+// the free slots and returns; each piece of work asks for the next pass the
+// moment it ends. So a 40-minute build on one app never holds up a DM
+// answer on another. `inFlight` is the leader's record of what runs; the
+// queue row's started_at is the durable one, claimed before the work starts
+// so a second Pod could never take the same row.
+
+// appId → { lane, person, issueNumber, itemId, startedAt }
+const inFlight = new Map();
+// A spent weekly cap stops dispatch until the next idle pass, rather than
+// re-dispatching (and refusing) on every completion.
+let budgetPausedUntil = 0;
+
+function personKeyOf(row) {
+  return row?.person_id ? `u${Number(row.person_id)}` : `a${Number(row?.app_id)}`;
+}
+
+/**
+ * Pure: which live queue rows to start now. `candidates` are queue rows in
+ * priority order (each carrying `person_id` or null); `busyAppIds` are apps
+ * with anything already running; `active` is the live work running, as
+ * { person }. One per app, at most `perPerson` per person counting what
+ * runs, at most `slots` new ones in all.
+ */
+function pickLive(candidates, { busyAppIds = [], active = [], slots = 0, perPerson = 1 } = {}) {
+  const busy = new Set(busyAppIds.map(Number));
+  const count = new Map();
+  for (const a of active) count.set(a.person, (count.get(a.person) || 0) + 1);
+  const picks = [];
+  for (const row of candidates || []) {
+    if (picks.length >= slots) break;
+    const appId = Number(row.app_id);
+    if (busy.has(appId)) continue;
+    const person = personKeyOf(row);
+    if ((count.get(person) || 0) >= perPerson) continue;
+    busy.add(appId);
+    count.set(person, (count.get(person) || 0) + 1);
+    picks.push({ ...row, person });
+  }
+  return picks;
+}
+
+/** The live queue's heads, in priority order, with who each one is for. */
+async function liveCandidates(pool, { liveSlugs, excludeAppIds, pausedApps, limit = 200 }) {
+  if (!liveSlugs.length) return [];
+  const { rows } = await pool.query(
+    `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
+            COALESCE(r.user_id, i.created_by) AS person_id
+       FROM homeroom_bot_queue q
+       JOIN apps a ON a.id = q.app_id
+       LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
+       LEFT JOIN LATERAL (
+         SELECT created_by FROM issues
+          WHERE app_id = q.app_id AND github_issue_number = q.issue_number
+          ORDER BY id LIMIT 1
+       ) i ON TRUE
+      WHERE q.started_at IS NULL
+        AND a.slug = ANY($1::text[])
+        AND NOT (q.app_id = ANY($2::int[]))
+        AND NOT (a.slug = ANY($3::text[]))
+      ORDER BY q.priority, q.enqueued_at
+      LIMIT $4`,
+    [liveSlugs, excludeAppIds, pausedApps, limit],
+  );
+  return rows;
+}
+
+/** Ask for a pass now: idle, it runs at once; mid-pass, it runs next. */
+function requestPass() {
+  if (stopped) return false;
+  wakeRequested = true;
+  if (!passInFlight && loopConfig) schedule(loopConfig, 0);
+  return true;
+}
+
+/** The apps backed off after a refusal, for the dashboard's loop line. */
+function currentRefusals(now = Date.now()) {
+  const out = [];
+  for (const [appId, b] of appBackoff) {
+    if (b.until > now) out.push({ appId, error: b.error, retryInMs: b.until - now });
+  }
+  return out;
+}
+
+/**
+ * What one finished piece of work means for the loop: counted, a refusal
+ * noted, or the dispatch paused (the weekly cap, a platform fault, the mode
+ * switched off). Returns { processed, refusals, budgets, paused, detail,
+ * retryInMs, stop }.
+ */
+function outcomeOf(r, { app, item }) {
+  const o = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
+  if (!r) return o;
+  if (r.ran) { o.processed = 1; clearFault(); }
+  if (r.budget) o.budgets.push({ app: app.slug, issueNumber: item.issue_number, kind: r.budget });
+  if (r.reason === 'budget') {
+    o.paused = 'budget';
+    o.stop = true;
+    budgetPausedUntil = Date.now() + IDLE_PASS_DELAY_MS;
+  } else if (r.reason === 'mode_off') {
+    o.paused = 'mode_off';
+    o.stop = true;
+  } else if (r.reason === 'refused') {
+    // A refusal moves on to the next APP: the others are not wedged just
+    // because this one is.
+    o.refusals.push({ app: r.app, appId: Number(app.id), error: r.detail, retryInMs: r.retryInMs });
+    o.stop = true;
+  } else if (r.reason === 'infra') {
+    const fault = noteFault(r.detail);
+    log.warn('homeroom-bot', 'Platform fault; the bot backs off', {
+      app: app.slug, issueNumber: item.issue_number, fault: fault.summary,
+      attempts: fault.attempts, retryInMs: fault.delayMs,
+    });
+    o.paused = 'infra';
+    o.detail = fault.summary;
+    o.retryInMs = fault.delayMs;
+    o.stop = true;
+  }
+  return o;
+}
+
+/** One issue through runTriage, a throw recorded rather than lost. */
+async function triageOne(pool, config, { bot, app, item, deps }) {
+  const settings = await readSettings(pool);
+  if (settings.mode === 'off') return { ran: false, reason: 'mode_off' };
+  try {
+    return await runTriage(pool, config, { bot, app, item, mode: settings.mode, settings, deps });
+  } catch (err) {
+    log.error('homeroom-bot', 'Triage threw', { app: app.slug, issueNumber: item.issue_number, err: err.message });
+    await recordThrownTriage(pool, { app, item, settings, err });
+    return { ran: false, reason: 'threw' };
+  }
+}
+
+/**
+ * A live row ended without consuming its claim (the cap, a refusal, the
+ * mode): hand it back so it is taken again when that clears.
+ */
+async function releaseClaim(pool, itemId) {
+  await pool.query('UPDATE homeroom_bot_queue SET started_at = NULL WHERE id = $1', [itemId])
+    .catch((err) => log.warn('homeroom-bot', 'Could not hand a queue row back', { itemId, err: err.message }));
+}
+
+/** Run one piece of work in its slot and free the slot when it ends. */
+function track(pool, appId, entry, work) {
+  inFlight.set(appId, entry);
+  return (async () => {
+    let o;
+    try {
+      o = await work();
+    } catch (err) {
+      log.error('homeroom-bot', 'Work slot failed', { appId, err: err.message });
+      o = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
+    } finally {
+      inFlight.delete(appId);
+    }
+    if (o.refusals.length) lastRefusals = [...lastRefusals.filter((x) => x.app !== o.refusals[0].app), ...o.refusals];
+    // The slot is free: fill it now, unless the loop is paused on the cap
+    // or a fault, which the next idle pass retries.
+    if (o.paused !== 'budget' && o.paused !== 'infra') requestPass();
+    return o;
+  })();
+}
+
+/**
+ * Fill the free slots, live first. Returns the promises of the work it
+ * started (each resolves to its outcome). `seen` keeps one drain from
+ * starting the same row twice.
+ */
+async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
+  if (stopped || settings.mode === 'off') return [];
+  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+  const started = [];
+  // A staging copy never acts (live.isLiveFor), so there every app is the
+  // background lane's.
+  const liveSlugs = isStagingLoop() ? []
+    : [...new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])];
+  const liveActive = [...inFlight.values()].filter((e) => e.lane === 'live');
+  const busyAppIds = [...inFlight.keys(), ...backedOff];
+
+  // Live: one issue per start.
+  const liveSlots = Math.max(0, (settings.liveAtOnce || DEFAULTS.liveAtOnce) - liveActive.length);
+  if (liveSlots && liveSlugs.length) {
+    const candidates = (await liveCandidates(pool, {
+      liveSlugs, excludeAppIds: busyAppIds, pausedApps: settings.pausedApps || [],
+    })).filter((row) => !seen.has(Number(row.id)));
+    const picks = pickLive(candidates, {
+      busyAppIds, active: liveActive, slots: liveSlots, perPerson: settings.perPerson || DEFAULTS.perPerson,
+    });
+    if (picks.length) {
+      const { rows: apps } = await pool.query(
+        'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = ANY($1::int[])',
+        [picks.map((p) => Number(p.app_id))],
+      );
+      const byId = new Map(apps.map((a) => [Number(a.id), a]));
+      for (const pick of picks) {
+        const app = byId.get(Number(pick.app_id));
+        if (!app) continue;
+        // Claimed before the work starts: the row is this Pod's.
+        const { rows: claimed } = await pool.query(
+          'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND started_at IS NULL RETURNING id',
+          [pick.id],
+        );
+        if (!claimed.length) continue;
+        seen.add(Number(pick.id));
+        const item = {
+          id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
+          reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
+        };
+        started.push(track(pool, Number(app.id), {
+          lane: 'live', person: pick.person, issueNumber: Number(pick.issue_number), itemId: Number(pick.id),
+          startedAt: new Date().toISOString(),
+        }, async () => {
+          const r = await triageOne(pool, config, { bot, app, item, deps });
+          const o = outcomeOf(r, { app, item });
+          if (['budget', 'refused', 'mode_off'].includes(r?.reason)) await releaseClaim(pool, item.id);
+          return o;
+        }));
+      }
+    }
+  }
+
+  // Background: a batch of one app's issues per start, as before.
+  const shadowActive = [...inFlight.values()].filter((e) => e.lane === 'background').length;
+  for (let i = shadowActive; i < (settings.concurrency || DEFAULTS.concurrency); i += 1) {
+    const batch = await nextBatch(pool, {
+      batchSize: settings.batchSize, excludeAppIds: [...inFlight.keys(), ...backedOff],
+      pausedApps: settings.pausedApps || [], liveSlugs,
+    });
+    if (!batch || !batch.app) break;
+    const items = (batch.items || []).filter((it) => !seen.has(Number(it.id)));
+    if (!items.length) break;
+    for (const it of items) seen.add(Number(it.id));
+    const app = batch.app;
+    started.push(track(pool, Number(app.id), {
+      lane: 'background', person: `a${Number(app.id)}`, issueNumber: Number(items[0].issue_number),
+      itemId: Number(items[0].id), startedAt: new Date().toISOString(),
+    }, async () => {
+      const total = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
+      for (const item of items) {
+        if (stopped) break;
+        const entry = inFlight.get(Number(app.id));
+        if (entry) { entry.issueNumber = Number(item.issue_number); entry.itemId = Number(item.id); }
+        const r = await triageOne(pool, config, { bot, app, item, deps });
+        const o = outcomeOf(r, { app, item });
+        total.processed += o.processed;
+        total.refusals.push(...o.refusals);
+        total.budgets.push(...o.budgets);
+        if (o.stop) {
+          total.paused = o.paused;
+          if (o.detail) total.detail = o.detail;
+          if (o.retryInMs) total.retryInMs = o.retryInMs;
+          break;
+        }
+      }
+      return total;
+    }));
+  }
+  return started;
+}
+
+/** A staging copy never acts (live.isLiveFor), so it has no live lane. */
+function isStagingLoop() {
+  return process.env.USERNODE_ENV === 'staging';
+}
+
+/**
+ * What the bot is working on now, for the dashboard and for a person asking
+ * in a DM: every claimed queue row, with its app and who it is for. Read
+ * from the database, so any Pod can answer, not only the one running it.
+ */
+async function workingNow(pool, settings, { userId = null } = {}) {
+  const liveSlugs = new Set(isStagingLoop() ? []
+    : [...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])]);
+  const { rows } = await pool.query(
+    `SELECT q.app_id, q.issue_number, q.started_at, q.reason, a.slug, a.name,
+            COALESCE(r.user_id, i.created_by) AS person_id, u.username AS person
+       FROM homeroom_bot_queue q
+       JOIN apps a ON a.id = q.app_id
+       LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
+       LEFT JOIN LATERAL (
+         SELECT created_by FROM issues
+          WHERE app_id = q.app_id AND github_issue_number = q.issue_number
+          ORDER BY id LIMIT 1
+       ) i ON TRUE
+       LEFT JOIN users u ON u.id = COALESCE(r.user_id, i.created_by)
+      WHERE q.started_at IS NOT NULL
+        AND ($1::int IS NULL OR COALESCE(r.user_id, i.created_by) = $1)
+      ORDER BY q.started_at
+      LIMIT 50`,
+    [userId],
+  );
+  return rows.map((row) => ({
+    appSlug: row.slug,
+    appName: row.name,
+    issueNumber: Number(row.issue_number),
+    since: row.started_at,
+    lane: liveSlugs.has(row.slug) ? 'live' : 'background',
+    person: row.person || null,
+  }));
+}
+
 // ── The work loop ───────────────────────────────────────────────────────
 
 /**
@@ -3941,7 +4310,9 @@ async function runOnce(pool, config, deps = {}) {
     if (settings.mode === 'off') return out;
 
     // Before anything is picked: a row an unfinished pass claimed is free again.
-    out.releasedClaims = await releaseStaleClaims(pool, settings);
+    out.releasedClaims = await releaseStaleClaims(pool, settings, {
+      keepIds: [...inFlight.values()].map((e) => e.itemId),
+    });
 
     const now = deps.now ? deps.now() : Date.now();
     // Take the wakes that arrived before this pass. Ones that arrive DURING
@@ -4016,64 +4387,46 @@ async function runOnce(pool, config, deps = {}) {
       else appBackoff.delete(appId);
     }
     out.backedOffApps = backedOff.length;
-    const taken = [...backedOff];
-    const batches = [];
-    for (let i = 0; i < settings.concurrency; i += 1) {
-      const batch = await nextBatch(pool, {
-        batchSize: settings.batchSize, excludeAppIds: taken, pausedApps: settings.pausedApps,
-      });
-      if (!batch || !batch.app) break;
-      taken.push(batch.app.id);
-      batches.push(batch);
+    // The weekly cap ran out under a piece of work: wait for the idle pass.
+    if (budgetPausedUntil > Date.now()) {
+      out.paused = 'budget';
+      out.inFlight = inFlight.size;
+      return out;
     }
-    if (!batches.length) return out;
-
-    const refusals = [];
-    const budgets = [];
-    const results = await Promise.all(batches.map(async (batch) => {
-      let processed = 0;
-      for (const item of batch.items) {
-        if (stopped) break;
-        // Re-read the mode between issues so "off" stops a batch mid-way.
-        const live = await readSettings(pool);
-        if (live.mode === 'off') { out.paused = 'mode_off'; break; }
-        let r;
-        try {
-          r = await runTriage(pool, config, {
-            bot, app: batch.app, item, mode: live.mode, settings: live, deps,
-          });
-        } catch (err) {
-          log.error('homeroom-bot', 'Triage threw', { app: batch.app.slug, issueNumber: item.issue_number, err: err.message });
-          await recordThrownTriage(pool, { app: batch.app, item, settings: live, err });
-          r = { ran: false, reason: 'threw' };
-        }
-        if (r.ran) { processed += 1; clearFault(); }
-        if (r.budget) budgets.push({ app: batch.app.slug, issueNumber: item.issue_number, kind: r.budget });
-        if (r.reason === 'budget') { out.paused = 'budget'; break; }
-        // A refusal moves on to the next APP rather than stopping the pass:
-        // the others are not wedged just because this one is.
-        if (r.reason === 'refused') {
-          refusals.push({ app: r.app, error: r.detail, retryInMs: r.retryInMs });
-          break;
-        }
-        if (r.reason === 'infra') {
-          const fault = noteFault(r.detail);
-          log.warn('homeroom-bot', 'Platform fault; the bot backs off', {
-            app: batch.app.slug, issueNumber: item.issue_number, fault: fault.summary,
-            attempts: fault.attempts, retryInMs: fault.delayMs,
-          });
-          out.paused = 'infra';
-          out.detail = fault.summary;
-          out.retryInMs = fault.delayMs;
-          break;
+    // #3624 stage 2: fill the free slots and, unless a test asks to drain,
+    // return without waiting for the work (see "How much at once").
+    const drain = deps.drain !== false;
+    const seen = new Set();
+    let started = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now });
+    out.dispatched = started.length;
+    if (!drain) {
+      out.inFlight = inFlight.size;
+      out.refusals = currentRefusals(now);
+      return out;
+    }
+    out.processed = 0;
+    out.refusals = [];
+    out.budgets = [];
+    while (started.length) {
+      const outcomes = await Promise.all(started);
+      for (const o of outcomes) {
+        out.processed += o.processed;
+        out.refusals.push(...o.refusals);
+        out.budgets.push(...o.budgets);
+        if (o.paused && !out.paused) {
+          out.paused = o.paused;
+          if (o.detail) out.detail = o.detail;
+          if (o.retryInMs) out.retryInMs = o.retryInMs;
         }
       }
-      return processed;
-    }));
-    out.processed = results.reduce((a, b) => a + b, 0);
-    out.refusals = refusals;
-    out.budgets = budgets;
-    lastRefusals = refusals;
+      if (out.paused || stopped) break;
+      const live = await readSettings(pool);
+      if (live.mode === 'off') { out.paused = 'mode_off'; break; }
+      started = await dispatch(pool, config, { settings: live, bot, backedOff, deps, seen, out, now });
+      out.dispatched += started.length;
+    }
+    lastRefusals = out.refusals;
+    out.inFlight = inFlight.size;
     return out;
   } catch (err) {
     log.error('homeroom-bot', 'Pass failed', { err: err.message });
@@ -4102,7 +4455,8 @@ async function tick(config) {
   let delay = IDLE_PASS_DELAY_MS;
   try {
     const { getPool } = require('../db/pool');
-    const out = await runOnce(getPool(config), config);
+    // The work runs in its own slots; the pass only fills them.
+    const out = await runOnce(getPool(config), config, { drain: false });
     if (out.processed > 0 && !out.paused && out.mode !== 'off') delay = BUSY_PASS_DELAY_MS;
     // A platform fault waits out its backoff rather than the 30-second idle.
     if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(IDLE_PASS_DELAY_MS, out.retryInMs);
@@ -4465,7 +4819,13 @@ async function adminPayload(pool, config, {
     modes: MODES,
     defaultModel: config.openrouterDefaultCodexModel || null,
     bot,
-    loop: lastPass ? { ...lastPass, refusals: lastRefusals } : lastPass,
+    // A refusal shows while its app is still backed off (#3624 stage 2:
+    // work ends between passes now, so the list is pruned here).
+    loop: lastPass ? {
+      ...lastPass,
+      refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId))
+        .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
+    } : lastPass,
     totals,
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
     runs: runRows.map((r) => ({
@@ -4480,7 +4840,26 @@ async function adminPayload(pool, config, {
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
     dmUsers: await dmUserList(pool, settings),
+    // #3624 stage 2: what runs now, and what the DM's answers cost.
+    workingNow: await workingNow(pool, settings),
+    dmChat: await dmChatSummary(pool),
   };
+}
+
+/** The bot's answers in DMs this week: how many, what they cost, how many failed. */
+async function dmChatSummary(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS turns, COUNT(*) FILTER (WHERE error IS NOT NULL)::int AS failed,
+              COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd, COUNT(DISTINCT user_id)::int AS people
+         FROM homeroom_bot_dm_turns WHERE created_at >= date_trunc('week', NOW())`,
+    );
+    const r = rows[0] || {};
+    return { turns: r.turns || 0, failed: r.failed || 0, people: r.people || 0, costUsd: Number(r.cost_usd) || 0 };
+  } catch (err) {
+    log.warn('homeroom-bot', 'DM chat summary failed', { err: err.message });
+    return { turns: 0, failed: 0, people: 0, costUsd: 0 };
+  }
 }
 
 /**
@@ -4699,6 +5078,30 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
 }
 
 /** An admin's "run now": the issue goes to the head of the queue. */
+/**
+ * #3624 stage 2: somebody answered the bot in its DM, or had it file a
+ * request there. The request goes to the front of the queue, as an admin's
+ * Run now does, so it is looked at next rather than behind every new
+ * request on the platform. A row already being worked on is left alone:
+ * that run ends first, and the wake re-queues the issue after it.
+ */
+async function enqueueFront(pool, { appId, issueNumber, userId = null, reason = 'dm_answer' }) {
+  const id = Number(appId);
+  const n = Number(issueNumber);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by)
+     VALUES ($1, $2, 0, $3, $4)
+     ON CONFLICT (app_id, issue_number) DO UPDATE
+       SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by, enqueued_at = NOW()
+     WHERE homeroom_bot_queue.started_at IS NULL
+     RETURNING id`,
+    [id, n, String(reason).slice(0, 40), userId || null],
+  );
+  noteIssueActivity({ appId: id, issueNumber: n, reason });
+  return rows[0] || null;
+}
+
 async function enqueueNow(pool, { slug, issueNumber, actorId }) {
   const n = Number(issueNumber);
   if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid issue number' };
@@ -4845,6 +5248,15 @@ module.exports = {
   KEY_BATCH_SIZE,
   KEY_PAUSED_APPS,
   KEY_LIVE_APPS,
+  KEY_LIVE_AT_ONCE,
+  KEY_PER_PERSON,
+  KEY_DM_CHAT,
+  pickLive,
+  personKeyOf,
+  enqueueFront,
+  liveCandidates,
+  workingNow,
+  dispatch,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -4855,6 +5267,7 @@ module.exports = {
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
     appBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
+    inFlight.clear(); budgetPausedUntil = 0;
     liveBuildsInFlight.clear();
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
@@ -4873,4 +5286,5 @@ module.exports = {
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
   _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },
   _setPassInFlightForTests(v) { passInFlight = !!v; },
+  _inFlightForTests() { return [...inFlight.entries()].map(([appId, e]) => ({ appId, ...e })); },
 };

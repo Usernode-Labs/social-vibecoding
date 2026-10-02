@@ -123,6 +123,8 @@ test('settings default to off and clamp their numbers', () => {
     dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
+    // #3624 stage 2: live work, 6 at once and 2 per person; a DM is read.
+    liveAtOnce: 6, perPerson: 2, dmChat: true,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -135,6 +137,20 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(t.batchSize, 1, 'clamped to the floor');
   assert.deepEqual(t.pausedApps, ['a-b', 'c']);
   assert.deepEqual(bot.parseSettings([{ key: bot.KEY_PAUSED_APPS, value: 'not json' }]).pausedApps, []);
+  const u = bot.parseSettings([
+    { key: bot.KEY_LIVE_AT_ONCE, value: '99' },
+    { key: bot.KEY_PER_PERSON, value: '0' },
+    { key: bot.KEY_DM_CHAT, value: 'off' },
+  ]);
+  assert.equal(u.liveAtOnce, 16, 'clamped to the ceiling');
+  assert.equal(u.perPerson, 1, 'clamped to the floor');
+  assert.equal(u.dmChat, false);
+  assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
+    [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
+  ]);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 17 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -935,7 +951,7 @@ test('runOnce: each pass frees rows an unfinished pass claimed, past one turn\'s
 
 test('the loop waits out a fault backoff instead of the 30-second idle', () => {
   assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
-  assert.match(SRC, /if \(r\.ran\) \{ processed \+= 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
+  assert.match(SRC, /if \(r\.ran\) \{ o\.processed = 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
 });
 
 test('releaseBotVolumes frees only the bot\'s own volumes whose worker is gone', async () => {

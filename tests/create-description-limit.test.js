@@ -7,6 +7,8 @@
 //      dialog's field stops taking letters at the same number. 90 is two lines
 //      of the project's hub hero on a 360px phone with room to spare (the
 //      measurement is written out beside DESCRIPTION_MAX).
+//      (Since the create dialog's rework the line is required there, on a
+//      "Short description" step of its own; the API keeps it optional.)
 //   2. THE FIELD COUNTS DOWN, LATE. "12 characters left" on the label's line,
 //      for the last 20 only, amber for the last 5. Rendered only once it says
 //      something, so the prerendered dialog is unchanged.
@@ -49,7 +51,7 @@ test('#3572: the field counts down its last 20 characters, in words', () => {
   assert.equal(left(120), '0 characters left', 'never a negative count (a paste is cut by maxLength anyway)');
 
   const row = SRC.slice(SRC.indexOf("' create-describe-row"), SRC.indexOf('</div>', SRC.indexOf('id="app-description"')));
-  assert.match(row, /' create-describe-row relative /, 'the row positions the count on the label\'s line');
+  assert.match(row, /' create-describe-row relative'/, 'the row positions the count on the label\'s line');
   assert.match(row, /\{describeLeftText \? \(\s*<span\s+id="app-description-left"\s+aria-live="polite"/, 'rendered only once it says something');
   assert.match(row, /aria-describedby=\{describeLeftText \? 'app-description-left' : undefined\}/, 'the field points at it while it is there');
   assert.match(row, /describe\.length >= DESCRIPTION_MAX - 5\s*\? 'text-amber-800 dark:text-amber-300'\s*: 'text-zinc-500 dark:text-zinc-400'/,

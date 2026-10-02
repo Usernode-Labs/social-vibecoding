@@ -36,6 +36,7 @@ const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const appActivity = require('../services/app-activity');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -495,8 +496,7 @@ async function sweepStuckCreatingApps(pool) {
 // native app returning from the background, say — without leaving the door
 // open. It is the DAILY cap that actually holds the line, because a ceiling
 // on one request is defeated by sending many.
-const ACTIVITY_MAX_PER_POST = 3600;
-const ACTIVITY_MAX_PER_DAY = 86400;
+const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
 
 /**
  * The seconds to credit for one heartbeat, or `null` to refuse the body.
@@ -508,12 +508,7 @@ const ACTIVITY_MAX_PER_DAY = 86400;
  * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
  * this body comes from our own client, which sends a number.
  */
-function activitySeconds(raw) {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  const rounded = Math.round(raw);
-  if (rounded <= 0) return null;
-  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
-}
+const { activitySeconds } = appActivity;
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -932,15 +927,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // #3624: the create dialog's suggested one-line "What is it?", from the
-  // longer description somebody the Homeroom bot builds for has written.
-  // Only for them: nobody else is shown the longer field. A helper-model
-  // call billed like a session title, and the description's own first
-  // sentence when the model is unavailable.
+  // The create dialog's suggested one-line "What is it?", from what the
+  // person said the project should do (#3624, asked of everyone making a
+  // project since). Any signed-in person who can reach the create dialog;
+  // the platform-access gate in front of /api/ decides who that is. A
+  // helper-model call billed like a session title, and the description's own
+  // first sentence when the model is unavailable.
   router.post('/api/apps/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const homeroomBotDm = require('../services/homeroom-bot-dm');
-      if (!(await homeroomBotDm.isEnabledFor(pool, req.user))) return res.status(404).json({ error: 'Not found' });
       const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
       const name = typeof req.body?.name === 'string' ? req.body.name.slice(0, 120) : '';
       const out = await homeroomBotDm.suggestShortDescription({ name, brief, max: createOptions.DESCRIPTION_MAX });
@@ -1194,10 +1190,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      // #3624: a longer description from somebody the Homeroom bot builds
-      // for: it files it as the project's first version once the project
-      // runs, and says so in their DM, which the dialog then offers to open.
-      // Never a reason the create fails.
+      // What the project should do, from the create dialog: filed as its
+      // first request, under its creator's name, once the project runs. For
+      // somebody the Homeroom bot builds for (#3624), the bot builds it and
+      // says so in their DM, which the dialog then offers to open; for
+      // anybody else it is left to the group. Optional here (a connector
+      // or an older client sends none), and never a reason the create fails.
       let homeroomBot = null;
       if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
         try {
@@ -3473,11 +3471,37 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
-    const seconds = activitySeconds(req.body?.seconds);
-
-    if (seconds === null) {
-      return res.status(400).json({ error: 'Invalid seconds value' });
+    const modern = req.body && Object.prototype.hasOwnProperty.call(req.body, 'batchId');
+    const legacySeconds = modern ? null : activitySeconds(req.body?.seconds);
+    const activityRequest = modern
+      ? appActivity.parseActivityRequest(req.body)
+      : (legacySeconds === null ? null : { legacy: true, seconds: legacySeconds });
+    if (!activityRequest) {
+      return res.status(400).json({
+        error: modern ? 'Invalid activity payload' : 'Invalid seconds value',
+      });
     }
+    if (!activityRequest.legacy) {
+      try {
+        const stored = await appActivity.recordActivityBatch(pool, {
+          slug: req.params.slug,
+          user: req.user,
+          request: activityRequest,
+        });
+        if (!stored.duplicate) {
+          await challengeScorer.scoreOnAppTime(pool, config, stored.scoring);
+        }
+        return res.json({ ok: true, duplicate: stored.duplicate });
+      } catch (err) {
+        if (err?.code === 'not_found') return res.status(404).json({ error: 'App not found' });
+        if (err?.code === 'batch_id_reused') {
+          return res.status(409).json({ error: 'Batch ID was reused' });
+        }
+        log.error('apps', 'Failed to track activity batch', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+    const seconds = activityRequest.seconds;
 
     try {
       const appRow = await appAccess.getAppForUser(

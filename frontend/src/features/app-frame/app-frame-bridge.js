@@ -27,6 +27,7 @@ import {
   appFrameRefs, appFrameStore, COVER_DEFAULTS, keepAliveLimit, liveAppSlugs,
 } from './app-frame-store.js';
 import { allowAttribute, BASE_ALLOW, isSafeAppFrameSrc, sameFrameSrc } from './app-frame-policy.js';
+import { appActivity } from './app-activity.js';
 
 /** Frames created. A tab switch must NEVER move this. */
 let mounts = 0;
@@ -161,6 +162,10 @@ export const appFrameBridge = {
       if (appFrameStore.get().slug !== slug || !appFrameRefs.iframe) return false;
     }
     resumedSlug = slug;
+    appActivity.adoptFrame({ slug, frame: appFrameRefs.iframe, src: srcOf(appFrameRefs.iframe) });
+    // Keep the visibility signal last. Existing app documents observe resume
+    // on this edge, and the frame identity contract pins it as the final
+    // lifecycle message; the readiness probe is independent and scoped.
     announce(appFrameRefs.iframe, true);
     return true;
   },
@@ -222,6 +227,7 @@ export const appFrameBridge = {
    */
   unmount() {
     resumedSlug = '';
+    appActivity.detachFrame(appFrameRefs.iframe);
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
       allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '',
@@ -244,6 +250,7 @@ export const appFrameBridge = {
     const kept = [keptRecord(current), ...current.kept.filter((k) => k.slug !== current.slug)]
       .slice(0, keepAliveLimit());
     resumedSlug = '';
+    appActivity.detachFrame(el);
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
       allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '', kept,
@@ -338,6 +345,7 @@ export const appFrameBridge = {
     appFrameStore.set({ sandboxReady: true, allow: allowAttribute(granted), navigatedAt: Date.now() });
     resumedSlug = '';
     navigations += 1;
+    appActivity.frameNavigated({ slug: appFrameStore.get().slug, frame: el, src });
     el.src = src;
     return true;
   },

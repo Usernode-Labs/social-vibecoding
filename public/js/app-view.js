@@ -1932,6 +1932,7 @@ const AppView = {
       return;
     }
     view.setAttribute('data-app-surface', next);
+    AppView._appActivity().visibilityChanged();
     AppView.scheduleSafeAreaBroadcast();
   },
 
@@ -2126,6 +2127,22 @@ const AppView = {
       && window.UsernodeReact.appFrame) || AppView._appFrameDom;
   },
 
+  // The engaged-use collector ships in the React bundle beside the frame it
+  // observes. VM/render harnesses without that bundle get this inert twin.
+  _appActivity() {
+    return (typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appActivity) || AppView._appActivityNoop;
+  },
+  _appActivityNoop: {
+    start() { return false; },
+    stop() {},
+    flush() { return Promise.resolve(false); },
+    visibilityChanged() {},
+    handleFrameMessage() { return false; },
+    discardSlug() {},
+    clearAccount() {},
+  },
+
   // The DOM half of the pair: the pre-chunk-H code path, kept verbatim. Live
   // only where the bundle is not — the node-side render tests load this file as
   // a classic script into a stubbed document — and in that world it is the SOLE
@@ -2314,6 +2331,7 @@ const AppView = {
   evictAllAppFrames() {
     AppView._issueStateSource = null;
     AppView._issueStateBySlug = {};
+    AppView._appActivity().clearAccount();
     AppView._appFrame().evictAll();
   },
 
@@ -20962,67 +20980,60 @@ const AppView = {
     return run;
   },
 
-  // #3570: the floor "Try an app" counts from — TRY_APPS_MIN_SECONDS in
-  // src/services/topochain/challenge-rules.js, held equal to this by
-  // tests/challenge-on-the-spot.test.js.
-  _TRY_APP_FLUSH_SECONDS: 10,
-
-  // Activity tracking: counts seconds while the user is on the App tab
+  // Activity tracking is owned by app-activity.js. A visible App tab is only
+  // one gate: the current frame must also answer the generation-scoped bridge
+  // readiness probe and have trusted user input within its 60-second lease.
   startActivityTracking(slug) {
     AppView.activeSeconds = 0;
-    AppView.openedSeconds = 0;
     AppView.iframeFocused = false;
-
-    AppView.activityInterval = setInterval(() => {
-      if (App.currentTab === 'app' && document.visibilityState === 'visible') {
-        AppView.activeSeconds++;
-        AppView.openedSeconds++;
-
-        // Flush every 30 seconds, and once at the "Try an app" floor
-        // (#3570). The server scores the heartbeat that takes somebody's
-        // time in an app across that floor, so sending it there ticks the
-        // challenge while they are still in the app. Otherwise the crossing
-        // waited for the 30-second flush, or for the one sent as they leave,
-        // which races Home's own load and can draw the step as not done.
-        if (AppView.activeSeconds >= 30 || AppView.openedSeconds === AppView._TRY_APP_FLUSH_SECONDS) {
-          AppView.flushActivity(slug);
-        }
-      }
-    }, 1000);
-
-    // Flush on tab switch or page hide
+    AppView._appActivity().start({
+      slug,
+      // A session snapshot is display-only. It may name the previous account,
+      // so it cannot own or upload analytics until /api/auth/me verifies it.
+      userId: (typeof App !== 'undefined' && App.user && !App._sessionFromSnapshot)
+        ? App.user.id : null,
+      isVisible: () => {
+        const frame = AppView._appFrame();
+        const focused = typeof document.hasFocus !== 'function' || document.hasFocus();
+        return App.currentTab === 'app'
+          && App.currentApp === slug
+          && AppView.appData?.slug === slug
+          && document.visibilityState === 'visible'
+          && focused
+          && !!frame.isActive?.()
+          && frame.slug?.() === slug;
+      },
+    });
     document.addEventListener('visibilitychange', AppView._onVisibilityChange);
+    window.addEventListener('blur', AppView._onWindowFocusChange);
+    window.addEventListener('focus', AppView._onWindowFocusChange);
   },
 
-  stopActivityTracking() {
+  stopActivityTracking({ discard = false } = {}) {
     if (AppView.activityInterval) {
       clearInterval(AppView.activityInterval);
       AppView.activityInterval = null;
     }
-    if (AppView.appData && AppView.activeSeconds > 0) {
-      AppView.flushActivity(AppView.appData.slug);
-    }
+    AppView._appActivity().stop({ discard });
     document.removeEventListener('visibilitychange', AppView._onVisibilityChange);
+    window.removeEventListener?.('blur', AppView._onWindowFocusChange);
+    window.removeEventListener?.('focus', AppView._onWindowFocusChange);
   },
 
   _onVisibilityChange() {
-    if (document.visibilityState === 'hidden' && AppView.appData && AppView.activeSeconds > 0) {
-      AppView.flushActivity(AppView.appData.slug);
-    }
+    AppView._appActivity().visibilityChanged();
   },
 
-  async flushActivity(slug) {
-    const seconds = AppView.activeSeconds;
-    if (seconds <= 0) return;
-    AppView.activeSeconds = 0;
+  _onWindowFocusChange() {
+    AppView._appActivity().visibilityChanged();
+  },
 
-    try {
-      await fetch(`/api/apps/${slug}/activity`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seconds }),
-      });
-    } catch {}
+  flushActivity() {
+    return AppView._appActivity().flush();
+  },
+
+  handleEngagementBridgeMessage(event) {
+    return AppView._appActivity().handleFrameMessage(event);
   },
 
   // App screens now use clean `/app/<slug>/...` paths. The self-app's other
@@ -23424,6 +23435,18 @@ const AppView = {
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
 if (typeof window !== 'undefined') {
+  // Snapshot identities are display-only and never own analytics. Once the
+  // authoritative /api/auth/me answer arrives, arm the already-open App tab
+  // without requiring a navigation or frame reload.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('sv:session', (event) => {
+      if (typeof App === 'undefined' || App._sessionFromSnapshot) return;
+      if (!event.detail?.user?.id || App.currentTab !== 'app') return;
+      const slug = AppView.appData?.slug;
+      if (slug && App.currentApp === slug) AppView.startActivityTracking(slug);
+    });
+  }
+
   // Both the report receipt and live block events announce this before
   // navigating Home. Drop the pending activity first: close() normally
   // flushes it, but the blocked app no longer accepts that request.
@@ -23439,9 +23462,11 @@ if (typeof window !== 'undefined') {
     if (AppView.appData?.slug !== slug) return;
     AppView._issueStateSource = null;
     AppView.activeSeconds = 0;
-    AppView.stopActivityTracking();
+    AppView._appActivity().discardSlug(slug);
+    AppView.stopActivityTracking({ discard: true });
   });
   window.addEventListener('message', (e) => {
+    try { AppView.handleEngagementBridgeMessage(e); } catch {}
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #2219: the gated browser capabilities (geolocation, microphone,
     // camera, display-capture, usb, serial, hid, bluetooth, midi).

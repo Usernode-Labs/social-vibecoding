@@ -260,7 +260,11 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.ok(cols.indexOf('question_answers') > cols.indexOf('build_session_id'), 'appended after every older column');
   });
 
+  // #3624 stage 2: with the model on (the default), a message that does not
+  // quote the bot is read by it (homeroom-bot-mayor-postgres.test.js). These
+  // two are the stage-1 path, which the switch below still gives.
   await t.test('newer news on a request closes its open question; a reply with nothing open gets the help', async () => {
+    await setting('homeroom_bot_dm_chat', 'off');
     const asked = await dm.relayIssuePost({
       pool, app, issueNumber: 7, kind: 'question', postId: 3, bot, dm: { question: 'Show dates?', answers: ['Yes'] },
     });
@@ -275,7 +279,34 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(text.content, dm.HELP_TEXT);
   });
 
+  await t.test('with the model on, free text goes to it; a reply quoting a question still goes to the request', async () => {
+    await setting('homeroom_bot_dm_chat', 'on');
+    const asked = await dm.relayIssuePost({
+      pool, app, issueNumber: 7, kind: 'question', postId: 31, bot, dm: { question: 'Font?', answers: ['Serif'] },
+    });
+    const turns = [];
+    const mayor = {
+      async decideOffer() { return null; },
+      async runDmTurn(_pool, _config, args) { turns.push(args.message.content); return { model: true }; },
+    };
+    const free = await conversations.sendMessage(pool, ada, asked.conversationId, { content: 'what are you working on?' });
+    threadPosts.length = 0;
+    assert.deepEqual(await dm.noteUserMessage(pool, {}, { user: ada, conversationId: asked.conversationId, message: free.message, deps: { mayor } }), { model: true });
+    assert.deepEqual(turns, ['what are you working on?']);
+    assert.equal(threadPosts.length, 0, 'a question to the bot is not posted on a request as an answer');
+    const quoting = await conversations.sendMessage(pool, ada, asked.conversationId, { content: 'Serif', reply_to_id: asked.messageId });
+    await dm.noteUserMessage(pool, {}, { user: ada, conversationId: asked.conversationId, message: quoting.message, deps: { mayor } });
+    assert.deepEqual(turns, ['what are you working on?'], 'a tapped answer never waits on the model');
+    assert.equal(threadPosts.length, 1);
+    const { rows: [queued] } = await pool.query(
+      'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7', [app.id],
+    );
+    assert.deepEqual(queued, { priority: 0, reason: 'dm_answer' }, 'an answer puts its request at the front of the queue');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+  });
+
   await t.test('an answer the request cannot take (not a member) is said, and the question stays open', async () => {
+    await setting('homeroom_bot_dm_chat', 'off');
     const asked = await dm.relayIssuePost({
       pool, app, issueNumber: 7, kind: 'question', postId: 5, bot, dm: { question: 'Colour?', answers: ['Green'] },
     });
@@ -290,6 +321,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     }
     const still = await conversations.getMessage(pool, ada, asked.conversationId, asked.messageId);
     assert.equal(still.metadata.homeroomBot.status, 'open');
+    await setting('homeroom_bot_dm_chat', 'on');
   });
 
   await t.test('the weekly allowance sums each requester\'s runs this week', async () => {
@@ -352,6 +384,65 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual((await homeroomBot.readSettings(pool)).firstVersionApps, [], 'off the list, back to shadow');
   });
 
+  await t.test('anybody else\'s description is filed as the first request too, and the bot is left out of it', async () => {
+    // Sam is not on the DM list: the same record and filing, and nothing of
+    // the bot's (no DM, no requester row, not live, no wake, no failure DM).
+    await setting('homeroom_bot_dm_users', JSON.stringify([ada.username]));
+    const { rows: [project] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ('Book club', 'book-club', 'creating', $1) RETURNING *`,
+      [sam.id],
+    );
+    const before = events.length;
+    const started = await dm.startFirstVersion(pool, {}, {
+      app: project, user: sam, brief: 'Pick a book each month, read it together, and talk about it here.',
+    });
+    assert.equal(started, null, 'no DM to open');
+    assert.equal(events.length, before, 'nothing pushed to anybody');
+    const { rows: [recorded] } = await pool.query(
+      'SELECT user_id, status, bot_builds FROM homeroom_bot_first_versions WHERE app_id = $1', [project.id],
+    );
+    assert.deepEqual(recorded, { user_id: sam.id, status: 'waiting', bot_builds: false });
+    assert.ok(!(await homeroomBot.readSettings(pool)).firstVersionApps.includes('book-club'), 'not on the bot\'s live list');
+
+    const woken = [];
+    const realNote = homeroomBot.noteIssueActivity;
+    homeroomBot.noteIssueActivity = (args) => { woken.push(args); };
+    const created = [];
+    const github = {
+      isEnabled: () => true,
+      safeMention: (x) => x,
+      async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
+      noteIssueCreated() {},
+    };
+    try {
+      await pool.query(
+        `UPDATE apps SET status = 'running', repo_url = 'https://github.com/usernode-bot/book-club' WHERE id = $1`,
+        [project.id],
+      );
+      issueUpdates.length = 0;
+      const filed = await dm.sweepFirstVersions(pool, {}, { github });
+      assert.equal(filed, 1, 'the sweep files it, the bot\'s or not');
+    } finally {
+      homeroomBot.noteIssueActivity = realNote;
+    }
+    assert.equal(created.length, 1);
+    assert.equal(created[0].title, 'First version of Book club');
+    assert.match(created[0].body, /^\*\*Source:\*\* Homeroom user \(sam_\d+\)/);
+    assert.match(created[0].body, /read it together/);
+    assert.match(created[0].body, /sam_\d+ described this when they created the project\.$/);
+    assert.doesNotMatch(created[0].body, /Homeroom bot/);
+    const { rows: [issue] } = await pool.query('SELECT created_by FROM issues WHERE app_id = $1', [project.id]);
+    assert.equal(issue.created_by, sam.id, 'under its creator');
+    assert.equal(issueUpdates.length, 1, 'the board hears of it');
+    assert.equal(await dm.requesterOf(pool, project.id, 1), null, 'no requester row: the bot\'s news has nowhere to go');
+    assert.deepEqual(woken, [], 'the bot is not woken for it');
+    const { rows: [after] } = await pool.query(
+      'SELECT status, issue_number FROM homeroom_bot_first_versions WHERE app_id = $1', [project.id],
+    );
+    assert.deepEqual(after, { status: 'filed', issue_number: 1 });
+    await setting('homeroom_bot_dm_users', '[]');
+  });
+
   await t.test('a staging preview has a bot DM with a question open, at its own address, once', async () => {
     const staging = require('../src/services/staging-messages');
     const env = process.env.USERNODE_ENV;
@@ -364,10 +455,16 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.notEqual(first, staging.BOT_DM_LEGACY_ID);
       const page = await conversations.listMessages(pool, viewer, first, {});
       const messages = page.messages || page;
-      assert.equal(messages.length, 1, 'one question, not one per visit');
-      assert.equal(messages[0].metadata.homeroomBot.status, 'open');
-      assert.deepEqual(messages[0].metadata.homeroomBot.answers, ['Newest first', 'Oldest first', 'Let me pick each time']);
-      assert.match(messages[0].content, /Staging demo/);
+      // #3624 stage 2: a question, and a request it offers to file.
+      assert.equal(messages.length, 2, 'one question and one offer, not one per visit');
+      const question = messages.find((m) => m.metadata.homeroomBot.kind === 'question');
+      assert.equal(question.metadata.homeroomBot.status, 'open');
+      assert.deepEqual(question.metadata.homeroomBot.answers, ['Newest first', 'Oldest first', 'Let me pick each time']);
+      assert.match(question.content, /Staging demo/);
+      const offer = messages.find((m) => m.metadata.homeroomBot.kind === 'confirm');
+      assert.deepEqual(offer.metadata.homeroomBot.answers, ['File it', 'Not now']);
+      assert.notEqual(offer.metadata.homeroomBot.mirrors, true, 'an offer posts nothing, so it says nothing is public');
+      assert.match(offer.content, /Staging demo, add a dark mode/);
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'never a question the bot waits on: nothing is posted anywhere');
     } finally {

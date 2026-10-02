@@ -199,7 +199,7 @@ const INFO: Record<string, string> = {
   'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them.',
   counters: 'At-a-glance totals. WAU | MAU are two independent counts: distinct users active in the last 7 vs 30 days, not a ratio. "Promoted (open)" is sessions live in promoted/merging right now; the all-time counts never leave their bucket.',
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform (this is what the caps track: the platform\'s own daily cap, and each account\'s weekly one); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
-  funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
+  funnels: 'Ordered paths use the same user or dev session at every step and a 30-day observation window. Mature cohorts show step conversion; maturing cohorts show provisional counts only. App-opening receipts depend on client reporting, so a missing receipt is coverage unknown rather than measured abandonment. Historical coarse/backfilled proposal times and bypassed stages are reported outside the denominator.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
   'general-users': 'A general user has a positive project-use heartbeat or took a deliberate human action: sent a project, Messages, change, Mayor, or Global Chat message; cast a proposal or request vote; gave kudos; or favorited a project. System and assistant messages do not count. Days use UTC. Older project heartbeats can include an idle open tab, actions deleted before durable logging are unavailable, and favorite actions before explicit logging are unavailable. <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
   retention: 'Each row is a signup-week cohort; each cell is the share of that cohort with recorded participation in a given UTC week. The General users definition describes what counts and its historical limits. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
@@ -391,14 +391,18 @@ function Counters({ o }: { o: any }) {
 }
 
 // ── Funnel bars ───────────────────────────────────────────────
-// stages: [{ label, value, admin }]. Bar width is relative to the first
-// stage's total; the caption shows the absolute count and the step-over-step
-// conversion. When admins are included (#341) each stage bar splits into a
-// non-admin (indigo) segment plus an amber admin segment.
-function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boolean }) {
+// stages: [{ label, value, admin, conversion? }]. Bar width is relative to
+// the first stage. A stage may suppress its adjacent percentage when the
+// preceding count is coverage rather than a trustworthy denominator.
+function Funnel({
+  stages, includeAdmins, emptyText,
+}: { stages: any[]; includeAdmins: boolean; emptyText?: string }) {
   const stageTotal = (s: any) => (Number(s.value) || 0) + (Number(s.admin) || 0);
   const top = stages[0] ? stageTotal(stages[0]) : 0;
   const anyAdmin = includeAdmins && stages.some((s) => (Number(s.admin) || 0) > 0);
+  if (!top) {
+    return <p className={SUB}>{emptyText || 'No mature measured cohort in this entry window.'}</p>;
+  }
   return (
     <>
       <AdminLegend includeAdmins={includeAdmins} nonAdminColor="#4f46e5" />
@@ -411,7 +415,9 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
         const naW = top > 0 ? (value / top) * 100 : 0;
         const adW = top > 0 ? (admin / top) * 100 : 0;
         const floor = total > 0 && naW + adW < 2 ? 2 - (naW + adW) : 0;
-        const conv = i === 0 ? '100%' : `${pct(total, stageTotal(stages[i - 1]))}% of prev`;
+        const conv = i === 0 ? 'mature cohort'
+          : s.conversion === false ? 'observed receipts'
+            : `${pct(total, stageTotal(stages[i - 1]))}% of prev`;
         const count = anyAdmin && admin > 0 ? `${fmtInt(total)} · ${fmtInt(admin)} admin` : fmtInt(total);
         return (
           <div key={s.label}>
@@ -427,6 +433,82 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
         );
       })}
     </>
+  );
+}
+
+function totalWithAdmins(row: any, key: string, includeAdmins: boolean): number {
+  return (Number(row?.[key]) || 0) + (includeAdmins ? (Number(row?.[`${key}_admin`]) || 0) : 0);
+}
+
+function CoverageNote({
+  coverage, includeAdmins, kind,
+}: { coverage: any; includeAdmins: boolean; kind: 'dapp' | 'proposal' }) {
+  if (!coverage) return null;
+  const mature = totalWithAdmins(coverage, 'eligible', includeAdmins);
+  const maturing = totalWithAdmins(coverage, 'maturing', includeAdmins);
+  const unknown = totalWithAdmins(coverage, 'unknown_coverage', includeAdmins);
+  const excluded = totalWithAdmins(coverage, 'excluded', includeAdmins);
+  if (coverage.status === 'awaiting_events') {
+    return (
+      <p className={`${SUB} mb-3`}>
+        No trustworthy opening receipts have been recorded yet. Conversion is unknown; missing history is not abandonment.
+      </p>
+    );
+  }
+  const boundary = String(coverage.startsAt || '').slice(0, 10);
+  const subject = kind === 'dapp' ? 'users' : 'sessions';
+  return (
+    <p className={`${SUB} mb-3`}>
+      {kind === 'dapp'
+        ? `Client-reported opening receipts observed since ${boundary}; receipt and occurrence coverage varies by client. `
+        : `Precise proposal-opening records observed since ${boundary}. `}
+      {`${fmtInt(mature)} mature ${subject} · ${fmtInt(maturing)} still maturing`}
+      {unknown ? ` · ${fmtInt(unknown)} before observed coverage` : ''}
+      {excluded ? ` · ${fmtInt(excluded)} ambiguous or bypassed` : ''}
+      {kind === 'dapp' ? '. A missing opening receipt is coverage unknown, not measured abandonment.' : '.'}
+    </p>
+  );
+}
+
+function ProvisionalProgress({
+  stages, includeAdmins,
+}: { stages: any[]; includeAdmins: boolean }) {
+  const first = stages[0]
+    ? (Number(stages[0].value) || 0) + (includeAdmins ? (Number(stages[0].admin) || 0) : 0)
+    : 0;
+  if (!first) return null;
+  return (
+    <div className="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+      <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Maturing progress</div>
+      <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Partial 30-day windows. Counts are provisional; no abandonment rate is inferred.</div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+        {stages.map((s) => {
+          const n = (Number(s.value) || 0) + (includeAdmins ? (Number(s.admin) || 0) : 0);
+          return <span key={s.label}>{`${s.label}: ${fmtInt(n)}`}</span>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MilestoneReach({ stages, includeAdmins }: { stages: any[]; includeAdmins: boolean }) {
+  const totals = stages.map((s) => (Number(s.value) || 0)
+    + (includeAdmins ? (Number(s.admin) || 0) : 0));
+  const max = Math.max(1, ...totals);
+  return (
+    <div className="space-y-2">
+      {stages.map((s, i) => (
+        <div key={s.label}>
+          <div className="flex items-center justify-between text-xs mb-1">
+            <span className="text-zinc-600 dark:text-zinc-300">{s.label}</span>
+            <span className="text-zinc-500 dark:text-zinc-400">{fmtInt(totals[i])}</span>
+          </div>
+          <div className="h-2 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+            <div className="h-full bg-violet-600" style={{ width: `${((totals[i] / max) * 100).toFixed(2)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1539,7 +1621,7 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h3 className={H3}>Funnels<InfoIcon info="funnels" /></h3>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Cohort:</span>
+                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Entry window:</span>
                 <ToggleGroup cls="cohort-btn" attr="data-cohort" value={cohort} onChange={setCohort} options={[
                   ['all', 'All time'], ['90d', 'Last 90d'], ['30d', 'Last 30d'], ['14d', 'Last 14d'],
                   ['7d', 'Last 7d'], ['3d', 'Last 3d'], ['1d', 'Last 1d'],
@@ -1548,34 +1630,71 @@ function AnalyticsSection() {
             </div>
             <div className="grid md:grid-cols-2 gap-6">
               <div>
-                <h4 className={`${H4} mb-3`}>Users using dapps</h4>
+                <h4 className={`${H4} mb-1`}>Ordered user path</h4>
+                <p className={`${SUB} mb-2`}>Signup → reported app open → later-UTC-day return → later social action → later project creation, all for the same user within 30 days.</p>
+                {funnels ? <CoverageNote coverage={funnels.dappUsage.coverage} includeAdmins={includeAdmins} kind="dapp" /> : null}
                 <div id="funnel-dapp" className="space-y-2">
                   {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
                     { label: 'Signed up', value: funnels.dappUsage.signed_up, admin: funnels.dappUsage.signed_up_admin },
-                    { label: 'Opened a dapp', value: funnels.dappUsage.opened_dapp, admin: funnels.dappUsage.opened_dapp_admin },
-                    { label: 'Returned (2+ days)', value: funnels.dappUsage.returned, admin: funnels.dappUsage.returned_admin },
-                    { label: 'Engaged socially', value: funnels.dappUsage.engaged, admin: funnels.dappUsage.engaged_admin },
-                    { label: 'Became a creator', value: funnels.dappUsage.creators, admin: funnels.dappUsage.creators_admin },
+                    { label: 'Reported an app open', value: funnels.dappUsage.opened_dapp, admin: funnels.dappUsage.opened_dapp_admin, conversion: false },
+                    { label: 'Returned on a later UTC day', value: funnels.dappUsage.returned, admin: funnels.dappUsage.returned_admin },
+                    { label: 'Took a later social action', value: funnels.dappUsage.engaged, admin: funnels.dappUsage.engaged_admin },
+                    { label: 'Later created a project', value: funnels.dappUsage.creators, admin: funnels.dappUsage.creators_admin },
+                  ]} emptyText="No mature signup entries have observed opening coverage in this cohort." /> : null}
+                </div>
+                {funnels ? <ProvisionalProgress includeAdmins={includeAdmins} stages={[
+                  { label: 'Signed up', value: funnels.dappUsage.provisional?.signed_up_provisional, admin: funnels.dappUsage.provisional?.signed_up_provisional_admin },
+                  { label: 'Reported open', value: funnels.dappUsage.provisional?.opened_dapp_provisional, admin: funnels.dappUsage.provisional?.opened_dapp_provisional_admin },
+                  { label: 'Returned', value: funnels.dappUsage.provisional?.returned_provisional, admin: funnels.dappUsage.provisional?.returned_provisional_admin },
+                  { label: 'Later social action', value: funnels.dappUsage.provisional?.engaged_provisional, admin: funnels.dappUsage.provisional?.engaged_provisional_admin },
+                  { label: 'Later project', value: funnels.dappUsage.provisional?.creators_provisional, admin: funnels.dappUsage.provisional?.creators_provisional_admin },
+                ]} /> : null}
+
+                <h4 className={`${H4} mt-5 mb-1`}>Independent user milestone reach</h4>
+                <p className={`${SUB} mb-3`}>Each count stands alone within the mature signup cohort. These bars are reach, not step conversion.</p>
+                <div id="funnel-dapp-reach">
+                  {funnels ? <MilestoneReach includeAdmins={includeAdmins} stages={[
+                    { label: 'Signed up', value: funnels.dappReach?.signed_up, admin: funnels.dappReach?.signed_up_admin },
+                    { label: 'Reported an app open', value: funnels.dappReach?.opened_dapp, admin: funnels.dappReach?.opened_dapp_admin },
+                    { label: 'Returned on a later UTC day', value: funnels.dappReach?.returned, admin: funnels.dappReach?.returned_admin },
+                    { label: 'Any recorded social action', value: funnels.dappReach?.engaged, admin: funnels.dappReach?.engaged_admin },
+                    { label: 'Any project creation', value: funnels.dappReach?.creators, admin: funnels.dappReach?.creators_admin },
                   ]} /> : null}
                 </div>
               </div>
               <div>
-                <h4 className={`${H4} mb-3`}>Promoting PRs (dev sessions)</h4>
+                <h4 className={`${H4} mb-1`}>Ordered proposal path</h4>
+                <p className={`${SUB} mb-2`}>Session start → precise PR opening → later promotion → later merge, all on the same dev session within 30 days.</p>
+                {funnels ? <CoverageNote coverage={funnels.prSessions.coverage} includeAdmins={includeAdmins} kind="proposal" /> : null}
                 <div id="funnel-pr" className="space-y-2">
                   {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
                     { label: 'Dev session started', value: funnels.prSessions.started, admin: funnels.prSessions.started_admin },
-                    { label: 'Produced a PR', value: funnels.prSessions.produced_pr, admin: funnels.prSessions.produced_pr_admin },
+                    { label: 'Opened a PR', value: funnels.prSessions.produced_pr, admin: funnels.prSessions.produced_pr_admin },
                     { label: 'Promoted to group', value: funnels.prSessions.promoted, admin: funnels.prSessions.promoted_admin },
-                    { label: 'Received a vote', value: funnels.prSessions.received_vote, admin: funnels.prSessions.received_vote_admin },
                     { label: 'Merged', value: funnels.prSessions.merged, admin: funnels.prSessions.merged_admin },
-                  ]} /> : null}
+                  ]} emptyText="No mature, timestamp-complete dev sessions in this cohort." /> : null}
                 </div>
-                <h4 className={`${H4} mt-5 mb-3`}>Promoting PRs (distinct users)</h4>
+                {funnels ? (
+                  <p className={`${SUB} mt-2`}>
+                    {`${fmtInt(totalWithAdmins(funnels.prSessions, 'received_vote', includeAdmins))} had recorded vote evidence after promotion. `}
+                    {`${fmtInt(totalWithAdmins(funnels.prSessions, 'merged_without_vote', includeAdmins))} merged without recorded vote evidence; votes are not required for every merge.`}
+                  </p>
+                ) : null}
+                {funnels ? <ProvisionalProgress includeAdmins={includeAdmins} stages={[
+                  { label: 'Started', value: funnels.prSessions.provisional?.started_provisional, admin: funnels.prSessions.provisional?.started_provisional_admin },
+                  { label: 'Opened PR', value: funnels.prSessions.provisional?.produced_pr_provisional, admin: funnels.prSessions.provisional?.produced_pr_provisional_admin },
+                  { label: 'Promoted', value: funnels.prSessions.provisional?.promoted_provisional, admin: funnels.prSessions.provisional?.promoted_provisional_admin },
+                  { label: 'Merged', value: funnels.prSessions.provisional?.merged_provisional, admin: funnels.prSessions.provisional?.merged_provisional_admin },
+                ]} /> : null}
+
+                <h4 className={`${H4} mt-5 mb-1`}>Independent builder milestone reach</h4>
+                <p className={`${SUB} mb-3`}>Distinct builders at each milestone across their dev sessions. Counts can come from different sessions and are not conversion.</p>
                 <div id="funnel-pr-users" className="space-y-2">
-                  {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
+                  {funnels ? <MilestoneReach includeAdmins={includeAdmins} stages={[
                     { label: 'Started building', value: funnels.prUsers.started, admin: funnels.prUsers.started_admin },
                     { label: 'Opened a PR', value: funnels.prUsers.produced_pr, admin: funnels.prUsers.produced_pr_admin },
                     { label: 'Promoted a PR', value: funnels.prUsers.promoted, admin: funnels.prUsers.promoted_admin },
+                    { label: 'Had a PR receive a vote', value: funnels.prUsers.received_vote, admin: funnels.prUsers.received_vote_admin },
                     { label: 'Got a PR merged', value: funnels.prUsers.merged, admin: funnels.prUsers.merged_admin },
                   ]} /> : null}
                 </div>

@@ -299,27 +299,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "7b689087e7ec4ffd947e",
-      "count": 1,
-      "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "8f53469a8fe70cca96fb",
-      "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE NOT COALESCE(usr.is_admin, FALSE))::int AS started, COUNT(*) FILTER (WHERE COALESCE(usr.is_admin, FALSE))::int AS started_admin, "
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "a72d1ee7f9ea1c4771d6",
-      "count": 1,
-      "preview": "`SELECT COUNT(DISTINCT cs.user_id) FILTER (WHERE NOT usr.is_admin)::int AS started, COUNT(DISTINCT cs.user_id) FILTER (WHERE usr.is_admin)::int AS started_admin"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "aee7aac3fc56fcf8f356",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted' ${adminFilter('created_by', includeAdmins)}`"
@@ -1051,6 +1030,34 @@
       "fingerprint": "ca502810f68a7b7521dd",
       "count": 1,
       "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${epochClause}`"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "7c68d039fac8e1650efb",
+      "count": 1,
+      "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "f19611464a9b660b148f",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.check_state, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at, (SELECT COUNT(*)::int FROM pr_votes pv WHERE "
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "f3f5fdd5a94eb8d50ab2",
+      "count": 1,
+      "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE slug = LOWER($1) OR LOWER(name) = LOWER($1) ORDER BY (slug = LOWER($1)) DESC, id LIM"
+    },
+    {
+      "source": "src/services/homeroom-bot.js",
+      "kind": "structural-template",
+      "fingerprint": "9a829c6ca7be69f2bf21",
+      "count": 1,
+      "preview": "`UPDATE homeroom_bot_queue SET started_at = NULL WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)${ keep.length ? '\\n AND NOT (id"
     },
     {
       "source": "src/services/issue-announce.js",

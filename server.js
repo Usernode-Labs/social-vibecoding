@@ -1310,6 +1310,16 @@ async function becomeLeader() {
   void runAccountDeletionCleanup();
   setInterval(runAccountDeletionCleanup, 60_000).unref();
 
+  // A project created with a description files it as its first request once
+  // it runs (services/homeroom-bot-dm.js). The creation hook in
+  // app-creator.js does it; this files one the hook missed or could not
+  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
+    .sweepFirstVersions(getPool(config), config)
+    .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
+    .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
+  setInterval(runFirstRequestSweep, 5 * 60 * 1000).unref();
+
   // #2779: delegated connector grants — the agent-session Mayor's, one or two
   // a turn — are dead the moment their turn ends. Keep a week for the audit
   // trail's sake, then remove them and their tokens.
@@ -5284,11 +5294,14 @@ function startSessionAutoPauseSweeper(config) {
     // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
     // the stale rest (merged / abandoned / paused / session-gone), so the next
     // Preview click rebuilds with current env behind the existing loader.
-    // Together they replace #850's one-off admin sweep.
+    // Together they replace #850's one-off admin sweep. It also takes any
+    // preview whose session merged, was archived or is gone, current env or
+    // not: a failed merge-time teardown has no other retry.
     //
     // Throttled to its own long interval rather than given a timer of its
-    // own — this sweeper already ticks, and a `docker ps` + teardown of a few
-    // containers every 15 minutes has no business running every 60 seconds.
+    // own — this sweeper already ticks, and listing the previews (Docker
+    // containers or Kubernetes Deployments) + tearing down a few every 15
+    // minutes has no business running every 60 seconds.
     // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
     try {
       // The interval + "is it due" bookkeeping lives in the service, so this

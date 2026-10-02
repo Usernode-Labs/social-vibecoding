@@ -633,6 +633,23 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Delivery receipts for engaged-use batches. A browser retains the same UUID
+-- until acknowledgement, so a response lost after COMMIT can be retried
+-- without adding its seconds twice. The payload hash also prevents a caller
+-- from reusing a receipt for different data. Receipts contain user-level
+-- analytics delivery history and therefore do not copy into staging.
+CREATE TABLE IF NOT EXISTS app_activity_receipts (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  payload_sha256  CHAR(64) NOT NULL,
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
+  ON app_activity_receipts(received_at);
+COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.
 --
@@ -9542,12 +9559,15 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_issue
   ON homeroom_bot_dm_messages(user_id, app_id, issue_number);
 COMMENT ON TABLE homeroom_bot_dm_messages IS 'staging:private';
 
--- A project created with a description by somebody the bot talks to in a
--- DM: filed as the project's first-version request once the project is
--- running (waiting, then filing, then filed; failed after three tries).
--- The bot acts live on the project while its creator is on the DM list.
--- Private: the brief is what the person typed, before they chose to post
--- it anywhere.
+-- A project created with a description ("What should it do?" in the create
+-- dialog): filed as the project's first request, under its creator's name,
+-- once the project is running (waiting, then filing, then filed; failed
+-- after three tries). `bot_builds` says whether the Homeroom bot builds it:
+-- true when the creator is somebody the bot talks to in a DM, and then the
+-- bot acts live on the project while they are on the DM list; false for
+-- everybody else, whose request is filed and left to the group. Private:
+-- the brief is what the person typed, before they chose to post it
+-- anywhere.
 CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
   app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -9564,6 +9584,8 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
   ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
+-- Every row before the column was one the bot builds, so the default is true.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- The bot fixing its own failing checks: the head commit a checks
 -- follow-up looked at, on the run that recorded it (a revision, a hand-off
@@ -9777,6 +9799,53 @@ CREATE TABLE IF NOT EXISTS bench_grades (
 CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
 COMMENT ON TABLE bench_grades IS 'staging:private';
 
+-- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
+-- One row per answer it wrote: what it cost (counted in the person's weekly
+-- allowance with their requests' runs), how many model calls and which
+-- tools it took, and why it failed when it did. Never the words: those are
+-- the conversation's.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_turns (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  message_id      INTEGER REFERENCES conversation_messages(id) ON DELETE SET NULL,
+  model           TEXT,
+  rounds          INTEGER NOT NULL DEFAULT 0,
+  tools           TEXT[] NOT NULL DEFAULT '{}',
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  cost_usd        NUMERIC(12, 6),
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_turns_user
+  ON homeroom_bot_dm_turns(user_id, created_at DESC);
+COMMENT ON TABLE homeroom_bot_dm_turns IS 'staging:private';
+
+-- #3624 stage 2: something the bot offered to do in a DM, done only when
+-- the person taps to confirm (today: file a new request on a project). The
+-- offer is a bot message with File it / Not now under it; the tap decides
+-- it once.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'file_request',
+  title           TEXT NOT NULL,
+  details         TEXT,
+  status          TEXT NOT NULL DEFAULT 'open',
+  issue_number    INTEGER,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request')),
+  CONSTRAINT homeroom_bot_dm_actions_status_check
+    CHECK (status IN ('open', 'done', 'declined', 'failed'))
+);
+COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9794,7 +9863,11 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_shadow_build_platform', 'off'),
   -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
   ('homeroom_bot_dm_users', '[]'),
-  ('homeroom_bot_user_weekly_cents', '5000')
+  ('homeroom_bot_user_weekly_cents', '5000'),
+  -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
+  ('homeroom_bot_live_at_once', '6'),
+  ('homeroom_bot_per_person', '2'),
+  ('homeroom_bot_dm_chat', 'on')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have

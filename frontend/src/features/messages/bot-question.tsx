@@ -20,6 +20,11 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * the rest of the group reads it. A reply quoting any other message the bot
  * sent about a request is posted there too; the composer's reply bar says
  * that one (./composer.tsx).
+ *
+ * #3624 stage 2: an OFFER (kind `confirm`) uses the same buttons: File it
+ * and Not now under a request the bot offers to file. Nothing is posted
+ * anywhere until File it, so it has no public note, no "suggested" and no
+ * Something else (anything typed is read by the bot instead).
  */
 
 export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
@@ -42,6 +47,7 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
   const answers = (meta.answers || []).filter((a) => typeof a === 'string' && a.trim());
   const open = meta.status === 'open' && !chosen && !message.deleted;
   const answered = meta.status === 'answered' ? (meta.answer || chosen) : chosen;
+  const offer = meta.kind === 'confirm';
 
   function choose(answer: string) {
     setChosen(answer);
@@ -60,18 +66,18 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label="Suggested answers">
+        <div className="messages-bot-answers" role="group" aria-label={offer ? 'File this request?' : 'Suggested answers'}>
           {answers.map((answer, index) => (
             <button key={answer} type="button" data-bot-answer={index === 0 ? 'default' : 'other'} onClick={() => choose(answer)}>
               <span>{answer}</span>
-              {index === 0 ? <span className="messages-bot-default">suggested</span> : null}
+              {index === 0 && !offer ? <span className="messages-bot-default">suggested</span> : null}
             </button>
           ))}
-          <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>
+          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
         </div>
       ) : null}
-      {answered ? <p className="messages-bot-answered">{`You answered: ${answered}`}</p> : null}
-      {open || chosen ? (
+      {answered ? <p className="messages-bot-answered">{offer ? `You chose: ${answered}` : `You answered: ${answered}`}</p> : null}
+      {(open || chosen) && meta.mirrors ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>

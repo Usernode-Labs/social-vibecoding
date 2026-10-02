@@ -274,9 +274,99 @@ test('the loop is bounded, and its last round cannot call tools', async () => {
   const always = { toolUses: [{ id: 't', name: 'get_app', input: { slug: 'recipe-box' } }] };
   const steps = Array.from({ length: agentTurn.MAX_TOOL_ROUNDS + 5 }, () => always);
   const { model } = await runTurn({ steps });
-  assert.equal(model.requests.length, agentTurn.MAX_TOOL_ROUNDS + 1);
+  // The rounds, then the one nudge a turn with no words gets.
+  assert.equal(model.requests.length, agentTurn.MAX_TOOL_ROUNDS + 2);
+  assert.deepEqual(model.requests.at(-2).toolChoice, { type: 'none' });
   assert.deepEqual(model.requests.at(-1).toolChoice, { type: 'none' });
   assert.equal(model.requests[0].toolChoice, undefined);
+});
+
+// ── A turn that ends with no words ─────────────────────────────────────
+
+function assistantRow(pool) {
+  return pool.calls.find((c) => /'assistant'/.test(c.sql) && /INSERT INTO chat_session_messages/.test(c.sql));
+}
+
+function lastUserText(request) {
+  const last = request.messages.at(-1);
+  assert.equal(last.role, 'user');
+  return typeof last.content === 'string'
+    ? last.content
+    : last.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+}
+
+test('a turn that ends empty after its tools is asked once, without tools, to answer in words', async () => {
+  const { model, pool, res } = await runTurn({
+    steps: [
+      { toolUses: [
+        { id: 't1', name: 'list_requests', input: { slug: 'recipe-box' } },
+        { id: 't2', name: 'suggest_replies', input: { replies: ['Show me the first one'] } },
+      ] },
+      { text: '' },
+      { text: 'There are two open requests.' },
+    ],
+  });
+  assert.equal(model.requests.length, 3, 'exactly one extra call');
+  const nudge = model.requests[2];
+  assert.deepEqual(nudge.toolChoice, { type: 'none' });
+  assert.equal(nudge.telemetryContext.component, 'mayor_empty_retry');
+  assert.ok(lastUserText(nudge).includes(agentTurn.EMPTY_REPLY_NOTE));
+  assert.equal(nudge.messages.at(-1).content[0].tool_use_id, 't1', 'the note joins the tool results');
+  assert.equal(model.requests[1].toolChoice, undefined, 'only the nudge is held to words');
+  const row = assistantRow(pool);
+  assert.equal(row.params[2], 'There are two open requests.');
+  assert.equal(row.params[4], 12, 'the extra round is costed');
+  const events = res.events();
+  assert.equal(events.find((e) => e.type === 'mayor_reasoning').text, 'There are two open requests.');
+  assert.deepEqual(events.find((e) => e.type === 'quick_replies').replies, ['Show me the first one'],
+    'the replies chosen before the nudge still show');
+});
+
+test('a nudge that is empty too falls back to the fixed line, with no further calls', async () => {
+  const { model, pool } = await runTurn({
+    steps: [
+      { toolUses: [{ id: 't1', name: 'list_requests', input: { slug: 'recipe-box' } }] },
+      { text: '' },
+      { text: '' },
+      { text: 'never asked' },
+    ],
+  });
+  assert.equal(model.requests.length, 3);
+  assert.equal(assistantRow(pool).params[2], agentTurn.EMPTY_REPLY_TEXT);
+});
+
+test('a first round with no words and no tools gets the nudge too', async () => {
+  const { model, pool } = await runTurn({ steps: [{ text: '' }, { text: 'Hello.' }] });
+  assert.equal(model.requests.length, 2);
+  assert.ok(lastUserText(model.requests[1]).endsWith(agentTurn.EMPTY_REPLY_NOTE));
+  assert.deepEqual(model.requests[1].toolChoice, { type: 'none' });
+  assert.equal(assistantRow(pool).params[2], 'Hello.');
+});
+
+test('a reply with words is not nudged', async () => {
+  const { model, pool } = await runTurn({
+    steps: [
+      { toolUses: [{ id: 't1', name: 'list_requests', input: { slug: 'recipe-box' } }] },
+      { text: 'There are two open requests.' },
+    ],
+  });
+  assert.equal(model.requests.length, 2);
+  assert.ok(!model.requests.some((r) => r.telemetryContext.component === 'mayor_empty_retry'));
+  assert.equal(assistantRow(pool).params[2], 'There are two open requests.');
+});
+
+test('an empty last round still gets its one nudge, past the round limit', async () => {
+  const use = { toolUses: [{ id: 't', name: 'get_app', input: { slug: 'recipe-box' } }] };
+  const steps = [
+    ...Array.from({ length: agentTurn.MAX_TOOL_ROUNDS }, () => use),
+    { text: '' },
+    { text: 'Recipe box is running.' },
+  ];
+  const { model, pool } = await runTurn({ steps });
+  assert.equal(model.requests.length, agentTurn.MAX_TOOL_ROUNDS + 2);
+  assert.deepEqual(model.requests.at(-1).toolChoice, { type: 'none' });
+  assert.equal(model.requests.at(-1).telemetryContext.component, 'mayor_empty_retry');
+  assert.equal(assistantRow(pool).params[2], 'Recipe box is running.');
 });
 
 test('a failed turn says so, records it, and still releases everything', async () => {
