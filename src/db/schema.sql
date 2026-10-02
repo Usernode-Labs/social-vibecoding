@@ -9577,6 +9577,62 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
   ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
 
+-- #3654: what a run can be replayed from. Every triage, follow-up,
+-- checks fix and build stores the text its model read (the seed, the frozen
+-- request thread as JSON, the whole prompt, and a stage's own inputs such as
+-- the spec or the failing checks), the commit the stage ran against and a
+-- hash of the prompt, so the benchmark (services/bench/) can run the same
+-- input through another model. Text is gzip-compressed and stored once per
+-- distinct content (homeroom_bot_snapshot_blobs, keyed by its sha256), and
+-- each text is capped (services/homeroom-bot-snapshots.js). Private: it is
+-- request and DM text, private apps' included.
+CREATE TABLE IF NOT EXISTS homeroom_bot_snapshot_blobs (
+  hash        TEXT PRIMARY KEY,
+  content     BYTEA NOT NULL,
+  chars       INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE homeroom_bot_snapshot_blobs IS 'staging:private';
+CREATE TABLE IF NOT EXISTS homeroom_bot_run_snapshots (
+  id            SERIAL PRIMARY KEY,
+  -- NULL for a snapshot imported from a merged pull request rather than
+  -- recorded by a run; kept when its run is deleted.
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  stage         TEXT NOT NULL,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  base_sha      TEXT,
+  prompt_hash   TEXT,
+  -- name to blob hash: seed, thread, prompt, and a stage's own inputs.
+  texts         JSONB NOT NULL DEFAULT '{}',
+  -- Small, structured inputs (a flag, a count, a model id).
+  extra         JSONB NOT NULL DEFAULT '{}',
+  truncated     BOOLEAN NOT NULL DEFAULT FALSE,
+  source        TEXT NOT NULL DEFAULT 'run',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_run_snapshots_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT homeroom_bot_run_snapshots_source_check
+    CHECK (source IN ('run', 'import'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_run_stage
+  ON homeroom_bot_run_snapshots(run_id, stage) WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_stage
+  ON homeroom_bot_run_snapshots(stage, created_at DESC);
+COMMENT ON TABLE homeroom_bot_run_snapshots IS 'staging:private';
+
+-- #3654: the verdict a labeller says was right, beside the yes/no rating
+-- (rating_note is no longer erased by a rating), and the model a run's
+-- build ran on (per-stage models: it may differ from the triage's).
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS label_verdict TEXT;
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_label_verdict_check;
+  ALTER TABLE homeroom_bot_runs ADD CONSTRAINT homeroom_bot_runs_label_verdict_check
+    CHECK (label_verdict IS NULL OR label_verdict IN ('question', 'ready', 'person', 'empty', 'answer', 'revise'));
+END $$;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app

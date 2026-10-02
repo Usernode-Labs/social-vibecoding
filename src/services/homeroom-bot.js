@@ -56,6 +56,7 @@ const log = require('./logger');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const snapshots = require('./homeroom-bot-snapshots');
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -98,11 +99,25 @@ const KEY_DM_USERS = 'homeroom_bot_dm_users';
 // platform pays; this is the ceiling that keeps one person from spending
 // it all.
 const KEY_USER_WEEKLY_CENTS = 'homeroom_bot_user_weekly_cents';
+// #3654: the OpenRouter model each stage runs on. Blank means the platform
+// default (OPENROUTER_DEFAULT_CODEX_MODEL), which every stage used before.
+// `followup` covers both kinds of follow-up turn: an answer to people's
+// replies and a fix for the proposal's own failing checks.
+const MODEL_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup']);
+const KEY_MODELS = Object.freeze({
+  triage: 'homeroom_bot_model_triage',
+  spec: 'homeroom_bot_model_spec',
+  build: 'homeroom_bot_model_build',
+  followup: 'homeroom_bot_model_followup',
+});
+// An OpenRouter model id: `vendor/model`, as the catalog spells them.
+const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_DM_USERS, KEY_USER_WEEKLY_CENTS,
+  ...Object.values(KEY_MODELS),
 ]);
 const MAX_DM_USERS = 50;
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -125,6 +140,8 @@ const DEFAULTS = Object.freeze({
   shadowBuildPlatform: false,
   dmUsers: [],
   userWeeklyCents: 5000,
+  // #3654: per-stage models; blank is the platform default (stageModel).
+  models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
   // Not a stored setting: the projects the bot is building for a DM user
   // (homeroom-bot-dm.js), live like the apps in liveApps. readSettings
   // fills it in.
@@ -355,11 +372,27 @@ function parseSettings(rows) {
   const userWeeklyCents = clampInt(
     map.get(KEY_USER_WEEKLY_CENTS), DEFAULTS.userWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
   );
+  const models = {};
+  for (const stage of MODEL_STAGES) {
+    const raw = String(map.get(KEY_MODELS[stage]) || '').trim();
+    models[stage] = MODEL_ID_RE.test(raw) ? raw : '';
+  }
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents, models,
     firstVersionApps: [],
   };
+}
+
+/**
+ * #3654: the model a stage runs on: the admin's choice for it, else the
+ * platform default. One answer for the run that is recorded and the turn
+ * that runs (stampSessionModel makes the session agree with it).
+ */
+function stageModel(settings, config, stage) {
+  const chosen = settings?.models?.[stage];
+  if (typeof chosen === 'string' && MODEL_ID_RE.test(chosen)) return chosen;
+  return (config && config.openrouterDefaultCodexModel) || null;
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -479,6 +512,21 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'userWeeklyCents must be a non-negative integer' };
     }
     updates.push([KEY_USER_WEEKLY_CENTS, String(n)]);
+  }
+  if (body.models !== undefined) {
+    if (!body.models || typeof body.models !== 'object' || Array.isArray(body.models)) {
+      return { ok: false, error: 'models must be an object of stage to model id' };
+    }
+    for (const [stage, value] of Object.entries(body.models)) {
+      if (!MODEL_STAGES.includes(stage)) {
+        return { ok: false, error: `models: unknown stage "${stage}" (one of ${MODEL_STAGES.join(', ')})` };
+      }
+      const id = value == null ? '' : String(value).trim();
+      if (id && !MODEL_ID_RE.test(id)) {
+        return { ok: false, error: `models.${stage} must be an OpenRouter model id such as z-ai/glm-5.3-flash, or blank for the default` };
+      }
+      updates.push([KEY_MODELS[stage], id]);
+    }
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -1160,6 +1208,34 @@ function triageClosing(issueNumber) {
 }
 
 /**
+ * #3654: the whole triage prompt for one request, as runTriage sends it and
+ * as the benchmark rebuilds it from a snapshot's seed. Pure apart from the
+ * cached prompt file and the design guidance it reads.
+ */
+function triagePromptFor({ seed, issueNumber, firstVersion = false }) {
+  return [
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    firstVersion ? FIRST_VERSION_NOTE : null,
+    triageReference(), triageClosing(issueNumber),
+  ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * #3654: the commit a stage is about to run against: where `branch` points
+ * on GitHub right now. Best-effort, for the run's snapshot; null when GitHub
+ * cannot say.
+ */
+async function headShaOf(github, repo, branch = 'main') {
+  if (!repo || typeof github?.getBranchSha !== 'function') return null;
+  try {
+    const sha = await github.getBranchSha(repo.owner, repo.repo, branch || 'main');
+    return typeof sha === 'string' ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The bot's one dev session per app, created on first use. `paused` at
  * rest and `active` only while a turn runs; is_headless FALSE and an empty
  * linked_issues so no board derivation reads it as work on any issue.
@@ -1569,7 +1645,17 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
   );
   const repo = parseRepo(app.repo_url);
-  const model = config.openrouterDefaultCodexModel || null;
+  // #3654: the triage stage's own model. It used to be the platform default
+  // here while the turn itself ran whatever the session was stamped with
+  // when it was created, so changing the model changed the ledger and not
+  // the turn. stampSessionModel below makes the two agree.
+  const model = stageModel(settings, config, 'triage');
+  // What this turn read, recorded beside every run it produces once the
+  // prompt exists (#3654), so it can be replayed by the benchmark.
+  let snapshot = null;
+  const recordSnapshot = (runId) => (snapshot && runId
+    ? snapshots.recordSnapshot(pool, { runId, ...snapshot })
+    : Promise.resolve(null));
 
   // A failed run is recorded either way. A MODEL failure (the turn ran and
   // produced nothing usable) consumes the queue row: retrying costs money
@@ -1595,6 +1681,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
     });
+    // A model failure is a benchmark case too (it is what a better model
+    // would get right); a platform fault is not.
+    if (!infra) await recordSnapshot(id);
     if (infra) {
       await pool.query('UPDATE homeroom_bot_queue SET started_at = NULL WHERE id = $1', [item.id]);
     } else {
@@ -1655,7 +1744,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       // (#3264), while it is still up for a vote.
       if (open.status === 'promoted') {
         return runFollowUp(pool, config, {
-          bot, app, repo, item, issue, proposal: open, runMode, model, turnBudgetMs, startedMs,
+          bot, app, repo, item, issue, proposal: open, runMode,
+          model: stageModel(settings, config, 'followup'), turnBudgetMs, startedMs,
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
@@ -1690,11 +1780,21 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = [
-    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
-    requester?.firstVersion ? FIRST_VERSION_NOTE : null,
-    triageReference(), triageClosing(issueNumber),
-  ].filter(Boolean).join('\n\n');
+  const prompt = triagePromptFor({ seed, issueNumber, firstVersion: !!requester?.firstVersion });
+  snapshot = {
+    stage: 'triage', appId: app.id, issueNumber,
+    // The scout turn resets its workspace to the session branch's tip
+    // (main) when it starts, so that tip is what it read.
+    baseSha: await headShaOf(github, repo, 'main'),
+    texts: {
+      seed,
+      prompt,
+      thread: snapshots.frozenThread({
+        issueNumber, issue, comments, threadMessages: thread?.messages || [], botLogin: botUsername,
+      }),
+    },
+    extra: { model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null },
+  };
 
   let session;
   try {
@@ -1702,6 +1802,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   } catch (err) {
     return recordFailure(`session: ${err.message}`, {}, { infra: true });
   }
+  // The session was stamped with a model once, when it was created; the
+  // turn runs whatever it carries (agent-turn resolveCodexRuntimeContext).
+  await live.stampSessionModel(pool, session, model);
 
   let containerName = null;
   try {
@@ -1887,6 +1990,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       costUsd, ...usage,
       durationMs: Date.now() - startedMs,
     });
+    await recordSnapshot(id);
     if (retried) {
       await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     } else {
@@ -1951,6 +2055,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs,
   });
+  await recordSnapshot(runId);
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
   clearRefusals(app.id);
   // A newer verdict on the issue replaces any build still waiting for an
@@ -1975,7 +2080,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     try {
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-        seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
+        seed, seedReadAt, postedAt, turnBudgetMs, botLogin: botUsername,
+        model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
         firstVersion: !!requester?.firstVersion,
@@ -2192,6 +2298,25 @@ function noteBuildFault(error, now = Date.now()) {
 }
 
 /**
+ * #3654: what a build reads, recorded on its run before it starts: the seed,
+ * the triage's plan, a spec already written (a restart's), and the commit
+ * the build branch is cut from (the tip of main, where
+ * session-lifecycle.ensureSessionBranch cuts it). Never throws.
+ */
+async function recordBuildSnapshot(pool, {
+  runId, app, repo, issueNumber, seed, buildNote, github = null, presetSpec = null,
+  firstVersion = false, platformRepo = false, model = null, specModel = null,
+}) {
+  if (!runId || !app) return null;
+  return snapshots.recordSnapshot(pool, {
+    runId, stage: 'build', appId: app.id, issueNumber,
+    baseSha: await headShaOf(github, repo, 'main'),
+    texts: { seed, build_note: buildNote || '', preset_spec: presetSpec || '' },
+    extra: { model, specModel: specModel || model, firstVersion: !!firstVersion, platformRepo: !!platformRepo },
+  });
+}
+
+/**
  * The build itself, for a claimed run: the same build live runs, with
  * `propose: false`, so the only thing it leaves is its branch. Debited from
  * the weekly allowance like any turn, and recorded on the run. Resolves
@@ -2200,12 +2325,16 @@ function noteBuildFault(error, now = Date.now()) {
  */
 async function shadowBuild({
   pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId,
-  turnBudgetMs, model, deps, presetSpec = null,
+  turnBudgetMs, model, specModel = null, deps, presetSpec = null,
 }) {
   const { limits, managedOpenRouter } = deps;
+  await recordBuildSnapshot(pool, {
+    runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github: deps.github, presetSpec,
+    platformRepo: isPlatformRepo(app, config), model, specModel,
+  });
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-    ...buildBudgets(app, config, turnBudgetMs), model, deps, presetSpec,
+    ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps, presetSpec,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
@@ -2238,7 +2367,8 @@ async function shadowBuild({
   await pool.query(
     `UPDATE homeroom_bot_runs
         SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
-            build_error = $6, build_cost_usd = $7, build_session_id = $8, build_spec_md = $9
+            build_error = $6, build_cost_usd = $7, build_session_id = $8, build_spec_md = $9,
+            build_model = $10
       WHERE id = $1`,
     [runId, !!built.ok, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
@@ -2247,7 +2377,7 @@ async function shadowBuild({
       built.ok
         ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
         : clip([built.error || 'unknown', built.specNote].filter(Boolean).join('; '), MAX_ERROR_CHARS),
-      built.costUsd ?? null, built.sessionId || null, built.specMd || null],
+      built.costUsd ?? null, built.sessionId || null, built.specMd || null, model || null],
   );
   log.info('homeroom-bot', 'Shadow build', {
     app: app.slug, issueNumber, runId, ok: !!built.ok, branch: built.branchName || null,
@@ -2324,7 +2454,7 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
   return shadowBuild({
     pool, config, bot, app, repo, issueNumber, issue, seed,
     parsed: { buildNote: claim.build_note }, runId, turnBudgetMs, presetSpec: claim.build_spec_md || null,
-    model: config.openrouterDefaultCodexModel || null,
+    model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
     deps: {
       worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
     },
@@ -3002,6 +3132,17 @@ async function queueShadowBackfill(pool, config = {}) {
  * Only the lane's own builds: every one was queued, and a live build, whose
  * outcome is recorded in the same columns (#3509), never is.
  */
+/**
+ * #3654: whether the live bot is using every build slot it has right now:
+ * shadow builds in the lane and live builds of ready verdicts, in this
+ * process. The benchmark's lane (services/bench/lane.js) starts nothing
+ * while it is, so a benchmark never takes a worker the bot is waiting for.
+ */
+function isLiveLaneSaturated(settings = null) {
+  const limit = clampInt(settings?.buildConcurrency, DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY);
+  return buildsInFlight.size + liveBuildsInFlight.size >= limit;
+}
+
 async function buildLaneSummary(pool) {
   const { rows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE build_at IS NULL AND build_ok IS NULL)::int AS queued,
@@ -3041,7 +3182,16 @@ async function runFollowUp(pool, config, {
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
   const issueNumber = Number(item.issue_number);
-  const fail = (error, extra = {}, opts = {}) => recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+  // #3654: what the follow-up turn read, recorded beside its run.
+  let snapshot = null;
+  const recordSnapshot = (runId) => (snapshot && runId
+    ? snapshots.recordSnapshot(pool, { runId, ...snapshot })
+    : Promise.resolve(null));
+  const fail = async (error, extra = {}, opts = {}) => {
+    const out = await recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+    if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
+    return out;
+  };
 
   const { rows: lastRows } = await pool.query(
     `SELECT id, thread_seen_at FROM homeroom_bot_runs
@@ -3131,6 +3281,19 @@ async function runFollowUp(pool, config, {
   const prompt = followup.followUpPrompt({
     seed, proposalBlock, prNumber: session.pr_number, replies, canRevise,
   });
+  snapshot = {
+    stage: 'followup', appId: app.id, issueNumber,
+    // The follow-up works on the proposal's branch, at its reviewed head.
+    baseSha: session.reviewed_head_sha || null,
+    texts: {
+      seed, prompt, proposal_block: proposalBlock,
+      replies: JSON.stringify(replies),
+      thread: snapshots.frozenThread({
+        issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
+      }),
+    },
+    extra: { model, canRevise, prNumber: session.pr_number || null, mode },
+  };
 
   const turn = await followup.runFollowUpTurn({
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
@@ -3206,6 +3369,7 @@ async function runFollowUp(pool, config, {
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
     });
+    await recordSnapshot(runId);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     const postedAt = [];
     await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
@@ -3232,6 +3396,7 @@ async function runFollowUp(pool, config, {
     threadSeenAt: item.thread_seen_at || null, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
   });
+  await recordSnapshot(runId);
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
   clearRefusals(app.id);
   log.info('homeroom-bot', 'Followed up on its proposal', {
@@ -3386,6 +3551,11 @@ async function runChecksFix(pool, config, {
   // the whole thread as new).
   const threadSeenAt = item.thread_seen_at || lastRun?.thread_seen_at || null;
   const dropRow = () => pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  // #3654: what the fix turn read, recorded beside the run it produces.
+  let snapshot = null;
+  const recordSnapshot = (id) => (snapshot && id
+    ? snapshots.recordSnapshot(pool, { runId: id, ...snapshot })
+    : Promise.resolve(null));
 
   if (followup.checksLookLikeInfra(checks)) {
     await dropRow();
@@ -3403,6 +3573,7 @@ async function runChecksFix(pool, config, {
       threadSeenAt, model, durationMs: Date.now() - startedMs,
       proposalSessionId: session.id, checksHeadSha: head, ...extra,
     });
+    await recordSnapshot(runId);
     await dropRow();
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
@@ -3442,6 +3613,18 @@ async function runChecksFix(pool, config, {
     threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
   });
   const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total });
+  snapshot = {
+    stage: 'checks_fix', appId: app.id, issueNumber,
+    baseSha: head,
+    texts: {
+      seed, prompt, proposal_block: proposalBlock,
+      failing: JSON.stringify(failing),
+      thread: snapshots.frozenThread({
+        issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
+      }),
+    },
+    extra: { model, prNumber: prNumber || null, total, mode },
+  };
   const turn = await followup.runFollowUpTurn({
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
@@ -3485,6 +3668,7 @@ async function runChecksFix(pool, config, {
       threadSeenAt, model, durationMs: Date.now() - startedMs,
       proposalSessionId: session.id, checksHeadSha: head, ...spent,
     });
+    await recordSnapshot(runId);
     await dropRow();
     clearRefusals(app.id);
     // Said in the proposal's own discussion, where the group votes and the
@@ -3565,7 +3749,7 @@ function liveSayer({
  * that failed is noted beside a build that went ahead, as a shadow
  * build's is (#3396). Never throws.
  */
-async function recordLiveBuild(pool, runId, built) {
+async function recordLiveBuild(pool, runId, built, model = null) {
   if (!runId || !built) return;
   const error = built.ok
     ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
@@ -3578,12 +3762,13 @@ async function recordLiveBuild(pool, runId, built) {
         SET build_ok = $2, build_error = $3,
             build_branch = COALESCE($4, build_branch), build_sha = COALESCE($5, build_sha),
             build_commits = COALESCE($6, build_commits), build_cost_usd = COALESCE($7, build_cost_usd),
-            build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md)
+            build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
+            build_model = COALESCE($10, build_model)
       WHERE id = $1`,
     [runId, !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
-      built.sessionId || null, built.specMd || null],
+      built.sessionId || null, built.specMd || null, model || built.model || null],
   ).catch((err) => log.warn('homeroom-bot', 'Could not record the live build on its run', { runId, err: err.message }));
 }
 
@@ -3594,7 +3779,7 @@ async function recordLiveBuild(pool, runId, built) {
  * of a live build a restart interrupted (#3471). Returns what was done.
  */
 async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
-  await recordLiveBuild(pool, runId, built);
+  await recordLiveBuild(pool, runId, built, built.model || null);
   if (built.ok) {
     await pool.query(
       'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
@@ -3632,7 +3817,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, quietHold = false,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
   proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, deps,
 }) {
   const { github, ws } = deps;
@@ -3678,11 +3863,15 @@ async function actOnVerdict({
     // Under way in this process: the sweep for live builds nothing finished
     // (settleAbandonedLiveBuilds) leaves it alone whatever its age.
     liveBuildsInFlight.add(runId);
+    await recordBuildSnapshot(pool, {
+      runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github,
+      firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel,
+    });
     let built;
     try {
       built = await live.buildAndPropose({
         pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-        ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, deps, onSpec, proposalCeiling,
+        ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
         platformRepo: isPlatformRepo(app, config),
         // Linked before any turn runs, so a restart mid-build can find the run
         // (#3471): the build's worker outlives the restart; this process does not.
@@ -3693,6 +3882,7 @@ async function actOnVerdict({
     } finally {
       liveBuildsInFlight.delete(runId);
     }
+    if (built) built.model = model;
     if (built.specMd) {
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
         .catch(() => {});
@@ -4051,6 +4241,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
             r.build_session_id,
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
+            r.label_verdict, r.build_model,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -4114,6 +4305,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'question_answers', 'dm_sent_at', 'dm_answered_at',
   // The failing head a checks follow-up looked at.
   'checks_head_sha',
+  // #3654: the verdict a labeller says was right, and the build's model.
+  'label_verdict', 'build_model',
 ]);
 
 /** A question's suggested answers as one cell: "Yes | No | Later". */
@@ -4201,6 +4394,8 @@ async function adminPayload(pool, config, {
       weeklySpentCents,
       hasIncludedKey,
       model: config.openrouterDefaultCodexModel || null,
+      // #3654: what each stage runs on now, the default filled in.
+      models: Object.fromEntries(MODEL_STAGES.map((stage) => [stage, stageModel(settings, config, stage)])),
     };
   }
 
@@ -4256,14 +4451,26 @@ async function adminPayload(pool, config, {
     `SELECT slug, name FROM apps WHERE status = 'running' AND repo_url IS NOT NULL ORDER BY name`,
   );
 
+  // #3654: which stages each run on this page can be replayed at (a run
+  // before snapshots existed has none), for "Add to a benchmark suite".
+  let replayable = {};
+  try {
+    replayable = await snapshots.stagesForRuns(pool, runRows.map((r) => r.id));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read which runs have snapshots', { err: err.message });
+  }
+
   return {
     settings,
     modes: MODES,
+    defaultModel: config.openrouterDefaultCodexModel || null,
     bot,
     loop: lastPass ? { ...lastPass, refusals: lastRefusals } : lastPass,
     totals,
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
-    runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r) })),
+    runs: runRows.map((r) => ({
+      ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r), replayStages: replayable[r.id] || [],
+    })),
     apps: appRows,
     caps: {
       proposalsPerApp: PROPOSALS_PER_APP_CAP,
@@ -4343,22 +4550,41 @@ async function removeMentionOptOut(pool, { slug, issueNumber, username }) {
   return { ok: true };
 }
 
-async function rateRun(pool, { id, rating, note, actorId }) {
+// #3654: the verdicts a labeller can name as the right one for a run.
+const LABEL_VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty', 'answer', 'revise']);
+
+/**
+ * An admin's rating of a run. Each of `rating`, `note` and `labelVerdict` is
+ * changed only when it is passed: the table's one-tap Yes/No sends a rating
+ * alone, and used to erase the note written beside it (#3654). `undefined`
+ * leaves a field as it is; `null` clears it.
+ */
+async function rateRun(pool, { id, rating, note, labelVerdict, actorId }) {
   const runId = Number(id);
   if (!Number.isInteger(runId) || runId <= 0) return { ok: false, status: 400, error: 'Invalid run id' };
-  if (rating !== null && rating !== 'yes' && rating !== 'no') {
+  if (rating !== undefined && rating !== null && rating !== 'yes' && rating !== 'no') {
     return { ok: false, status: 400, error: 'rating must be "yes", "no" or null' };
+  }
+  if (labelVerdict !== undefined && labelVerdict !== null && !LABEL_VERDICTS.includes(labelVerdict)) {
+    return { ok: false, status: 400, error: `labelVerdict must be one of ${LABEL_VERDICTS.join(', ')}, or null` };
+  }
+  if (rating === undefined && note === undefined && labelVerdict === undefined) {
+    return { ok: false, status: 400, error: 'Nothing to rate' };
   }
   const cleanNote = note == null ? null : clip(String(note), 1000);
   const { rows } = await pool.query(
     `UPDATE homeroom_bot_runs
-        SET rating = $2::text,
-            rating_by = CASE WHEN $2::text IS NULL THEN NULL ELSE $3::int END,
-            rating_note = $4::text,
-            rated_at = CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END
+        SET rating = CASE WHEN $5::boolean THEN $2::text ELSE rating END,
+            rating_by = CASE WHEN NOT $5::boolean THEN rating_by
+                             WHEN $2::text IS NULL THEN NULL ELSE $3::int END,
+            rated_at = CASE WHEN NOT $5::boolean THEN rated_at
+                            WHEN $2::text IS NULL THEN NULL ELSE NOW() END,
+            rating_note = CASE WHEN $6::boolean THEN $4::text ELSE rating_note END,
+            label_verdict = CASE WHEN $8::boolean THEN $7::text ELSE label_verdict END
       WHERE id = $1
-      RETURNING id, rating, rating_note, rated_at`,
-    [runId, rating, actorId || null, cleanNote],
+      RETURNING id, rating, rating_note, rated_at, label_verdict`,
+    [runId, rating ?? null, actorId || null, cleanNote, rating !== undefined, note !== undefined,
+      labelVerdict ?? null, labelVerdict !== undefined],
   );
   if (!rows.length) return { ok: false, status: 404, error: 'Run not found' };
   return { ok: true, run: rows[0] };
@@ -4516,7 +4742,17 @@ module.exports = {
   EXPORT_COLUMNS,
   EXPORT_CHUNK,
   rateRun,
+  LABEL_VERDICTS,
   enqueueNow,
+  // #3654: per-stage models and the pieces the benchmark replays with.
+  stageModel,
+  MODEL_STAGES,
+  KEY_MODELS,
+  MODEL_ID_RE,
+  triagePromptFor,
+  headShaOf,
+  INFRA_ERRORS,
+  isLiveLaneSaturated,
   retriageQuestions,
   mentionOptOutList,
   removeMentionOptOut,

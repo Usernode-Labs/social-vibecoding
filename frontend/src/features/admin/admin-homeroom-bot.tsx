@@ -44,7 +44,21 @@ interface Settings {
   userWeeklyCents: number;
   // The projects it is building for them, live like liveApps.
   firstVersionApps: string[];
+  // #3654: the model each stage runs on; blank is the platform default.
+  models?: Record<ModelStage, string>;
 }
+
+// #3654: the stages that each run on a model of their own. `followup` is
+// both kinds of follow-up turn: replies, and the proposal's failing checks.
+type ModelStage = 'triage' | 'spec' | 'build' | 'followup';
+const MODEL_STAGES: { key: ModelStage; label: string }[] = [
+  { key: 'triage', label: 'Triage' },
+  { key: 'spec', label: 'Spec' },
+  { key: 'build', label: 'Build' },
+  { key: 'followup', label: 'Follow-ups and check fixes' },
+];
+// The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
+const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 
 // #3624: one person on the DM list, with what their requests cost this week.
 interface DmUser {
@@ -77,6 +91,8 @@ interface Bot {
   weeklySpentCents: number;
   hasIncludedKey: boolean;
   model: string | null;
+  // #3654: what each stage runs on now, the default filled in.
+  models?: Record<ModelStage, string | null>;
 }
 
 interface Totals {
@@ -139,11 +155,19 @@ interface Run {
   build_queued_at: string | null;
   // The spec the bot wrote before building, live or shadow.
   build_spec_md: string | null;
+  // #3654: the verdict a labeller says was right, the build's model, and the
+  // stages this run can be replayed at by the benchmark.
+  label_verdict?: LabelVerdict | null;
+  build_model?: string | null;
+  replayStages?: string[];
   buildUrl: string | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
 }
+
+type LabelVerdict = 'question' | 'ready' | 'person' | 'empty' | 'answer' | 'revise';
+const LABEL_VERDICTS: LabelVerdict[] = ['question', 'ready', 'person', 'empty', 'answer', 'revise'];
 
 interface Refusal {
   app: string;
@@ -175,6 +199,7 @@ function retryAt(loop: LastPass): string {
 interface Payload {
   settings: Settings;
   modes: string[];
+  defaultModel?: string | null;
   bot: Bot | null;
   loop: LastPass | null;
   totals: Totals;
@@ -445,6 +470,58 @@ function VerdictBody({ run }: { run: Run }) {
 }
 
 /** The build lane in one line: what is waiting, running, done, and why it idles. */
+/**
+ * #3654: the labeller's half of a rating: the verdict that was right, and a
+ * note. Saved together and only on Save, so a Yes/No tap in the table never
+ * touches them (the server changes only the fields a request carries).
+ */
+function RunLabel({ run, canWrite, busy, onSave }: {
+  run: Run;
+  canWrite: boolean;
+  busy: boolean;
+  onSave: (labelVerdict: LabelVerdict | null, note: string | null) => void;
+}) {
+  const [verdict, setVerdict] = useState<string>(run.label_verdict || '');
+  const [note, setNote] = useState<string>(run.rating_note || '');
+  const dirty = verdict !== (run.label_verdict || '') || note !== (run.rating_note || '');
+  if (!canWrite) {
+    return run.label_verdict
+      ? <p className={AdminUI.muted} data-label-verdict={run.label_verdict}>{`Right verdict, per its labeller: ${VERDICT_LABEL[run.label_verdict]}`}</p>
+      : null;
+  }
+  return (
+    <div className="flex flex-wrap items-end gap-2" data-run-label={run.id}>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-label-${run.id}`}>Right verdict</label>
+        <select
+          id={`admin-homeroom-bot-label-${run.id}`}
+          className={`${AdminUI.select} mt-1`}
+          value={verdict}
+          onChange={(e) => setVerdict(e.target.value)}
+        >
+          <option value="">Not labelled</option>
+          {LABEL_VERDICTS.map((v) => <option key={v} value={v}>{VERDICT_LABEL[v]}</option>)}
+        </select>
+      </div>
+      <div className="flex-1 min-w-[12rem]">
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-note-${run.id}`}>Note</label>
+        <input
+          id={`admin-homeroom-bot-note-${run.id}`}
+          className={`${AdminUI.input} mt-1`}
+          maxLength={1000}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </div>
+      <button
+        type="button" className={AdminUI.btn.primarySm}
+        disabled={busy || !dirty}
+        onClick={() => onSave((verdict || null) as LabelVerdict | null, note.trim() ? note.trim() : null)}
+      >Save label</button>
+    </div>
+  );
+}
+
 function buildLaneLine(b: BuildLane | undefined): string {
   if (!b) return '';
   const parts = [
@@ -662,6 +739,26 @@ function HomeroomBotSection() {
     const data = await write(`/api/admin/homeroom-bot/runs/${run.id}/rating`, 'POST', { rating },
       rating ? `#${run.issue_number} rated.` : `#${run.issue_number} rating cleared.`);
     if (data) load();
+  };
+
+  // #3654: the right verdict and a note, without touching the Yes/No.
+  const label = async (run: Run, labelVerdict: LabelVerdict | null, note: string | null) => {
+    const data = await write(`/api/admin/homeroom-bot/runs/${run.id}/rating`, 'POST', { labelVerdict, note },
+      `#${run.issue_number} labelled.`);
+    if (data) load();
+  };
+
+  // #3654: one stage's model; blank goes back to the platform default.
+  const saveModel = async (stage: ModelStage, value: string) => {
+    const id = value.trim();
+    if ((settings?.models?.[stage] || '') === id) return;
+    if (id && !MODEL_ID_RE.test(id)) {
+      setStatus({ text: 'A model is an OpenRouter id such as z-ai/glm-5.3-flash, or blank for the default.', tone: 'err' });
+      return;
+    }
+    const name = MODEL_STAGES.find((m) => m.key === stage)?.label || stage;
+    await saveSettings({ models: { [stage]: id } as Record<ModelStage, string> },
+      id ? `${name} now runs on ${id}.` : `${name} is back on the platform default.`);
   };
 
   // A plain link, not a fetch: the endpoint streams the file and the browser
@@ -944,6 +1041,29 @@ function HomeroomBotSection() {
               A warning, not a stop. The bot only learns what a turn read once the
               turn is over, so a turn past this keeps its verdict and the overrun is
               logged. The minute limit above is what actually ends a runaway turn.
+            </p>
+          </div>
+
+          <div id="admin-homeroom-bot-models">
+            <p className={AdminUI.label}>Models</p>
+            {MODEL_STAGES.map((m) => (
+              <div className="mt-2" key={m.key}>
+                <label className={`${AdminUI.muted} block`} htmlFor={`admin-homeroom-bot-model-${m.key}`}>{m.label}</label>
+                <input
+                  id={`admin-homeroom-bot-model-${m.key}`}
+                  className={`${AdminUI.input} mt-1`}
+                  defaultValue={settings?.models?.[m.key] || ''}
+                  key={`model-${m.key}-${settings?.models?.[m.key] || ''}`}
+                  placeholder={payload?.defaultModel || 'platform default'}
+                  spellCheck={false}
+                  disabled={!canWrite}
+                  onBlur={(e) => saveModel(m.key, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                />
+              </div>
+            ))}
+            <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-models-note">
+              {`An OpenRouter model id per stage. Blank runs the platform default${payload?.defaultModel ? ` (${payload.defaultModel})` : ''}. A change applies from the next turn, and each run records the model it ran on.`}
             </p>
           </div>
 
@@ -1384,12 +1504,18 @@ function HomeroomBotSection() {
                         <div className="space-y-2">
                           <div className={AdminUI.muted}>{ratingLabel}</div>
                           <VerdictBody run={run} />
+                          <RunLabel
+                            key={`label-${run.id}-${run.label_verdict || ''}-${run.rating_note || ''}`}
+                            run={run} canWrite={canWrite} busy={busy !== ''}
+                            onSave={(v, n) => label(run, v, n)}
+                          />
                           <div className={`${AdminUI.muted} flex flex-wrap gap-x-4 gap-y-1`}>
                             {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                             <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                             {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
                             {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}
                             {run.model ? <span>{run.model}</span> : null}
+                            {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}
                             {run.duration_ms != null ? <span>{Math.round(run.duration_ms / 1000)}s</span> : null}
                             {run.rating_note ? <span>note: {run.rating_note}</span> : null}
                           </div>

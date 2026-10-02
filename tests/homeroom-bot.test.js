@@ -121,6 +121,8 @@ test('settings default to off and clamp their numbers', () => {
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
     // #3624: nobody gets the bot's DM by default; $50 a week each.
     dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
+    // #3654: every stage on the platform default until an admin names one.
+    models: { triage: '', spec: '', build: '', followup: '' },
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
