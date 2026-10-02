@@ -61,7 +61,9 @@ function loadAuthScreens(search) {
     location,
     setTimeout,
     clearTimeout,
-    fetch: async () => ({ ok: false, status: 500, json: async () => ({}) }),
+    AbortController,
+    history: { replaceState(_state, _title, url) { location.href = url; } },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ user: { id: 7 } }) }),
     document: {
       addEventListener: () => {},
       removeEventListener: () => {},

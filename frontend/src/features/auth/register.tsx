@@ -23,11 +23,11 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
+import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
   fetchSessionMint,
-  finishLogin,
   HANDLE_FIELD,
   hiddenLast,
   NativeLoginPreparationError,
@@ -76,6 +76,8 @@ export function RegisterScreen() {
 
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
+  const completion = useSessionConfirmation();
+  const { finishLogin, clear: clearConfirmation } = completion;
   // A refusal the server pinned to one field (`field` on the 400/409), shown
   // under that field instead of in #reg-error.
   const [fieldError, setFieldError] = useState<{ field: RegisterField; message: string } | null>(null);
@@ -91,14 +93,16 @@ export function RegisterScreen() {
    * re-navigation cannot clobber something half-typed.
    */
   const registerOnShow = useCallback((seg?: string) => {
+    clearConfirmation();
     setDetails(null);
     if (!seg || !code.current || code.current.value) return;
     code.current.value = decodeURIComponent(seg);
     username.current?.focus();
-  }, []);
+  }, [clearConfirmation]);
 
   const onSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    clearConfirmation();
     setError(null);
     setDetails(null);
     setFieldError(null);
@@ -123,12 +127,12 @@ export function RegisterScreen() {
         setError(data.error || 'Registration failed');
         return;
       }
-      finishLogin();
+      await finishLogin();
     } catch (error) {
       setError(sessionMintFailureMessage(error));
       setDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, []);
+  }, [clearConfirmation, finishLogin]);
 
   const live = useRef({ registerOnShow });
   live.current = { registerOnShow };
@@ -173,6 +177,7 @@ export function RegisterScreen() {
             Create your account
           </p>
           <form id="register-form" className="space-y-4" onSubmit={onSubmit}>
+            <SessionConfirmationNotice completion={completion} />
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
               <label htmlFor="reg-code" className={AUTH_LABEL}>
