@@ -13,6 +13,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
 
@@ -283,7 +284,9 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     requester: pick(row, 'requester', 'inviter') ? normalizeUser(pick(row, 'requester', 'inviter')) : null,
     peer,
     latestMessage,
-    latestSummary: text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '',
+    // One line of plain text: the row is a preview, not the message, and a
+    // bot message's `**Project**` should not show its asterisks.
+    latestSummary: plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || ''),
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
