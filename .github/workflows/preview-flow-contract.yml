@@ -54,6 +54,7 @@ on:
       - 'archives/experimental-replay-c01dc0687/**'
       - '.dockerignore'
       - 'tests/packaged-cli-*.test.js'
+      - 'tests/https-private-fixture.test.js'
       - 'tests/decision-runtime.test.js'
       - 'tests/disposable-postgres.test.js'
       - 'tests/execution-worker.test.js'

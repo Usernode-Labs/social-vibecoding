@@ -26,7 +26,7 @@ async function inspectFreshStore(f) {
   return inventory;
 }
 
-async function seed(f) {
+async function seed(f, { privateIdentity = false } = {}) {
   await f.pool.query('CREATE DATABASE usernode'); // Default clone maintenance DB, same disposable server.
   await f.pool.query('CREATE ROLE app_demo_stgtmpl_owner NOLOGIN');
   await f.pool.query('CREATE DATABASE app_demo_stgtmpl TEMPLATE template0 OWNER app_demo_stgtmpl_owner');
@@ -35,6 +35,16 @@ async function seed(f) {
   const template = new Client({ connectionString: templateUrl.toString() });
   await template.connect();
   try {
+    if (privateIdentity) {
+      await f.pool.query("UPDATE users SET has_platform_access = true WHERE username IN ('usernode-capture', 'usernode-capture-admin')");
+      await template.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+      const users = (await f.pool.query("SELECT id, username, password, is_admin, admin_readonly, has_platform_access FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin')")).rows;
+      assert.equal(users.length, 2);
+      for (const user of users) {
+        await template.query('INSERT INTO users (id, username, password, is_admin, admin_readonly, has_platform_access) VALUES ($1,$2,$3,$4,$5,$6)',
+          [user.id, user.username, user.password, user.is_admin, user.admin_readonly, user.has_platform_access]);
+      }
+    }
     await template.query('CREATE TABLE evidence (value TEXT)');
     await template.query('INSERT INTO evidence VALUES ($1)', [f.fixture.isolation.fixtureId]);
     await template.query('ALTER TABLE evidence OWNER TO app_demo_stgtmpl_owner');
@@ -50,10 +60,17 @@ async function seed(f) {
     (name, slug, repo_url, status, created_by, db_password, runtime_kind)
     VALUES ('Packaged fixture','demo',$1,'running',$2,'fixture-only','kubernetes') RETURNING *`,
   [f.fixture.preparationSource.repoUrl, user.id])).rows[0];
+  if (privateIdentity) {
+    await f.pool.query("UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1", [app.id]);
+    await f.pool.query("INSERT INTO app_collaborators (app_id,user_id) SELECT $1,id FROM users WHERE username = 'usernode-capture'", [app.id]);
+  }
   const session = (await f.pool.query(`INSERT INTO chat_sessions
     (app_id, user_id, branch_name, status, source, handoff_base_sha, handoff_uploaded_sha)
     VALUES ($1,$2,'main','active','cli_handoff',$3,$4) RETURNING *`,
   [app.id, user.id, '0'.repeat(40), f.fixture.preparationSource.revision])).rows[0];
+  if (privateIdentity) {
+    await f.pool.query("UPDATE chat_sessions SET testing_path = '/proof' WHERE id = $1", [session.id]);
+  }
   const token = makeAccessToken();
   await f.pool.query(`INSERT INTO cli_access_tokens
     (token_hash, token_hint, user_id, scopes, expires_at)
@@ -133,10 +150,93 @@ async function identities(f, sessionId) {
   return { oid, buildUid: image.uid, imageRef: image.imageRef, uids, runtimeName: intent.runtimeName };
 }
 
+async function verifyPrivatePermissions(f, tls, app) {
+  const jwt = require('../src/services/platform-jwt');
+  const visuals = require('../src/services/visuals');
+  const saved = {
+    privateKey: process.env.IFRAME_JWT_PRIVATE_KEY,
+    publicKey: process.env.IFRAME_JWT_PUBLIC_KEY,
+  };
+  process.env.IFRAME_JWT_PRIVATE_KEY = f.environment.IFRAME_JWT_PRIVATE_KEY;
+  process.env.IFRAME_JWT_PUBLIC_KEY = f.environment.IFRAME_JWT_PUBLIC_KEY;
+  let tokens;
+  try {
+    const users = (await f.pool.query("SELECT * FROM users WHERE username IN ('usernode-capture','usernode-capture-admin')")).rows;
+    const normal = users.find(user => user.username === 'usernode-capture');
+    const admin = users.find(user => user.username === 'usernode-capture-admin');
+    tokens = visuals.selectCaptureTokens({
+      captureToken: visuals.mintCaptureToken(normal, app.id),
+      adminToken: visuals.mintCaptureToken(admin, app.id),
+    });
+    const rejectedTokens = [
+      undefined,
+      'malformed',
+      jwt.signAppIdentityToken({ appId: app.id + 1, user: normal }),
+      jwt.signAppIdentityToken({ appId: app.id, user: normal, ttl: -1 }),
+      jwt.signAppIdentityToken({ appId: app.id, user: { id: 999999, username: 'unknown' } }),
+    ];
+
+    for (const token of rejectedTokens) {
+      assert.equal((await tls.request('/api/proof/identity', { token, method: 'POST' })).status, 404);
+      assert.equal((await tls.request('/usernode-bridge/v1/bridge.js', { token, method: 'POST' })).status, 404);
+    }
+    const mismatch = jwt.signAppIdentityToken({ appId: app.id, user: { ...normal, username: 'wrong' } });
+    assert.equal((await tls.request('/api/proof/identity', { token: mismatch })).status, 401);
+  } finally {
+    const signingEnvironment = [
+      ['IFRAME_JWT_PRIVATE_KEY', saved.privateKey],
+      ['IFRAME_JWT_PUBLIC_KEY', saved.publicKey],
+    ];
+    for (const [key, value] of signingEnvironment) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+
+  // The real edge cookie and clone session are independently scoped authorities.
+  const first = await tls.request(`/api/proof/identity?token=${tokens.screenshotToken}`);
+  assert.equal(first.status, 302);
+  assert.match(first.headers['set-cookie'][0], /__usernode_access=.*HttpOnly.*Secure/);
+  const edgeCookie = first.headers['set-cookie'][0].split(';')[0];
+  const exchanged = await tls.request(first.headers.location, { cookie: edgeCookie });
+  assert.equal(exchanged.status, 200, exchanged.body);
+  assert.equal(JSON.parse(exchanged.body).isAdmin, false);
+  const sessionCookie = exchanged.headers['set-cookie'][0];
+  assert.match(sessionCookie, /session=.*HttpOnly.*Secure/);
+  const cookie = `${edgeCookie}; ${sessionCookie.split(';')[0]}`;
+  assert.equal((await tls.request('/api/proof/identity', { cookie })).status, 200);
+  assert.equal((await tls.request('/api/proof/admin', { cookie })).status, 403);
+
+  // Reusing a screenshot cookie must not downgrade the assertion identity.
+  const assertion = await tls.request('/api/proof/admin', { token: tokens.testsToken, cookie });
+  assert.equal(assertion.status, 200, assertion.body);
+  assert.equal((await tls.request('/api/proof/admin', { token: tokens.testsToken, method: 'POST' })).status, 403);
+
+  const assets = [
+    '/usernode-bridge/v1/bridge.js',
+    '/usernode-native/v1/native.css',
+    '/usernode-tailwind/v1/tailwind.js',
+  ];
+  for (const asset of assets) {
+    assert.equal((await tls.request(asset)).status, 302);
+    const loaded = await tls.request(asset, { cookie });
+    assert.equal(loaded.status, 200, `${asset}: ${loaded.body.slice(0, 100)}`);
+    assert.ok(loaded.body.length > 100);
+  }
+  fs.writeFileSync(path.join(f.directory, 'https-permissions.json'), JSON.stringify({
+    tls: true,
+    secureCookies: true,
+    screenshotsNonAdmin: true,
+    assertionsReadOnly: true,
+    rejected: ['missing', 'malformed', 'wrong-app', 'expired', 'unknown-user', 'username-mismatch'],
+    privateAssets: true,
+  }));
+}
+
 test('packaged web HTTP admission and standalone worker recover persisted phase boundaries', {
   skip: process.env.RUN_ISOLATED_PACKAGED_CLI_TEST !== '1', timeout: 1800000,
 }, async t => {
-  const f = await packagedFixture(t);
+  const httpsCapture = process.env.RUN_ISOLATED_HTTPS_CAPTURE_TEST === '1';
+  const f = await packagedFixture(t, { httpsCapture });
   const migration = await f.start('migration');
   await f.waitFor(async () => {
     const [state] = JSON.parse(await f.docker(['inspect', migration]));
@@ -145,7 +245,7 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
     return true;
   }, 'packaged migration', 120000);
   const freshInventory = await inspectFreshStore(f);
-  const { app, session, token } = await seed(f);
+  const { app, session, token } = await seed(f, { privateIdentity: httpsCapture });
   const serving = await servingPreview(f, session, app);
 
   // Admission commits through HTTP; losing its reply must join the same work.
@@ -211,6 +311,22 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
   // exercise the policy service rather than a legitimate not-in-review no-op.
   await f.pool.query(`UPDATE chat_sessions SET status = 'promoted', reviewed_head_sha = checks_commit_sha WHERE id = $1`, [session.id]);
 
+  let tls;
+  if (httpsCapture) {
+    tls = await require('./lib/https-private-fixture').startPrivateCapture(f, session, app, web);
+    await verifyPrivatePermissions(f, tls, app);
+    fs.writeFileSync(path.join(f.evidence, 'hold-capture'), 'owned capture barrier');
+    worker = await f.start('worker', { pause: 'checks_created', admission: false });
+    await f.waitFor(() => fs.existsSync(marker('checks_created')), 'original browser and companion Jobs');
+    const original = await require('../src/services/kubernetes').findCheckJobs(f.fixture.config, {
+      sessionId: session.id, previewRunId: (await f.pool.query('SELECT run_id FROM check_runs WHERE session_id=$1', [session.id])).rows[0].run_id,
+    });
+    assert.ok(original.capture && original.unitSuite);
+    fs.writeFileSync(path.join(f.directory, 'https-original-jobs.json'), JSON.stringify(original));
+    await f.stop(worker);
+    fs.unlinkSync(path.join(f.evidence, 'hold-capture'));
+  }
+
   // Real Jobs produce the verdict. Its receipt, history and gate commit before loss.
   worker = await f.start('worker', { pause: 'verdict_committed', admission: false });
   await f.waitFor(() => fs.existsSync(marker('verdict_committed')), 'real capture/unit verdict COMMIT', 300000);
@@ -237,6 +353,27 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
     sessionId: session.id, previewRunId: checks.run_id,
   });
   assert.ok(jobs.capture && jobs.unitSuite);
+  if (httpsCapture) {
+    const originals = JSON.parse(fs.readFileSync(path.join(f.directory, 'https-original-jobs.json')));
+    assert.equal(jobs.capture.uid, originals.capture.uid);
+    assert.equal(jobs.unitSuite.uid, originals.unitSuite.uid);
+    assert.equal(verdict.check_state, 'passing', JSON.stringify(verdict.test_results));
+    const pods = await f.clients.core.listNamespacedPod({ namespace: f.fixture.isolation.namespace.name,
+      labelSelector: `job-name=${jobs.capture.name}` });
+    assert.equal(pods.items.length, 1);
+    assert.ok(pods.items[0].metadata.ownerReferences.some(owner => owner.uid === jobs.capture.uid));
+    const output = await f.clients.core.readNamespacedPodLog({ namespace: f.fixture.isolation.namespace.name,
+      name: pods.items[0].metadata.name, container: 'capture' });
+    const frames = require('../src/services/visuals').parseShots(output);
+    const png = frames.shots.find(shot => shot.kind === 'after' && shot.media === 'png');
+    assert.ok(png && png.status === 200, 'Original Job emits a real authenticated HTTPS screenshot');
+    assert.equal(png.buf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    fs.writeFileSync(path.join(f.directory, 'https-screenshot.png'), png.buf, { mode: 0o600 });
+    const traffic = fs.readFileSync(path.join(f.evidence, 'https.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(traffic.some(event => event.kind === 'identity' && event.detail.path === '/proof' && event.detail.username === 'usernode-capture'));
+    assert.ok(traffic.some(event => event.kind === 'identity' && event.detail.path === '/proof' && event.detail.username === 'usernode-capture-admin' && !event.detail.canWrite));
+    assert.ok(traffic.filter(event => event.kind === 'edge').every(event => event.detail.tls));
+  }
   await f.stop(worker);
   await f.stop(web);
   web = await f.start('web', { admission: false });

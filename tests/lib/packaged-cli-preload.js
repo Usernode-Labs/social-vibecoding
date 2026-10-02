@@ -42,7 +42,13 @@ Client.prototype.connect = function (callback) {
   return connectDatabase.call(this).then(() => verifyDatabase(this));
 };
 
-const allowedHosts = new Set([settings.databaseAddress, new URL(settings.apiServer).hostname, '127.0.0.1', 'localhost']);
+const allowedHosts = new Set([
+  settings.databaseAddress,
+  new URL(settings.apiServer).hostname,
+  '127.0.0.1',
+  'localhost',
+  ...(settings.privateCapture ? [settings.privateCapture.platformAddress] : []),
+]);
 const actualFetch = global.fetch;
 global.fetch = (input, options) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
@@ -81,6 +87,11 @@ async function pause(phase, detail) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 }
 
+if (settings.role === 'edge') {
+  require('./https-private-edge').start(settings);
+  return;
+}
+
 const configuration = require('../../src/config');
 configuration.runsClusterMaintenance = () => false; // Request-serving follower.
 const github = require('../../src/services/github');
@@ -91,7 +102,8 @@ github.getCloneUrl = async () => settings.source.repoUrl;
 github.listChangedFiles = async () => ['frontend/fixture.js'];
 github.getFileContent = async (_owner, _repo, filename) => {
   if (filename === 'dapp.json') return JSON.stringify({ tests: [{
-    name: 'Packaged worker checks the real candidate', path: '/health', expectText: 'Ok',
+    name: 'Packaged worker checks the real candidate', path: settings.httpsCapture ? '/proof' : '/health',
+    expectText: settings.httpsCapture ? 'Read-only assertions' : 'Ok',
   }] });
   if (filename === 'package.json') return JSON.stringify({ scripts: { test: 'node --test' } });
   throw new Error(`Unconfigured fixture GitHub file: ${filename}`);
@@ -149,6 +161,14 @@ kubernetes._getClients = () => {
         clients[lane][method] = async parameters => {
           await verifiedClients;
           assert.equal(parameters.namespace, settings.namespace, 'Mutation must stay in the disposable namespace');
+          if (settings.httpsCapture && method === 'createNamespacedJob'
+              && parameters.body.metadata.name.startsWith('sv-capture-')) {
+            const tls = settings.tlsDestination;
+            assert.ok(tls, 'Verified TLS destination required before capture creation');
+            assert.equal(tls.fixtureId, settings.fixtureId);
+            assert.equal(tls.sessionId, Number(parameters.body.metadata.labels['social.usernode.io/session-id']));
+            parameters.body.spec.template.spec.hostAliases = [{ ip: tls.address, hostnames: [tls.hostname] }];
+          }
           const result = await mutate(parameters);
           if (method === 'createNamespacedJob') {
             record('job_created', {
@@ -156,6 +176,9 @@ kubernetes._getClients = () => {
               uid: result.metadata.uid,
               runId: result.metadata.labels['social.usernode.io/preview-run-id'],
             });
+          }
+          if (method === 'createNamespacedJob' && result.metadata.name.startsWith('sv-unit-suite-')) {
+            await pause('checks_created', { name: result.metadata.name, uid: result.metadata.uid });
           }
           return result;
         };
@@ -168,6 +191,12 @@ kubernetes._getClients = () => {
 kubernetes._getClients();
 const capture = kubernetes.runCaptureJob;
 kubernetes.runCaptureJob = async (config, options) => {
+  if (settings.httpsCapture) {
+    const env = { ...options.env, MEDIA: '1', HOME: '/home/node' };
+    const targets = JSON.parse(env.TARGETS);
+    env.TARGETS = JSON.stringify(targets.map(target => ({ ...target, beforeUrl: '', still: true, companion: undefined })));
+    return capture(config, { ...options, env, cpus: '1', memory: '1g' });
+  }
   const pool = require('../../src/db/pool').getPool(config);
   const row = (await pool.query('SELECT staging_runtime_name FROM chat_sessions WHERE id = $1',
     [options.sessionId])).rows[0];

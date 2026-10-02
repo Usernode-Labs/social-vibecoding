@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { randomBytes, randomUUID, generateKeyPairSync } = require('node:crypto');
+const { randomBytes, randomUUID, generateKeyPairSync, createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const yaml = require('js-yaml');
 const { bech32m } = require('bech32');
@@ -48,16 +48,29 @@ async function retirePackagedResources(state, docker) {
   }
 }
 
-async function packagedFixture(t) {
+async function packagedFixture(t, { httpsCapture = false } = {}) {
   const verified = await verifyIsolatedBuildFixture({ requireUnitSuite: true });
   require('../../src/services/kubernetes')._setClientsForTest(verified.clients);
   const fixture = verified.fixture;
+  if (httpsCapture) require('./https-private-fixture').verifyTls(fixture);
   const isolation = fixture.isolation;
   const directory = path.join(isolation.directory, 'packaged');
   const evidence = path.join(directory, 'evidence');
   fs.mkdirSync(evidence, { recursive: true, mode: 0o777 });
   fs.chmodSync(evidence, 0o777); // Disposable evidence shared with uid 1000.
   const revision = (await execute('git', ['rev-parse', 'HEAD'], { cwd: ROOT })).stdout.trim();
+  const proofSources = [
+    'Dockerfile.kubernetes', 'package-lock.json', 'capture/capture.js',
+    'src/routes/internal.js', 'src/middleware/auth.js', 'src/middleware/admin.js',
+    'src/services/platform-jwt.js', 'src/services/visuals.js',
+    'tests/lib/packaged-cli-fixture.js', 'tests/lib/packaged-cli-preload.js',
+    'tests/lib/https-private-edge.js', 'tests/lib/https-private-fixture.js',
+    'tests/packaged-cli-entrypoints-integration.test.js', 'scripts/kpack-local-fixture.js',
+  ];
+  fs.writeFileSync(path.join(directory, 'source-sha256.json'), JSON.stringify(
+    Object.fromEntries(proofSources.map(filename => [filename,
+      createHash('sha256').update(fs.readFileSync(path.join(ROOT, filename))).digest('hex')])), null, 2),
+  { mode: 0o600 });
   const tag = `preview-packaged-${isolation.fixtureId}:local`;
   const containers = new Map();
   const journal = {
@@ -171,8 +184,19 @@ async function packagedFixture(t) {
     PLATFORM_INTERNAL_URL: 'http://127.0.0.1:3000',
   };
 
-  async function start(role, { pause = null, admission = true } = {}) {
+  async function start(role, { pause = null, admission = true, privateCapture = null } = {}) {
     await verifyIsolatedBuildFixture({ requireUnitSuite: true });
+    let tlsDestination = null;
+    const destinationFile = path.join(evidence, 'tls-destination.json');
+    if (httpsCapture && role === 'worker' && fs.existsSync(destinationFile)) {
+      tlsDestination = JSON.parse(fs.readFileSync(destinationFile));
+      assert.equal(tlsDestination.fixtureId, isolation.fixtureId);
+      assert.equal(tlsDestination.hostname, `demo--s${tlsDestination.sessionId}.fixture.invalid`);
+      const edge = await ownedContainer(tlsDestination.containerId);
+      assert.equal(edge.NetworkSettings.Networks[network].IPAddress, tlsDestination.address);
+      assert.equal(containers.get(edge.Id), 'edge', 'TLS destination must be the owned edge process');
+      require('./https-private-fixture').verifyTls(fixture);
+    }
     const processDirectory = fs.mkdtempSync(path.join(directory, `${role}-`));
     fs.chmodSync(processDirectory, 0o755);
     fs.writeFileSync(path.join(processDirectory, 'kubeconfig'), yaml.dump(kubeconfig), { mode: 0o644 });
@@ -184,9 +208,19 @@ async function packagedFixture(t) {
       namespace: isolation.namespace.name,
       source: fixture.preparationSource,
       unitSuite: fixture.checks.unitSuite,
+      role, privateCapture, httpsCapture, tlsDestination,
       pause,
-      environment: { ...environment, PREVIEW_CLI_HANDOFF_ENABLED: String(admission) },
+      environment: { ...environment, PREVIEW_CLI_HANDOFF_ENABLED: String(admission),
+        ...(role === 'edge' ? { USERNODE_ENV: 'staging', USERNODE_APP_ID: String(privateCapture.appId),
+          DATABASE_URL: privateCapture.cloneUrl, IFRAME_JWT_PRIVATE_KEY: '', EDGE_JWT_SECRET: '' } : {}) },
     }), { mode: 0o644 });
+    if (role === 'edge') {
+      require('./https-private-fixture').verifyTls(fixture);
+      for (const name of ['cert.pem', 'key.pem']) {
+        fs.copyFileSync(path.join(isolation.directory, 'tls', name), path.join(processDirectory, name));
+        fs.chmodSync(path.join(processDirectory, name), 0o644);
+      }
+    }
     const request = {
       requestId: randomUUID(), role, name: `packaged-${randomUUID()}`,
       createdAt: new Date(Math.floor(Date.now() / 1000) * 1000).toISOString(), id: null,
@@ -205,7 +239,9 @@ async function packagedFixture(t) {
       '-e', `PACKAGED_CLI_CLUSTER_IDENTITY=${isolation.cluster.uid}`,
       '-e', 'NODE_OPTIONS=--require=/app/tests/lib/packaged-cli-preload.js'];
     if (role === 'web') args.push('-p', '127.0.0.1::3000');
+    if (role === 'edge') args.push('-p', '127.0.0.1::8443');
     args.push(tag);
+    if (role === 'edge') args.push('node', '-e', 'setInterval(() => {}, 1000)');
     if (role === 'worker') args.push('node', 'scripts/preview-preparation-worker.js');
     if (role === 'migration') args.push('node', 'scripts/migrate-kubernetes.js');
     const id = await docker(args);
@@ -274,6 +310,7 @@ async function packagedFixture(t) {
     docker,
     waitFor,
     healthy,
+    ownedContainer,
   };
 }
 

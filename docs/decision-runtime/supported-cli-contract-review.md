@@ -180,3 +180,18 @@ is benchmark orphan recovery in `server.js` (`a3ebbf92c`) and fresh live approva
 enrichment in `votes.js`/`merge-requirements.js` (`c1c0a2e8e`); these survive the subsequent pinned integration. The original review did not
 establish freshness; the later reconciliation does so against the explicit pin. GitHub delivery is substituted, Linux CI execution is unverified, and
 the first supported CLI gate and full migration remain open.
+
+
+### Current HTTPS evidence and ordinary-use gate
+
+The [disposable HTTPS/private-capture proof](https-private-capture-contract.md) now
+runs real TLS, edge/session exchange, private assets and original-Job restart
+recovery. The non-admin fixture member and read-only assertion admin retain their
+separate permissions; missing/invalid credentials are rejected. The fixture TLS
+router/tiny staging document and explicit membership are named substitutions,
+not installed-production or automatic-private-membership proof. Least-privilege
+RBAC, supervision, production ingress/certificates and protocol limits remain.
+The first supported CLI slice additionally requires successive session revisions,
+overlapping checks/supersession and safe published-predecessor retirement with
+resource release after consumers finish. Final owners and disappearing competing
+mechanisms are explicit in the roadmap; no new workflows precede this proof.

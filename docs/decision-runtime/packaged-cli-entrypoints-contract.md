@@ -131,3 +131,17 @@ Its prerequisite is full `setup` and `setup-unit-checks` preflight. An isolated
 flag or URL alone fails before mutations. The fresh-store scan covers work,
 resources, check runs and all four decision journals before admission. Its zero
 counts say nothing about other developer stores, backups or historical exports.
+
+
+## Subsequent HTTPS/private-capture proof
+
+[The HTTPS contract](https-private-capture-contract.md) records a fresh packaged
+matrix using unchanged HTTPS URLs, fixture-scoped browser trust, real edge/session
+exchange and separate screenshot/assertion permissions. It also interrupts the
+worker while original Jobs run and after verdict persistence; continuation and
+required substituted merge delivery recover without competing Jobs. The internal
+HTTP transport above remains historical evidence for that earlier matrix. The
+new proof's TLS installation, tiny auth surface and explicit private membership
+are substitutions; production installation and ordinary private-project permission
+provisioning remain unproved. Repeated-use/published-predecessor retirement is the
+following essential gate, not another workflow expansion.

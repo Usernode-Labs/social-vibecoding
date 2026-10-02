@@ -318,6 +318,7 @@ async function verifyIsolatedBuildFixture({
   requireIsolation(fs.realpathSync(env.KPACK_RECOVERY_TEST_CONFIG) === path.join(fs.realpathSync(isolation.directory), 'fixture.json'),
     'configuration must belong to the dedicated fixture directory');
   const clients = (dependencies.loadClients || loadDedicatedClients)(isolation);
+  if (fixture.checks?.tls) require('./https-private-fixture').verifyTls(fixture);
   const inventory = verifyContainers(isolation, dependencies.readDocker || dockerReader(isolation));
   await verifyCluster(isolation, clients);
   const nodes = await clients.core.listNode();

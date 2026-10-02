@@ -38,5 +38,41 @@ Sources: [current preparation](../../src/services/preview-flow/work.js),
 Canonical main was pinned and integrated at `d9cf30cd7`. The subsequent freshness
 check fetched `708faeedf`; relevant capture/auth/runtime paths are unchanged.
 This bounded removal stays on accepted `c01dc0687`. A later canonical update is a
-separate integration gate. Public HTTPS/private identity proof remains next;
+separate integration gate. Authorized private HTTPS proof is now recorded in its contract;
 this inventory does not establish production compatibility or authorize rollout.
+Repeated-use and published-predecessor retirement proof is the following
+correctness gate; no additional workflow expansion precedes it.
+
+
+## Ordinary-use replacement gate
+
+The first supported CLI gate now includes repeated heads on the same session,
+overlapping checks, supersession and retirement of **published predecessors**.
+The final owner map is in the roadmap. The CLI route must not prepare or launch
+checks in a detached promise; enrolled rebuild/restart paths must not become a
+second builder/capture owner. Required settlement/gates stay with the shared worker;
+Job/input retirement stays with the existing manifest/lifecycle/harvester. Published
+preview retirement must release clone/build/runtime dependencies after consumers
+finish while retaining unresolved creation. This is mandatory verification, with
+bounded fixes if needed; it is not yet demonstrated by the single-revision proof.
+Global legacy locks, timers and safeguards are not removal candidates for this
+cohort alone. Removal evidence must name the competing owner actually eliminated.
+
+
+This HTTPS verification slice removes the internal-HTTP substitution from its
+proof path only. No product lifecycle owner, timer, lock or reducer is removed;
+the older HTTP harness remains for its earlier matrix. All three new actual
+fixtures and the PostgreSQL-only container have been verified and retired.
+Ordinary-use/published-predecessor replacement is still pending, not demonstrated
+by authorized private capture. Production and unenrolled callers remain protected.
+
+
+The current candidate reducer intentionally retains every published predecessor
+(`consumer_retirement_required`) and refuses new preparation with two retained
+published attempts. This is a deferred containment safeguard, not a regression
+introduced by the HTTPS slice. Ordinary repeated use requires **new bounded cohort
+retirement authorization and actual verification**, not documentation alone.
+Keep the guard for legacy callers/unrepresented consumers; replace it for this
+cohort only after proving original check/creation obligations and consumers are
+retired. [Candidate policy](../../src/services/preview-flow/candidate-reducer.js)
+and [resource loading](../../src/services/preview-flow/store.js) contain the boundary.

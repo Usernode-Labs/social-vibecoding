@@ -421,6 +421,33 @@ async function controllers(state) {
   }
 }
 
+async function setupHttps(state) {
+  // Generated trust is confined to this freshly verified fixture and image.
+  await verifyIsolatedBuildFixture({ env: {
+    PATH: process.env.PATH, KPACK_RECOVERY_TEST_CONFIG: path.join(state.directory, 'fixture.json'),
+    PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
+  } });
+  check(!state.captureImage, 'HTTPS trust must be selected before building the checks image');
+  const directory = path.join(state.directory, 'tls');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const cert = path.join(directory, 'cert.pem');
+  const key = path.join(directory, 'key.pem');
+  if (!state.tls) {
+    await run(state, 'openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+      '-keyout', key, '-out', cert, '-days', '1', '-subj', `/CN=${state.fixtureId}`,
+      '-addext', 'subjectAltName=DNS:*.fixture.invalid,DNS:fixture.invalid',
+      '-addext', 'basicConstraints=critical,CA:TRUE']);
+    fs.chmodSync(key, 0o600);
+    state.tls = { fixtureId: state.fixtureId,
+      certificateSha256: createHash('sha256').update(fs.readFileSync(cert)).digest('hex') };
+    save(state);
+  }
+  check(state.tls.fixtureId === state.fixtureId
+    && state.tls.certificateSha256 === createHash('sha256').update(fs.readFileSync(cert)).digest('hex'),
+  'fixture TLS identity changed');
+  console.log('[fixture] dedicated TLS certificate generated; host trust unchanged');
+}
+
 async function setupChecks(state) {
   const filename = path.join(state.directory, 'fixture.json');
   const verified = await verifyIsolatedBuildFixture({ env: {
@@ -444,6 +471,20 @@ async function setupChecks(state) {
     const dockerfile = path.join(context, 'capture/Dockerfile');
     fs.writeFileSync(dockerfile, fs.readFileSync(dockerfile, 'utf8').replace(
       'FROM node:22-bookworm-slim', `FROM node@${base}`));
+    if (state.tls) {
+      const cert = fs.readFileSync(path.join(state.directory, 'tls/cert.pem'));
+      check(state.tls.fixtureId === state.fixtureId
+        && createHash('sha256').update(cert).digest('hex') === state.tls.certificateSha256,
+      'capture trust certificate mismatch');
+      fs.writeFileSync(path.join(context, 'fixture-ca.crt'), cert);
+      fs.appendFileSync(dockerfile, `
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends libnss3-tools && rm -rf /var/lib/apt/lists/*
+COPY fixture-ca.crt /usr/local/share/ca-certificates/fixture-ca.crt
+RUN update-ca-certificates && mkdir -p /home/node/.pki/nssdb && certutil -N --empty-password -d sql:/home/node/.pki/nssdb && certutil -A -d sql:/home/node/.pki/nssdb -n disposable-fixture -t 'C,,' -i /usr/local/share/ca-certificates/fixture-ca.crt && chown -R 1000:1000 /home/node/.pki
+USER 1000:1000
+`);
+    }
     state.captureLocalTag = `${state.clusterName}-capture:local`;
     save(state);
     const existing = await docker(state, ['image', 'ls', '--filter', `reference=${state.captureLocalTag}`, '-q', '--no-trunc']);
@@ -467,7 +508,7 @@ async function setupChecks(state) {
     });
   }
   const fixture = JSON.parse(fs.readFileSync(filename));
-  fixture.checks = { ...fixture.checks, captureImage: state.captureImage };
+  fixture.checks = { ...fixture.checks, captureImage: state.captureImage, ...(state.tls ? { tls: state.tls } : {}) };
   fixture.config.captureRuntime = 'kubernetes';
   Object.assign(fixture.config.kubernetes, {
     workerNamespace: state.namespace.name,
@@ -746,11 +787,11 @@ async function integration(state, mode = 'test') {
     PATH: process.env.PATH, TMPDIR: os.tmpdir(),
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
-  await verifyIsolatedBuildFixture({ env, requireUnitSuite: ['test-checks', 'test-packaged'].includes(mode) });
-  if (mode === 'test-packaged') {
+  await verifyIsolatedBuildFixture({ env, requireUnitSuite: ['test-checks', 'test-packaged', 'test-https'].includes(mode) });
+  if (['test-packaged', 'test-https'].includes(mode)) {
     const child = spawn(process.execPath, ['--test', '--test-force-exit', '--test-timeout=1800000',
       'tests/packaged-cli-entrypoints-integration.test.js'], {
-      env: { ...env, RUN_ISOLATED_KPACK_TEST: '1', RUN_ISOLATED_PACKAGED_CLI_TEST: '1' }, stdio: 'inherit',
+      env: { ...env, RUN_ISOLATED_KPACK_TEST: '1', RUN_ISOLATED_PACKAGED_CLI_TEST: '1', ...(mode === 'test-https' ? { RUN_ISOLATED_HTTPS_CAPTURE_TEST: '1' } : {}) }, stdio: 'inherit',
     });
     const [code] = await once(child, 'exit');
     state.lastPackagedIntegration = { completedAt: new Date().toISOString(), exitCode: code };
@@ -780,8 +821,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged'].includes(mode) && argument,
-    'use init <local-socket>, setup/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/test-packaged/teardown <directory>');
+  check(['setup', 'setup-https', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https'].includes(mode) && argument,
+    'use init <local-socket>, setup/setup-https/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/test-packaged/test-https/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -790,9 +831,10 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
+    else if (mode === 'setup-https') await setupHttps(state);
     else if (mode === 'setup-checks') await setupChecks(state);
     else if (mode === 'setup-unit-checks') await setupUnitChecks(state);
-    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged'].includes(mode)) await integration(state, mode);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;
