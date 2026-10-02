@@ -299,27 +299,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "7b689087e7ec4ffd947e",
-      "count": 1,
-      "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "8f53469a8fe70cca96fb",
-      "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE NOT COALESCE(usr.is_admin, FALSE))::int AS started, COUNT(*) FILTER (WHERE COALESCE(usr.is_admin, FALSE))::int AS started_admin, "
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "a72d1ee7f9ea1c4771d6",
-      "count": 1,
-      "preview": "`SELECT COUNT(DISTINCT cs.user_id) FILTER (WHERE NOT usr.is_admin)::int AS started, COUNT(DISTINCT cs.user_id) FILTER (WHERE usr.is_admin)::int AS started_admin"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "aee7aac3fc56fcf8f356",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted' ${adminFilter('created_by', includeAdmins)}`"
