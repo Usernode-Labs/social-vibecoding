@@ -3344,8 +3344,58 @@ function useMediaFlag(query: string): boolean {
  */
 const STRIP_PROPS = ['--dev-ws-head-top', '--dev-ws-band-left', '--dev-ws-band-right'];
 
+/** The header's measured foot, published on the host (see `usePinnedStrip`).
+ *  app.css's sticky offsets fall back from it to their token arithmetic. */
+const HEAD_FOOT_PROP = '--dev-ws-head-foot';
+
 /** The column gap between the strip and the pane below it (`.dev-ws`). */
 const WS_GAP_PX = 10;
+
+/**
+ * #3726: HOW FAR THE HEADER'S FOOT IS BELOW WHATEVER SCROLLS THE PAGE.
+ *
+ * Every sticky offset on this page is an offset from the SCROLLPORT's own top
+ * (`top:` on the band, the strip and the pane head), so the header's foot is
+ * that bottom edge measured in the same frame: the bar's `bottom` less the
+ * scrolling box's `top`. NEGATIVE is a real answer and the one this exists
+ * for, because the two edges need not meet: in-flow chrome between the header
+ * and the frame (the "View as non-admin" reminder, a strip where it is not
+ * fixed) pushes the scrollport down past the bar, and a negative offset is
+ * what lets the sticky band sit back up on the bar's foot instead of below it.
+ *
+ * Which box scrolls is asked the way `usePinnedStrip` already asks it, by the
+ * live layout rather than the shell: the nearest ancestor set to scroll, which
+ * in the dev frame is #dev-forum-scroll. Its RANGE is deliberately not
+ * required: a short tab that cannot scroll is still framed by the same box, and
+ * its top is where the band would pin the moment it did. No such box means the
+ * DOCUMENT scrolls (a phone browser, lib/browser-scroll.ts, where the CSS
+ * forces this scroller's own overflow open), the sticky header is measured from
+ * the viewport's top, and app.css's `--platform-header-h` arithmetic is the
+ * answer; this returns null and the offset falls back to that.
+ */
+function headerFoot(host: HTMLElement): number | null {
+  if (typeof document === 'undefined') return null;
+  const header = document.getElementById('platform-header');
+  if (!header || !header.getBoundingClientRect().height) return null;
+  for (let n: HTMLElement | null = host.parentElement; n && n !== document.body; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.clientHeight > 0) {
+      return header.getBoundingClientRect().bottom - n.getBoundingClientRect().top;
+    }
+  }
+  return null;
+}
+
+/**
+ * The host app.css declares its offsets on (#dev-workshop), one level above the
+ * React root. The measured value has to land HERE, not on `.dev-ws`: a custom
+ * property inherits DOWN, and `#dev-workshop { --ws-pin-top: var(--dev-ws-head-foot) }`
+ * is read on that node, so a value on its child would resolve to the fallback.
+ */
+function offsetHost(host: HTMLElement): HTMLElement {
+  const root = host.closest('#dev-workshop');
+  return root instanceof HTMLElement ? root : host;
+}
 
 /**
  * Measure the strip against the pane on All items, from 700px up, where the
@@ -3453,11 +3503,20 @@ function usePinnedStrip(
     if (!bar || typeof document === 'undefined') {
       host.removeAttribute('data-ws-pinned');
       host.removeAttribute('data-ws-head-pinned');
+      offsetHost(host).style.removeProperty(HEAD_FOOT_PROP);
       return undefined;
     }
     let frame = 0;
     const check = () => {
       frame = 0;
+      // #3726: the header's foot in the scrollport's frame, before the pinned
+      // answers below, so a re-laid-out page is corrected on the same frame it
+      // scrolls. Null where the document scrolls: app.css's own arithmetic is
+      // the answer there, and the property is dropped so it takes over.
+      const foot = headerFoot(host);
+      const cssHost = offsetHost(host);
+      if (foot == null) cssHost.style.removeProperty(HEAD_FOOT_PROP);
+      else cssHost.style.setProperty(HEAD_FOOT_PROP, `${Math.round(foot)}px`);
       const below = bar.nextElementSibling;
       if (!below) return;
       const strip = bar.getBoundingClientRect();
@@ -3483,6 +3542,7 @@ function usePinnedStrip(
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
       host.removeAttribute('data-ws-head-pinned');
+      offsetHost(host).style.removeProperty(HEAD_FOOT_PROP);
     };
   }, [bar, hostRef, tab]);
 }

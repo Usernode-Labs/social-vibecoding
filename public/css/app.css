@@ -17445,9 +17445,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 
    WHERE IT RESTS depends on which element scrolls. In the installed app and
    the native WebView #dev-forum-scroll does, and its top edge is the
-   scrollport's: the band rests 10px above it (its -18px tuck under the
-   header, less #dev-body's 8px top padding), the part the header covers. On
-   a phone browser the document scrolls, under the sticky header, so the band
+   scrollport's: the band rests 18px above the HEADER'S MEASURED FOOT less
+   #dev-body's 8px top padding, the part the header covers (that foot is
+   `--dev-ws-head-foot`, published by workshop.tsx; see #3726 below). On   a phone browser the document scrolls, under the sticky header, so the band
    rests the header's height less its 17px tuck below the viewport's top.
    `--ws-band-top` carries whichever it is, and the pane head on All items,
    which pins too, comes to rest under the band (58px: its 18px tuck and its
@@ -17456,7 +17456,20 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    Z-INDEX 29: over the cards that scroll under it, and under the header (30)
    whose foot overlaps its top. */
 @media (max-width: 699.98px) {
-  #dev-workshop { --ws-band-top: -10px; }
+  /* #3726: THE BAND RESTS ON THE HEADER'S FOOT, MEASURED. The two literals
+     below are the same fact when the header is exactly 3.25rem and its foot
+     overlaps the scroller's top by 7px, which is the ordinary case: -10px is
+     the band's 18px tuck less #dev-body's 8px padding, and the 7px overlap
+     comes out of the scroller top being 45. In-flow chrome between the header
+     and the frame (a strip that is not fixed, the non-admin reminder) moves
+     the scroller's top without moving the header, and the literal no longer
+     reaches the foot: a gap opens and the tabs separate. `--dev-ws-head-foot`
+     is the header's measured foot in the scroller's frame, published by
+     workshop.tsx, and the band rests 18px above it less the body's 8px. The
+     calc is the fallback for the frame before the first measurement, and the
+     phone-browser form (the document scrolls, so the property is absent) keeps
+     its own arithmetic. */
+  #dev-workshop { --ws-band-top: calc(var(--dev-ws-head-foot, 7px) - 17px); }
   html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
     --ws-band-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top) - 17px);
   }
@@ -17898,7 +17911,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      strip pinned there drew straight over the header and hid it. There it
      is the header's own height, as everything else that sticks under the
      header in that mode is measured (#browse-search-bar). */
-  #dev-workshop { --ws-pin-top: 7px; }
+  #dev-workshop { --ws-pin-top: var(--dev-ws-head-foot, 7px); }
   html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
     --ws-pin-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
   }
