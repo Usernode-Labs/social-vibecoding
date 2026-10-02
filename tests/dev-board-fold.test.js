@@ -1402,15 +1402,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Sonnet 5.5 in place of Sonnet 5 is pinned on the #2117 flat-list check,
   // which already reads the same <select> on the same session.
   //
-  // 831 → 832: +1 (#3567): the welcome tour's first card, what a community
+  // 831 → 832: +1 (#3620): Back from a project's Workshop tab returns to its
+  // Hub. It has a route of its own (?shot=tab-back presses the tab and goes
+  // Back in the page), so it could not share another check's route.
+  //
+  // 832 → 833: +1 (#3567): the welcome tour's first card, what a community
   // is. No check could see the tour open before (every ?shot= route kept it
   // shut), so ?shot=welcome-tour opens it at step 1; the #2255 check that
   // it ships hidden on a plain load still says something this one cannot.
-  // 832 leaves 28 slots against MAX_DECLARED_TESTS (860).
+  // 833 leaves 27 slots against MAX_DECLARED_TESTS (860).
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 832);
+  checkCap.assertPinned(DAPP.tests.length, 833);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

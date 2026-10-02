@@ -62,6 +62,11 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const href = event.currentTarget.getAttribute('href');
   if (!href) return;
   event.preventDefault();
+  // #3620: a step Back when the entry below is where the chip points (the
+  // board it was opened from), so the device's Back afterwards does not
+  // reopen this item. Anywhere else (a cold link) it pushes, as it did.
+  const app = (window as unknown as { App?: { _stepBackTo?: (h: string) => boolean } }).App;
+  if (app?._stepBackTo?.(href)) return;
   window.location.hash = href;
 }
 

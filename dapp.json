@@ -1232,14 +1232,15 @@
     },
     {
       "id": "kept-apps.home-dot",
-      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902)",
+      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902); in the desktop sidebar its Active row offers a Resume button, the button a closed app collapses into (#3618)",
       "path": "/?demo=1&shot=apps-kept",
-      "expectSelector": "#app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
+      "expectSelector": "body:has(#platform-recents .platform-active > a[data-live]:not([aria-current]) > .platform-recent-resume) #app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
       "visual": true,
       "impact": [
         "public/css/app.css",
         "frontend/src/features/home/app-grid.tsx",
-        "frontend/src/features/app-frame/**"
+        "frontend/src/features/app-frame/**",
+        "frontend/src/features/nav/**"
       ]
     },
     {
@@ -2564,6 +2565,12 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded:not(:has(.messages-thread-header))"
     },
     {
+      "name": "Back from a project's Workshop tab returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop tab, then goes Back",
+      "path": "/?demo=1&ws=status&shot=tab-back#app/usernode-2d5619/workshop",
+      "expectSelector": "html[data-shot-tab-back=\"status\"] #app-view:not(.hidden) .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"status\"][aria-selected=\"true\"]",
+      "expectText": "Hub"
+    },
+    {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
@@ -3337,9 +3344,9 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, with no chip on the page (#3051, #852)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, no chip on the page, and the page bounces (#3051, #852, #3566)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
+      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
       "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488)",
@@ -5295,9 +5302,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "Over a running app the rail is the route's to hide, so a peek from the window's edge never brings the sidebar toggle into the app's strip",
+      "name": "Over a running app the rail is the route's to hide: no sidebar toggle in the app's strip, and no left-edge hover strip, so pointing at x=2 never opens the sidebar (#3138)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden:not(.platform-tabs-peek)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle"
     },
     {
       "id": "agent-session.card",
@@ -5319,7 +5326,7 @@
     {
       "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Changes and ⋯ (where it is built moved to the composer's Build with, #3078)",
       "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-changes-button] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
+      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-pills] > [data-agent-session-focus] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
       "expectText": "Also keep the choice when I switch devices."
     },
     {

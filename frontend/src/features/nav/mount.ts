@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -136,6 +139,28 @@ if (typeof window !== 'undefined') {
         iconEmoji: app.iconEmoji || null,
       } : null);
     },
+    /**
+     * #3618: the app you just left shrinks into its Resume control, from
+     * `from` (where the app was drawn, measured before it was hidden). A
+     * no-op when that control is not on screen or motion is reduced. The
+     * caller parks the app first, so the control is already drawn — every
+     * store above flushes synchronously. See ./resume-motion.ts.
+     */
+    collapse(app: { slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null } | null,
+      from?: { left: number; top: number; width: number; height: number } | null) {
+      if (!app || !app.slug) return false;
+      return collapseIntoResume({ ...app, slug: app.slug }, from);
+    },
+    /** #3618: the Resume control for `slug` on screen now, or null. */
+    resumeHandle(slug: string) {
+      return resumeHandleFor(slug);
+    },
+    /** #3618: the Resume control just pressed for `slug`, once, or null. */
+    takeResumeOrigin(slug: string) {
+      return takeResumeOrigin(slug);
+    },
+    /** #3618: how long the collapse and the expand take. */
+    resumeMotionMs: RESUME_MOTION_MS,
     /** A blocked app must disappear from both desktop Recents and mobile Resume. */
     forget(slug: string) {
       if (parkedStore.get().app?.slug === slug) setParked(null);
