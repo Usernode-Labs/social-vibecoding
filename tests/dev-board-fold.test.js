@@ -1402,9 +1402,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Sonnet 5.5 in place of Sonnet 5 is pinned on the #2117 flat-list check,
   // which already reads the same <select> on the same session.
   //
+  // 831 → 832: +1 (#3620): Back from a project's Workshop tab returns to its
+  // Hub. It has a route of its own (?shot=tab-back presses the tab and goes
+  // Back in the page), so it could not share another check's route.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 831);
+  checkCap.assertPinned(DAPP.tests.length, 832);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
