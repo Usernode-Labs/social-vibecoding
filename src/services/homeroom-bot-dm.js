@@ -19,7 +19,9 @@
 //   - "building", "ready to vote on" and "live" reach the DM too;
 //   - a project created with a description is built by the bot: it files
 //     the description as the project's first-version request once the
-//     project is running, and the loop above takes it from there.
+//     project is running, and the loop above takes it from there. (Anybody
+//     else's description is filed the same way, as the project's first
+//     request, and left to the group: the bot is not involved.)
 //
 // Who it talks to is a list an admin keeps (`homeroom_bot_dm_users`), so it
 // can be tried one person at a time. What each person's requests may cost
@@ -102,7 +104,11 @@ async function botAccount(pool) {
   return rows[0] || null;
 }
 
-/** The slugs of the projects the bot is building for somebody still on the list. */
+/**
+ * The slugs of the projects the bot is building for somebody still on the
+ * list. A first request the bot does not build (its creator was not on the
+ * list when they made it) never makes a project live.
+ */
 async function firstVersionAppSlugs(pool, settings) {
   const users = Array.isArray(settings?.dmUsers) ? settings.dmUsers : [];
   if (!users.length) return [];
@@ -111,7 +117,7 @@ async function firstVersionAppSlugs(pool, settings) {
        FROM homeroom_bot_first_versions f
        JOIN apps a ON a.id = f.app_id
        JOIN users u ON u.id = f.user_id
-      WHERE LOWER(u.username) = ANY($1::text[])`,
+      WHERE f.bot_builds AND LOWER(u.username) = ANY($1::text[])`,
     [users],
   );
   return rows.map((r) => r.slug).filter((s) => typeof s === 'string');
@@ -592,25 +598,29 @@ function normalizeBrief(raw) {
 }
 
 /**
- * A project was just created with a description, by somebody the bot talks
- * to in a DM (routes/apps.js). Recorded, so the bot files it as the
- * project's first-version request once the project is running, and the
- * person is told in their DM. Resolves { conversationId } or null when the
- * bot does not build for them.
+ * A project was just created with a description (routes/apps.js): what the
+ * create dialog asks as "What should it do?". Recorded, so it is filed as
+ * the project's first request once the project is running, under its
+ * creator's name. When the creator is somebody the bot talks to in a DM,
+ * the bot builds that first version and the person is told in their DM;
+ * for anybody else the request is filed and left to the group, with no DM.
+ * Resolves { conversationId } when the bot builds it and said so, else null.
  */
 async function startFirstVersion(pool, config, { app, user, brief }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
-  if (!isDmUser(settings, user.username)) return null;
-  const bot = await settingsModule().ensureBotUser(pool, config);
-  if (!bot) return null;
+  const bot = isDmUser(settings, user.username) ? await settingsModule().ensureBotUser(pool, config) : null;
   await pool.query(
-    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief)
-     VALUES ($1, $2, $3)
+    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (app_id) DO NOTHING`,
-    [app.id, user.id, text],
+    [app.id, user.id, text, !!bot],
   );
+  if (!bot) {
+    log.info('homeroom-bot-dm', 'Project will file its description as its first request', { app: app.slug, userId: user.id });
+    return null;
+  }
   const name = app.name || app.slug;
   const sent = await sendDm(pool, {
     bot,
@@ -626,10 +636,12 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
 }
 
 /**
- * File one project's first-version request, once the project is running:
- * a GitHub issue under the creator's name, the platform's issue row, and
- * the bot woken for it. Claimed by a status flip, so two Pods (or the
- * creation hook and the sweep) file it once.
+ * File one project's first request, once the project is running: a GitHub
+ * issue under the creator's name and the platform's issue row. When the bot
+ * builds it, the creator is recorded as its requester (so the bot's news
+ * reaches their DM) and the bot is woken for it; otherwise nothing of the
+ * bot's is touched. Claimed by a status flip, so two Pods (or the creation
+ * hook and the sweep) file it once.
  */
 async function fileFirstVersion(pool, config, appId, deps = {}) {
   if (isStaging() && !deps.allowStaging) return null;
@@ -639,7 +651,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
        FROM apps a
       WHERE f.app_id = $1 AND a.id = f.app_id AND f.status = 'waiting'
         AND a.status = 'running' AND a.repo_url IS NOT NULL
-      RETURNING f.app_id, f.user_id, f.brief, f.attempts, a.slug, a.name, a.repo_url`,
+      RETURNING f.app_id, f.user_id, f.brief, f.attempts, f.bot_builds, a.slug, a.name, a.repo_url`,
     [appId],
   );
   const row = claimed[0];
@@ -649,6 +661,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const { rows: people } = await pool.query('SELECT username FROM users WHERE id = $1', [row.user_id]);
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
+  const botBuilds = row.bot_builds !== false;
   const title = clip(`First version of ${name}`, 200);
   const body = [
     `**Source:** Homeroom user (${username})`,
@@ -656,7 +669,9 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     row.brief,
     '',
     '---',
-    `${username} described this when they created the project. Homeroom bot is building its first version from it.`,
+    botBuilds
+      ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
+      : `${username} described this when they created the project.`,
   ].join('\n');
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
@@ -676,12 +691,14 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
        VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
       [row.app_id, issueNumber, title, body, row.user_id],
     );
-    await pool.query(
-      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
-       VALUES ($1, $2, $3, $4, TRUE)
-       ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE`,
-      [row.app_id, issueNumber, row.user_id, title],
-    );
+    if (botBuilds) {
+      await pool.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
+         VALUES ($1, $2, $3, $4, TRUE)
+         ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE`,
+        [row.app_id, issueNumber, row.user_id, title],
+      );
+    }
     await pool.query(
       `UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = $2, filed_at = NOW(), error = NULL
         WHERE app_id = $1`,
@@ -690,8 +707,8 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
       'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
     ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId: issueRows[0]?.id, kind: 'general' });
-    settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'created' });
-    log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id });
+    if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'created' });
+    log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };
   } catch (err) {
     const final = row.attempts >= MAX_FILE_ATTEMPTS;
@@ -700,7 +717,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
       [row.app_id, final ? 'failed' : 'waiting', clip(err.message, 300)],
     ).catch(() => {});
     log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final });
-    if (final) {
+    if (final && botBuilds) {
       const bot = await botAccount(pool);
       if (bot) {
         await sendDm(pool, {
@@ -714,7 +731,12 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   }
 }
 
-/** Every project waiting for its first version whose project is running now. */
+/**
+ * Every project waiting for its first request whose project is running now,
+ * the bot's or not. The bot's loop runs it before its refresh, and the
+ * leader runs it on its own timer (server.js), so a request the creation
+ * hook missed is filed whether or not the bot is on.
+ */
 async function sweepFirstVersions(pool, config, deps = {}) {
   if (isStaging() && !deps.allowStaging) return 0;
   // A filing a restart interrupted is tried again, within its attempts.

@@ -1305,6 +1305,16 @@ async function becomeLeader() {
   void runAccountDeletionCleanup();
   setInterval(runAccountDeletionCleanup, 60_000).unref();
 
+  // A project created with a description files it as its first request once
+  // it runs (services/homeroom-bot-dm.js). The creation hook in
+  // app-creator.js does it; this files one the hook missed or could not
+  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
+    .sweepFirstVersions(getPool(config), config)
+    .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
+    .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
+  setInterval(runFirstRequestSweep, 5 * 60 * 1000).unref();
+
   // #2779: delegated connector grants — the agent-session Mayor's, one or two
   // a turn — are dead the moment their turn ends. Keep a week for the audit
   // trail's sake, then remove them and their tokens.
