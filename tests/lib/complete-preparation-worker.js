@@ -21,11 +21,7 @@ function completePreparationWorker(pool, verified, {
     ...fixture.config,
     databaseUrl: pool.options.connectionString,
     dataEncryptionKey: 'c7-disposable-only',
-    nativePreviewWorkerEnabled: true,
-    nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true,
-    nativePreviewRecoverableBuild: true,
-    nativePreviewRecoverableRuntime: true,
+    nativeCliPreviewHandoffEnabled: true,
   };
   assert.ok(config.databaseUrl, 'Explicit fixture database required');
   const environment = {

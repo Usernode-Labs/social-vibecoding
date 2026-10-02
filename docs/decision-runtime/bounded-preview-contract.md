@@ -107,11 +107,26 @@ matrix and include service/storage/retention/security costs in that decision.
 
 ## Implementation and operation
 
+### Current admission contract (2 October 2026)
+
+New durable preparation has one format: `native-preview-kubernetes-prepare`,
+version 1, containing the reserved clone, pinned kpack Build and Kubernetes runtime
+operations and their stable completion action identities. Admission requires the
+existing default-off `nativeCliPreviewHandoffEnabled` switch and valid Kubernetes/
+kpack configuration. The authenticated CLI adapter retains its existing policies;
+the shared transaction commits accepted head/details and required work together.
+No capability combination may admit a partial durable preparation contract.
+
+Disabling admission rejects new preparation but does not change the registry or
+the meaning of already persisted work. Retained earlier kinds still recover under
+their original input/checkpoint contract. Replay snapshots, synchronous native
+attempt opt-in, locks, lifecycle and cleanup protections remain. Removing old
+handlers/trace formats requires the separate supported-store/retention decision;
+that gate does not block simplifying new admission. No rollout default changes.
+
 - [`preview-flow/work.js`](../../src/services/preview-flow/work.js) is the trusted
-  internal owner. `request(action)` requires both `nativePreviewWorkerEnabled:
-  true` and the existing native-attempt opt-in; it accepts CLI handoffs only.
-  No HTTP/MCP route invokes it. Authentication remains a future caller-adapter
-  obligation, not a capability encoded in an action payload.
+  internal preparation owner. The default-off CLI adapter invokes transactional
+  admission; caller authentication is not a capability encoded in the action.
 - [`execution/store.js`](../../src/services/execution/store.js) composes admission
   and domain settlement through B2. Claims use PostgreSQL time and rotate durable
   positions before I/O. A receipt means an accepted decision; a claim means

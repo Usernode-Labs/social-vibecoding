@@ -4,14 +4,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { createExecutionDatabase } = require('./lib/execution-database');
+const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
 const { createReviewWork, ANNOUNCE_RETURN } = require('../src/services/proposal-review/work');
 const { createProposalReview } = require('../src/services/proposal-review/store');
 const { replayDecision } = require('../src/services/proposal-review/reducer');
-const { createPreviewWork, PREPARE } = require('../src/services/preview-flow/work');
+const { PREPARE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createExecutionWorker } = require('../src/services/execution/worker');
 
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
+
 const HEAD = 'a'.repeat(40);
 
 function action(sessionId = 1) {
@@ -44,7 +46,7 @@ async function fixture(t) {
   const db = await createExecutionDatabase(databaseUrl);
   t.after(() => db.close());
   await db.pool.query("INSERT INTO chat_sessions (id, source, status, checks_commit_sha) VALUES (1, 'imported', 'promoted', $1)", [HEAD]);
-  const config = { proposalReviewWorkerEnabled: true, nativePreviewWorkerEnabled: true, nativePreviewAttempts: true,
+  const config = { proposalReviewWorkerEnabled: true,
     dataEncryptionKey: 'test-key', databaseUrl: db.url, appRuntime: 'docker' };
   const review = createReviewWork(db.pool, config);
   async function attempt(executor = review) {
@@ -210,7 +212,7 @@ test('real PostgreSQL: shared scheduler progresses beyond a busy preview batch a
   await pool.query('DELETE FROM chat_sessions');
   let previewsBusy = true;
   let reviewFailing = true;
-  const preview = createPreviewWork(pool, config, {
+  const preview = createRetainedPreviewWork(pool, config, {
     store: review.store,
     lock: async (_config, _classifier, _sessionId, run) => previewsBusy ? { busy: true } : run(),
     inspect: async () => ({ present: false, receipt: null }),
@@ -224,7 +226,7 @@ test('real PostgreSQL: shared scheduler progresses beyond a busy preview batch a
   const previewWork = [];
   for (let id = 1; id <= 25; id++) {
     await pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1, $2)', [id, HEAD]);
-    previewWork.push((await preview.request({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: id,
+    previewWork.push((await preview.seedRetained({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: id,
       headSha: HEAD, startedStatus: 'active' })).work);
   }
   const reviewWork = [];

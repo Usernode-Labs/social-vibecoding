@@ -21,8 +21,7 @@ const KEY = 'injected-runtime-only';
 function settings() {
   return {
     appRuntime: 'kubernetes', dataEncryptionKey: KEY,
-    nativePreviewWorkerEnabled: true, nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true, nativePreviewRecoverableBuild: true, nativePreviewRecoverableRuntime: true,
+    nativeCliPreviewHandoffEnabled: true,
     kubernetes: {
       appNamespace: 'isolated', buildNamespace: 'isolated', buildEngine: 'kpack',
       builderImage: `example.test/builder@sha256:${'c'.repeat(64)}`, buildServiceAccount: 'builder',

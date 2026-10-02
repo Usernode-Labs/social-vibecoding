@@ -12,6 +12,7 @@ const { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE } = require('..
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { replayDecision } = require('../src/services/preview-flow/reducer');
 const { createExecutionDatabase } = require('./lib/execution-database');
+const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
 
 const HEAD = 'a'.repeat(40);
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
@@ -19,10 +20,7 @@ const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQ
 function config() {
   return {
     appRuntime: 'kubernetes',
-    nativePreviewWorkerEnabled: true,
-    nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true,
-    nativePreviewRecoverableBuild: true,
+    nativeCliPreviewHandoffEnabled: true,
     dataEncryptionKey: 'isolated-build-test',
     kubernetes: {
       appNamespace: 'isolated-apps',
@@ -287,7 +285,8 @@ async function fixture(t, settings = config(), {
     return result;
   };
   let deploys = 0;
-  const work = createPreviewWork(db.pool, settings, {
+  const work = createRetainedPreviewWork(db.pool, settings, {
+    workflow: PREPARE_IMAGE,
     owner,
     images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }), inspect: async () => ({ status: 'complete' }) },
@@ -341,7 +340,7 @@ async function fixture(t, settings = config(), {
 for (const loss of ['interruption', 'create acknowledgment', 'decision acknowledgment']) {
   test(`real PostgreSQL / injected kpack: recovery after ${loss} keeps serving state and journals`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t, config(), { replyLoss: loss === 'create acknowledgment', decisionLoss: loss === 'decision acknowledgment' });
-    const admitted = await f.work.request(f.action);
+    const admitted = await f.work.seedRetained(f.action);
     assert.equal(admitted.work.workflow, PREPARE_IMAGE);
     if (loss === 'create acknowledgment') await assert.rejects(f.run(), /acknowledgment loss/);
     else assert.equal((await f.run()).outcome, 'waiting');
@@ -370,7 +369,7 @@ for (const loss of ['interruption', 'create acknowledgment', 'decision acknowled
 
 test('real PostgreSQL / injected kpack: stale image completion and runtime permission are rejected', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.request(f.action);
+  await f.work.seedRetained(f.action);
   await f.run();
   const state = await f.owner.read(f.action.sessionId);
   const identity = { flowId: state.flow.id, generation: state.flow.generation, headSha: HEAD,
@@ -389,31 +388,33 @@ test('real PostgreSQL / injected kpack: stale image completion and runtime permi
   assert.equal((await f.owner.read(f.action.sessionId)).preview.runtimeName, 'serving');
 });
 
-test('real PostgreSQL: admission freezes recipe configuration and preserves already admitted work', { skip: !databaseUrl }, async t => {
-  for (const [recoverClone, workflow] of [[false, PREPARE], [true, PREPARE_CLONE]]) {
-    const f = await fixture(t, { ...config(), nativePreviewRecoverableClone: recoverClone, nativePreviewRecoverableBuild: false });
-    const before = await f.work.request(f.action);
-    const changed = createPreviewWork(f.pool, { ...f.settings, nativePreviewRecoverableClone: true, nativePreviewRecoverableBuild: true });
+test('real PostgreSQL: new admission preserves retained kinds and their frozen recipe', { skip: !databaseUrl }, async t => {
+  for (const workflow of [PREPARE, PREPARE_CLONE]) {
+    const f = await fixture(t);
+    const retained = createRetainedPreviewWork(f.pool, f.settings, { workflow });
+    const before = await retained.seedRetained(f.action);
+    const changed = createPreviewWork(f.pool, f.settings);
     const replayed = await changed.request(f.action);
     assert.equal(replayed.work.workflow, workflow);
     assert.deepEqual(replayed.work.input, before.work.input);
   }
   const f = await fixture(t);
-  const admitted = await f.work.request(f.action);
+  const admitted = await f.work.seedRetained(f.action);
   f.settings.kubernetes.builderImage = `changed/builder@sha256:${'d'.repeat(64)}`;
   assert.notEqual(admitted.work.input.intent.buildOperation.builderImage, f.settings.kubernetes.builderImage);
   assert.ok(f.work.handlers[PREPARE] && f.work.handlers[PREPARE_CLONE] && f.work.handlers[PREPARE_IMAGE]);
 });
 
-for (const invalid of ['docker', 'auto', 'mutable builder', 'missing clone']) {
+for (const invalid of ['docker', 'auto', 'mutable builder', 'admission disabled']) {
   test(`real PostgreSQL: ${invalid} admission rolls back decisions, resources and work`, { skip: !databaseUrl }, async t => {
     const settings = config();
     if (invalid === 'docker') settings.appRuntime = 'docker';
     if (invalid === 'auto') settings.kubernetes.buildEngine = 'auto';
     if (invalid === 'mutable builder') settings.kubernetes.builderImage = 'builder:latest';
-    if (invalid === 'missing clone') settings.nativePreviewRecoverableClone = false;
+    if (invalid === 'admission disabled') settings.nativeCliPreviewHandoffEnabled = false;
     const f = await fixture(t, settings);
-    await assert.rejects(f.work.request(f.action));
+    const admission = createPreviewWork(f.pool, f.settings);
+    await assert.rejects(admission.request(f.action));
     for (const table of ['preview_flows', 'preview_flow_resources', 'preview_flow_decisions', 'execution_work_requests']) {
       assert.equal((await f.pool.query(`SELECT * FROM ${table}`)).rowCount, 0);
     }
@@ -423,7 +424,7 @@ for (const invalid of ['docker', 'auto', 'mutable builder', 'missing clone']) {
 test('real PostgreSQL + HTTP / injected Build: SIGKILL of the actual worker recovers its original claim and Build', { skip: !databaseUrl }, async t => {
   const { fork } = require('node:child_process');
   const f = await fixture(t);
-  const admitted = await f.work.request(f.action);
+  const admitted = await f.work.seedRetained(f.action);
   const server = createServer(async (request, response) => {
     try {
       let value;
@@ -483,7 +484,7 @@ test('real PostgreSQL + HTTP / injected Build: SIGKILL of the actual worker reco
 for (const kind of ['build', 'infrastructure', 'unknown']) {
   test(`real PostgreSQL / injected kpack: ${kind} failure settles the domain with an explicit cause`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t);
-    await f.work.request(f.action);
+    await f.work.seedRetained(f.action);
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
     const build = f.api.object(resource);
@@ -505,12 +506,12 @@ for (const kind of ['build', 'infrastructure', 'unknown']) {
 
 test('real PostgreSQL / injected runtimes: cleanup defers for a live Build and preserves its successor after completion', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.request(f.action);
+  await f.work.seedRetained(f.action);
   await f.run();
   const old = await f.owner.read(f.action.sessionId);
   await f.owner.apply({ type: 'PreparationFailed', actionId: randomUUID(), sessionId: f.action.sessionId,
     flowId: old.flow.id, generation: old.flow.generation, headSha: HEAD, detail: 'Retired isolated test attempt' });
-  await f.work.request({ ...f.action, actionId: randomUUID() });
+  await f.work.seedRetained({ ...f.action, actionId: randomUUID() });
   const successor = await f.owner.read(f.action.sessionId);
   const removals = [];
   t.mock.method(require('../src/services/preview-flow/binding-adapters'), 'inspect', async () => ({ target: 'serving', token: null, uid: null }));
@@ -578,7 +579,7 @@ test('injected Kubernetes inventory: legacy failed/app deletion and success rete
 
 test('real PostgreSQL: recipe writes and decision journal roll back together after a persistence error', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.request(f.action);
+  await f.work.seedRetained(f.action);
   const initial = await f.owner.read(f.action.sessionId);
   await f.owner.markClonePrepared(f.action.sessionId, initial.flow.id);
   const action = { type: 'RequestCandidateImageBuild', actionId: randomUUID(), sessionId: f.action.sessionId,
@@ -609,7 +610,7 @@ test('real PostgreSQL: recipe writes and decision journal roll back together aft
 
 test('real PostgreSQL: candidate completion cannot bypass its reserved image receipt', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.request(f.action);
+  await f.work.seedRetained(f.action);
   await f.run();
   const state = await f.owner.read(f.action.sessionId);
   const receipt = {
@@ -637,7 +638,7 @@ test('injected kpack: failed or rejected submission checkpoint prevents external
 for (const loss of ['before', 'after']) {
   test(`real PostgreSQL / production observer: healthy runtime adoption repairs ${loss}-persistence receipt loss`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t, config(), { runtimeReceiptLoss: loss });
-    await f.work.request(f.action);
+    await f.work.seedRetained(f.action);
     const servingPreview = (await f.owner.read(f.action.sessionId)).preview;
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
@@ -680,7 +681,7 @@ for (const conflict of adoptionConflicts) {
   test(`real PostgreSQL / production observer: recovery rejects conflicting ${conflict}`, { skip: !databaseUrl }, async t => {
     const persistedReceipt = conflict === 'runtime UID' || conflict === 'stored Build reference';
     const f = await fixture(t, config(), { runtimeReceiptLoss: persistedReceipt ? 'after' : 'before' });
-    await f.work.request(f.action);
+    await f.work.seedRetained(f.action);
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
     f.api.succeed(resource);

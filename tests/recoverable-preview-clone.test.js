@@ -7,14 +7,16 @@ const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { Client } = require('pg');
 const { createExecutionDatabase } = require('./lib/execution-database');
+const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
 const { candidateResources } = require('../src/services/preview-flow/candidate-resources');
 const { createCloneOperations } = require('../src/services/preview-flow/clone-operation');
-const { createPreviewWork, PREPARE, PREPARE_CLONE } = require('../src/services/preview-flow/work');
+const { PREPARE, PREPARE_CLONE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createExecutionWorker } = require('../src/services/execution/worker');
 const { replayDecision } = require('../src/services/preview-flow/reducer');
 
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL;
+
 const HEAD = 'a'.repeat(40);
 const password = '1'.repeat(48);
 
@@ -320,8 +322,7 @@ test('real shared runtime and clone: interrupted copy and lost completion receip
   await db.pool.query('UPDATE apps SET slug=$1', [resource.sourceDb.slice(4)]);
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1,$2)', [sessionId, HEAD]);
   await db.pool.query('CREATE TABLE objects (name text PRIMARY KEY, receipt jsonb)');
-  const config = { databaseUrl: db.url, appRuntime: 'docker', dataEncryptionKey: 'test-key',
-    nativePreviewWorkerEnabled: true, nativePreviewAttempts: true, nativePreviewRecoverableClone: true };
+  const config = { databaseUrl: db.url, appRuntime: 'docker', dataEncryptionKey: 'test-key' };
   let runtimeCreates = 0;
   const adapters = {
     clones: resource.operations(),
@@ -351,9 +352,9 @@ test('real shared runtime and clone: interrupted copy and lost completion receip
       return receipt;
     },
   };
-  const work = createPreviewWork(db.pool, config, adapters);
+  const work = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE_CLONE });
   const request = { type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId, headSha: HEAD, startedStatus: 'active' };
-  const admission = await work.request(request);
+  const admission = await work.seedRetained(request);
   assert.equal(admission.work.workflow, PREPARE_CLONE);
   const intent = admission.work.input.intent;
   resource.remember(intent);
@@ -372,7 +373,7 @@ test('real shared runtime and clone: interrupted copy and lost completion receip
   const oid = (await resource.operations().inspect(intent)).database.oid;
   await db.pool.query("UPDATE execution_work_requests SET lease_until=clock_timestamp()-interval '1 second'");
   let lost = false;
-  const recovered = createPreviewWork(db.pool, config, { ...adapters, owner: {
+  const recovered = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE_CLONE, owner: {
     ...owner,
     async apply(action) {
       const receipt = await owner.apply(action);
@@ -409,16 +410,16 @@ test('real shared runtime and clone: interrupted copy and lost completion receip
   assert.equal(state.binding, null);
   assert.equal((await resource.operations().inspect(intent)).databaseOid, oid);
   for (const entry of await owner.trace(sessionId)) assert.deepEqual(replayDecision(entry), entry.decision);
-  // Disabling future enrollment does not reinterpret an already accepted request.
-  const compatibility = createPreviewWork(db.pool, { ...config, nativePreviewRecoverableClone: false }, adapters);
-  assert.equal((await compatibility.request(request)).work.id, admission.work.id);
+  // A different historical fixture format does not reinterpret retained work.
+  const compatibility = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE });
+  assert.equal((await compatibility.seedRetained(request)).work.id, admission.work.id);
   assert.ok(compatibility.handlers[PREPARE] && compatibility.handlers[PREPARE_CLONE]);
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (2,$1)', [HEAD]);
   const oldRequest = { ...request, actionId: randomUUID(), sessionId: 2 };
-  const legacy = await compatibility.request(oldRequest);
+  const legacy = await compatibility.seedRetained(oldRequest);
   assert.equal(legacy.work.workflow, PREPARE);
   assert.equal(legacy.work.input.intent.cloneOperation, undefined);
-  assert.equal((await work.request(oldRequest)).work.id, legacy.work.id, 'existing admission keeps its old contract');
+  assert.equal((await work.seedRetained(oldRequest)).work.id, legacy.work.id, 'existing admission keeps its old contract');
 });
 
 for (const runtimeKind of ['docker', 'kubernetes']) {
@@ -431,15 +432,14 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
     await db.pool.query('UPDATE apps SET slug=$1', [resource.sourceDb.slice(4)]);
     await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (1,$1)', [HEAD]);
     const config = { databaseUrl: db.url, appRuntime: runtimeKind, jwtSecret: 'test',
-      kubernetes: { appNamespace: 'apps', appDomain: 'test.local' }, dataEncryptionKey: 'test-key',
-      nativePreviewWorkerEnabled: true, nativePreviewAttempts: true, nativePreviewRecoverableClone: true };
-    const work = createPreviewWork(db.pool, config, { clones: resource.operations() });
+      kubernetes: { appNamespace: 'apps', appDomain: 'test.local' }, dataEncryptionKey: 'test-key' };
+    const work = createRetainedPreviewWork(db.pool, config, { workflow: PREPARE_CLONE, clones: resource.operations() });
     const action = { type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: 1, headSha: HEAD, startedStatus: 'active' };
-    const predecessor = await work.request(action);
+    const predecessor = await work.seedRetained(action);
     const oldIntent = predecessor.work.input.intent;
     resource.remember(oldIntent);
     await resource.operations().prepare(oldIntent, password);
-    const successor = await work.request({ ...action, actionId: randomUUID() });
+    const successor = await work.seedRetained({ ...action, actionId: randomUUID() });
     const nextIntent = successor.work.input.intent;
     resource.remember(nextIntent);
     const next = await resource.operations().prepare(nextIntent, password);

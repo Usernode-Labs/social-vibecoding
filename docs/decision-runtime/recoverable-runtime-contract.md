@@ -1,5 +1,11 @@
 # C5: recoverable Kubernetes candidate preparation
 
+**Current admission:** only complete `native-preview-kubernetes-prepare` is newly
+admitted under the default-off CLI switch. Earlier capability flags and partial
+formats described below are historical recovery/evidence contracts, not new
+admission choices. Retained formats remain supported; see the
+[consolidated admission contract](bounded-preview-contract.md#current-admission-contract-2-october-2026).
+
 Contract before implementation, 1 October 2026. One new experimental work kind;
 old admitted work keeps its old behavior. Shared decision transactions, aggregate
 locks, receipts/traces and execution claims/checkpoints/fair retries stay in use.

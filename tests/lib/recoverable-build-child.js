@@ -17,10 +17,6 @@ process.once('message', async ({ databaseUrl, config, apiUrl, runScript = null }
       config = {
         ...verified.fixture.config,
         dataEncryptionKey: 'disposable-integration-only',
-        nativePreviewWorkerEnabled: true,
-        nativePreviewAttempts: true,
-        nativePreviewRecoverableClone: true,
-        nativePreviewRecoverableBuild: true,
       };
       runScript = verified.fixture.runScript;
     } else {

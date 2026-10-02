@@ -33,12 +33,12 @@ async function fixture(t) {
   const config = {
     ...verified.fixture.config,
     databaseUrl: db.url,
+    kubernetes: {
+      ...verified.fixture.config.kubernetes,
+      workerNamespace: verified.fixture.isolation.namespace.name,
+    },
     nativeCliPreviewHandoffEnabled: true,
-    nativePreviewWorkerEnabled: true,
     nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true,
-    nativePreviewRecoverableBuild: true,
-    nativePreviewRecoverableRuntime: true,
     dataEncryptionKey: 'c8-isolated',
   };
   const owner = createPreviewFlow(db.pool);
@@ -286,19 +286,15 @@ test('C8 enrolled aggregate rejects competing synchronous and durable preparatio
   assert.deepEqual(replayDecision(historical), original.decision, 'Retained v9 traces keep their original decision contract');
 });
 
-test('C8 the CLI switch scopes its capabilities and does not enroll other Dev callers', { skip: !isolated }, async t => {
+test('CLI admission uses the complete contract without enabling legacy Dev attempts', { skip: !isolated }, async t => {
   const f = await fixture(t);
   f.config.nativePreviewAttempts = false;
-  f.config.nativePreviewWorkerEnabled = false;
-  f.config.nativePreviewRecoverableClone = false;
-  f.config.nativePreviewRecoverableBuild = false;
-  f.config.nativePreviewRecoverableRuntime = false;
   const work = f.make();
   const result = await work.admit({ session: await f.session(), headSha: HEAD });
   assert.equal(result.accepted, true);
   assert.equal(require('../src/services/preview-flow/activation').enabled(f.config), false);
   assert.equal(require('../src/services/cli-preview-handoff/work').selected(f.config, { source: 'anthropic' }), false);
-  assert.equal(f.config.nativePreviewRecoverableRuntime, false, 'Global caller configuration stays unchanged');
+  assert.equal(f.config.nativePreviewAttempts, false, 'Legacy caller configuration stays unchanged');
 });
 
 test('C9 completion requires the verdict and release of manifest/lifecycle ownership', { skip: !isolated }, async t => {

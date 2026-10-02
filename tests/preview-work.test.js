@@ -4,12 +4,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createPreviewWork, PREPARE, RETIRE } = require('../src/services/preview-flow/work');
+const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
+const { PREPARE, RETIRE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createGuard } = require('../src/services/build-retention-guard');
 const { replayDecision } = require('../src/services/preview-flow/reducer');
 
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
+
 const HEAD = 'a'.repeat(40);
 
 function request() {
@@ -41,7 +43,7 @@ async function fixture(t, kind = 'docker') {
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (1, $1)', [HEAD]);
   await db.pool.query('CREATE TABLE objects (name TEXT PRIMARY KEY, receipt JSONB)');
   const config = { databaseUrl: db.url, appRuntime: kind, kubernetes: { appNamespace: 'apps' },
-    dataEncryptionKey: 'test-encryption-key', nativePreviewWorkerEnabled: true, nativePreviewAttempts: true };
+    dataEncryptionKey: 'test-encryption-key', };
   const guard = createGuard({ onLockLost: () => { throw new Error('Unexpected guard loss'); } });
   let creates = 0;
   const adapters = {
@@ -71,7 +73,7 @@ async function fixture(t, kind = 'docker') {
       await owner.apply({ type: 'PreviewCleanupCompleted', actionId: randomUUID(), sessionId, flowId, disposition: 'removed' });
     },
   };
-  const work = createPreviewWork(db.pool, config, adapters);
+  const work = createRetainedPreviewWork(db.pool, config, adapters);
   async function execute(workflow = PREPARE, executor = work) {
     await db.pool.query("UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE workflow = $1", [workflow]);
     const [attempt] = await executor.store.claim(randomUUID(), [workflow], 1);
@@ -83,17 +85,17 @@ async function fixture(t, kind = 'docker') {
   return { ...db, config, adapters, work, execute, creates: () => creates };
 }
 
-test('real PostgreSQL: admission atomically reserves resources, decision, work and original receipt', { skip: !databaseUrl }, async t => {
+test('real PostgreSQL: retained-work fixture atomically seeds resources, decision, work and original receipt', { skip: !databaseUrl }, async t => {
   const { pool, config, adapters, work } = await fixture(t);
-  const broken = createPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO execution_work_events')), config, adapters);
+  const broken = createRetainedPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO execution_work_events')), config, adapters);
   const action = request();
-  await assert.rejects(broken.request(action));
+  await assert.rejects(broken.seedRetained(action));
   for (const table of ['preview_flows', 'preview_action_receipts', 'preview_flow_decisions', 'preview_flow_resources', 'execution_work_requests']) {
     assert.equal((await pool.query(`SELECT * FROM ${table}`)).rowCount, 0, table);
   }
-  const lost = createPreviewWork(failOnce(pool, sql => sql === 'COMMIT', true), config, adapters);
-  await assert.rejects(lost.request(action));
-  const retried = await work.request(action);
+  const lost = createRetainedPreviewWork(failOnce(pool, sql => sql === 'COMMIT', true), config, adapters);
+  await assert.rejects(lost.seedRetained(action));
+  const retried = await work.seedRetained(action);
   assert.equal(retried.replayed, true);
   assert.equal((await pool.query('SELECT * FROM execution_work_requests')).rowCount, 1);
   assert.equal((await pool.query('SELECT * FROM preview_flow_resources')).rowCount, 1);
@@ -104,7 +106,7 @@ test('real PostgreSQL: admission atomically reserves resources, decision, work a
 for (const kind of ['docker', 'kubernetes']) {
   test(`real PostgreSQL ${kind}: preparation preserves serving state and candidate ownership between claims`, { skip: !databaseUrl }, async t => {
     const { pool, work, execute, creates } = await fixture(t, kind);
-    const admitted = await work.request(request());
+    const admitted = await work.seedRetained(request());
     await work.census();
     assert.equal((await pool.query('SELECT * FROM execution_work_requests WHERE workflow = $1', [RETIRE])).rowCount, 0);
     const prepared = await execute();
@@ -122,8 +124,8 @@ for (const kind of ['docker', 'kubernetes']) {
 
   test(`real PostgreSQL ${kind}: lost runtime receipt acknowledgment is adopted without another creation`, { skip: !databaseUrl }, async t => {
     const { pool, config, adapters, work, execute, creates } = await fixture(t, kind);
-    const broken = createPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO preview_flow_resources (flow_id, session_id, receipt)')), config, adapters);
-    await broken.request(request());
+    const broken = createRetainedPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO preview_flow_resources (flow_id, session_id, receipt)')), config, adapters);
+    await broken.seedRetained(request());
     await assert.rejects(execute(PREPARE, broken));
     await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
     const result = await execute();
@@ -134,7 +136,7 @@ for (const kind of ['docker', 'kubernetes']) {
 
   test(`real PostgreSQL ${kind}: interrupted creation is retired; completed absence still catches late resources`, { skip: !databaseUrl }, async t => {
     const { pool, work, execute } = await fixture(t, kind);
-    const admission = await work.request(request());
+    const admission = await work.seedRetained(request());
     const [interrupted] = await work.store.claim(randomUUID(), [PREPARE]);
     await work.store.checkpoint(interrupted, { creationStarted: true });
     await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
@@ -152,11 +154,11 @@ for (const kind of ['docker', 'kubernetes']) {
 
   test(`real PostgreSQL ${kind}: stale preparation result schedules retirement and cannot damage successor`, { skip: !databaseUrl }, async t => {
     const { pool, work, execute } = await fixture(t, kind);
-    const old = await work.request(request());
+    const old = await work.seedRetained(request());
     const [attempt] = await work.store.claim(randomUUID(), [PREPARE]);
     const proposed = await work.handlers[PREPARE].run({ attempt, signal: new AbortController().signal,
       checkpoint: value => work.store.checkpoint(attempt, value) });
-    const next = await work.request(request());
+    const next = await work.seedRetained(request());
     const stale = await work.store.settle(attempt, proposed, work.handlers[PREPARE].commit);
     assert.equal(stale.result.accepted, false);
     assert.equal(stale.result.reason, 'superseded_flow');
@@ -172,7 +174,7 @@ test('real PostgreSQL: dedicated worker death after creation recovers in a diffe
   const { fork } = require('node:child_process');
   const { once } = require('node:events');
   const { pool, work, url } = await fixture(t);
-  const admission = await work.request(request());
+  const admission = await work.seedRetained(request());
   const children = [];
   t.after(() => { for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); });
   function launch(stopAfterCreate) {
@@ -200,10 +202,10 @@ test('real PostgreSQL: expiry cannot release a live creator resource lock or aut
   let entered;
   const pending = new Promise(resolve => { finish = resolve; });
   const started = new Promise(resolve => { entered = resolve; });
-  const held = createPreviewWork(pool, config, { ...adapters,
+  const held = createRetainedPreviewWork(pool, config, { ...adapters,
     async prepare(...args) { entered(); await pending; return adapters.prepare(...args); },
   });
-  await work.request(request());
+  await work.seedRetained(request());
   const [old] = await work.store.claim(randomUUID(), [PREPARE]);
   const preparation = held.handlers[PREPARE].run({ attempt: old, signal: new AbortController().signal,
     checkpoint: value => work.store.checkpoint(old, value) });
@@ -268,8 +270,8 @@ test('candidate observation checks physical owner, built head and health; errors
 for (const afterCommit of [false, true]) {
   test(`real PostgreSQL: preparation settlement ${afterCommit ? 'loses commit acknowledgment' : 'rolls back after mapping failure'} without duplicate decisions`, { skip: !databaseUrl }, async t => {
     const { pool, config, adapters, work, execute, creates } = await fixture(t);
-    const admission = await work.request(request());
-    const broken = createPreviewWork(failOnce(pool, sql => afterCommit ? sql === 'COMMIT'
+    const admission = await work.seedRetained(request());
+    const broken = createRetainedPreviewWork(failOnce(pool, sql => afterCommit ? sql === 'COMMIT'
       : sql.includes('INSERT INTO preview_flow_decisions'), afterCommit), config, adapters);
     // Work is already claimed before injecting completion failure. Its clone
     // checkpoint and runtime receipt remain outside the settlement transaction.
@@ -293,11 +295,11 @@ test('real PostgreSQL: busy discovery rolls back without blocking polling or lat
   const { runWorker } = require('../scripts/preview-preparation-worker');
   const { pool, config, adapters, work } = await fixture(t);
   await pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (2, $1), (3, $1)', [HEAD]);
-  const oldest = await work.request(request());
-  const later = await work.request({ ...request(), sessionId: 3 });
+  const oldest = await work.seedRetained(request());
+  const later = await work.seedRetained({ ...request(), sessionId: 3 });
   // Retire domain permission before holding the oldest aggregate lock.
   await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id IN (1, 3)");
-  const unrelated = await work.request({ ...request(), sessionId: 2 });
+  const unrelated = await work.seedRetained({ ...request(), sessionId: 2 });
   // Remove preparation from discovery assertions: these obligations already
   // have stable resources and only their cleanup must now be discovered.
   await pool.query("UPDATE execution_work_requests SET status = 'succeeded' WHERE session_id IN (1, 3)");

@@ -18,11 +18,7 @@ function runtimeTestWorker(pool, fixture, clients, {
     ...fixture.config,
     databaseUrl: pool.options.connectionString,
     dataEncryptionKey: 'c5-disposable-only',
-    nativePreviewWorkerEnabled: true,
-    nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true,
-    nativePreviewRecoverableBuild: true,
-    nativePreviewRecoverableRuntime: true,
+    nativeCliPreviewHandoffEnabled: true,
   };
   if (!config.databaseUrl) throw new Error('Explicit isolated database connection is required');
   const counts = { secret: 0, service: 0, deployment: 0, cloneRemovals: 0 };

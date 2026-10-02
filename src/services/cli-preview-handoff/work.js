@@ -30,17 +30,9 @@ function createCliHandoffWork(pool, config, {
   warm = require('../staging').warmStagingCert,
 } = {}) {
   const runtime = createSessionDecisionRuntime(pool);
-  // These preparation capabilities are scoped to this owner. Enabling the CLI
-  // caller must not change the legacy Dev callers' preview configuration.
-  const preparationConfig = {
-    ...config,
-    nativePreviewWorkerEnabled: true,
-    nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true,
-    nativePreviewRecoverableBuild: true,
-    nativePreviewRecoverableRuntime: true,
-  };
-  const preview = createPreviewWork(pool, preparationConfig, { ...previewOptions, candidateAccepted });
+  // New preparation has one complete contract. Recovery still dispatches by
+  // persisted kind, independently of admission or legacy native-attempt opt-in.
+  const preview = createPreviewWork(pool, config, { ...previewOptions, candidateAccepted });
   const store = preview.store;
 
   function readWork(transaction, sessionId, workId) {

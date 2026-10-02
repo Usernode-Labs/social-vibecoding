@@ -9,7 +9,8 @@ const { once } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createPreviewWork, PREPARE_IMAGE } = require('../src/services/preview-flow/work');
+const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
+const { PREPARE_IMAGE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createImageBuildOperations } = require('../src/services/preview-flow/image-build-operation');
 const { buildManifest } = require('../src/services/preview-flow/image-build-intent');
@@ -31,10 +32,6 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
   const sessionId = 3000000 + process.pid;
   config.databaseUrl = db.url;
   config.dataEncryptionKey = 'disposable-integration-only';
-  config.nativePreviewWorkerEnabled = true;
-  config.nativePreviewAttempts = true;
-  config.nativePreviewRecoverableClone = true;
-  config.nativePreviewRecoverableBuild = true;
   await db.pool.query('UPDATE apps SET repo_url = $1 WHERE id = 1', [fixture.repoUrl]);
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1, $2)', [sessionId, fixture.revision]);
   const owner = createPreviewFlow(db.pool);
@@ -49,7 +46,8 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
     }
     return result;
   };
-  const work = createPreviewWork(db.pool, config, {
+  const work = createRetainedPreviewWork(db.pool, config, {
+    workflow: PREPARE_IMAGE,
     owner,
     images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }) },
@@ -66,7 +64,7 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
       };
     },
   });
-  const admitted = await work.request({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
+  const admitted = await work.seedRetained({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
     headSha: fixture.revision, startedStatus: 'active' });
   const child = fork(require.resolve('./lib/recoverable-build-child'), [], {
     execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -135,8 +133,6 @@ async function actualFixture(t, runScript) {
   t.after(() => db.close());
   const config = {
     ...fixture.config, kubernetes: { ...fixture.config.kubernetes }, databaseUrl: db.url, dataEncryptionKey: 'disposable-integration-only',
-    nativePreviewWorkerEnabled: true, nativePreviewAttempts: true,
-    nativePreviewRecoverableClone: true, nativePreviewRecoverableBuild: true,
   };
   const sessionId = 4000000 + process.pid;
   await db.pool.query('UPDATE apps SET repo_url = $1 WHERE id = 1', [fixture.repoUrl]);
@@ -144,7 +140,8 @@ async function actualFixture(t, runScript) {
   const owner = createPreviewFlow(db.pool);
   const images = createImageBuildOperations({ clients: () => clients });
   let deployments = 0;
-  const work = createPreviewWork(db.pool, config, {
+  const work = createRetainedPreviewWork(db.pool, config, {
+    workflow: PREPARE_IMAGE,
     owner, images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }) },
     inspect: async () => ({ present: false, receipt: null }),
@@ -161,7 +158,7 @@ async function actualFixture(t, runScript) {
     },
   });
   async function admit() {
-    return work.request({
+    return work.seedRetained({
       type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
       headSha: fixture.revision, startedStatus: 'active',
     });

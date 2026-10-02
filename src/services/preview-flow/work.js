@@ -35,7 +35,7 @@ function createPreviewWork(pool, config, {
   }
 
   async function requestInTransaction(transaction, action) {
-    if (config.nativePreviewWorkerEnabled !== true || !require('./activation').enabled(config)) {
+    if (config.nativeCliPreviewHandoffEnabled !== true) {
       throw new Error('Durable native preview admission is experimentally disabled');
     }
     if (action.type !== 'RequestCandidatePreview') throw new Error('Native candidate request required');
@@ -54,28 +54,18 @@ function createPreviewWork(pool, config, {
         throw new Error('This experiment accepts native CLI handoff preparation only');
       }
       const flow = admission.decision.flow;
-      const recoverClone = config.nativePreviewRecoverableClone === true;
-      const recoverImage = config.nativePreviewRecoverableBuild === true;
-      const recoverRuntime = config.nativePreviewRecoverableRuntime === true;
-      if (recoverRuntime && !recoverImage) throw new Error('Recoverable runtime requires recoverable image preparation');
-      if (recoverImage && !recoverClone) throw new Error('Recoverable image preparation requires the recoverable clone');
-      let workflow = PREPARE;
-      if (recoverClone) workflow = PREPARE_CLONE;
-      if (recoverImage) workflow = PREPARE_IMAGE;
-      if (recoverRuntime) workflow = PREPARE_RUNTIME;
       const intent = {
         ...candidateResources(config, session.id, flow.attemptId),
-        ...(recoverClone ? {
-          cloneOperation: {
-            kind: 'template-v1',
-            sourceDb: require('../db-manager').appDbName(app.slug),
-          },
-        } : {}),
-        ...(recoverImage ? {
-          buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
-        } : {}),
+        cloneOperation: {
+          kind: 'template-v1',
+          sourceDb: require('../db-manager').appDbName(app.slug),
+        },
+        buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
+        runtimeOperation: {
+          kind: 'kubernetes-v1',
+          resources: {},
+        },
       };
-      if (recoverRuntime) intent.runtimeOperation = { kind: 'kubernetes-v1', resources: {} };
       const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
       await owner.reserveCandidateInTransaction(transaction, session.id, flow.id, intent, {
         credentialEnc,
@@ -85,18 +75,30 @@ function createPreviewWork(pool, config, {
         id: randomUUID(),
         effectKey: effect.effectKey,
         sessionId: session.id,
-        workflow,
+        workflow: PREPARE_RUNTIME,
         version: 1,
         causedBy: action.actionId,
         input: {
-          identity: { flowId: flow.id, generation: flow.generation, headSha: flow.headSha },
+          identity: {
+            flowId: flow.id,
+            generation: flow.generation,
+            headSha: flow.headSha,
+          },
           intent,
-          app: { id: app.id, slug: app.slug, repo_url: app.repo_url },
-          session: { id: session.id, branch_name: session.branch_name, pr_number: session.pr_number },
+          app: {
+            id: app.id,
+            slug: app.slug,
+            repo_url: app.repo_url,
+          },
+          session: {
+            id: session.id,
+            branch_name: session.branch_name,
+            pr_number: session.pr_number,
+          },
           preparedActionId: randomUUID(),
           failedActionId: randomUUID(),
-          ...(recoverClone ? { clonePreparedActionId: randomUUID() } : {}),
-          ...(recoverImage ? { imageBuiltActionId: randomUUID() } : {}),
+          clonePreparedActionId: randomUUID(),
+          imageBuiltActionId: randomUUID(),
         },
       });
       return { ...admission, work };
