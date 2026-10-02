@@ -277,6 +277,11 @@ const CHECKS_REASON = 'checks_failing';
 // very pass its wake started, which is how a live build a restart
 // interrupted was never looked at again (recipebot #48, run 613).
 const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON]);
+// #3703: what runTriage answers when a row the loop started as a follow-up
+// (beside other work on its app, see "How much at once") no longer has the
+// bot's proposal to follow up on. It touches nothing and is handed back, to
+// be taken when the app's own session is free.
+const NOT_FOLLOW_UP = 'not_follow_up';
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -1706,6 +1711,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // #3146: on an app in the live list the verdict is acted on, and the run
   // is recorded as 'live' so the ledger says which runs spoke.
   const liveMode = live.isLiveFor(settings, app);
+  // A follow-up may have been started while the app's session runs
+  // something else (#3703); anything but a follow-up would use that session.
+  if (item.followUp && !liveMode) return { ran: false, reason: NOT_FOLLOW_UP };
   const runMode = liveMode ? 'live' : mode;
   const liveD = liveMode ? liveDeps(deps) : null;
   const turnBudgetMs = 1000 * clampInt(
@@ -1808,6 +1816,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   }
   if (liveMode) {
     const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+    if (!open && item.followUp) return { ran: false, reason: NOT_FOLLOW_UP };
     if (open) {
       // One proposal per issue: the group is already voting on the bot's
       // answer, and a second build would be a second, competing proposal.
@@ -3241,6 +3250,26 @@ async function buildLaneSummary(pool) {
 }
 
 /**
+ * #3703: the newest spec on a proposal's session, the one its spec card
+ * opens. '' when it has none or the read fails: the follow-up still has the
+ * request, the discussion and the code.
+ */
+async function proposalSpec(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT content FROM chat_session_specs
+        WHERE session_id = $1
+        ORDER BY version DESC LIMIT 1`,
+      [Number(sessionId)],
+    );
+    return typeof rows[0]?.content === 'string' ? rows[0].content : '';
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the proposal\'s spec (continuing without)', { sessionId, err: err.message });
+    return '';
+  }
+}
+
+/**
  * #3264: a follow-up on the bot's own open proposal for this issue. Runs
  * where runTriage would otherwise have stopped at "already has a bot
  * proposal". See homeroom-bot-followup.js for what the turn may do.
@@ -3353,15 +3382,18 @@ async function runFollowUp(pool, config, {
     sessionId: session.id, prNumber: session.pr_number,
     threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
   });
+  // #3703: the spec whose card leads the proposal's discussion, which is
+  // what a reply there is usually about.
+  const spec = await proposalSpec(pool, session.id);
   const prompt = followup.followUpPrompt({
-    seed, proposalBlock, prNumber: session.pr_number, replies, canRevise,
+    seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise,
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
     // The follow-up works on the proposal's branch, at its reviewed head.
     baseSha: session.reviewed_head_sha || null,
     texts: {
-      seed, prompt, proposal_block: proposalBlock,
+      seed, prompt, proposal_block: proposalBlock, spec,
       replies: JSON.stringify(replies),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
@@ -4004,6 +4036,16 @@ function liveDeps(deps = {}) {
 // it on Homeroom, else the app itself, so a person with a long list cannot
 // take every slot while somebody else waits.
 //
+// A FOLLOW-UP is the exception to "one at a time on an app" (#3703): a row
+// whose issue has the bot's own proposal up for a vote is somebody talking
+// to the bot about that proposal (or its checks failing), and it runs on the
+// proposal's own session, never the app's. So it neither waits for the app
+// nor holds it, and it starts ahead of every row but the queue's front ones
+// (priority 0: a Run now, an answer given in the DM). Before, a question in
+// the discussion of the bot's proposal on an Ear Trainer project waited
+// eleven minutes behind two other requests' builds on that project, the
+// newer request taken first, and was reported as the bot not answering.
+//
 // BACKGROUND work is shadow triage of every other app: the calibration
 // sweep. It keeps its old shape, a batch of one app's issues at a time,
 // `concurrency` apps at once, in slots of its own, so it never holds up
@@ -4016,7 +4058,9 @@ function liveDeps(deps = {}) {
 // queue row's started_at is the durable one, claimed before the work starts
 // so a second Pod could never take the same row.
 
-// appId → { lane, person, issueNumber, itemId, startedAt }
+// slot → { lane, appId, person, issueNumber, itemId, startedAt, followUp }.
+// A slot is the app's id for work on the app's own session, and
+// `followup:<queue row id>` for a follow-up, which runs on its proposal's.
 const inFlight = new Map();
 // A spent weekly cap stops dispatch until the next idle pass, rather than
 // re-dispatching (and refusing) on every completion.
@@ -4028,35 +4072,54 @@ function personKeyOf(row) {
 
 /**
  * Pure: which live queue rows to start now. `candidates` are queue rows in
- * priority order (each carrying `person_id` or null); `busyAppIds` are apps
- * with anything already running; `active` is the live work running, as
- * { person }. One per app, at most `perPerson` per person counting what
- * runs, at most `slots` new ones in all.
+ * priority order (each carrying `person_id` or null, and
+ * `follow_up_session_id` when its issue has the bot's own open proposal);
+ * `busyAppIds` are apps whose session something already runs on;
+ * `blockedAppIds` are apps nothing may start on (backed off); `active` is
+ * the live work running, as { person }. One per app, at most `perPerson`
+ * per person counting what runs, at most `slots` new ones in all. A
+ * follow-up (#3703) runs on its proposal's session, so a busy app does not
+ * hold it back and it does not make the app busy.
  */
-function pickLive(candidates, { busyAppIds = [], active = [], slots = 0, perPerson = 1 } = {}) {
+function pickLive(candidates, {
+  busyAppIds = [], blockedAppIds = [], active = [], slots = 0, perPerson = 1,
+} = {}) {
   const busy = new Set(busyAppIds.map(Number));
+  const blocked = new Set(blockedAppIds.map(Number));
   const count = new Map();
   for (const a of active) count.set(a.person, (count.get(a.person) || 0) + 1);
   const picks = [];
   for (const row of candidates || []) {
     if (picks.length >= slots) break;
     const appId = Number(row.app_id);
-    if (busy.has(appId)) continue;
+    const followUp = row.follow_up_session_id != null;
+    if (blocked.has(appId) || (!followUp && busy.has(appId))) continue;
     const person = personKeyOf(row);
     if ((count.get(person) || 0) >= perPerson) continue;
-    busy.add(appId);
+    if (!followUp) busy.add(appId);
     count.set(person, (count.get(person) || 0) + 1);
-    picks.push({ ...row, person });
+    picks.push({ ...row, person, followUp });
   }
   return picks;
 }
 
-/** The live queue's heads, in priority order, with who each one is for. */
-async function liveCandidates(pool, { liveSlugs, excludeAppIds, pausedApps, limit = 200 }) {
+/**
+ * The live queue's heads, in priority order, with who each one is for.
+ * Nothing on an app in `excludeAppIds` (backed off); on an app in
+ * `busyAppIds` (its session taken), only follow-ups. A follow-up (#3703),
+ * a row whose issue has the bot's own proposal still up for a vote, comes
+ * right after the priority-0 rows: somebody is usually waiting on the bot in
+ * that proposal's discussion, and it is one turn on the proposal's own
+ * session.
+ */
+async function liveCandidates(pool, {
+  liveSlugs, excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200,
+}) {
   if (!liveSlugs.length) return [];
   const { rows } = await pool.query(
     `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
-            COALESCE(r.user_id, i.created_by) AS person_id
+            COALESCE(r.user_id, i.created_by) AS person_id,
+            fu.id AS follow_up_session_id
        FROM homeroom_bot_queue q
        JOIN apps a ON a.id = q.app_id
        LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
@@ -4065,13 +4128,21 @@ async function liveCandidates(pool, { liveSlugs, excludeAppIds, pausedApps, limi
           WHERE app_id = q.app_id AND github_issue_number = q.issue_number
           ORDER BY id LIMIT 1
        ) i ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT cs.id FROM chat_sessions cs
+          WHERE cs.app_id = q.app_id AND cs.user_id = $6
+            AND q.issue_number = ANY(cs.linked_issues)
+            AND cs.status = 'promoted' AND cs.is_headless = FALSE
+          ORDER BY cs.id DESC LIMIT 1
+       ) fu ON TRUE
       WHERE q.started_at IS NULL
         AND a.slug = ANY($1::text[])
         AND NOT (q.app_id = ANY($2::int[]))
+        AND (fu.id IS NOT NULL OR NOT (q.app_id = ANY($5::int[])))
         AND NOT (a.slug = ANY($3::text[]))
-      ORDER BY q.priority, q.enqueued_at
+      ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
-    [liveSlugs, excludeAppIds, pausedApps, limit],
+    [liveSlugs, excludeAppIds, pausedApps, limit, busyAppIds, botId],
   );
   return rows;
 }
@@ -4153,18 +4224,24 @@ async function releaseClaim(pool, itemId) {
 }
 
 /** Run one piece of work in its slot and free the slot when it ends. */
-function track(pool, appId, entry, work) {
-  inFlight.set(appId, entry);
+function track(pool, slot, entry, work) {
+  inFlight.set(slot, entry);
   return (async () => {
     let o;
     try {
       o = await work();
     } catch (err) {
-      log.error('homeroom-bot', 'Work slot failed', { appId, err: err.message });
+      log.error('homeroom-bot', 'Work slot failed', { appId: entry.appId, err: err.message });
       o = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
     } finally {
-      inFlight.delete(appId);
+      inFlight.delete(slot);
     }
+    // #3703: what people said on the app while this ran is read on the very
+    // next pass. A reply that lands while the bot works on its issue cannot
+    // queue it (the row is claimed, and the run deletes it as it ends), and
+    // the run leaves it unread on purpose (live.advanceSeen), so it used to
+    // wait for the next full refresh, up to REFRESH_INTERVAL_MS.
+    if (entry.lane === 'live') pendingApps.add(Number(entry.appId));
     if (o.refusals.length) lastRefusals = [...lastRefusals.filter((x) => x.app !== o.refusals[0].app), ...o.refusals];
     // The slot is free: fill it now, unless the loop is paused on the cap
     // or a fault, which the next idle pass retries.
@@ -4186,17 +4263,22 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   // background lane's.
   const liveSlugs = isStagingLoop() ? []
     : [...new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])];
-  const liveActive = [...inFlight.values()].filter((e) => e.lane === 'live');
-  const busyAppIds = [...inFlight.keys(), ...backedOff];
+  const running = [...inFlight.values()];
+  const liveActive = running.filter((e) => e.lane === 'live');
+  // The apps whose one session is taken. A follow-up runs on its
+  // proposal's session instead (#3703), so it takes no app.
+  const sessionTaken = running.filter((e) => !e.followUp).map((e) => Number(e.appId));
 
   // Live: one issue per start.
   const liveSlots = Math.max(0, (settings.liveAtOnce || DEFAULTS.liveAtOnce) - liveActive.length);
   if (liveSlots && liveSlugs.length) {
     const candidates = (await liveCandidates(pool, {
-      liveSlugs, excludeAppIds: busyAppIds, pausedApps: settings.pausedApps || [],
+      liveSlugs, excludeAppIds: backedOff, busyAppIds: sessionTaken, botId: bot?.id ?? null,
+      pausedApps: settings.pausedApps || [],
     })).filter((row) => !seen.has(Number(row.id)));
     const picks = pickLive(candidates, {
-      busyAppIds, active: liveActive, slots: liveSlots, perPerson: settings.perPerson || DEFAULTS.perPerson,
+      busyAppIds: sessionTaken, blockedAppIds: backedOff, active: liveActive,
+      slots: liveSlots, perPerson: settings.perPerson || DEFAULTS.perPerson,
     });
     if (picks.length) {
       const { rows: apps } = await pool.query(
@@ -4220,15 +4302,16 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         const item = {
           id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
           reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
+          followUp: !!pick.followUp,
         };
-        started.push(track(pool, Number(app.id), {
-          lane: 'live', person: pick.person, issueNumber: Number(pick.issue_number), itemId: Number(pick.id),
-          startedAt: new Date().toISOString(),
+        started.push(track(pool, pick.followUp ? `followup:${Number(pick.id)}` : Number(app.id), {
+          lane: 'live', appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
+          itemId: Number(pick.id), startedAt: new Date().toISOString(), followUp: !!pick.followUp,
         }, async () => {
           try {
             const r = await triageOne(pool, config, { bot, app, item, deps });
             const o = outcomeOf(r, { app, item });
-            if (['budget', 'refused', 'mode_off'].includes(r?.reason)) await releaseClaim(pool, item.id);
+            if (['budget', 'refused', 'mode_off', NOT_FOLLOW_UP].includes(r?.reason)) await releaseClaim(pool, item.id);
             return o;
           } finally {
             tray().noteWorkChanged(pick.person_id, deps);
@@ -4242,7 +4325,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   const shadowActive = [...inFlight.values()].filter((e) => e.lane === 'background').length;
   for (let i = shadowActive; i < (settings.concurrency || DEFAULTS.concurrency); i += 1) {
     const batch = await nextBatch(pool, {
-      batchSize: settings.batchSize, excludeAppIds: [...inFlight.keys(), ...backedOff],
+      batchSize: settings.batchSize,
+      excludeAppIds: [...new Set([...inFlight.values()].map((e) => Number(e.appId))), ...backedOff],
       pausedApps: settings.pausedApps || [], liveSlugs,
     });
     if (!batch || !batch.app) break;
@@ -4251,7 +4335,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     for (const it of items) seen.add(Number(it.id));
     const app = batch.app;
     started.push(track(pool, Number(app.id), {
-      lane: 'background', person: `a${Number(app.id)}`, issueNumber: Number(items[0].issue_number),
+      lane: 'background', appId: Number(app.id), person: `a${Number(app.id)}`, issueNumber: Number(items[0].issue_number),
       itemId: Number(items[0].id), startedAt: new Date().toISOString(),
     }, async () => {
       const total = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
@@ -5261,6 +5345,7 @@ module.exports = {
   APP_AGAIN_REASON,
   CHECKS_REASON,
   SELF_QUEUED_REASONS,
+  NOT_FOLLOW_UP,
   noteProposalChecks,
   checksToFix,
   runChecksFix,
@@ -5338,5 +5423,5 @@ module.exports = {
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
   _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },
   _setPassInFlightForTests(v) { passInFlight = !!v; },
-  _inFlightForTests() { return [...inFlight.entries()].map(([appId, e]) => ({ appId, ...e })); },
+  _inFlightForTests() { return [...inFlight.values()].map((e) => ({ ...e })); },
 };

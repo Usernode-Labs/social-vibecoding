@@ -542,7 +542,9 @@ function followupTurn(snapshot, kind) {
   try { replies = JSON.parse(snapshot.texts.replies || '[]'); } catch { replies = []; }
   const canRevise = snapshot.extra?.canRevise !== false;
   return {
-    prompt: followup.followUpPrompt({ seed, proposalBlock: snapshot.texts.proposal_block || '', prNumber, replies, canRevise }),
+    prompt: followup.followUpPrompt({
+      seed, proposalBlock: snapshot.texts.proposal_block || '', spec: snapshot.texts.spec || '', prNumber, replies, canRevise,
+    }),
     mode: canRevise ? 'build' : 'scout',
   };
 }

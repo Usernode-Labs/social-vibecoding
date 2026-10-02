@@ -106,7 +106,7 @@ function snapshot(stage, extra = {}) {
   return {
     id: 1, stage, issueNumber: 12, baseSha: BASE, promptHash: snapshots.hashText(bot.triagePromptFor({ seed, issueNumber: 12 })),
     texts: {
-      seed, build_note: 'Pin the markers.', proposal_block: 'DISCUSSION ON PR #5',
+      seed, build_note: 'Pin the markers.', proposal_block: 'DISCUSSION ON PR #5', spec: '# Pin the markers\n\nThey stay put.',
       replies: JSON.stringify([{ where: 'issue', via: 'homeroom', author: 'ann', body: 'Make it blue', createdAt: '2026-09-30T00:00:00Z' }]),
       failing: JSON.stringify([{ name: 'home', path: '/', reason: 'expected Blue' }]),
     },
@@ -229,9 +229,10 @@ test('a follow-up trial answers or revises on its own branch at the proposal\'s 
   assert.equal(out.parsed.action, 'revise');
   assert.equal(out.parsed.moved, true);
   assert.equal(h.calls.prompts[0], followup.followUpPrompt({
-    seed: snapshot('followup').texts.seed, proposalBlock: 'DISCUSSION ON PR #5', prNumber: 5,
+    seed: snapshot('followup').texts.seed, proposalBlock: 'DISCUSSION ON PR #5', spec: '# Pin the markers\n\nThey stay put.', prNumber: 5,
     replies: JSON.parse(snapshot('followup').texts.replies), canRevise: true,
   }));
+  assert.match(h.calls.prompts[0], /They stay put\./, 'the spec the run read (#3703) is replayed with it');
   assert.deepEqual(h.calls.modes, ['build']);
   assert.match(out.diff, /app\.js/);
   assert.deepEqual(side, [], 'no revision post, no reconcile, no DM');

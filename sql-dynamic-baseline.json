@@ -1041,16 +1041,16 @@
     {
       "source": "src/services/homeroom-bot-mayor.js",
       "kind": "structural-template",
-      "fingerprint": "f19611464a9b660b148f",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.check_state, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at, (SELECT COUNT(*)::int FROM pr_votes pv WHERE "
-    },
-    {
-      "source": "src/services/homeroom-bot-mayor.js",
-      "kind": "structural-template",
       "fingerprint": "f3f5fdd5a94eb8d50ab2",
       "count": 1,
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE slug = LOWER($1) OR LOWER(name) = LOWER($1) ORDER BY (slug = LOWER($1)) DESC, id LIM"
+    },
+    {
+      "source": "src/services/homeroom-bot-progress.js",
+      "kind": "structural-template",
+      "fingerprint": "5d6c2c90d78a445c3a2c",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress, cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at,"
     },
     {
       "source": "src/services/homeroom-bot.js",
