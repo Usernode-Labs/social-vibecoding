@@ -438,6 +438,8 @@ async function specStage(ctx) {
     buildNote: snapshot.texts.build_note || '', turnBudgetMs: budgets.turnMs, model, specBudgetMs: budgets.specMs,
     deps: { worker: deps.worker, sessions: deps.sessions, agentTurn: deps.agentTurn, activeWorkers: deps.activeWorkers },
     telemetryComponent: TELEMETRY,
+    // #3737: a first version's spec decides its look, as the live one does.
+    firstVersion: !!snapshot.extra?.firstVersion,
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, cost_usd: spec.costUsd ?? null, session };
   if (spec.stopped) return { ...out, status: 'timeout', error: spec.error };
@@ -516,6 +518,7 @@ async function buildStage(ctx) {
     onSpec: null,
     proposalCeiling: null,
     platformRepo: !!snapshot.extra?.platformRepo,
+    firstVersion: !!snapshot.extra?.firstVersion,
     sessionTitle: title,
     telemetry: TELEMETRY,
     onSession: async (s) => { sessionId = s.id; await ctx.onSession?.(s.id, { branch }); },
