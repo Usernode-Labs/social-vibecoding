@@ -115,7 +115,18 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
 
 const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   app: 'App', issue: 'Issue', proposal: 'Code proposal', governance: 'Governance proposal', spec: 'Spec version',
+  // #3660: the two pages a pasted Homeroom link can name that are not items.
+  hub: 'Community hub', discussion: 'Discussion',
 };
+
+// The glyph tile a card leads with: the app's diamond for an app and its
+// community, the `#` a channel is named with for a discussion, the section
+// sign for a spec, and the number sign for everything that has one.
+function objectGlyph(type: SharedObjectCard['type']): string {
+  if (type === 'app' || type === 'hub') return '◆';
+  if (type === 'spec') return '§';
+  return '#';
+}
 
 // #3103: a shared card that opens a Workshop topic or a dev session records
 // the conversation it was tapped in, so that page's back returns here rather
@@ -123,7 +134,12 @@ const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
 // APP route, and a Messages conversation is not one. Plain clicks only: a
 // modified click opens a new tab, which navigates nothing here. Not in the side
 // panel's document, whose links are the top window's to follow.
-export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+//
+// #3660: `inboxOnly` is for a card under a message in an app's discussion,
+// which is drawn on the app's own pages as well as in this inbox. There the
+// page's own back already leads to the discussion, so the card records an
+// origin only while the discussion is open here.
+export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: string, inboxOnly = false): void {
   const w = window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
     App?: { embeddedPanel?: boolean };
@@ -132,12 +148,18 @@ export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: s
   if (!href.startsWith('#app/') || w.App?.embeddedPanel) return;
   if (w.NavLink?.isNativeClick?.(event)) return;
   const here = window.location.hash;
+  if (inboxOnly && !here.startsWith('#messages')) return;
   const origin = here.startsWith('#messages') ? here : '#messages';
   if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
   else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
-export function ObjectCard({ object, compact = false }: { object: SharedObjectCard; compact?: boolean }) {
+export function ObjectCard({ object, compact = false, inboxOnly = false }: {
+  object: SharedObjectCard;
+  compact?: boolean;
+  /** Drawn in an app's discussion: see `recordObjectOrigin`. */
+  inboxOnly?: boolean;
+}) {
   if (!object.available) {
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
@@ -148,7 +170,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
   }
   const body = (
     <>
-      <span className="messages-object-icon">{object.type === 'app' ? '◆' : object.type === 'spec' ? '§' : '#'}</span>
+      <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
         <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
@@ -162,7 +184,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     </>
   );
   return object.href ? (
-    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => recordObjectOrigin(event, object.href as string)}>{body}</a>
+    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => recordObjectOrigin(event, object.href as string, inboxOnly)}>{body}</a>
   ) : <div className="messages-object-card">{body}</div>;
 }
 

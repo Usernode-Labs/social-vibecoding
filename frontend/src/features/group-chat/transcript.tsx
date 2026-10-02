@@ -70,6 +70,7 @@ import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
+import { LinkEmbeds } from '../messages/link-cards';
 import { setUserBlocked } from '../messages/store';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
@@ -739,6 +740,13 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           <Body html={msg.bodyHtml} />
           <Attachments items={msg.attachments} />
+          {/*
+              #3660: a link in the words to one of Homeroom's own pages —
+              a request, a proposal, a community's hub or discussion — as
+              the card it names, the same card a DM draws for it, resolved
+              for whoever is reading (../messages/link-cards.tsx).
+          */}
+          {msg.text ? <LinkEmbeds text={msg.text} inboxOnly /> : null}
           {/*
               #3288: a message that carries a proposal (the Homeroom bot's
               "built this" post, now an ordinary message from its user) hangs
