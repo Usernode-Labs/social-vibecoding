@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+const appTemplates = require('./app-templates');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
@@ -299,6 +300,108 @@ connector registered under some other name.
   ];
 }
 
+// server.js has three parts that differ by template; everything around them
+// (the sign-in check, the hosted-asset handler, the share-link fallback) is
+// the same for every new app. EMPTY_SERVER is the Press! example, exactly
+// as the scaffold always wrote it. STARTER_SERVER mounts a starter's api.js
+// (services/app-templates.js) and adds the graceful shutdown the platform
+// conventions ask for.
+const EMPTY_SERVER = {
+  health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+`,
+  routes: `// Button press
+app.post('/api/press', async (req, res) => {
+  try {
+    await pool.query(\`
+      INSERT INTO presses (user_id, username) VALUES ($1, $2)
+    \`, [req.user.id, req.user.username]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leaderboard
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, COUNT(*) as presses
+      FROM presses
+      GROUP BY username
+      ORDER BY presses DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+`,
+  start: `async function start() {
+  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS presses (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);
+  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
+  server.keepAliveTimeout = 75_000;
+}
+
+`,
+};
+
+const STARTER_SERVER = {
+  health: `// 503 once a shutdown has begun, so anything polling readiness sees the
+// container leaving rotation rather than a connection reset.
+let shuttingDown = false;
+app.get('/health', (_req, res) => res.status(shuttingDown ? 503 : 200).json({ status: shuttingDown ? 'stopping' : 'ok' }));
+`,
+  routes: `// This app's own routes and tables live in api.js, which came from a
+// Homeroom starter template. Everything it mounts is behind the sign-in
+// check above, so req.user is always set there.
+const api = require('./api');
+api.routes(app, pool);
+
+`,
+  start: `async function start() {
+  // Tables are created idempotently on every boot; a staging preview also
+  // gets a few obviously fake rows (see migrate() in api.js).
+  await api.migrate(pool);
+  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
+  server.keepAliveTimeout = 75_000;
+
+  // Every deploy stops this container with SIGTERM. Stop accepting
+  // connections, let in-flight requests finish under a short deadline,
+  // close the pool and exit. Idempotent: SIGTERM then SIGINT runs it once.
+  const DRAIN_MS = 3000;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(\`[shutdown] \${signal} received, draining\`);
+    server.close(() => {});
+    server.closeIdleConnections?.();
+    const timer = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
+    timer.unref?.();
+    try {
+      await pool.end();
+    } catch (err) {
+      console.warn('[shutdown] pool.end failed: ' + err.message);
+    }
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+`,
+};
+
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
 // GitHub has none, and gets no pointer.
@@ -315,11 +418,17 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
+  // `template` is the create screen's starter (services/app-templates.js).
+  // Absent or `empty` writes exactly what every new app always got; a
+  // starter swaps in its own screen, api.js, README and checks.
+  const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
+  if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
+  const server = starter ? STARTER_SERVER : EMPTY_SERVER;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
-  return [
+  const files = [
     {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
@@ -382,7 +491,7 @@ this check for you and tells you when you are behind. It is silent offline, so
 its silence is not proof the checkout is current. Inside Homeroom's dev-chat
 the platform fixes the base commit, and none of this applies.
 
-## Starter template
+${starter ? starterClaudeSection(starter) : `## Starter template
 
 The screen this app currently ships — the hero, the "What's already
 working" card, and the Press! example (the demo markup in
@@ -402,7 +511,7 @@ screen rather than building alongside it:
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
 HTML — that block is platform infrastructure, not template content.
 
-If a rule below this line conflicts with the hosted conventions, the
+`}If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
 things about *this* app that belong in the repo: product intent,
 data-model quirks, style preferences, opt-in policies (e.g. which
@@ -434,7 +543,7 @@ dependencies"; etc.)_
     // was scaffolded with until its own agent rewrites the screen.
     {
       path: 'README.md',
-      content: `# ${appName}
+      content: starter ? starterReadme(appName, starter) : `# ${appName}
 
 > **Starter template** — this repo was scaffolded by Homeroom Social
 > Vibecoding. Everything in it is placeholder example code until the
@@ -642,8 +751,11 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
+          // A starter's tile icon and the checks its first proposal runs.
+          ...(starter ? { icon: { emoji: starter.icon } } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
+          ...(starter ? { tests: starter.tests } : {}),
         },
         null,
         2,
@@ -758,8 +870,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-
+${server.health}
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
 // /favicon.ico (older browsers, direct visits) doesn't fall through to
@@ -767,35 +878,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
+${server.routes}app.use(express.static(path.join(__dirname, 'public')));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -832,21 +915,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
-  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
-  // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
-  server.keepAliveTimeout = 75_000;
-}
-
-start().catch(err => { console.error(err); process.exit(1); });
+${server.start}start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
     {
@@ -989,6 +1058,76 @@ start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
+  if (!starter) return files;
+  // A starter's own screen replaces the Press! page, and its api.js and
+  // scripts join the shared plumbing.
+  const own = appTemplates.starterFiles(template, {
+    APP_NAME: escapeHtml(appName),
+    DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
+  });
+  const ownPaths = new Set(own.map((f) => f.path));
+  return [...files.filter((f) => !ownPaths.has(f.path)), ...own];
+}
+
+// The CLAUDE.md section a starter writes in place of the Press! example's.
+// Same job: tell the coding agent what is placeholder and what to keep.
+function starterClaudeSection(starter) {
+  return `## Starter template: ${starter.title}
+
+This app was created from Homeroom's **${starter.title}** template:
+${starter.summary.charAt(0).toLowerCase()}${starter.summary.slice(1)} It is a working starting point, not
+product intent. Keep what the people building this app want and change
+the rest freely.
+
+Where things are:
+
+- \`api.js\`: this app's routes and its tables (${starter.tables}).
+  \`server.js\` mounts it after the sign-in check and runs \`migrate()\`
+  on boot, which also seeds a few obviously fake rows in a staging preview.
+- \`public/index.html\` and \`public/app.js\`: the screen.
+- \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
+  and change them when you change what they look for.
+
+The \`usernode-starter-notice@1\` block in \`public/index.html\` (both sentinel
+comments and everything between them) is the "started from a template"
+notice: remove it with the first real change. Rewrite \`README.md\` to
+describe the actual app once it has one.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
+\`<script>\` when rewriting the HTML: both are platform infrastructure.
+
+`;
+}
+
+function starterReadme(appName, starter) {
+  return `# ${appName}
+
+> **Started from a template.** This repo was scaffolded by Homeroom from
+> the **${starter.title}** template. Make it your own.
+
+${starter.summary}
+
+What it already does:
+
+${starter.features.map((f) => `- ${f}`).join('\n')}
+
+And what every Homeroom app gets:
+
+- **Sign-in**: the server verifies the platform-issued user token (an
+  RS256 JWT) on every request, so the app already knows who is using it.
+- **Database**: the app has its own Postgres database. Its tables are
+  created on boot by \`api.js\`.
+- **Styling**: Tailwind CSS, precompiled by \`npm run build\` during image
+  creation, following the platform's light or dark theme.
+
+## Changing it
+
+Open the app on Homeroom, tap the Homeroom icon in the header, choose
+**Start a new change**, and describe what you want in plain English. You
+can also run Claude Code against this repo directly; start with
+\`CLAUDE.md\`, which carries the app-specific notes and points at the
+platform rules.
+`;
 }
 
 function escapeHtml(str) {

@@ -46,10 +46,10 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, app_quota) VALUES
        ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10),
-       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10)
+       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10), ('starter', 'x', TRUE, 10)
      RETURNING id, username`
   );
-  const [maker, ada, grace, other, writer, mailer] = people;
+  const [maker, ada, grace, other, writer, mailer, starter] = people;
   // Ada has an address confirmed on her account; nobody has sam@.
   await pool.query(`UPDATE users SET email = 'ada@example.com', email_confirmed = TRUE WHERE id = $1`, [ada.id]);
   // Mutable: the create limiter allows five an hour per user, so the last
@@ -181,6 +181,26 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.deepEqual(mailed, [{ email: 'sam@example.com', inviter: 'mailer', project: 'Mail club' }]);
     const wrong = await create({ name: 'Mail club two', audience: 'open', inviteEmails: ['sam@example.com'] });
     assert.equal(wrong.status, 400, 'only a group is created with invites');
+  });
+
+  await t.test('a starter template is written to the row and reaches the build; Empty stays the default (#3521)', async () => {
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    const game = await create({ name: 'Star catch', audience: 'solo', template: 'game-2d' });
+    assert.equal(game.status, 201, JSON.stringify(game.data));
+    assert.equal(game.data.app.template, 'game-2d');
+    assert.equal(built.find((row) => row.id === game.data.app.id).template, 'game-2d',
+      'the build receives the row it scaffolds from, so a Retry writes the same starter');
+    const plain = await create({ name: 'Plain', audience: 'solo' });
+    assert.equal(plain.status, 201, JSON.stringify(plain.data));
+    assert.equal(plain.data.app.template, null, 'no template is the empty starter, stored as nothing');
+    const unknown = await create({ name: 'Mystery', audience: 'solo', template: 'chess' });
+    assert.equal(unknown.status, 400);
+    assert.match(unknown.data.error, /^template must be one of: empty, /);
+    const imported = await create({ name: 'Imported', audience: 'solo', template: 'game-3d', repoUrl: 'https://github.com/o/r' });
+    assert.equal(imported.status, 400);
+    assert.match(imported.data.error, /import keeps its own repository/);
+    const { rows } = await pool.query(`SELECT name FROM apps WHERE name IN ('Mystery', 'Imported')`);
+    assert.deepEqual(rows, [], 'a refused template creates nothing');
   });
 
   await t.test('an older client\'s body still works, and a bad choice is a 400 before anything exists', async () => {

@@ -3312,6 +3312,7 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
    flush against siblings (segmented pills, theme mode pills, the Dev
    board's tab strip) — the scale makes adjacent cells appear to shift.
    Keep the brightness dim, drop the transform. */
+.create-template-pill:active,
 .create-kind-row:active,
 .create-mode-pill:active,
 .create-who-pill:active,
@@ -12441,13 +12442,13 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    A literal, with no dark step, for the reason the button carries none:
    white on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter
    accent would not carry white text. */
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill, .create-approvals-pill) {
   color: var(--text-primary);
   cursor: pointer;
 }
 #create-card .create-approvals-pill { color: var(--text-muted); }
 #create-card .create-approvals-pill:hover { color: var(--text-primary); }
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
 /* A row that is there but cannot be pressed yet (Document, Video, a
@@ -12462,7 +12463,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+#create-card                            .create-template-pill[aria-pressed="true"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
@@ -12477,7 +12480,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card                            .create-template-pill[aria-pressed="true"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
   color: inherit;

@@ -22,11 +22,12 @@
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
  *            second. A private or a public community only.
- *   start    how to begin: from scratch, from a template (Soon), or from a
- *            GitHub repo, whose check opens under its row. The check also
- *            reads the repo's dapp.json, and a notice names each earlier
- *            answer it will replace (name, what it is, who it is for, who
- *            approves); those answers are dimmed.
+ *   start    how to begin: from scratch, from a template, or from a GitHub
+ *            repo. A template's four starters open under its row (#3521;
+ *            services/app-templates.js); the repo's check opens under its
+ *            row. The check also reads the repo's dapp.json, and a notice
+ *            names each earlier answer it will replace (name, what it is,
+ *            who it is for, who approves); those answers are dimmed.
  *
  * NOTHING IS CHOSEN FOR THE PERSON, AND NOTHING MOVES WITHOUT THEM. Every
  * answer starts empty. Pressing a row selects it; Next, beside Cancel on
@@ -35,7 +36,7 @@
  * step's "Change" reopens it with its answer still picked.
  *
  * `POST /api/apps` takes `audience`, `invitees`, `inviteEmails`,
- * `description` and `governance` (services/create-options.js); the rule and
+ * `description`, `governance` and `template` (services/create-options.js); the rule and
  * the line are written to the new repository's dapp.json, or, for an import
  * whose dapp.json does not already set them, committed into it by the bot
  * (services/import-manifest.js), so both are votable later like any other
@@ -128,7 +129,7 @@ import { normalizeRepositoryUrl } from './repository-url';
 import { open as openMessages } from '../messages/store';
 import { useDialog } from './use-dialog';
 
-type Mode = 'new' | 'import';
+type Mode = 'new' | 'template' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 /** Who it is for: services/communities.js's audiences, by their internal names. */
 type Audience = 'solo' | 'invited' | 'open';
@@ -143,6 +144,20 @@ type Approvals = 'majority' | 'atLeast';
  * `#create-card[data-step]`. See the header for what each one asks.
  */
 type Step = 'who' | 'invite' | 'kind' | 'details' | 'approve' | 'start';
+
+/**
+ * The starters "Start from a template" offers (#3521), in the order and the
+ * words the screen uses. The ids are services/app-templates.js's
+ * TEMPLATE_IDS less `empty`, which is "Start from scratch";
+ * tests/app-templates.test.js keeps the two lists equal.
+ */
+export type TemplateId = 'social-productivity' | 'multimedia-social' | 'game-2d' | 'game-3d';
+export const TEMPLATES: ReadonlyArray<{ key: TemplateId; title: string; caption: string }> = [
+  { key: 'social-productivity', title: 'Social productivity', caption: 'Shared lists that members add tasks to, claim and tick off.' },
+  { key: 'multimedia-social', title: 'Multimedia social', caption: 'A feed of posts with photos, likes and a way to report a post.' },
+  { key: 'game-2d', title: '2D game', caption: 'A canvas game played with keys or touch, with a leaderboard.' },
+  { key: 'game-3d', title: '3D game', caption: 'A 3D scene drawn with WebGL, with controls and a leaderboard.' },
+];
 
 /** One person a private community is created with: an account, or an address. */
 export type Invitee =
@@ -271,6 +286,8 @@ export function createBody(answers: {
   approvalsN?: number;
   /** An import's dapp.json, as the check read it. */
   repo?: RepoManifest | null;
+  /** The starter picked under "Start from a template". */
+  template?: TemplateId | null;
   /**
    * #3624: the longer description the Homeroom bot builds the first
    * version from, for somebody it builds for. Never sent with an import.
@@ -280,6 +297,8 @@ export function createBody(answers: {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
   if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  // From scratch sends nothing: the server's default is the empty starter.
+  if (answers.mode === 'template' && answers.template) body.template = answers.template;
   const brief = (answers.brief || '').trim();
   if (!importing && brief.length >= BRIEF_MIN) body.brief = brief.slice(0, BRIEF_MAX);
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
@@ -361,6 +380,7 @@ interface ShotState {
  *   create-details  Just me, an app, on the name step
  *   create-approve  A public community, on the approval step
  *   create-start    A public community, on the last step, nothing picked yet
+ *   create-template the last step, starting from a template, none picked yet
  *   create-import   the last step, importing
  *
  * `create-access`, an older link, lands on `create-approve`.
@@ -374,6 +394,7 @@ function shotState(): ShotState {
     if (shot === 'create-details') return { ...open, step: 'details', audience: 'solo', kind: 'app' };
     if (shot === 'create-approve' || shot === 'create-access') return { ...named, step: 'approve', audience: 'open' };
     if (shot === 'create-start') return { ...named, step: 'start', audience: 'open', approvers: 'anyone' };
+    if (shot === 'create-template') return { ...named, step: 'start', audience: 'solo', mode: 'template' };
     if (shot === 'create-import') return { ...named, step: 'start', audience: 'solo', mode: 'import' };
     return open;
   } catch {
@@ -442,6 +463,8 @@ const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300
 /* A row that is there but cannot be pressed yet: dimmed, saying Soon. */
 const SOON = 'create-soon-row w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 text-zinc-500 dark:text-zinc-400';
 const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+/* A starter under "Start from a template": a choice row, smaller, inset. */
+const TEMPLATE_CHOICE = 'create-template-pill w-full text-left ' + CARD + ' px-4 py-2.5 flex items-center gap-3 transition-colors';
 
 /*
  * "What is it?" (#3572). DESCRIPTION_MAX is the server's limit
@@ -769,6 +792,7 @@ export function CreateAppDialog() {
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
   const [mode, setMode] = useState<Mode | null>(null);
+  const [template, setTemplate] = useState<TemplateId | null>(null);
   const [step, setStep] = useState<Step>('who');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [repo, setRepo] = useState<RepoManifest | null>(null);
@@ -803,7 +827,7 @@ export function CreateAppDialog() {
       case 'kind': return kind != null;
       case 'details': return name.trim().length > 0;
       case 'approve': return approvers != null && (approvers !== 'invited' || approvals != null);
-      case 'start': return mode != null && (mode !== 'import' || importState === 'ok');
+      case 'start': return mode != null && (mode !== 'import' || importState === 'ok') && (mode !== 'template' || template != null);
       default: return false;
     }
   }
@@ -851,6 +875,7 @@ export function CreateAppDialog() {
       setApprovers(null);
       setApprovals(null);
       setApprovalsN(1);
+      setTemplate(null);
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
       // dismissing a report, not cancelling anything.
@@ -912,6 +937,7 @@ export function CreateAppDialog() {
     if (step !== 'start' || next === mode) return;
     applyMode(next);
     if (next === 'import') setTimeout(() => urlRef.current?.focus(), 0);
+    if (next === 'template') reveal();
   }
 
   /** Move one step along, once this one is answered. */
@@ -1016,6 +1042,10 @@ export function CreateAppDialog() {
       setError('Choose how you want to start.');
       return;
     }
+    if (mode === 'template' && !template) {
+      setError('Choose a template.');
+      return;
+    }
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     // Guard: an import is gated behind a successful check. The server runs
     // the pre-flight again on POST anyway.
@@ -1036,6 +1066,7 @@ export function CreateAppDialog() {
       approvals,
       approvalsN,
       repo,
+      template,
     });
 
     // One request at a time (QA 2026-09-24 Q5). Claimed synchronously, before
@@ -1148,7 +1179,7 @@ export function CreateAppDialog() {
         {created ? (
           <CreateProgress
             appName={created.name}
-            mode={mode ?? 'new'}
+            mode={mode === 'import' ? 'import' : 'new'}
             surface="pane"
             progress={progress}
             openLabel={botChat ? 'Open my chat with Homeroom bot' : 'Open project'}
@@ -1478,10 +1509,11 @@ export function CreateAppDialog() {
             </div>
           </div>
           {/*
-              LAST: how to begin. From scratch; from a template, which is
-              coming; or from a GitHub repo, whose URL and Check open under
-              its row. The check also reads the repo's dapp.json, and the
-              notice under it names each earlier answer the repo replaces.
+              LAST: how to begin. From scratch; from a template, whose four
+              starters open under its row; or from a GitHub repo, whose URL
+              and Check open under its row. The check also reads the repo's
+              dapp.json, and the notice under it names each earlier answer
+              the repo replaces.
           */}
           <div data-create-step="start" className="space-y-2" ref={lastStepRef}>
             <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
@@ -1497,13 +1529,43 @@ export function CreateAppDialog() {
                 <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
               </span>
             </button>
-            <div className={SOON} data-mode-pill="template" aria-disabled="true">
+            <button
+              type="button"
+              data-mode-pill="template"
+              aria-pressed={mode === 'template'}
+              className={CHOICE}
+              onClick={() => chooseStart('template')}
+            >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A ready-made app to make your own.</span>
+                <span className={CHOICE_CAPTION}>A small working app to make your own.</span>
               </span>
-              <span className={SOON_TAG}>Soon</span>
-            </div>
+            </button>
+            {/*
+                The starters (#3521), only once "Start from a template" is
+                chosen: rendered behind that state, like the progress view,
+                so nothing here is in the prerendered document. Nothing is
+                picked on arrival; Create stays dimmed until one is.
+            */}
+            {mode === 'template' ? (
+              <div id="create-template-block" role="group" aria-label="Templates" className="space-y-2 pl-3">
+                {TEMPLATES.map((choice) => (
+                  <button
+                    key={choice.key}
+                    type="button"
+                    data-template-pill={choice.key}
+                    aria-pressed={template === choice.key}
+                    className={TEMPLATE_CHOICE}
+                    onClick={() => { setTemplate(choice.key); setError(''); }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className={CHOICE_TITLE}>{choice.title}</span>
+                      <span className={CHOICE_CAPTION}>{choice.caption}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               data-mode-pill="import"

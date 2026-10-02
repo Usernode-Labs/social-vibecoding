@@ -76,7 +76,17 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── What it starts from ───────────────────────────────────────────────
+ *
+ * `template` is the starter the new repository is scaffolded from
+ * (services/app-templates.js): one of its TEMPLATE_IDS, `empty` when
+ * absent. Strict, like the rest: an unknown id is a 400, never quietly the
+ * empty starter. An import keeps its own repository, so it takes no
+ * template beyond the default.
  */
+
+const appTemplates = require('./app-templates');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
@@ -180,9 +190,9 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +224,12 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = appTemplates.parseTemplate(body.template);
+  if (tpl.error) return { error: tpl.error };
+  if (imported && tpl.template !== appTemplates.DEFAULT_TEMPLATE) {
+    return { error: 'An import keeps its own repository, so it cannot start from a template.' };
+  }
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +238,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
