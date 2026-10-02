@@ -5,12 +5,13 @@
 // work it reads: the signed-in person's, and nobody else's, whatever the
 // request asks for. Then what it reads:
 //
-//   - NOW is a claimed queue row on a request of theirs (recorded for them,
-//     or an issue they filed that the loop has not recorded yet), on an app
-//     the bot acts on for real, with its step (looking, then building once
-//     its spec is posted during this turn); and a project of theirs still
-//     being set up for its first version. Shadow triage is not work for
-//     anybody.
+//   - NOW is what the bot's own progress answer (homeroom-bot-progress.js)
+//     calls in flight on a request of theirs (recorded for them, or an issue
+//     they filed that the loop has not recorded yet), on an app the bot acts
+//     on for real: reading it, building it (its queue row long gone), a
+//     follow-up on its proposal waiting its turn (#3734), a request waiting
+//     in the queue; and a project of theirs still being set up for its
+//     first version. Shadow triage is not work for anybody.
 //   - HISTORY is the bot's live runs on their requests, newest first, each
 //     with what came of it and where it opens (the proposal once people can
 //     open it, else the request). Shadow runs are not shown.
@@ -173,26 +174,82 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
   const asSam = { id: sam.id, username: sam.username, isAdmin: false };
   const key = (job) => `${job.appSlug}#${job.issueNumber ?? 'first'}`;
 
-  await t.test('now: their claimed requests on apps the bot acts on, and their project being set up', async () => {
+  await t.test('now: what the bot is doing for them on apps it acts on, and their project being set up', async () => {
     const work = await tray.workFor(pool, { user: asAda });
-    assert.deepEqual(work.now.map(key), ['seed-swap#3', 'note-board#7', 'ear-trainer#first']);
-    const [sort, csv, first] = work.now;
+    assert.deepEqual(work.now.map(key).sort(), ['ear-trainer#first', 'note-board#7', 'seed-swap#3']);
+    const by = new Map(work.now.map((job) => [key(job), job]));
+    const sort = by.get('seed-swap#3');
     assert.equal(sort.phase, 'looking');
     assert.equal(sort.title, 'Sort by date');
     assert.equal(sort.href, '#app/seed-swap/dev/issues/3');
     assert.ok(sort.since, 'and since when');
-    assert.equal(csv.title, 'Export as CSV', 'an issue they filed, read off the issue before the loop records it');
+    assert.equal(by.get('note-board#7').title, 'Export as CSV', 'an issue they filed, read off the issue before the loop records it');
+    const first = by.get('ear-trainer#first');
     assert.equal(first.phase, 'setting_up');
     assert.equal(first.firstVersion, true);
     assert.equal(first.href, '#app/ear-trainer/app');
+  });
 
-    // Its spec posted during this turn of work: it is building.
+  await t.test('#3734: now agrees with the bot\'s own progress answer, for a build and for a follow-up waiting its turn', async () => {
+    const progressSvc = require('../src/services/homeroom-bot-progress');
+    const settings = await homeroomBot.readSettings(pool);
+    const both = async () => {
+      const [work, progress] = await Promise.all([
+        tray.workFor(pool, { user: asAda }),
+        progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: null } }),
+      ]);
+      const said = progress.rightNow.filter(progressSvc.inFlight)
+        .map((item) => `${item.project}#${item.number ?? 'first'}`)
+        .filter((k) => !k.startsWith('hidden-lab#'));
+      assert.deepEqual(work.now.map(key).sort(), said.sort(), 'the tray lists what the bot says it is doing');
+      return { work, progress, job: (k) => work.now.find((job) => key(job) === k) };
+    };
+    // The real pipeline: a request leaves the queue once it has been read,
+    // and is planned and built with no queue row. The tray used to drop it
+    // here, for the whole build, while the bot said it was building.
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 3', [seeds.id]);
+    const { rows: [build] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title) VALUES ($1, $2, 'active', 'Homeroom bot: #3') RETURNING id`,
+      [seeds.id, bot.id],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 3, 'live', 'ready', $2) RETURNING id`,
+      [seeds.id, build.id],
+    );
+    assert.equal((await both()).job('seed-swap#3').phase, 'building', 'writing its plan is building it');
+    await pool.query(`INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, 3, $2, 'spec')`, [seeds.id, run.id]);
+    const building = (await both()).job('seed-swap#3');
+    assert.equal(building.phase, 'building');
+    assert.equal(building.href, '#app/seed-swap/dev/issues/3');
+
+    // A change asked for on its proposal, waiting its turn: in flight in both,
+    // and it opens the proposal. Then it runs.
+    await pool.query('UPDATE chat_sessions SET linked_issues = ARRAY[5] WHERE id = $1', [proposal.id]);
+    await homeroomBot.enqueueFront(pool, { appId: notes.id, issueNumber: 5, userId: ada.id, reason: 'dm_revise' });
+    const queued = await both();
+    const followUp = queued.job('note-board#5');
+    assert.equal(followUp.phase, 'follow_up_queued');
+    assert.equal(followUp.href, `#app/note-board/dev/proposals/${proposal.id}`);
+    assert.match(queued.progress.rightNow.find((item) => item.project === 'note-board' && item.number === 5).doing,
+      /^waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/);
+    assert.equal(queued.work.now[0].phase !== 'follow_up_queued', true, 'what it is doing this minute comes first');
+    await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    assert.equal((await both()).job('note-board#5').phase, 'following_up');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    assert.equal((await both()).job('note-board#5'), undefined, 'done: up for the vote again, which is the group\'s');
+
+    // A request of theirs waiting in the queue is in flight too, in both.
+    await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 4, 1, 'changed')`, [seeds.id]);
+    assert.equal((await both()).job('seed-swap#4').phase, 'queued');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [seeds.id]);
+
+    // Put back as it was for the tests below.
+    await pool.query('DELETE FROM homeroom_bot_posts WHERE run_id = $1', [run.id]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
     await pool.query(
-      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at) VALUES ($1, 3, 'spec', NOW())`,
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at) VALUES ($1, 3, 1, 'new', NOW() - INTERVAL '5 minutes')`,
       [seeds.id],
     );
-    const later = await tray.workFor(pool, { user: asAda });
-    assert.equal(later.now[0].phase, 'building');
   });
 
   await t.test('history: their live runs, newest first, each with what came of it and where it opens', async () => {

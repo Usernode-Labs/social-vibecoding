@@ -66,6 +66,8 @@ const dm = require('../src/services/homeroom-bot-dm');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const progressSvc = require('../src/services/homeroom-bot-progress');
 const homeroomBot = require('../src/services/homeroom-bot');
+const tray = require('../src/services/homeroom-bot-tray');
+const followup = require('../src/services/homeroom-bot-followup');
 
 const CONFIG = { openrouterApiBase: 'https://openrouter.test/api/v1', openrouterOrigin: 'https://test', openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' };
 
@@ -810,5 +812,204 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await Promise.all([turn('one', slow), turn('two', slow), turn('three', slow)]);
     assert.equal(most, 1);
     assert.equal(mayor._chainsForTests(), 0, 'nothing is left waiting');
+  });
+
+  // ── #3740: a change to one of the bot's own proposals, asked for in the DM ──
+  //
+  // The report: in the DM about its Ear Trainer proposal the bot said "I'll
+  // revise the proposal to remove the small/medium/large options" with
+  // nothing started (its activity tray said, truly, that it was doing
+  // nothing: #3734), and an hour later, asked "Oh, yeah update it?", said it
+  // could not revise a proposal from the chat.
+  await pool.query('UPDATE chat_sessions SET linked_issues = ARRAY[5] WHERE id = $1', [proposal.id]);
+  // Her turns above are inside the hour: these would otherwise meet the
+  // hourly limit, which is pinned above.
+  await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+  const queueRow = async () => (await pool.query(
+    'SELECT priority, reason, requested_by, started_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5',
+    [notes.id],
+  )).rows[0] || null;
+  const clearQueue = () => pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+
+  await t.test('#3740: a clear ask sends the change to the right proposal, as a reply there, and its follow-up goes first', async () => {
+    await clearQueue();
+    threadPosts.length = 0;
+    // The bot offered the change in its last answer; she says yes.
+    await mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId,
+      message: await say('the pin icon on Pin notes looks odd'),
+      deps: { chat: scripted([[['reply', { text: 'Want me to change the proposal to drop the pin icon from each note?' }]]]), apiKey: 'sk-test', openMcp },
+    });
+    assert.equal(threadPosts.length, 0, 'an offer sends nothing');
+    assert.equal(await queueRow(), null, 'and queues nothing');
+    let result = null;
+    const sent = await turn('Oh, yeah update it?', scripted([
+      [['revise_proposal', { proposal: proposal.id, change: 'Drop the pin icon from each note.' }]],
+      (req) => {
+        result = lastToolResult(req, 'revise_proposal');
+        return [['reply', { text: 'Done: I sent that to the Pin notes proposal and I\'m changing it next.' }]];
+      },
+    ]));
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.proposal, { proposal: proposal.id, project: 'note-board', projectName: 'Note board', number: 5, title: 'Pin notes' });
+    assert.match(result.queued, /^At the front of your queue/);
+    // Posted where a reply typed in the proposal's discussion lands, as hers.
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].userId, ada.id);
+    assert.equal(threadPosts[0].appId, notes.id);
+    assert.deepEqual(threadPosts[0].msg.thread, { type: 'session', ref: proposal.id });
+    assert.equal(threadPosts[0].msg.content,
+      'Oh, yeah update it?\n\n(Sent in a chat with Homeroom bot. The change asked for, as Homeroom bot understood it: Drop the pin icon from each note.)',
+      'her own words, and the change as the bot understood it, said to be that');
+    assert.equal(result.posted.endsWith(threadPosts[0].msg.content), true, 'the model is told exactly what was posted');
+    // Its follow-up is first in the queue: the loop's follow-up lane takes it.
+    const row = await queueRow();
+    assert.deepEqual({ ...row, started_at: undefined }, { priority: 0, reason: 'dm_revise', requested_by: ada.id, started_at: undefined });
+    assert.equal(row.started_at, null);
+    const [candidate] = (await homeroomBot.liveCandidates(pool, {
+      liveSlugs: ['note-board'], excludeAppIds: [], pausedApps: [], busyAppIds: [notes.id], botId: bot.id,
+    })).filter((c) => Number(c.issue_number) === 5);
+    assert.equal(Number(candidate.follow_up_session_id), proposal.id, 'a follow-up on that proposal, even while the app is busy');
+    // The answer carries the proposal's card, and the turn says what it used.
+    const { rows: objects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId]);
+    assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${proposal.id}`]);
+    const { rows: [turned] } = await pool.query('SELECT tools FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
+    assert.deepEqual(turned.tools, ['revise_proposal', 'reply']);
+  });
+
+  await t.test('#3734: once it is queued, the activity tray and the progress answer both say it is in flight', async () => {
+    const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
+    assert.equal(said.stage, 'followup_queued');
+    assert.equal(progressSvc.inFlight(said), true);
+    assert.match(said.doing, /^waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/);
+    const work = await tray.workFor(pool, { user: ada, settings });
+    const shown = work.now.find((job) => job.appSlug === 'note-board' && job.issueNumber === 5);
+    assert.ok(shown, 'the tray lists it under Now');
+    assert.equal(shown.phase, 'follow_up_queued');
+    assert.equal(shown.href, `#app/note-board/dev/proposals/${proposal.id}`);
+    const words = await mayor.myWork(pool, { userId: ada.id, settings });
+    assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
+      /^step 5 of 6: waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/,
+      'and the bot\'s list of her work says the same');
+    // Running it: both say so.
+    await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    const running = (await progressSvc.progressFor(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
+    assert.equal(running.stage, 'revising');
+    assert.equal((await tray.workFor(pool, { user: ada, settings })).now.find((j) => j.issueNumber === 5 && j.appSlug === 'note-board').phase, 'following_up');
+    // A second ask while that runs is still sent, and says honestly when it is read.
+    threadPosts.length = 0;
+    let result = null;
+    await turn('also make the pin blue', scripted([
+      [['revise_proposal', { project: 'note-board', number: 5, change: 'Make the pin blue.' }]],
+      (req) => { result = lastToolResult(req, 'revise_proposal'); return [['reply', { text: 'Sent.' }]]; },
+    ]));
+    assert.equal(result.ok, true);
+    assert.match(result.queued, /^You are following up on this proposal right now; you read this as soon as that finishes\.$/);
+    assert.equal(threadPosts.length, 1);
+    await clearQueue();
+  });
+
+  await t.test('#3740: an unclear ask is asked about, never sent: no change, or no proposal named among several', async () => {
+    threadPosts.length = 0;
+    const results = [];
+    const capture = (req) => { results.push(lastToolResult(req, 'revise_proposal')); return [['reply', { text: 'What should I change?' }]]; };
+    await turn('change it', scripted([[['revise_proposal', { proposal: proposal.id, change: 'it' }]], capture]));
+    assert.equal(results[0].ok, false);
+    assert.match(results[0].error, /^Say what they want changed\. If they have not said, ask them; nothing was sent\.$/);
+    // Two of her requests have proposals up (Pin notes, and Tags from the
+    // test above): which one is for her to say.
+    await turn('drop the icons from my proposal', scripted([[['revise_proposal', { change: 'Drop the icons.' }]], capture]));
+    assert.equal(results[1].ok, false);
+    assert.match(results[1].error, /^Several of your proposals for them are up for a vote: ask which one, or name it\. Nothing was sent\.$/);
+    assert.ok(results[1].proposals.some((p) => p.proposal === proposal.id && p.project === 'note-board' && p.number === 5));
+    assert.ok(results[1].proposals.length >= 2);
+    // Naming only the project, where both are, is no less a guess.
+    await turn('drop the icons from my Note board proposal', scripted([[['revise_proposal', { project: 'Note board', change: 'Drop the icons.' }]], capture]));
+    assert.match(results[2].error, /^Several of your proposals for them are up for a vote/);
+    assert.equal(threadPosts.length, 0);
+    assert.equal(await queueRow(), null);
+  });
+
+  await t.test('#3740: somebody who may not give feedback on it cannot, nor on a proposal that is not the bot\'s', async () => {
+    threadPosts.length = 0;
+    // Sam is not a member of Note board and did not ask for Pin notes.
+    const samDm = await conversations.ensureAdmittedDirect(pool, bot.id, sam.id);
+    const asSam = { ...sam, isAdmin: false };
+    let result = null;
+    await mayor.runDmTurn(pool, CONFIG, {
+      bot, user: asSam, settings, conversationId: samDm.conversationId,
+      message: (await conversations.sendMessage(pool, asSam, samDm.conversationId, { content: 'remove the pins from Pin notes' })).message,
+      deps: {
+        chat: scripted([
+          [['revise_proposal', { proposal: proposal.id, change: 'Remove the pins.' }]],
+          (req) => { result = lastToolResult(req, 'revise_proposal'); return [['reply', { text: 'I can\'t.' }]]; },
+        ]),
+        apiKey: 'sk-test', openMcp,
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /^Only whoever asked for it, or a member of Note board, can ask for changes to it, and they are neither\./);
+    // A proposal somebody else made is not the bot's to change.
+    const { rows: [theirs] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues)
+       VALUES ($1, $2, 'sams', 'promoted', 'Sam''s idea', NOW(), ARRAY[5]) RETURNING id`,
+      [notes.id, sam.id],
+    );
+    const ctx = { bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [] };
+    const other = await mayor.reviseProposal(pool, ctx, { proposal: theirs.id, change: 'Drop the pins.' });
+    assert.match(other.error, /^That proposal is not one you built, so you cannot change it\./);
+    await pool.query('DELETE FROM chat_sessions WHERE id = $1', [theirs.id]);
+    assert.equal(threadPosts.length, 0);
+    assert.equal(await queueRow(), null);
+  });
+
+  await t.test('#3740: past its allowance, at MAX_REVISIONS, off its projects or no longer up for a vote: refused, and it says so', async () => {
+    threadPosts.length = 0;
+    const ask = (extra = {}, args = {}) => mayor.reviseProposal(pool, {
+      bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], ...extra,
+    }, { proposal: proposal.id, change: 'Drop the pins.', ...args });
+
+    // Her week's allowance is spent: the follow-up would be paid from it.
+    const spent = await ask({ settings: { ...settings, userWeeklyCents: 1 } });
+    assert.equal(spent.ok, false);
+    assert.match(spent.error, /^Their weekly allowance for your work \(\$0\.01\) is used up, so you cannot change it this week\. Nothing was sent or queued\./);
+    // Somebody else asking spends the requester's allowance, which is spent.
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const forHer = await mayor.reviseProposal(pool, {
+      bot, user: { ...sam, isAdmin: false }, settings: { ...settings, userWeeklyCents: 1 }, deps: {}, userText: 'drop the pins', cards: [],
+    }, { proposal: proposal.id, change: 'Drop the pins.' });
+    assert.match(forHer.error, /^The weekly allowance this request is paid from is used up/);
+    await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
+
+    // It has already revised this proposal as many times as it may.
+    const { rows: revisions } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
+       SELECT $1, 5, 'live', 'revise', $2 FROM generate_series(1, $3) RETURNING id`,
+      [notes.id, proposal.id, followup.MAX_REVISIONS],
+    );
+    const capped = await ask();
+    assert.equal(capped.ok, false);
+    assert.match(capped.error, new RegExp(`^You have already changed this proposal ${followup.MAX_REVISIONS} times, as many as you may on your own, so you cannot change it again\\. Nothing was sent or queued\\.`));
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [revisions.map((r) => r.id)]);
+
+    // A project the bot is not working on, or has paused: nobody would pick it up.
+    const off = await ask({ settings: { ...settings, liveApps: ['seed-swap'] } });
+    assert.match(off.error, /^You are not working on Note board right now, so nobody would pick the change up\. Nothing was sent\.$/);
+    const paused = await ask({ settings: { ...settings, pausedApps: ['note-board'] } });
+    assert.match(paused.error, /^You are not working on Note board right now/);
+
+    // Approved, or closed: there is nothing to change any more.
+    await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [proposal.id]);
+    assert.match((await ask()).error, /^That proposal was approved, so it can no longer be changed\./);
+    await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [proposal.id]);
+    assert.match((await ask()).error, /^That proposal is not up for a vote any more/);
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [proposal.id]);
+
+    assert.equal(threadPosts.length, 0, 'nothing was posted for any of them');
+    assert.equal(await queueRow(), null, 'and nothing queued');
+    // One change per turn.
+    const once = { bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], revised: true };
+    assert.match((await mayor.reviseProposal(pool, once, { proposal: proposal.id, change: 'Drop the pins.' })).error, /^One change per turn\.$/);
   });
 });

@@ -5,8 +5,9 @@
 // tests/homeroom-bot-tray-postgres.test.js pins whose work the endpoint reads
 // on the real schema. This file pins the rest without a database:
 //
-//   - the service's pure rules: the step a claimed request is at, what a run
-//     came to, where a row opens;
+//   - the service's pure rules: how an in-flight entry of the bot's own
+//     progress (homeroom-bot-progress.js) is drawn, what a run came to, where
+//     a row opens;
 //   - the live loop announcing, to the person it is for, when it starts and
 //     finishes their work (the tray's realtime), and app.js turning that
 //     announcement into the window event the tray listens for;
@@ -34,14 +35,38 @@ const bot = require('../src/services/homeroom-bot');
 
 // ── The service's rules ───────────────────────────────────────────────
 
-test('a claimed request is building once its spec is posted during this turn of work', () => {
-  const started = '2026-10-02T10:00:00Z';
-  assert.equal(tray.phaseOf({ started_at: started }), 'looking');
-  assert.equal(tray.phaseOf({ started_at: started, spec_at: '2026-10-02T10:03:00Z' }), 'building');
-  assert.equal(tray.phaseOf({ started_at: started, spec_at: '2026-10-01T09:00:00Z' }), 'looking',
-    'a spec from an earlier turn is not this one');
-  assert.equal(tray.phaseOf({ started_at: started, proposal_status: 'promoted' }), 'following_up');
-  assert.equal(tray.phaseOf({ started_at: started, proposal_status: 'closed' }), 'looking');
+test('#3734: Now is the bot\'s own progress, its in-flight entries drawn as steps', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  // Every stage the bot calls in flight has a step the tray draws, and the
+  // tray draws nothing the bot does not call in flight.
+  assert.deepEqual(Object.keys(tray.PHASE_OF_STAGE).sort(), [...progress.IN_FLIGHT_STAGES].sort());
+  const item = (extra) => ({
+    project: 'ear trainer', projectName: 'Ear Trainer', number: 12, title: 'Sort by date', since: '2026-10-02T10:00:00.000Z', ...extra,
+  });
+  assert.deepEqual(tray.jobOfProgress(item({ stage: 'reading' })), {
+    appSlug: 'ear trainer', appName: 'Ear Trainer', issueNumber: 12, title: 'Sort by date', firstVersion: false,
+    phase: 'looking', since: '2026-10-02T10:00:00.000Z', href: '#app/ear%20trainer/dev/issues/12',
+  });
+  for (const stage of ['starting', 'planning', 'building', 'proposing']) {
+    assert.equal(tray.jobOfProgress(item({ stage })).phase, 'building', stage);
+  }
+  assert.equal(tray.jobOfProgress(item({ stage: 'queued' })).phase, 'queued');
+  // A follow-up on its proposal, waiting its turn or running, opens the proposal.
+  const onProposal = { proposal: { proposal: 40, status: 'up for a vote' } };
+  for (const [stage, phase] of [['followup_queued', 'follow_up_queued'], ['fix_queued', 'follow_up_queued'],
+    ['revising', 'following_up'], ['fixing', 'following_up'], ['merging', 'merging']]) {
+    const job = tray.jobOfProgress(item({ stage, ...onProposal }));
+    assert.equal(job.phase, phase, stage);
+    assert.equal(job.href, '#app/ear%20trainer/dev/proposals/40', stage);
+  }
+  const setup = tray.jobOfProgress({ project: 'ear-trainer', projectName: 'Ear Trainer', title: 'First version', firstVersion: true, stage: 'setting_up' });
+  assert.deepEqual([setup.phase, setup.firstVersion, setup.title, setup.issueNumber, setup.href],
+    ['setting_up', true, null, null, '#app/ear-trainer/app']);
+  // What waits on the person or the group, or on the checks, is not in flight.
+  for (const stage of ['question', 'vote', 'checks', 'checks_failed', 'held', 'stalled']) {
+    assert.equal(tray.jobOfProgress(item({ stage })), null, stage);
+  }
+  assert.equal(tray.jobOfProgress(item({ stage: 'setting_up', waitingOn: 'them' })), null, 'a project waiting for its secrets');
 });
 
 test('what a run came to: a ready verdict is told by its build and its proposal', () => {
@@ -70,11 +95,11 @@ test('a row opens its proposal once people can open it, else its request', () =>
   assert.equal(tray.hrefOf({ slug: 'x', issue_number: 3 }), '#app/x/dev/issues/3');
 });
 
-test('the staging demo draws a job in flight and a history, and links nowhere', () => {
+test('the staging demo draws a job in flight, a follow-up waiting its turn, and a history, and links nowhere', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = tray.demoWork(now);
-  assert.equal(demo.now.length, 1);
-  assert.equal(demo.now[0].phase, 'building');
+  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'follow_up_queued']);
+  assert.ok(demo.now.every((job) => tray.PHASES.includes(job.phase)));
   assert.ok(demo.history.length >= 3);
   for (const job of [...demo.now, ...demo.history]) {
     assert.equal(job.href, null, 'no project stands behind the demo');
@@ -265,10 +290,13 @@ test('a row with nowhere to open is a plain row, not a link', () => {
 
 test('every phase and outcome has words', () => {
   const { PHASE_LABELS, OUTCOME_LABELS, trayLine, jobTitle, newestBotMessageId } = loadTsx(TRAY);
-  assert.deepEqual(Object.keys(PHASE_LABELS).sort(), ['building', 'following_up', 'looking', 'setting_up']);
+  assert.deepEqual(Object.keys(PHASE_LABELS).sort(), [...tray.PHASES].sort());
   assert.deepEqual(Object.keys(OUTCOME_LABELS).sort(), [...tray.OUTCOMES].sort());
   assert.equal(trayLine([]), '');
   assert.equal(trayLine([job({ issueNumber: 3, phase: 'following_up' })]), 'Working on: Ear Trainer #3 · following up on its proposal');
+  assert.equal(trayLine([job({ issueNumber: 3, phase: 'follow_up_queued' })]),
+    'Working on: Ear Trainer #3 · waiting its turn to follow up on its proposal');
+  assert.equal(trayLine([job({ issueNumber: 4, phase: 'queued' })]), 'Working on: Ear Trainer #4 · waiting its turn in my queue');
   assert.equal(jobTitle(job({ firstVersion: true, title: 'ignored' })), 'Ear Trainer first version');
   const message = (id, isBot) => ({ id, sender: { id: isBot ? 1 : 2, username: isBot ? 'homeroom_bot' : 'ada', ...(isBot ? { bot: true } : {}) } });
   assert.equal(newestBotMessageId([message(4, true), message(7, true), message(9, false), message(-3, false)]), 7);
@@ -281,6 +309,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
     now: [
       { appSlug: 'a', appName: 'A', issueNumber: 3, phase: 'building', since: 'x', href: 'javascript:alert(1)' },
       { appSlug: 'b', appName: 'B', phase: 'dancing', href: '#app/b/app', firstVersion: true },
+      ...tray.PHASES.map((phase) => ({ appSlug: 'c', appName: 'C', issueNumber: 1, phase })),
     ],
     history: [
       { id: 2, appSlug: 'a', issueNumber: 3, outcome: 'live', href: 'https://example.test/x' },
@@ -292,6 +321,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   assert.equal(work.now[1].href, '#app/b/app');
   assert.equal(work.now[1].phase, 'looking');
   assert.equal(work.now[1].firstVersion, true);
+  assert.deepEqual(work.now.slice(2).map((j) => j.phase), [...tray.PHASES], 'every step the server draws is kept');
   assert.equal(work.history.length, 2, 'a row without an id is dropped');
   assert.equal(work.history[0].href, null);
   assert.equal(work.history[0].appName, 'a', 'a missing name falls back to the slug');

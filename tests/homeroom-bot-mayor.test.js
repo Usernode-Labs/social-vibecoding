@@ -62,9 +62,9 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: six lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: seven lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'offer_request', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal', 'offer_request', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -138,4 +138,38 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
   assert.equal(sends.length, 3, 'a turn\'s answer, its offer and the answer to a tap');
   for (const send of sends) assert.match(send, /replyToId: message\.id/);
+});
+
+test('#3740: a change to one of its own proposals is a tool, used only on a clear ask', () => {
+  const revise = mayor.TOOLS.find((t) => t.function.name === 'revise_proposal').function;
+  assert.deepEqual(revise.parameters.required, ['change']);
+  assert.deepEqual(Object.keys(revise.parameters.properties).sort(), ['change', 'number', 'project', 'proposal']);
+  assert.match(revise.description, /YOUR OWN proposals that is up for a vote/);
+  assert.match(revise.description, /the way a reply in its discussion does/);
+  assert.match(revise.description, /Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead\./);
+  assert.match(revise.description, /The result says what was sent and queued, or why nothing was\./);
+  assert.match(revise.parameters.properties.change.description, /When their message only says yes to a change you offered, the change you offered\./);
+});
+
+test('#3734, #3740: the prompt never lets the bot promise what no tool started, and has it offer when unsure', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
+  assert.match(prompt, /- Change one of your own proposals that is up for a vote when they clearly ask you to \(revise_proposal\)/);
+  assert.match(prompt, /When it is not clear what they want changed, or which proposal, ask them, or\n  offer it \("Want me to change the proposal to \.\.\.\?"\), and call revise_proposal once they say yes\./);
+  assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, look at it again\) unless a tool you\n  called in this turn started it and its result says so, or progress or my_work shows it under way\./);
+  assert.match(prompt, /If a\n  tool refused, say plainly why, and that nothing was done\. When you have not started it, offer to do it\n  instead of promising it\./);
+  assert.match(prompt, /or change anybody else's\n  proposal\. Changes happen through requests and their proposals, and to your own proposals through\n  revise_proposal\./);
+  assert.doesNotMatch(prompt, /From this chat you cannot build, merge, vote, close requests or change settings\. Changes happen/,
+    'the old rule, which told it it could not change its own proposals either, is gone');
+  assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
+});
+
+test('#3740: what is posted on the proposal is their own words, with the change as the bot understood it', () => {
+  assert.equal(
+    mayor.revisionText('Oh, yeah update it?', 'Remove the small, medium and large size options entirely.'),
+    'Oh, yeah update it?\n\n(Sent in a chat with Homeroom bot. The change asked for, as Homeroom bot understood it: '
+      + 'Remove the small, medium and large size options entirely.)',
+  );
+  assert.equal(mayor.revisionText('Drop the size options!', 'drop the size options'),
+    'Drop the size options!\n\n(Sent in a chat with Homeroom bot.)', 'said once when the change is their words');
+  assert.doesNotMatch(mayor.revisionText('a', 'b c'), /—/);
 });

@@ -31,6 +31,12 @@
 // Nothing here guesses. A step has a time limit when the platform enforces
 // one (a reading turn, a plan, a build), which is the most it can take, not
 // an estimate, and a record the bot cannot read is left out, not filled in.
+//
+// #3734: the DM's activity tray (homeroom-bot-tray.js) lists under Now what
+// this module says is in flight (inFlight below), so the tray and the bot's
+// own answer never disagree. They used to read it separately: the tray from
+// claimed queue rows alone, so a build (whose queue row is gone) and a
+// follow-up waiting its turn showed as nothing while the bot said otherwise.
 
 const MINUTE_MS = 60 * 1000;
 // A ready verdict with no build session yet is a build starting. Past this,
@@ -62,7 +68,9 @@ const STEP_OF_STAGE = Object.freeze({
   proposing: 'build',
   checks: 'checks',
   checks_failed: 'checks',
+  fix_queued: 'checks',
   fixing: 'checks',
+  followup_queued: 'vote',
   revising: 'vote',
   vote: 'vote',
   merging: 'vote',
@@ -74,6 +82,12 @@ const STEP_OF_STAGE = Object.freeze({
 const BUSY_STAGES = new Set([
   'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'proposing', 'merging',
 ]);
+
+// #3734: what the bot has in hand for the person: doing this minute, or in
+// its queue to be done (a request to read, a follow-up on its proposal).
+// Not what waits on them or the group, a proposal's checks running, or a
+// build held back or stalled. The activity tray's Now is exactly this.
+const IN_FLIGHT_STAGES = new Set([...BUSY_STAGES, 'queued', 'followup_queued', 'fix_queued']);
 
 // app-creation-phase.js PHASES, in words.
 const SETUP_PARTS = Object.freeze({
@@ -160,6 +174,15 @@ function stageOf(row, { now = new Date() } = {}) {
       return row.queue_reason === 'checks_failing'
         ? { stage: 'fixing', since: row.started_at, doing: 'fixing its failing checks' }
         : { stage: 'revising', since: row.started_at, doing: 'reading the newest replies on its proposal' };
+    }
+    // #3734: a follow-up waiting its turn (a reply on the proposal, a change
+    // asked for in the DM, its own failing checks). Only while it is up for
+    // a vote: the loop does not follow up on a proposal being merged.
+    if (row.queue_id && row.proposal_status === 'promoted') {
+      const at = row.queue_position ? ` (number ${row.queue_position})` : '';
+      return row.queue_reason === 'checks_failing'
+        ? { stage: 'fix_queued', since: row.enqueued_at, doing: `waiting in the queue${at} to fix its failing checks` }
+        : { stage: 'followup_queued', since: row.enqueued_at, doing: `waiting in the queue${at} to follow up on the newest replies on its proposal` };
     }
     if (row.question_at) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
@@ -405,6 +428,11 @@ function setupOf(row, { phase = null } = {}) {
   return { stage: 'setting_up', since: row.app_created_at || row.created_at, doing: `setting up the project${part}` };
 }
 
+/** Pure: whether a `progressFor` entry is in the bot's hands now (IN_FLIGHT_STAGES). */
+function inFlight(item) {
+  return !!item && IN_FLIGHT_STAGES.has(item.stage) && !item.waitingOn;
+}
+
 function entry({ row, number = null, title = null, firstVersion, state, proposal = null, limits = {}, domain, now }) {
   const steps = firstVersion ? FIRST_VERSION_STEPS : REQUEST_STEPS;
   const step = stepNumber(state.stage, firstVersion);
@@ -415,6 +443,7 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     projectName: row.name || row.slug,
     ...(number ? { number: Number(number) } : {}),
     title: firstVersion ? 'First version' : (title || null),
+    ...(firstVersion ? { firstVersion: true } : {}),
     stage: state.stage,
     step,
     of: steps.length,
@@ -433,9 +462,11 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
  * How far along the bot is with everything it does for `userId`, newest
  * first: `rightNow` (in progress, each with its step of the steps above,
  * what it is doing, since when, the step's time limit and links) and
- * `finishedLately` (the last few that came to something).
+ * `finishedLately` (the last few that came to something). `facts: false`
+ * leaves a proposal as its id alone, without its checks and votes (the
+ * activity tray draws no more than that, and reads this on every change).
  */
-async function progressFor(pool, { userId, settings = null, config = null, deps = {}, now = new Date() }) {
+async function progressFor(pool, { userId, settings = null, config = null, deps = {}, now = new Date(), facts = true }) {
   const botSvc = deps.botSvc || require('./homeroom-bot');
   const phases = deps.creationPhase || require('./app-creation-phase');
   const domain = deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
@@ -451,16 +482,29 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
     }
   }
 
-  const rows = await requestRows(pool, userId);
+  // #3734: a queue row is the bot's work only on a project it acts on for
+  // real. On any other the queue is its background triage, which says
+  // nothing to anybody, so it is neither "waiting in the queue" nor "reading
+  // it" for them. Whether the bot is switched on is said apart (botIsOn).
+  const acts = settings
+    ? new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])
+    : null;
+  const rows = (await requestRows(pool, userId)).map((row) => (!acts || acts.has(row.slug) ? row : {
+    ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
+  }));
   const position = await queuePositions(pool, rows, settings);
   const cutoff = now.getTime() - FINISHED_WITHIN_DAYS * 24 * 60 * MINUTE_MS;
   for (const row of rows) {
     const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
     const state = stageOf({ ...row, queue_position: queuePosition }, { now });
     if (state) {
-      const proposal = row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed'
-        ? await proposalFacts(pool, Number(row.proposal_session_id), { domain })
-        : null;
+      const open = row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed';
+      let proposal = null;
+      if (open) {
+        proposal = facts
+          ? await proposalFacts(pool, Number(row.proposal_session_id), { domain })
+          : { proposal: Number(row.proposal_session_id) };
+      }
       rightNow.push(entry({
         row, number: row.issue_number, title: row.issue_title, firstVersion: !!row.first_version, state, proposal,
         limits: state.limit ? limitsFor(row, { settings, config, botSvc }) : {}, domain, now,
@@ -519,7 +563,9 @@ module.exports = {
   REQUEST_STEPS,
   SETUP_PARTS,
   BUSY_STAGES,
+  IN_FLIGHT_STAGES,
   START_GRACE_MS,
+  inFlight,
   stageOf,
   outcomeOf,
   setupOf,

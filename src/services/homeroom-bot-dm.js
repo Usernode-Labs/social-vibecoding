@@ -836,6 +836,48 @@ async function postOnRequest(pool, { user, target, text, deps = {} }) {
   return { ok: true, app, line, question };
 }
 
+/**
+ * #3740: post a person's words in the discussion of the bot's own proposal,
+ * as their own message: exactly what a reply typed there is, under the same
+ * gates (somebody who may write in the project's discussion), and what the
+ * bot's follow-up on that proposal reads (homeroom-bot.js runFollowUp). The
+ * request it answers then goes to the front of the queue, as an answered
+ * question's does, so the follow-up is next rather than after the next
+ * sweep. Resolves { ok, queued } or { ok: false, why }. `queued` is false
+ * while a follow-up on it runs right now (that run ends first, and the
+ * reply is read after it), and null when it could not be put first: the
+ * post still wakes the bot, as any reply there does.
+ */
+async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {} }) {
+  const ws = deps.ws || require('./ws');
+  const posted = await ws.handleMessage(
+    pool,
+    { user, appId: app.id, appSlug: app.slug, postedVia: null },
+    { type: 'chat', content: clip(text, 3900), thread: { type: 'session', ref: Number(sessionId) } },
+  ).catch((err) => ({ ok: false, code: err.message }));
+  if (!posted?.ok) {
+    log.warn('homeroom-bot-dm', 'Could not post a DM change on its proposal', {
+      app: app.slug, sessionId, userId: user.id, code: posted?.code || null,
+    });
+    const why = posted?.code === 'not_collaborator' || posted?.code === 'join_required'
+      ? `you need to be a member of ${app.name || app.slug} to take part in its discussion`
+      : 'something went wrong on my side';
+    return { ok: false, why };
+  }
+  let queued = null;
+  try {
+    queued = !!(await settingsModule().enqueueFront(pool, {
+      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: 'dm_revise',
+    }));
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not put the proposal\'s follow-up first', { app: app.slug, err: err.message });
+  }
+  log.info('homeroom-bot-dm', 'Posted a DM change on the bot\'s proposal', {
+    app: app.slug, sessionId, issueNumber, userId: user.id, queued,
+  });
+  return { ok: true, queued };
+}
+
 /** The deterministic path: words posted on the request, and the bot says where. */
 async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) {
   const text = String(message.content || '').trim();
@@ -1157,6 +1199,7 @@ module.exports = {
   requestStart,
   newestOpenQuestion,
   postOnRequest,
+  postOnProposal,
   noteProposalMerged,
   isBotDirect,
   mirroredText,
