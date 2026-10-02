@@ -80,11 +80,16 @@ function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-/** Whether the bot acts for real on this app, in this process. */
+/**
+ * Whether the bot acts for real on this app, in this process: an app in
+ * the live list, or (#3624) a project it is building for somebody it talks
+ * to in a DM (settings.firstVersionApps, homeroom-bot-dm.js).
+ */
 function isLiveFor(settings, app) {
   if (!settings || settings.mode === 'off' || isStaging()) return false;
   const live = Array.isArray(settings.liveApps) ? settings.liveApps : [];
-  return !!app && live.includes(app.slug);
+  const built = Array.isArray(settings.firstVersionApps) ? settings.firstVersionApps : [];
+  return !!app && (live.includes(app.slug) || built.includes(app.slug));
 }
 
 const MAX_QUOTED_CHARS = 1500;
@@ -811,11 +816,21 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null, threadMessage = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null,
 }) {
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass.
-  const tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  // #3624: a requester the bot tells in a DM is not also tagged here: the
+  // DM is where the news reaches them, and it would ring twice.
+  if (dm && sender && tagged.length) {
+    try {
+      const recipient = await require('./homeroom-bot-dm').dmRecipient(pool, app.id, issueNumber);
+      if (recipient) tagged = tagged.filter((n) => String(n).toLowerCase() !== recipient.username.toLowerCase());
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check the DM recipient (tagging as before)', { app: app.slug, issueNumber, err: err.message });
+    }
+  }
   const handles = tagged.map((n) => `@${n}`).join(' ');
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
@@ -897,6 +912,18 @@ async function post({
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
+  // #3624: the same news, in the requester's DM with the bot, when they
+  // are somebody it talks to there. A post that carries `dm` is one worth
+  // telling them about; the issue stays the record either way.
+  if (dm && sender) {
+    try {
+      await require('./homeroom-bot-dm').relayIssuePost({
+        pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
 }
 
