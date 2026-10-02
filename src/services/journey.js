@@ -864,9 +864,250 @@ async function coverage(pool, { week, leftOutIds = [] } = {}) {
   };
 }
 
+// ── Loops ──────────────────────────────────────────────────────────────
+//
+// The change loop is counted in turns, not people: one turn is one request
+// or one piece of feedback (a GitHub issue in a project), filed by a real
+// person, going round
+//
+//   Notice → Make sense → Sketch → Decide → Go live → Hear back
+//
+// Notice: filed. Make sense: somebody other than the reporter commented in
+// its thread or backed it. Sketch: a change linked to it was started.
+// Decide: that change was put to a vote. Go live: it merged. Hear back:
+// telling the reporter is not built yet, so the step is returned as
+// "coming", never as a number.
+//
+// $1 week start, $2 week end, $3/$4 real people.
+const CHANGE_LOOP_SQL = `WITH reported AS (
+    SELECT i.app_id, i.github_issue_number AS number, i.created_by AS reporter, i.created_at AS noticed_at,
+           i.title, i.status
+      FROM issues i
+     WHERE i.kind = 'general' AND i.github_issue_number IS NOT NULL AND i.created_by IS NOT NULL
+    UNION ALL
+    SELECT COALESCE(fr.app_id, (SELECT a.id FROM apps a WHERE a.self_hosted ORDER BY a.id LIMIT 1)),
+           fr.issue_number, fr.user_id, fr.created_at, fr.title, 'open'
+      FROM feedback_reports fr
+     WHERE fr.issue_number IS NOT NULL
+  ), turns AS (
+    SELECT DISTINCT ON (t.app_id, t.number) t.*
+      FROM reported t
+      JOIN users u ON u.id = t.reporter
+     WHERE t.app_id IS NOT NULL AND t.noticed_at < $2::timestamptz
+       -- A year back: older requests are history, not open turns.
+       AND t.noticed_at >= $1::timestamptz - make_interval(days => 365)
+       AND ${REAL_PERSON_SQL}
+     ORDER BY t.app_id, t.number, t.noticed_at
+  )
+  SELECT t.app_id, ap.slug, ap.name AS project, t.number, t.title, t.status, t.noticed_at,
+         t.reporter AS reporter_id, ru.username AS reporter,
+         (SELECT MIN(x.at) FROM (
+            SELECT MIN(cmx.created_at) AS at FROM chat_messages cmx
+             WHERE cmx.app_id = t.app_id AND cmx.thread_type = 'issue' AND cmx.thread_ref = t.number
+               AND cmx.msg_type = 'message' AND cmx.user_id IS DISTINCT FROM t.reporter
+            UNION ALL
+            SELECT MIN(ivx.created_at) FROM issue_votes ivx JOIN issues ix ON ix.id = ivx.issue_id
+             WHERE ix.app_id = t.app_id AND ix.github_issue_number = t.number AND ivx.user_id IS DISTINCT FROM t.reporter
+          ) x) AS made_sense_at,
+         lc.sketch_at, lc.decide_at, lc.live_at, lc.holder
+    FROM turns t
+    JOIN apps ap ON ap.id = t.app_id
+    LEFT JOIN users ru ON ru.id = t.reporter
+    LEFT JOIN LATERAL (
+      SELECT MIN(cs.created_at) AS sketch_at, MIN(cs.promoted_at) AS decide_at,
+             MIN(cs.merged_at) FILTER (WHERE cs.status = 'merged') AS live_at,
+             (SELECT hu.username FROM chat_sessions h JOIN users hu ON hu.id = h.user_id
+               WHERE h.app_id = t.app_id
+                 AND (t.number = ANY(h.linked_issues) OR h.created_from_issue_number = t.number)
+               ORDER BY h.created_at DESC LIMIT 1) AS holder
+        FROM chat_sessions cs
+       WHERE cs.app_id = t.app_id
+         AND (t.number = ANY(cs.linked_issues) OR cs.created_from_issue_number = t.number)
+    ) lc ON TRUE
+   ORDER BY t.noticed_at`;
+
+const LOOP_STEPS = Object.freeze(['notice', 'make_sense', 'sketch', 'decide', 'go_live', 'hear_back']);
+
+function turnStep(row) {
+  if (row.live_at) return 'go_live';
+  if (row.decide_at) return 'decide';
+  if (row.sketch_at) return 'sketch';
+  if (row.made_sense_at) return 'make_sense';
+  return 'notice';
+}
+
+async function changeLoop(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(CHANGE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+  const nowMs = new Date(now).getTime();
+  const turns = rows.map((r) => {
+    const step = turnStep(r);
+    const since = { notice: r.noticed_at, make_sense: r.made_sense_at, sketch: r.sketch_at, decide: r.decide_at, go_live: r.live_at }[step];
+    return {
+      project: r.project, slug: r.slug, number: r.number, title: r.title,
+      reporter: r.reporter ? { userId: Number(r.reporter_id), name: r.reporter } : null,
+      step,
+      since,
+      days: since ? Math.floor((nowMs - new Date(since).getTime()) / DAY_MS) : null,
+      holder: step === 'notice' ? null : r.holder || null,
+      noticedAt: r.noticed_at,
+      liveAt: r.live_at,
+      closed: r.status !== 'open' && !r.live_at,
+    };
+  });
+  // Open turns: not live and not closed without a change, oldest first.
+  const open = turns.filter((x) => x.step !== 'go_live' && !x.closed)
+    .sort((a, b) => new Date(a.since) - new Date(b.since));
+  const inWeek = (at, w) => at && new Date(at) >= w.start && new Date(at) < w.end;
+  const live = turns.filter((x) => inWeek(x.liveAt, week)).map((x) => ({
+    ...x, daysFromNotice: Math.round((new Date(x.liveAt) - new Date(x.noticedAt)) / DAY_MS),
+  }));
+  const before = previousWeek(week);
+  const projects = new Map();
+  for (const x of turns) {
+    if (!inWeek(x.liveAt, week) && !inWeek(x.liveAt, before)) continue;
+    const p = projects.get(x.slug) || { slug: x.slug, project: x.project, thisWeek: 0, lastWeek: 0 };
+    if (inWeek(x.liveAt, week)) p.thisWeek += 1; else p.lastWeek += 1;
+    projects.set(x.slug, p);
+  }
+  const atStep = {};
+  for (const key of LOOP_STEPS) {
+    atStep[key] = key === 'hear_back' ? { status: 'coming' }
+      : key === 'go_live' ? live.length
+        : open.filter((x) => x.step === key).length;
+  }
+  return {
+    week: week.label,
+    steps: LOOP_STEPS,
+    atStep,
+    turnsClosed: { status: 'coming' },
+    live,
+    perProject: [...projects.values()].filter((p) => p.thisWeek > 0)
+      .map((p) => ({ ...p, alsoLastWeek: p.lastWeek > 0 })),
+    open,
+  };
+}
+
+// The invite loop: who brought whom through an invite link, and whether the
+// person arrived, did something, and brought someone in turn.
+const INVITE_LOOP_SQL = `SELECT inv.id AS invitee_id, inv.username AS invitee, host.id AS host_id, host.username AS host,
+         inv.platform_access_granted_at AS let_in_at,
+         LEAST(
+           (SELECT MIN(cm.joined_at) FROM conversation_members cm JOIN conversations c ON c.id = cm.conversation_id
+             WHERE c.kind = 'channel' AND cm.user_id = inv.id),
+           (SELECT MIN(e.created_at) FROM events e WHERE e.user_id = inv.id AND e.event_type = 'ui_experience')
+         ) AS arrived_at,
+         (SELECT MIN(x.at) FROM (
+            SELECT MIN(cmx.created_at) AS at FROM chat_messages cmx WHERE cmx.user_id = inv.id AND cmx.msg_type = 'message'
+            UNION ALL SELECT MIN(pvx.created_at) FROM pr_votes pvx WHERE pvx.user_id = inv.id
+            UNION ALL SELECT MIN(frx.created_at) FROM feedback_reports frx WHERE frx.user_id = inv.id
+            UNION ALL SELECT MIN(csx.created_at) FROM chat_sessions csx WHERE csx.user_id = inv.id
+          ) x) AS did_something_at,
+         EXISTS (SELECT 1 FROM users nxt WHERE nxt.admitted_by = inv.id) AS invited_someone
+    FROM users inv
+    JOIN users host ON host.id = inv.admitted_by
+    JOIN users u ON u.id = inv.id
+   WHERE inv.admitted_by IS NOT NULL AND inv.platform_access_granted_at < $2::timestamptz
+     AND inv.platform_access_granted_at >= $1::timestamptz - make_interval(days => 365)
+     AND ${REAL_PERSON_SQL}
+   ORDER BY inv.platform_access_granted_at`;
+
+async function inviteLoop(pool, { week, leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(INVITE_LOOP_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]);
+  const pairs = rows.map((r) => ({
+    host: { userId: Number(r.host_id), name: r.host },
+    invitee: { userId: Number(r.invitee_id), name: r.invitee },
+    letInAt: r.let_in_at,
+    arrived: !!r.arrived_at,
+    didSomething: !!r.did_something_at,
+    invitedSomeone: r.invited_someone === true,
+  }));
+  return {
+    steps: ['invited', 'arrived', 'did_something', 'invited_someone'],
+    counts: {
+      invited: pairs.length,
+      arrived: pairs.filter((p) => p.arrived).length,
+      did_something: pairs.filter((p) => p.didSomething).length,
+      invited_someone: pairs.filter((p) => p.invitedSomeone).length,
+    },
+    pairs,
+  };
+}
+
+// ── Navigation readings ────────────────────────────────────────────────
+//
+// The raw rows behind paths, next steps and "possibly lost", for a set of
+// people over a window: their UI telemetry in time order, and whether any of
+// their delivery receipts in the window reported dropped events (a gap in the
+// data must never read as a move). $1 from, $2 to, $3 the people.
+const NAV_ROWS_SQL = `SELECT e.user_id, e.created_at AS at, e.metadata->>'kind' AS kind,
+         e.metadata->>'screen' AS screen, e.metadata->>'via' AS via, a.slug AS app_slug,
+         (e.metadata->>'sequence')::int AS sequence
+    FROM events e
+    LEFT JOIN apps a ON a.id = e.app_id
+   WHERE e.event_type = 'ui_experience' AND e.user_id = ANY($3::int[])
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+   ORDER BY e.user_id, e.created_at, e.id`;
+
+const DROPPED_SQL = `SELECT DISTINCT e.user_id FROM events e
+   WHERE e.event_type = 'ui_telemetry_delivery' AND e.user_id = ANY($3::int[])
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+     AND COALESCE((e.metadata->>'droppedEvents')::int, 0) > 0`;
+
+/** Visits per person for a window, leaving out people with lost telemetry. */
+async function visitsFor(pool, { userIds, from, to }) {
+  const ids = (userIds || []).map(Number);
+  if (!ids.length) return { byPerson: new Map(), leftOut: { droppedEvents: [], noNavigation: [] } };
+  const [{ rows }, { rows: dropped }] = await Promise.all([
+    pool.query(NAV_ROWS_SQL, [from, to, ids]),
+    pool.query(DROPPED_SQL, [from, to, ids]),
+  ]);
+  const droppedIds = new Set(dropped.map((r) => Number(r.user_id)));
+  const grouped = new Map();
+  for (const r of rows) {
+    const id = Number(r.user_id);
+    if (!grouped.has(id)) grouped.set(id, []);
+    grouped.get(id).push({ at: r.at, kind: r.kind, screen: r.screen, via: r.via, appSlug: r.app_slug, sequence: r.sequence });
+  }
+  const byPerson = new Map();
+  const noNavigation = [];
+  for (const id of ids) {
+    if (droppedIds.has(id)) continue;
+    const visits = splitVisits(grouped.get(id) || []);
+    if (!visits.length) { noNavigation.push(id); continue; }
+    byPerson.set(id, visits);
+  }
+  return { byPerson, leftOut: { droppedEvents: [...droppedIds], noNavigation } };
+}
+
+// The people a next-step table is about: one cohort, or every newcomer.
+const NEWCOMER_IDS_SQL = `SELECT u.id FROM users u
+   WHERE u.has_platform_access
+     AND u.platform_access_granted_at >= $2::timestamptz - make_interval(days => $1::int)
+     AND u.platform_access_granted_at <= $2::timestamptz
+     AND ${REAL_PERSON_SQL}`;
+
+async function nextStepCounts(pool, { from, to, userIds }) {
+  const { byPerson, leftOut } = await visitsFor(pool, { userIds, from, to });
+  return { ...nextSteps(byPerson), people: byPerson.size, leftOut };
+}
+
+/** Next steps for every newcomer (first 28 days) over their window. */
+async function newcomerNextSteps(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(NEWCOMER_IDS_SQL, [NEWCOMER_DAYS, now, ...realPersonParams(leftOutIds)]);
+  const to = new Date(now);
+  const from = new Date(to.getTime() - NEWCOMER_DAYS * DAY_MS);
+  return nextStepCounts(pool, { from, to, userIds: rows.map((r) => r.id) });
+}
+
 module.exports = {
   COHORTS_SQL,
+  CHANGE_LOOP_SQL,
   COVERAGE_SQL,
+  DROPPED_SQL,
+  INVITE_LOOP_SQL,
+  LOOP_STEPS,
+  NAV_ROWS_SQL,
+  NEWCOMER_IDS_SQL,
   LIVE_CHANGES_SQL,
   WAITING_SQL,
   DAY_MS,
@@ -885,9 +1126,13 @@ module.exports = {
   VISIT_GAP_MS,
   WEEK_MS,
   activeGroups,
+  changeLoop,
   cohorts,
   coverage,
   groupsForWeek,
+  inviteLoop,
+  newcomerNextSteps,
+  nextStepCounts,
   firstMile,
   firstMileCounts,
   firstMileSteps,
@@ -902,5 +1147,6 @@ module.exports = {
   previousWeek,
   splitVisits,
   stages,
+  visitsFor,
   weekStart,
 };
