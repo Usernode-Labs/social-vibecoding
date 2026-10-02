@@ -27,7 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -338,28 +338,29 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('the rail peeks back over a folded rail, and never over a running app', () => {
+  // The desktop rail can be folded by hand, and the pointer at the window's
+  // left edge brings it back on hover so the reader is not left hunting for
+  // navigation they put away.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
-  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
-  // its Workshop the rail is UP. This strip is `z-index: 39` against the
-  // rail's 30, so rendering it there lays an invisible 18px column down the
-  // left edge of the tabs and swallows the press meant for the one under the
-  // pointer.
+  // BOTH FACTS HAVE TO HOLD (#3138). `visible` is the ROUTE's answer that it
+  // has a rail — false over a running app, on the chromeless shell and on the
+  // signed-out shell, all of which have none to bring back — and `!railOpen`
+  // is the VIEWER having folded the one this route has. `!railOpen` ALONE was
+  // the bug: it outlives the screen, so a rail folded on one screen stayed
+  // folded into a project and a pointer near the left edge summoned the whole
+  // navigation over it, where a project's own menus and lists live.
+  assert.match(bar, /\{visible && !railOpen \? \(/,
+    'a strip only for a rail this route has that the viewer folded');
+  // NOT the app view either: it is two screens, and on its Workshop the rail
+  // is UP. This strip is `z-index: 39` against the rail's 30, so rendering it
+  // there lays an invisible 18px column down the left edge of the tabs and
+  // swallows the press meant for the one under the pointer.
   assert.ok(!bar.includes("{screen === 'app-view' ? ("),
     'the app view alone is not the question — whether its rail is down is');
+  assert.ok(!/\(screen === 'app-view' && !visible\)/.test(bar),
+    'and the running app is no longer a reason to render a hot zone at all (#3138)');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
   // screens reserve no band, and the app is full width; this is an overlay
   // on top of that answer.
@@ -378,8 +379,71 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}animation: none;/);
 });
 
+// The `#platform-rail-peek` strip is the ONLY thing that can start a sidebar
+// peek, so whether it renders is the whole of #3138. Its condition is a pair
+// of facts — the route's rail (`visible`) and the viewer's fold (`railOpen`)
+// — and a grep cannot tell which arrangements produce the element. This runs
+// the real component across them, with `useVisibility` and the nav store
+// stubbed to the arrangement under test, the two inputs the condition reads.
+function railPeekHtml({ screen, visible, railOpen }) {
+  const snapshot = {
+    tab: null, messages: 0, communities: 0, screen,
+    peek: false, peekOut: false, railOpen, viewer: null,
+  };
+  const stubs = {
+    './nav-store.js': {
+      navStore: {
+        get: () => snapshot,
+        subscribe: () => () => {},
+        set() {},
+      },
+    },
+    '../../lib/visibility-store': {
+      useVisibility: () => visible,
+      readVisibility: () => visible,
+      getVisibilityStore: () => ({ visible: {}, listeners: new Set() }),
+    },
+  };
+  const { PlatformTabs } = loadTsx('frontend/src/features/nav/tab-bar.tsx', { stubs });
+  return renderToHtml(createElement(PlatformTabs, {}));
+}
+
+test('the left-edge hot zone renders only for a folded rail the route has', () => {
+  // #3138. The bug was that `!railOpen` ALONE rendered the strip: the fold
+  // outlives the screen, so a rail folded on one screen stayed folded into a
+  // project, and hovering the left edge there — where a project's own menus,
+  // lists and scrollbars live — summoned the whole navigation over it.
+  // `visible` is the route's own answer that it has a rail; both have to hold.
+  const peek = (arrangement) => /id="platform-rail-peek"/.test(railPeekHtml(arrangement));
+
+  // A platform screen with the rail folded by hand: the strip is there, and
+  // the toggle's own hover is the other way back.
+  assert.equal(peek({ screen: 'home-screen', visible: true, railOpen: false }), true,
+    'a folded rail on a platform screen keeps its hot zone');
+  // A project's Workshop: the route has a rail, folded — the strip is there.
+  assert.equal(peek({ screen: 'app-view', visible: true, railOpen: false }), true,
+    'a project Workshop with a folded rail keeps its hot zone');
+  // THE RUNNING APP, both arrangements. The rail was folded elsewhere and
+  // stayed folded in — the reported bug — or it was left open; neither gets a
+  // strip, because a running app has no rail of its own to bring back and the
+  // way out is the ✕.
+  assert.equal(peek({ screen: 'app-view', visible: false, railOpen: false }), false,
+    'a running app with the rail folded elsewhere must not open on hover (#3138)');
+  assert.equal(peek({ screen: 'app-view', visible: false, railOpen: true }), false,
+    'nor with the rail left open');
+  // The chromeless and signed-out shells have no rail either, and no toggle
+  // to fold; a strip there would be conjuring navigation out of nothing.
+  assert.equal(peek({ screen: null, visible: false, railOpen: false }), false,
+    'the chromeless/signed-out shells show no strip');
+  assert.equal(peek({ screen: null, visible: false, railOpen: true }), false);
+  // The rail is up: no strip, so it cannot lay an invisible 18px column over
+  // the rail's own tabs.
+  assert.equal(peek({ screen: 'home-screen', visible: true, railOpen: true }), false,
+    'no strip while the rail is open');
+});
+
 test('every screen change clears the peek, and nothing else does', () => {
-  // That is what a peek is FOR: you reveal the rail over an app to leave it,
+  // That is what a peek is FOR: you reveal the folded rail to go somewhere,
   // and the thing you tapped has now happened. Leaving it set would hand the
   // next screen an overlay rail on top of its own.
   const mount = read('frontend/src/features/nav/mount.ts');
@@ -423,7 +487,7 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
 
   // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,
   // signed out — because a toggle for a thing that is not there is a dead
-  // control, and an app's rail comes back by pointing at the window's edge.
+  // control; over a running app the way out is the ✕ in the header (#3138).
   // BUT THAT IS CSS'S ANSWER, not a `return null`: see the hydration note
   // further down, and the selector asserted with it.
   assert.ok(!/^import .*visibility-store/m.test(toggle),
