@@ -1599,3 +1599,80 @@ test('the trace counts the shots proxy\'s refusals of a destination by reason on
   ]);
   assert.doesNotMatch(JSON.stringify(events), /internal\.example|10\.0\.0\.5/);
 });
+
+test('a shots agent that died says how: its exit code and the worker\'s reason, from fixed values', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onShotsDiagnostic({ kind: 'worker_memory', usedMb: 1990, limitMb: 2048, peakMb: 2047, oomKills: 0,
+        rssMb: { browser: 1400, agent: 380, mcp: 120, proxy: 40, other: 50 }, browserProcesses: 9 });
+      throw Object.assign(new Error('The shots agent stopped with an error before it finished.'), {
+        code: 'shots_agent_failed', shotsExitCode: -1, shotsExitCause: 'oom_killed',
+        detail: { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' },
+      });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_failed' });
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.agentDispatches[0].exitCode, -1);
+  assert.equal(trace.agentDispatches[0].exitCause, 'oom_killed');
+  assert.deepEqual(trace.failure.detail, { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' });
+  assert.equal(trace.workerMemory.lastUsedMb, 1990);
+  assert.equal(trace.workerMemory.limitMb, 2048);
+
+  // Anything but a known reason is dropped.
+  const odd = setup({
+    dispatch: async () => {
+      throw Object.assign(new Error('stopped'), {
+        code: 'shots_agent_failed', shotsExitCode: 'nine', shotsExitCause: 'killed by /tmp/secret',
+      });
+    },
+  });
+  await assert.rejects(execute(odd), { code: 'shots_agent_failed' });
+  const oddDispatch = odd.transitions.at(-1).patch.traceSummary.agentDispatches[0];
+  assert.equal('exitCode' in oddDispatch, false);
+  assert.equal('exitCause' in oddDispatch, false);
+});
+
+test('the trace keeps the worker\'s memory as a summary of numbers, outside the agent\'s event ring', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', sequence: 1 });
+  const samples = [
+    { usedMb: 900, limitMb: 2048, peakMb: 950, oomKills: 3, rssMb: { browser: 500, agent: 300, mcp: 60, proxy: 30, other: 10 }, browserProcesses: 4 },
+    { usedMb: 2040, limitMb: 2048, peakMb: 2047, oomKills: 4, rssMb: { browser: 1500, agent: 390, mcp: 90, proxy: 30, other: 20 }, browserProcesses: 11 },
+    { usedMb: 1200, limitMb: 2048, peakMb: 2047, oomKills: 5, rssMb: { browser: 700, agent: 'lots', mcp: -1, proxy: 30, other: 9e9, cmdline: 1 }, browserProcesses: 6 },
+    { usedMb: '/proc/1/cmdline', limitMb: null, peakMb: null, oomKills: null, rssMb: null, browserProcesses: null, path: '/tmp/x' },
+  ];
+  for (const sample of samples) orchestrator.recordAgentDiagnostic(metrics, { kind: 'worker_memory', ...sample });
+  const trace = orchestrator.traceSummary(metrics);
+  assert.deepEqual(trace.agentActivity.events.map((event) => event.kind), ['tool_start'],
+    'samples every few seconds would push the agent\'s own events out');
+  const { lastAtMs, ...memory } = trace.workerMemory;
+  assert.ok(Number.isSafeInteger(lastAtMs));
+  assert.deepEqual(memory, {
+    samples: 4, limitMb: 2048, peakUsedMb: 2040, lastUsedMb: null, containerPeakMb: 2047,
+    peakRssMb: { browser: 1500, agent: 390, mcp: 90, proxy: 30, other: 20 }, peakBrowserProcesses: 11,
+    oomKillsDuringTurn: 2,
+  });
+  assert.doesNotMatch(JSON.stringify(trace), /cmdline|tmp|proc/);
+  // A run with no samples has no memory summary at all.
+  assert.equal('workerMemory' in orchestrator.traceSummary(orchestrator.newRunMetrics()), false);
+});
+
+test('the trace counts the proxy\'s refusals by reason and kind of host', () => {
+  const metrics = orchestrator.newRunMetrics();
+  for (const event of [
+    { blockReason: 'private_address', hostKind: 'pair_host' },
+    { blockReason: 'private_address', hostKind: 'pair_host' },
+    { blockReason: 'dns', hostKind: 'other' },
+    { blockReason: 'port', hostKind: 'loopback' },
+    { blockReason: 'private_address', hostKind: 'internal.example' },
+    { blockReason: 'private_address' },
+    { blockReason: '10.0.0.5', hostKind: 'pair_host' },
+  ]) orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', ...event });
+  const { agentActivity } = orchestrator.traceSummary(metrics);
+  assert.deepEqual(agentActivity.egressBlocked, {
+    'private_address:pair_host': 2, 'dns:other': 1, 'port:loopback': 1, 'private_address:unknown': 2,
+  });
+  assert.equal(agentActivity.events.at(-3).hostKind, undefined, 'an unknown kind of host is dropped');
+  assert.doesNotMatch(JSON.stringify(agentActivity), /internal\.example|10\.0\.0\.5/);
+});

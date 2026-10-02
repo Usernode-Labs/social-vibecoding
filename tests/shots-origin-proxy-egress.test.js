@@ -59,7 +59,7 @@ async function network(t) {
   return { outside, pair, outsidePort: outsideServer.port, base: pairServer.origin };
 }
 
-async function startProxy(t, net_, { platformAssets = '1' } = {}) {
+async function startProxy(t, net_, { platformAssets = '1', memorySampleMs = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-egress-'));
   const ready = path.join(dir, 'proxy.ready');
   const notes = path.join(dir, 'notes.jsonl');
@@ -74,6 +74,7 @@ async function startProxy(t, net_, { platformAssets = '1' } = {}) {
       SHOTS_ALLOWED_ORIGINS: JSON.stringify([net_.base, 'http://head.invalid:3000']),
       SHOTS_PROXY_PORT: '0', SHOTS_PROXY_READY: ready,
       SHOTS_PLATFORM_ASSETS: platformAssets,
+      ...(memorySampleMs ? { SHOTS_MEMORY_SAMPLE_MS: String(memorySampleMs) } : {}),
       SHOTS_PROXY_CONTROL_TOKEN: 'c'.repeat(64),
       SHOTS_MEMBER_TOKEN: 'member.fixture.jwt',
       SHOTS_ADMIN_TOKEN: 'admin.fixture.jwt',
@@ -173,6 +174,8 @@ test('an internal destination, another port, or a name that does not resolve is 
     ['cdn.example:8443', 'port'],
     ['missing.example:443', 'dns'],
     ['not-approved.invalid:443', 'dns'],
+    // The pair's own host on another port: a browser trying https:// first.
+    ['head.invalid:443', 'dns'],
   ];
   for (const [authority] of refusals) {
     assert.match(await connect(proxy.shared, authority), /^HTTP\/1\.1 403/, authority);
@@ -189,7 +192,13 @@ test('an internal destination, another port, or a name that does not resolve is 
   assert.deepEqual(blocked(proxy).map((event) => event.blockReason), [
     ...refusals.map(([, reason]) => reason), 'private_address', 'private_address', 'port', 'private_address',
   ]);
-  assert.ok(blocked(proxy).every((event) => Object.keys(event).sort().join(',') === 'blockReason,kind'));
+  // And the kind of host, in fixed words: the pair's own (127.0.0.1 is the
+  // base here; head.invalid the head), a loopback address, or another.
+  assert.deepEqual(blocked(proxy).map((event) => event.hostKind), [
+    'other', 'other', 'other', 'other', 'pair_host', 'other', 'loopback', 'other', 'other', 'other', 'other', 'other',
+    'pair_host', 'other', 'other', 'other', 'other',
+  ]);
+  assert.ok(blocked(proxy).every((event) => Object.keys(event).sort().join(',') === 'blockReason,hostKind,kind'));
   assert.doesNotMatch(proxy.stderr(), /rebind|internal\.example|metadata|10\.0\.0\.5|169\.254|missing|not-approved|computeMetadata/);
 });
 
@@ -219,4 +228,19 @@ test('the legacy Tailwind CDN is an ordinary public host now, for any pair, and 
     await diagnostics(proxy, 'legacy_tailwind_cdn', 1);
     assert.equal(proxy.events().filter((event) => event.kind === 'legacy_tailwind_cdn').length, 1, platformAssets);
   }
+});
+
+test('when the runner asks, the proxy samples the worker\'s memory into the trace, as numbers only', async (t) => {
+  const net_ = await network(t);
+  const quiet = await startProxy(t, net_);
+  const sampled = await startProxy(t, net_, { memorySampleMs: 1000 });
+  await diagnostics(sampled, 'worker_memory', 1);
+  const [sample] = sampled.events().filter((event) => event.kind === 'worker_memory');
+  assert.deepEqual(Object.keys(sample).sort(),
+    ['browserProcesses', 'kind', 'limitMb', 'oomKills', 'peakMb', 'rssMb', 'usedMb']);
+  for (const value of [sample.usedMb, sample.limitMb, sample.peakMb, sample.oomKills, sample.browserProcesses]) {
+    assert.ok(value === null || Number.isSafeInteger(value), JSON.stringify(sample));
+  }
+  if (sample.rssMb) assert.deepEqual(Object.keys(sample.rssMb), ['browser', 'agent', 'mcp', 'proxy', 'other']);
+  assert.deepEqual(quiet.events().filter((event) => event.kind === 'worker_memory'), [], 'off unless asked');
 });

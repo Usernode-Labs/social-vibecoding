@@ -156,6 +156,8 @@ COPY shots-hosted-origins.js /usr/local/bin/shots-hosted-origins.js
 # Where the shots browser may go, and which of its screenshots may be
 # published: used by the proxy, the browser observer and the shots bridge.
 COPY shots-boundary.js /usr/local/bin/shots-boundary.js
+# The worker's memory through a shots turn, sampled by the shots proxy.
+COPY shots-memory.js /usr/local/bin/shots-memory.js
 COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
 COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js

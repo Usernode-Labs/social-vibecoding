@@ -604,3 +604,14 @@ test('fail_request only toggles an API path a change declared', async (t) => {
   assert.equal(control.headers['x-shots-control-token'], 'c'.repeat(64));
   assert.deepEqual(JSON.parse(control.body), { path: '/api/lists/demo', enabled: true });
 });
+
+test('a shots turn samples the worker\'s memory through the proxy, which the image carries', () => {
+  // The image copies the sampler beside the proxy that loads it.
+  assert.match(read('Dockerfile'), /COPY shots-memory\.js \/usr\/local\/bin\/shots-memory\.js/);
+  assert.match(read('shots-origin-proxy.js'), /require\('\.\/shots-memory'\)/);
+  // The runner asks for a sample every five seconds, before the proxy starts.
+  const runner = read('run-cc.sh');
+  const asked = runner.indexOf('export SHOTS_MEMORY_SAMPLE_MS=5000');
+  assert.ok(asked > 0, 'the runner sets the interval');
+  assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
+});

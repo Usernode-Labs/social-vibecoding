@@ -64,6 +64,19 @@ const EXPORT_COLUMNS = Object.freeze([
   // larger budget). Blank on an interrupted run means nothing explained the
   // interruption, or that it predates the tag.
   'interrupted_by',
+  // How the shots agent's process ended, when it failed: its exit code, and
+  // when it left no exit marker the worker's reason (oom_killed,
+  // container_gone, turn_process_gone, probe_unobservable).
+  'agent_exit_code', 'agent_exit_cause',
+  // The worker's memory through the turn, sampled every few seconds:
+  // its limit, the most used, the last sample (the nearest to a sudden
+  // death), the out-of-memory kills during the turn, and the most each
+  // class of process held (browser, agent, mcp, proxy, other).
+  'worker_memory_limit_mb', 'worker_memory_peak_mb', 'worker_memory_last_mb',
+  'worker_oom_kills', 'worker_memory_by_process_json',
+  // Destinations the shots proxy refused, counted by reason and kind of
+  // host ("private_address:pair_host"), never by destination.
+  'egress_blocked_json',
 ]);
 
 // The agent's own event ring holds up to 128 entries; the tail is what
@@ -229,6 +242,13 @@ function exportRecord(row) {
     if (arr(activity[field]).length) pending[key] = activity[field];
   }
   const slug = row.app_slug || null;
+  // The last dispatch that recorded how the agent ended; before those were
+  // recorded, the exit code is still in the failure's "exit N" text.
+  const ended = [...dispatches].reverse().map(obj)
+    .find((dispatch) => Number.isSafeInteger(dispatch.exitCode) || dispatch.exitCause) || {};
+  const legacyExit = /^exit (-?\d{1,4})$/.exec(typeof failure.detail === 'string' ? failure.detail : '');
+  const memory = obj(trace.workerMemory);
+  const egress = obj(activity.egressBlocked);
   return {
     run_id: row.id,
     created_at: row.created_at,
@@ -298,6 +318,16 @@ function exportRecord(row) {
     intent_json: json(row.intent),
     interrupted_by: typeof trace.interruptedBy === 'string' && /^[a-z_]{1,32}$/.test(trace.interruptedBy)
       ? trace.interruptedBy : null,
+    agent_exit_code: Number.isSafeInteger(ended.exitCode) ? ended.exitCode
+      : legacyExit ? Number(legacyExit[1]) : null,
+    agent_exit_cause: typeof ended.exitCause === 'string' && /^[a-z_]{1,32}$/.test(ended.exitCause)
+      ? ended.exitCause : null,
+    worker_memory_limit_mb: num(memory.limitMb),
+    worker_memory_peak_mb: num(memory.peakUsedMb),
+    worker_memory_last_mb: num(memory.lastUsedMb),
+    worker_oom_kills: num(memory.oomKillsDuringTurn),
+    worker_memory_by_process_json: Object.keys(obj(memory.peakRssMb)).length ? json(memory.peakRssMb) : null,
+    egress_blocked_json: Object.keys(egress).length ? json(egress) : null,
     diagnostics_path: slug && row.session_id
       ? `/api/apps/${slug}/proposals/${row.session_id}/shots/diagnostics?runId=${row.id}`
       : null,

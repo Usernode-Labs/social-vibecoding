@@ -593,7 +593,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
-  'platform_asset', 'legacy_tailwind_cdn', 'egress_blocked',
+  'platform_asset', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
   'worker_stop_requested', 'worker_stop_returned',
@@ -624,6 +624,9 @@ const AGENT_STARTUP_KINDS = new Set([
 function recordAgentDiagnostic(metrics, raw) {
   const kind = String(raw?.kind || '');
   if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
+  // A sample every few seconds would push the agent's own events out of the
+  // ring, so samples are kept as a summary instead.
+  if (kind === 'worker_memory') { recordWorkerMemory(metrics, raw); return; }
   const activity = metrics.agentActivity;
   const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
   if (AGENT_STARTUP_KINDS.has(kind) && activity.firstAtMs[kind] == null) {
@@ -669,6 +672,10 @@ function recordAgentDiagnostic(metrics, raw) {
   // only (worker/shots-boundary.js): never which destination.
   if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
     event.blockReason = raw.blockReason;
+    // And what kind of host it was, from fixed words: never the host.
+    if (EGRESS_HOST_KINDS.has(raw.hostKind)) event.hostKind = raw.hostKind;
+    const key = `${event.blockReason}:${event.hostKind || 'unknown'}`;
+    activity.egressBlocked[key] = (activity.egressBlocked[key] || 0) + 1;
   }
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
@@ -756,6 +763,48 @@ function recordAgentDiagnostic(metrics, raw) {
   if (activity.events.length > MAX_AGENT_EVENTS) activity.events.shift();
 }
 
+const EGRESS_HOST_KINDS = new Set(['pair_host', 'catalog_host', 'loopback', 'other']);
+const MEMORY_CLASSES = Object.freeze(['browser', 'agent', 'mcp', 'proxy', 'other']);
+const memoryMb = (value) => (Number.isSafeInteger(value) && value >= 0 && value <= 1_048_576 ? value : null);
+
+// The worker's memory through the turn (worker/shots-memory.js): the limit,
+// the highest use seen, the last sample (the one nearest a sudden death),
+// the out-of-memory kills since the first sample, and the most each class of
+// process held. Numbers only.
+function recordWorkerMemory(metrics, raw) {
+  const memory = metrics.workerMemory || (metrics.workerMemory = {
+    samples: 0, limitMb: null, peakUsedMb: null, lastUsedMb: null, containerPeakMb: null,
+    oomKillsAtStart: null, oomKills: null, peakRssMb: {}, peakBrowserProcesses: null, lastAtMs: null,
+  });
+  memory.samples += 1;
+  memory.lastAtMs = Math.max(0, Date.now() - metrics.startedAtMs);
+  const used = memoryMb(raw.usedMb);
+  memory.lastUsedMb = used;
+  if (used != null) memory.peakUsedMb = Math.max(memory.peakUsedMb ?? 0, used);
+  if (memoryMb(raw.limitMb) != null) memory.limitMb = raw.limitMb;
+  if (memoryMb(raw.peakMb) != null) memory.containerPeakMb = Math.max(memory.containerPeakMb ?? 0, raw.peakMb);
+  if (Number.isSafeInteger(raw.oomKills) && raw.oomKills >= 0 && raw.oomKills <= 1_000_000) {
+    if (memory.oomKillsAtStart == null) memory.oomKillsAtStart = raw.oomKills;
+    memory.oomKills = raw.oomKills;
+  }
+  const rss = raw.rssMb && typeof raw.rssMb === 'object' ? raw.rssMb : {};
+  for (const name of MEMORY_CLASSES) {
+    if (memoryMb(rss[name]) != null) memory.peakRssMb[name] = Math.max(memory.peakRssMb[name] ?? 0, rss[name]);
+  }
+  if (Number.isSafeInteger(raw.browserProcesses) && raw.browserProcesses >= 0 && raw.browserProcesses <= 10_000) {
+    memory.peakBrowserProcesses = Math.max(memory.peakBrowserProcesses ?? 0, raw.browserProcesses);
+  }
+}
+
+function workerMemorySummary(memory) {
+  const { oomKillsAtStart, oomKills, ...rest } = memory;
+  return {
+    ...rest,
+    peakRssMb: { ...memory.peakRssMb },
+    oomKillsDuringTurn: oomKills == null || oomKillsAtStart == null ? null : Math.max(0, oomKills - oomKillsAtStart),
+  };
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -771,7 +820,8 @@ function newRunMetrics() {
     agentFinalResponses: [],
     agentActivity: { events: [], counts: {}, toolCounts: {}, firstAtMs: {}, pending: new Map(),
       browserCallCounts: {}, browserPending: new Map(), documentPending: new Map(),
-      providerPending: new Map(), budgetMs: null },
+      providerPending: new Map(), egressBlocked: {}, budgetMs: null },
+    workerMemory: null,
     agentFinalResponse: null,
     artifactBytes: 0,
     idleWait: null,
@@ -806,6 +856,7 @@ function agentActivitySummary(metrics) {
     counts: { ...metrics.agentActivity.counts },
     toolCounts: { ...metrics.agentActivity.toolCounts },
     browserCallCounts: { ...metrics.agentActivity.browserCallCounts },
+    egressBlocked: { ...metrics.agentActivity.egressBlocked },
     firstAtMs: { ...metrics.agentActivity.firstAtMs },
     events: metrics.agentActivity.events.slice(-MAX_AGENT_EVENTS),
     pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
@@ -828,6 +879,7 @@ function traceSummary(metrics, extra = {}) {
     ...(metrics.agentFinalResponses.length
       ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 8) } : {}),
     agentActivity: agentActivitySummary(metrics),
+    ...(metrics.workerMemory ? { workerMemory: workerMemorySummary(metrics.workerMemory) } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -1088,6 +1140,10 @@ async function executeRun(config, options, injected = {}) {
         if (error?.shotsModel) dispatchTrace.model = safeModelId(error.shotsModel);
         dispatchTrace.outcome = 'failed';
         dispatchTrace.code = errorCode(error);
+        // How the agent's process ended, when it did not report it itself
+        // (shots-agent.js): its exit code and the worker's reason.
+        if (Number.isSafeInteger(error?.shotsExitCode)) dispatchTrace.exitCode = error.shotsExitCode;
+        if (shotsAgent.EXIT_CAUSES.has(error?.shotsExitCause)) dispatchTrace.exitCause = error.shotsExitCause;
         return { dispatched: null, error };
       } finally {
         metrics.timingsMs.agentExploration += Math.max(0, Date.now() - dispatchStartedAt);
