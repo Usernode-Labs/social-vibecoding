@@ -17627,8 +17627,18 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 /* An emoji tile's glyph at the tile's own size, not the launcher's. */
 .community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
 .platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-.community-switcher-tile-all { background: #1f2329; color: #fff; }
-.dark .community-switcher-tile-all { background: #3a3f47; }
+/* ALL COMMUNITIES WEARS THE TAB'S FACE (#3663): the people glyph in a square
+   ring, in the row's own ink, as `.platform-tab-ring-all` draws it on the
+   phone's bar. It was a filled near-black tile, which in the same list as
+   Homeroom's own (a cream H on near-black) read as a second Homeroom. The
+   ring is the tab's 2px at the tile's size, and the glyph is the tab's
+   share of it (18px in 28px) with the tab's 1.8 stroke. */
+.community-switcher-tile-all {
+  background: transparent; color: inherit;
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+.community-switcher-tile-all > svg { width: 26px; height: 26px; stroke-width: 1.8; }
+.community-switcher-menu .community-switcher-tile-all > svg { width: 22px; height: 22px; }
 .community-switcher-tile-add {
   background: transparent; color: var(--text-muted);
   box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
