@@ -127,7 +127,7 @@ async function claimRun(pool, row, base) {
 // longer wants this run), 'busy' (a live run here has the session),
 // 'contested' (another harvester took the row first), or 'failed'.
 // `hold` is the seat claimRun() took; without one the claim happens here.
-async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) {
+async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJobs = false } = {}) {
   const visuals = require('./visuals');
   const kubernetes = require('./kubernetes');
   const unitSuite = require('./unit-suite');
@@ -140,6 +140,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   const sessionId = Number(row.session_id);
   const runId = row.run_id;
   const manifest = row.manifest || {};
+  const retireConsumers = async () => {
+    if (retireJobs || manifest.durableCli) {
+      await kubernetes.cancelPreviewChecks(config, sessionId, runId, { releaseInputs: true });
+    }
+  };
   const commitSha = row.commit_sha || null;
   const startedAt = Date.now();
   const base = describeRow(row, reason);
@@ -160,18 +165,33 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   // successor's row is never overwritten.
   const settleLifecycle = async (outcome) => {
     if (!lifecycle.enabled(config)) return;
-    await lifecycle.settleAdopted(config, operation || { sessionId, runId }, outcome).catch(() => {});
+    const settlement = lifecycle.settleAdopted(config, operation || { sessionId, runId }, outcome);
+    if (retireJobs || manifest.durableCli) await settlement;
+    else await settlement.catch(() => {});
   };
   const moot = async (why) => {
+    if (manifest.durableCli && manifest.launched && !(manifest.shotsOnly && !manifest.media)) {
+      const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
+      if (!jobs.capture) return { outcome: 'waiting', why: 'retired capture creation unconfirmed', ...base };
+    }
     log.info('check-harvest', 'Orphaned run is moot — clearing its manifest', { ...base, why });
+    await retireConsumers();
+    const currentSession = manifest.durableCli ? await loadSession(pool, sessionId) : null;
+    const alreadySettled = currentSession && LIVE_STATUSES.has(currentSession.status)
+      && currentSession.checks_commit_sha === commitSha
+      && (['passing', 'failing', 'error', 'skipped'].includes(currentSession.check_state)
+        || (currentSession.check_state === 'pending' && currentSession.check_phase === 'deferred'));
+    await settleLifecycle(alreadySettled
+      ? { result: { state: currentSession.check_state } }
+      : { error: lifecycle.cancelled() });
     await checkRuns.finish(pool, runId);
-    await settleLifecycle({ error: lifecycle.cancelled() });
     return { outcome: 'moot', why, ...base };
   };
   const redrive = async (session, why) => {
     log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', { ...base, why });
-    await checkRuns.finish(pool, runId);
+    await retireConsumers();
     await settleLifecycle({ error: new Error(why) });
+    await checkRuns.finish(pool, runId);
     mergeDebug.endRun(pool, manifest.debugRunId || null, {
       status: 'error', summary: `checks run orphaned (${why}); re-driven`,
     });
@@ -208,7 +228,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // capture container at all (visuals: shotsOnly && !media) — its stamp is
     // the whole settlement, and there is nothing on the cluster to find.
     const captureExpected = !(manifest.shotsOnly && !manifest.media);
-    if (captureExpected && !jobs.capture) return await redrive(session, 'capture Job not found');
+    if (captureExpected && !jobs.capture) {
+      // The launch manifest precedes external creation. For the enrolled
+      // contract, absence cannot close that submission or authorize a second
+      // run. Keep the locator so a delayed Job can still be harvested.
+      if (manifest.durableCli) return { outcome: 'waiting', why: 'capture creation unconfirmed', ...base };
+      return await redrive(session, 'capture Job not found');
+    }
 
     log.info('check-harvest', 'Adopting an orphaned checks run', {
       ...base, owner: row.owner,
@@ -305,6 +331,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       mergeDebug.endRun(pool, manifest.debugRunId || null, {
         status: 'error', summary: `checks error in ${Math.round((Date.now() - (manifest.startedAt || startedAt)) / 1000)}s (harvested: ${why})`,
       });
+      await retireConsumers();
       if (operation) await lifecycle.settleAdopted(config, operation, { result: { state: 'error' } });
       await checkRuns.finish(pool, runId);
       return { outcome: 'settled', state: 'error', why, ...base };
@@ -345,6 +372,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       status: verdict,
       summary: `checks ${verdict} in ${Math.round((Date.now() - (Number(manifest.startedAt) || startedAt)) / 1000)}s (harvested)`,
     });
+    await retireConsumers();
     if (operation) {
       await lifecycle.settleAdopted(config, operation, { result: settled.result });
       // The lifecycle wrapper fires this for a live run once its operation

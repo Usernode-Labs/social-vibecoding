@@ -421,6 +421,68 @@ async function controllers(state) {
   }
 }
 
+async function setupChecks(state) {
+  const filename = path.join(state.directory, 'fixture.json');
+  const verified = await verifyIsolatedBuildFixture({ env: {
+    PATH: process.env.PATH,
+    KPACK_RECOVERY_TEST_CONFIG: filename,
+    PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
+  } });
+  if (!state.captureImage) {
+    const context = path.join(state.directory, 'capture-context');
+    const files = ['capture/Dockerfile', 'capture/capture.js', 'capture/fonts.conf',
+      'shots/hosted-app-fixture.js', 'worker/session-bootstrap.js',
+      'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js'];
+    for (const file of files) {
+      const target = path.join(context, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(path.resolve(__dirname, '..', file), target);
+    }
+    const crane = path.join(state.directory, 'tools/crane');
+    const base = await run(state, crane, ['digest', '--platform', 'linux/arm64', 'node:22-bookworm-slim']);
+    check(/^sha256:[a-f0-9]{64}$/.test(base), 'capture base digest required');
+    const dockerfile = path.join(context, 'capture/Dockerfile');
+    fs.writeFileSync(dockerfile, fs.readFileSync(dockerfile, 'utf8').replace(
+      'FROM node:22-bookworm-slim', `FROM node@${base}`));
+    state.captureLocalTag = `${state.clusterName}-capture:local`;
+    save(state);
+    const existing = await docker(state, ['image', 'ls', '--filter', `reference=${state.captureLocalTag}`, '-q', '--no-trunc']);
+    if (!existing) {
+      await docker(state, ['build', '--platform', 'linux/arm64', '--label', `${LABEL}=${state.fixtureId}`,
+        '-t', state.captureLocalTag, '-f', dockerfile, context], { timeout: 900000 });
+    }
+    const [image] = JSON.parse(await docker(state, ['image', 'inspect', state.captureLocalTag]));
+    check(image.Config.Labels?.[LABEL] === state.fixtureId
+      && (!state.captureLocalImageId || state.captureLocalImageId === image.Id), 'capture image ownership mismatch');
+    state.captureLocalImageId = image.Id;
+    save(state);
+    const archive = path.join(state.directory, 'capture-image.tar');
+    await docker(state, ['save', '-o', archive, state.captureLocalTag]);
+    await withRegistryForward(state, verified.clients, async port => {
+      const repo = `preview-recovery-${state.fixtureId}/capture`;
+      await run(state, crane, ['push', archive, `127.0.0.1:${port}/${repo}:fixture`]);
+      const digest = await run(state, crane, ['digest', `127.0.0.1:${port}/${repo}:fixture`]);
+      state.captureImage = `${state.registry.host}/${repo}@${digest}`;
+      save(state);
+    });
+  }
+  const fixture = JSON.parse(fs.readFileSync(filename));
+  fixture.checks = { captureImage: state.captureImage };
+  fixture.config.captureRuntime = 'kubernetes';
+  Object.assign(fixture.config.kubernetes, {
+    workerNamespace: state.namespace.name,
+    workerServiceAccount: 'recovery-builder',
+    captureImage: state.captureImage,
+  });
+  fs.writeFileSync(filename, JSON.stringify(fixture, null, 2), { mode: 0o600 });
+  await verifyIsolatedBuildFixture({ env: {
+    PATH: process.env.PATH,
+    KPACK_RECOVERY_TEST_CONFIG: filename,
+    PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
+  } });
+  console.log('[fixture] actual capture image and checks destinations verified');
+}
+
 async function manifest(state) {
   if (!state.revision) {
     state.repoUrl = 'https://github.com/heroku/node-js-sample';
@@ -537,6 +599,27 @@ function verifyDeletionInventory(state, containers, net, volumes, consumers) {
 
 async function teardown(state) {
   await daemon(state);
+  let captureImageToDelete = null;
+  if (state.captureLocalTag) {
+    if (!state.captureLocalImageId) {
+      // Recover a successful local build whose reply/state save was lost.
+      // Only the exact fixture tag and its ownership label may be adopted.
+      const found = await docker(state, ['image', 'ls', '--filter', `reference=${state.captureLocalTag}`, '-q', '--no-trunc']);
+      if (found) {
+        const [image] = JSON.parse(await docker(state, ['image', 'inspect', found]));
+        check(image.Config.Labels?.[LABEL] === state.fixtureId, 'capture image recovery ownership mismatch');
+        state.captureLocalImageId = image.Id;
+        save(state);
+      }
+    }
+    const images = (await docker(state, ['image', 'ls', '-q', '--no-trunc'])).split('\n');
+    if (state.captureLocalImageId && images.includes(state.captureLocalImageId)) {
+      const [image] = JSON.parse(await docker(state, ['image', 'inspect', state.captureLocalImageId]));
+      check(image.Config.Labels?.[LABEL] === state.fixtureId
+        && image.RepoTags?.every(tag => tag === state.captureLocalTag), 'capture image deletion ownership mismatch');
+      captureImageToDelete = state.captureLocalImageId;
+    }
+  }
   // Inventory by immutable IDs. Missing IDs may result from interrupted teardown;
   // replacements with the same name are never adopted or deleted.
   const ids = [...(state.nodes || []).map(node => node.id), ...(state.database ? [state.database.containerId] : [])];
@@ -558,6 +641,7 @@ async function teardown(state) {
   const [net] = state.networkId && netIds.includes(state.networkId)
     ? JSON.parse(await docker(state, ['network', 'inspect', state.networkId])) : [];
   verifyDeletionInventory(state, containers, net, volumes, consumers);
+  if (captureImageToDelete) await docker(state, ['image', 'rm', captureImageToDelete]);
   for (const container of containers) {
     await docker(state, ['rm', '-f', '-v', container.Id]);
     state.removedContainerIds = [...(state.removedContainerIds || []), container.Id];
@@ -577,7 +661,7 @@ async function integration(state, mode = 'test') {
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
   await verifyIsolatedBuildFixture({ env });
-  const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation', 'test-handoff': '--handoff' }[mode];
+  const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation', 'test-handoff': '--handoff', 'test-checks': '--checks' }[mode];
   const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
   state.lastIntegration = { completedAt: new Date().toISOString(), exitCode: code };
@@ -599,8 +683,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff'].includes(mode) && argument,
-    'use init <local-socket>, setup/test/test-runtime/test-release/test-preparation/test-handoff/teardown <directory>');
+  check(['setup', 'setup-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode) && argument,
+    'use init <local-socket>, setup/setup-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -609,7 +693,8 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
-    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff'].includes(mode)) await integration(state, mode);
+    else if (mode === 'setup-checks') await setupChecks(state);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

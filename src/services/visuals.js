@@ -1937,8 +1937,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         await operation.check();
         return captureForSession(config, fresh, app, operation.revision, stagingResult,
           { ...opts, force: opts.force || !!stagingResult });
-      }, { force: opts.force, onError: (err, pool, operation) =>
-        publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
+      }, {
+        force: opts.force,
+        recoverRun: opts.recoverExisting
+          ? context => require('./cli-preview-handoff/checks').recoverCaptureRun(config, {
+            ...context,
+            force: !!opts.force,
+          })
+          : null,
+        onError: (err, pool, operation) => publishCaptureError(
+          pool, session.id, operation.revision, err, opts.send),
+      });
       if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
       return completed;
     } catch (err) {
@@ -2073,6 +2082,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const runId = operation?.runId || crypto.randomUUID();
   const harvestable = config.captureRuntime === 'kubernetes';
   let stopHeartbeat = () => {};
+  let cliLaunchRecorded = false;
+  let captureSettled = false;
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -2136,10 +2147,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // session, and a heartbeat must not cost a row lock every fifteen
     // seconds.
     if (harvestable) {
-      await checkRuns.record(operation?.cleanupPool || pool, {
+      const recorded = await checkRuns.record(operation?.cleanupPool || pool, {
         runId, sessionId: session.id, commitSha: commitHash || null,
-        manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt },
+        manifest: {
+          launched: false,
+          durableCli: !!opts.recoverExisting,
+          trigger: trigger || null,
+          debugRunId,
+          startedAt: runStartedAt,
+        },
       });
+      if (opts.recoverExisting && !recorded) throw new Error('Required CLI checks manifest could not be persisted');
       stopHeartbeat = checkRuns.startHeartbeat(operation?.cleanupPool || pool, runId);
     }
 
@@ -2564,10 +2582,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // are recorded without their URLs — those embed the capture tokens, and
     // storeArtifacts wants only the index, path and frame.
     if (harvestable) {
-      await checkRuns.record(operation?.cleanupPool || pool, {
+      const recorded = await checkRuns.record(operation?.cleanupPool || pool, {
         runId, sessionId: session.id, commitSha: commitHash || null,
         manifest: {
           launched: true,
+          durableCli: !!opts.recoverExisting,
           trigger: trigger || null,
           debugRunId,
           startedAt: runStartedAt,
@@ -2591,6 +2610,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
         },
       });
+      if (opts.recoverExisting && !recorded) throw new Error('Required CLI checks launch manifest could not be persisted');
+      cliLaunchRecorded = !!opts.recoverExisting && recorded;
     }
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
@@ -2781,6 +2802,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
     });
     traceStatus = settled.traceStatus;
+    captureSettled = true;
     return settled.result;
   } catch (err) {
     closeProgress();
@@ -2821,12 +2843,15 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       status: traceStatus,
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
-    // The manifest goes with the run, whatever ended it: a settled run has
-    // nothing left to harvest, and a superseded or failed one has had its
-    // Jobs cancelled (or is about to) — a harvester finding the row would
-    // only re-drive a run something else already replaced.
+    // Legacy runs clear their locator on exit. Enrolled CLI runs retain a
+    // submitted launch until settlement, so retirement can still discover it.
     stopHeartbeat();
-    if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    // An acknowledged launch manifest can outlive a failed creation reply or
+    // settlement. Keep that locator for retirement/harvest, even if the live
+    // lifecycle records an error. Observed absence cannot close submission.
+    if (harvestable && (!cliLaunchRecorded || captureSettled)) {
+      await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    }
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
     scheduleShots(config, pool, session.id, commitHash);

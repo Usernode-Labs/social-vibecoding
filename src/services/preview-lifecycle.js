@@ -135,7 +135,12 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
     };
   }
 
-  async function run(config, session, revision, phase, fn, { force = false, onError = null, resolveRevision = null } = {}) {
+  async function run(config, session, revision, phase, fn, {
+    force = false,
+    onError = null,
+    resolveRevision = null,
+    recoverRun = null,
+  } = {}) {
     if (!enabled(config)) return fn(null, session);
     const inherited = current();
     if (inherited?.sessionId === Number(session.id)) return fn(inherited, session);
@@ -150,7 +155,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         || (resolveRevision && await resolveRevision(fresh));
       if (!revision) throw new Error('A coordinated preview requires an exact revision');
     }
-    const requestedAt = await request(pool, session.id, revision, force);
+    const requestedAt = await request(pool, session.id, revision, force && !recoverRun);
     return lock(config, PREVIEW_LIFECYCLE_LOCK, session.id, async () => {
       const fresh = await readSession(pool, session.id);
       const { rows } = await pool.query('SELECT * FROM preview_operations WHERE session_id = $1', [session.id]);
@@ -162,6 +167,14 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
       // A duplicate arriving during the same phase joins its durable completion.
       if (!force && previous.phase === phase && previous.state === 'completed'
           && previous.revision === revision && new Date(previous.finished_at) >= requestedAt) return previous.result;
+
+      // Recovery inspects after acquiring the same lock as new execution.
+      // A caller's earlier inspection cannot authorize cancelling a run that
+      // another owner created while that caller waited for this boundary.
+      if (recoverRun) {
+        const recovered = await recoverRun({ pool, session: fresh, previous });
+        if (recovered.handled) return recovered.result;
+      }
 
       // An owner can die while its Kubernetes Jobs keep running. Owning this
       // lock is necessary but insufficient until those consumers have stopped.

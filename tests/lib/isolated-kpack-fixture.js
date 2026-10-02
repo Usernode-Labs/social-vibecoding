@@ -84,6 +84,15 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
       && fixture.preparationSource.revision === '59de32fd44f50ba06926a43d90b567e33aa39236'
       && fixture.preparationSource.branch === 'main', 'pinned health-enabled preparation fixture required');
   }
+  requireIsolation(!settings.captureRuntime || fixture.checks, 'capture configuration requires its dedicated checks manifest');
+  requireIsolation(!runtime.captureImage || fixture.checks, 'capture image requires its dedicated checks manifest');
+  if (fixture.checks) {
+    requireIsolation(settings.captureRuntime === 'kubernetes'
+      && runtime.workerNamespace === name && runtime.workerServiceAccount === 'recovery-builder'
+      && runtime.captureImage === fixture.checks.captureImage
+      && runtime.captureImage.startsWith(`${prefix}/capture@sha256:`)
+      && DIGEST.test(runtime.captureImage), 'checks must use the dedicated namespace, account and registry');
+  }
   return isolation;
 }
 

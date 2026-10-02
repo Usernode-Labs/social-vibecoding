@@ -9,19 +9,29 @@ function createCliPreviewHandoff(pool) {
   const runtime = createSessionDecisionRuntime(pool);
   const machine = {
     name: 'cli-preview-handoff',
-    version: 1,
+    version: 2,
     parseAction,
     reduce,
     async load(client, session, { sessionId }) {
       const handoff = (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0] || null;
       // Same aggregate transaction: no independently locked domain snapshots.
       const previewState = await readState(client, session, sessionId);
+      const { rows: obligations } = await client.query(`SELECT
+        EXISTS (SELECT 1 FROM check_runs WHERE session_id = $1 AND commit_sha = $2::text)
+        OR EXISTS (SELECT 1 FROM preview_operations
+          WHERE session_id = $1 AND revision = $2::text AND state = 'running') AS outstanding`,
+      [sessionId, session?.checks_commit_sha || null]);
       const lifecycleSession = session ? Object.fromEntries([
         'id', 'app_id', 'user_id', 'source', 'status', 'active_turn', 'handoff_uploaded_sha',
         'handoff_head_sha', 'handoff_upload_checked_sha', 'checks_commit_sha',
         'staging_commit_sha', 'staging_runtime_name', 'reviewed_head_sha', 'check_state', 'check_phase',
       ].map(key => [key, session[key] ?? null])) : null;
-      return { session: lifecycleSession, handoff, preview: previewState };
+      return {
+        session: lifecycleSession,
+        handoff,
+        preview: previewState,
+        checksOutstanding: obligations[0].outstanding,
+      };
     },
     facts: () => ({}),
     actionConflict: () => new Error('CLI preview action ID reused with different input'),

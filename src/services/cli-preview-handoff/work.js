@@ -204,7 +204,7 @@ function createCliHandoffWork(pool, config, {
     state = permission.current;
     // Receipts replay decisions; they do not grant permission over a new head.
     if (!current(state, input)) return { outcome: 'succeeded', code: 'handoff_obsolete' };
-    if (!checksSettled(state.session)) {
+    if (!checksSettled(state.session) || state.checksOutstanding) {
       if (!require('../preview-lifecycle').enabled(config)) {
         throw new Error('Enrolled checks require the preview lifecycle; fallback is forbidden');
       }
@@ -217,11 +217,15 @@ function createCliHandoffWork(pool, config, {
         });
       });
       notify(session, app, result);
-      await capture(config, session, app, input.headSha, result, { trigger: input.force ? 'manual' : 'commit-push', force: input.force });
+      await capture(config, session, app, input.headSha, result, {
+        trigger: input.force ? 'manual' : 'commit-push',
+        force: input.force,
+        recoverExisting: true,
+      });
     }
     state = await owner.read(attempt.session_id);
     if (!current(state, input)) return { outcome: 'succeeded', code: 'handoff_obsolete' };
-    return checksSettled(state.session)
+    return checksSettled(state.session) && !state.checksOutstanding
       ? { outcome: 'succeeded', result: { checksObserved: true } }
       : { outcome: 'waiting', code: 'checks_continuation_pending', delayMs: 1000 };
   }

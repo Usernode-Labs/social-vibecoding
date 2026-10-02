@@ -218,3 +218,29 @@ Build output/template selection and reply-loss/timing injections are identified
 separately. It does not establish a complete actual kpack preparation path or
 production compatibility. No default credentials, contexts or deployment settings
 are changed; teardown uses the existing immutable ownership verification.
+
+## C9 actual capture/browser-check Job
+
+After normal fixture setup, provision the repository's capture image and run the
+fixed checks entry point:
+
+```sh
+node scripts/kpack-local-fixture.js setup-checks /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js test-checks /absolute/path/to/preview-recovery-test-UUID
+```
+
+`setup-checks` passes live preflight before building. It copies only named capture
+sources into the private fixture directory, pins the ARM64 Node base digest,
+builds an image labelled with the fixture UUID, and pushes only to the dedicated
+registry's fixture `/capture` repository through a verified local forward. The
+manifest records its immutable digest, namespace and service account; parent and
+child refuse a missing marker or mismatched capture destination. No ambient Docker
+config/kubeconfig/registry credentials are loaded.
+
+Teardown verifies the exact recorded local image ID, UUID label and sole fixture
+tag before deleting it. If setup died before saving that ID, only the exact tagged,
+labelled fixture image can be adopted for removal. Base-image caches stay. Actual
+Chromium assertions, PNGs, Jobs/logs and SQL settlement are distinguished from
+manifest, internal HTTP transport, unauthenticated-user and timing substitutions
+in the C9 contract. The fixture app has no unit-suite script; no actual unit-suite
+Job proof is claimed. Local integration does not establish production compatibility.

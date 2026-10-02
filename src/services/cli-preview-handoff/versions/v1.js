@@ -1,6 +1,14 @@
 'use strict';
 
-const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
+// Frozen C8 decision policy for retained traces.
+function nativeHeadCondition(session, startedStatus, headSha) {
+  if (!session) return 'session_missing';
+  if (session.source === 'imported') return 'imported_session';
+  if (session.checksCommitSha !== headSha) return 'head_changed';
+  const publishable = session.status === startedStatus
+    || (session.status === 'promoted' && session.reviewedHeadSha === headSha);
+  return publishable ? null : 'status_changed';
+}
 
 function reject(reason) {
   return { accepted: false, reason, effects: [] };
@@ -54,7 +62,7 @@ function reduce(state, action) {
   if (preview.flow.state !== 'ready' || preview.binding?.observed?.flowId !== action.flowId
       || session.staging_commit_sha !== action.headSha) return reject('activation_unconfirmed');
   const request = action.type === 'RequestCliPreviewChecks';
-  if (!request && (!checksSettled(session) || state.checksOutstanding)) return reject('checks_pending');
+  if (!request && !checksSettled(session)) return reject('checks_pending');
   return {
     accepted: true,
     reason: request ? 'cli_checks_requested' : 'cli_checks_observed',
@@ -63,10 +71,4 @@ function reduce(state, action) {
   };
 }
 
-function replayDecision(entry) {
-  if (entry.reducer_version === 1) return require('./versions/v1').reduce(entry.pre_state, entry.action);
-  if (entry.reducer_version === 2) return reduce(entry.pre_state, entry.action);
-  throw new Error(`Unsupported CLI handoff reducer version: ${entry.reducer_version}`);
-}
-
-module.exports = { reduce, checksSettled, replayDecision };
+module.exports = { reduce, checksSettled };

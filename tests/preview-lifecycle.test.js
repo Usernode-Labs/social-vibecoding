@@ -46,6 +46,25 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
       return { id, status: 'active', checks_commit_sha: sha };
     };
 
+    await t.test('C9 recovery joins an existing run under the lock even for force retries', async () => {
+      const session = await reset(16);
+      const runId = '11111111-1111-4111-8111-111111111116';
+      await db.query(`INSERT INTO preview_operations
+        (session_id, desired_revision, run_id, revision, phase, state)
+        VALUES (16, 'old', $1, 'old', 'capture', 'running')`, [runId]);
+      const owner = make(async () => assert.fail('Recovery must not cancel the existing execution'));
+      const result = await owner.run(config, session, 'old', 'capture', async () => assert.fail('New execution'), {
+        force: true,
+        async recoverRun({ previous }) {
+          assert.equal(previous.state, 'running');
+          assert.equal(previous.run_id, runId);
+          return { handled: true, result: { waiting: true } };
+        },
+      });
+      assert.deepEqual(result, { waiting: true });
+      assert.equal((await db.query('SELECT run_id FROM preview_operations WHERE session_id = 16')).rows[0].run_id, runId);
+    });
+
     await t.test('new head fences old writes and waits for consumers to stop', async () => {
       const session = await reset(1);
       const entered = deferred(); const stopped = deferred(); const aborted = deferred();

@@ -1643,9 +1643,31 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null, { releaseInputs = false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
+  if (releaseInputs && !previewRunId) throw new Error('Input retirement requires an exact checks run');
+
+  async function releaseInput(job) {
+    if (!releaseInputs) return;
+    const name = withSuffix(job.metadata.name, 'input');
+    let secret;
+    try { secret = await core.readNamespacedSecret({ namespace, name }); }
+    catch (error) { if (isNotFound(error)) return; throw error; }
+    const inputRunId = secret.metadata.labels?.['social.usernode.io/preview-run-id'];
+    const jobOwners = (secret.metadata.ownerReferences || []).filter(owner => owner.kind === 'Job');
+    const referenced = jobOwners.some(owner => owner.uid === job.metadata.uid && owner.name === job.metadata.name);
+    const conflictingOwner = jobOwners.some(owner => owner.uid !== job.metadata.uid || owner.name !== job.metadata.name);
+    if (secret.metadata.labels?.['social.usernode.io/session-id'] !== String(sessionId)
+        || (inputRunId && inputRunId !== previewRunId) || conflictingOwner
+        || (inputRunId !== previewRunId && !referenced)) {
+      throw new Error('Checks input ownership is unconfirmed');
+    }
+    await deleteIfPresent(core, 'deleteNamespacedSecret', name, namespace, {
+      body: { preconditions: { uid: secret.metadata.uid } },
+    });
+  }
+
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
     + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
@@ -1658,7 +1680,10 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
     };
-    if ((job.status?.succeeded || job.status?.failed) && await podsStopped()) return;
+    if ((job.status?.succeeded || job.status?.failed) && await podsStopped()) {
+      await releaseInput(job);
+      return;
+    }
     await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, {
       propagationPolicy: 'Foreground', body: { preconditions: { uid: job.metadata.uid } },
     });
@@ -1671,6 +1696,7 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
       if (Date.now() >= deadline) throw new Error(`Preview checks still stopping: ${name}`);
       await new Promise(resolve => setTimeout(resolve, 250));
     }
+    await releaseInput(job);
   }));
 }
 
@@ -1840,7 +1866,7 @@ async function runCheckJob(config, {
     if (inputSecretName) {
       await core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
-        metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
+        metadata: { name: inputSecretName, namespace, labels: { ...body.metadata.labels } },
         type: 'Opaque', stringData: unitSuite
           ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
           : { 'tests.json': String(stdinPayload) },

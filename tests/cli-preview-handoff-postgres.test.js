@@ -300,3 +300,38 @@ test('C8 the CLI switch scopes its capabilities and does not enroll other Dev ca
   assert.equal(require('../src/services/cli-preview-handoff/work').selected(f.config, { source: 'anthropic' }), false);
   assert.equal(f.config.nativePreviewRecoverableRuntime, false, 'Global caller configuration stays unchanged');
 });
+
+test('C9 completion requires the verdict and release of manifest/lifecycle ownership', { skip: !isolated }, async t => {
+  const f = await fixture(t);
+  const runId = randomUUID();
+  let captures = 0;
+  const work = f.make({ async capture(_config, session, _app, headSha) {
+    captures++;
+    await f.pool.query(`INSERT INTO preview_operations (session_id, desired_revision, run_id, revision, state)
+      VALUES ($1,$2,$3,$2,'running')`, [session.id, headSha, runId]);
+    await require('../src/services/check-runs').record(f.pool, {
+      runId, sessionId: session.id, commitSha: headSha, manifest: { launched: true, durableCli: true },
+    });
+    await require('../src/services/visuals').storeChecks(f.pool, session.id, headSha, { state: 'passing', results: [] });
+  } });
+  const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
+  await candidate(f, work, admitted);
+  await tick(work);
+  const identity = { sessionId: 1, flowId: admitted.work.input.identity.flowId, headSha: HEAD };
+  const observed = () => work.owner.apply({ type: 'CliPreviewChecksObserved', actionId: randomUUID(), ...identity });
+  assert.equal((await observed()).decision.accepted, false);
+  await f.pool.query('DELETE FROM check_runs WHERE run_id = $1', [runId]);
+  assert.equal((await observed()).decision.accepted, false, 'Lost manifest is not lifecycle release');
+  await f.pool.query("UPDATE preview_operations SET state = 'completed' WHERE run_id = $1", [runId]);
+  await f.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE workflow = $1', [CONTINUE]);
+  await tick(work);
+  assert.equal((await work.recover(1)).status, 'succeeded');
+  assert.equal(captures, 1);
+  const { replayDecision } = require('../src/services/cli-preview-handoff/reducer');
+  for (const entry of await work.owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+  const historical = { reducer_version: 1, pre_state: (await work.owner.read(1)), action: {
+    type: 'CliPreviewChecksObserved', actionId: randomUUID(), ...identity,
+  } };
+  historical.pre_state.checksOutstanding = true;
+  assert.equal(replayDecision(historical).accepted, true, 'C8 traces preserve their original completion policy');
+});

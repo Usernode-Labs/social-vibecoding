@@ -18,8 +18,8 @@
 // nobody has touched for CHECK_RUN_ORPHAN_MS.
 //
 // Everything here is best-effort and never throws into the checks pipeline:
-// a run that cannot record its manifest still runs; it just cannot be
-// harvested if its process dies.
+// legacy callers may run without a manifest. The enrolled CLI caller requires
+// record() to return true before dispatching Jobs; it fails closed otherwise.
 
 const os = require('os');
 const log = require('./logger');
@@ -121,15 +121,16 @@ function startHeartbeat(pool, runId, { intervalMs = HEARTBEAT_MS } = {}) {
 // `isInFlight(sessionId)` is visuals.hasInFlightCapture; a row whose session
 // has a live capture in this process is never an orphan, whatever its
 // heartbeat says — that run will settle it (or replace it) itself.
-async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50 } = {}) {
+async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50, sessionId = null } = {}) {
   if (!pool) return [];
   const { rows } = await pool.query(
     `SELECT run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at,
             (heartbeat_at < NOW() - ($1::int * INTERVAL '1 millisecond')) AS stale
        FROM check_runs
+      WHERE ($3::integer IS NULL OR session_id = $3)
       ORDER BY started_at ASC
       LIMIT $2`,
-    [Math.round(staleMs), limit]
+    [Math.round(staleMs), limit, sessionId]
   );
   const me = selfOwner();
   return rows.filter((row) => {

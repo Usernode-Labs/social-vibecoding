@@ -306,3 +306,19 @@ for (const conflict of [null, 'database', 'address', 'identifier', 'start time']
     assert.equal(closed, true);
   });
 }
+
+test('C9 capture destinations require a manifest and the dedicated immutable registry image', t => {
+  const f = fixture(t);
+  const value = f.value;
+  value.config.captureRuntime = 'kubernetes';
+  assert.throws(() => validateDestinations(value, value.isolation.database.url), /dedicated checks manifest/);
+  const prefix = value.config.kubernetes.repositoryPrefix.replace(/\/images$/, '');
+  const image = `${prefix}/capture@sha256:${'a'.repeat(64)}`;
+  value.checks = { captureImage: image };
+  Object.assign(value.config.kubernetes, {
+    workerNamespace: value.isolation.namespace.name, workerServiceAccount: 'recovery-builder', captureImage: image,
+  });
+  assert.equal(validateDestinations(value, value.isolation.database.url), value.isolation);
+  value.config.kubernetes.captureImage = `production.example/capture@sha256:${'b'.repeat(64)}`;
+  assert.throws(() => validateDestinations(value, value.isolation.database.url), /dedicated namespace, account and registry/);
+});

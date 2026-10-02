@@ -135,3 +135,48 @@ test('failed teardown settles all in-flight deletes before releasing ownership',
   await flush(); assert.equal(settled, false);
   finishIngress(); assert.match((await pending).message, /API failed/);
 });
+
+function completedInputFixture(t, secret) {
+  const deleted = [];
+  const job = { metadata: { name: 'sv-capture-s42-old', uid: 'old-job',
+    labels: { 'social.usernode.io/preview-run-id': 'old' } }, status: { succeeded: 1 } };
+  kubernetes._setClientsForTest({
+    batch: { listNamespacedJob: async () => ({ items: [job] }) },
+    core: {
+      listNamespacedPod: async () => ({ items: [{ status: { phase: 'Succeeded' } }] }),
+      readNamespacedSecret: async () => secret,
+      deleteNamespacedSecret: async request => { deleted.push(request); },
+    },
+  });
+  t.after(() => kubernetes._setClientsForTest(null));
+  return deleted;
+}
+
+test('C9 retirement releases run-tagged input after lost Job reply using the Secret UID', async t => {
+  const deleted = completedInputFixture(t, { metadata: {
+    uid: 'input-uid', labels: { 'social.usernode.io/session-id': '42', 'social.usernode.io/preview-run-id': 'old' },
+  } });
+  await kubernetes.cancelPreviewChecks(config, 42, 'old', { releaseInputs: true });
+  assert.equal(deleted.length, 1);
+  assert.equal(deleted[0].name, 'sv-capture-s42-old-input');
+  assert.equal(deleted[0].body.preconditions.uid, 'input-uid');
+});
+
+test('C9 older input without a run tag requires its matching Job owner UID', async t => {
+  const deleted = completedInputFixture(t, { metadata: {
+    uid: 'input-uid', labels: { 'social.usernode.io/session-id': '42' },
+    ownerReferences: [{ kind: 'Job', name: 'sv-capture-s42-old', uid: 'old-job' }],
+  } });
+  await kubernetes.cancelPreviewChecks(config, 42, 'old', { releaseInputs: true });
+  assert.equal(deleted.length, 1);
+});
+
+test('C9 conflicting input ownership preserves a successor even with the old run tag', async t => {
+  const deleted = completedInputFixture(t, { metadata: {
+    uid: 'successor-input', labels: { 'social.usernode.io/session-id': '42', 'social.usernode.io/preview-run-id': 'old' },
+    ownerReferences: [{ kind: 'Job', name: 'sv-capture-s42-old', uid: 'successor-job' }],
+  } });
+  await assert.rejects(kubernetes.cancelPreviewChecks(config, 42, 'old', { releaseInputs: true }), /ownership/);
+  assert.deepEqual(deleted, []);
+  await assert.rejects(kubernetes.cancelPreviewChecks(config, 42, null, { releaseInputs: true }), /exact checks run/);
+});

@@ -119,3 +119,34 @@ production ingress behavior were not proved by injected checks/local API binding
 Next, review retained obligations and prove the real checks continuation for this
 same caller before considering wider rollout or more workflows. Prune only owners
 whose replacement and retained-data gate have both been demonstrated.
+
+## C9: same checks owner survives worker loss
+
+For enrolled CLI continuation only, replace restart-time cancellation/recapture of
+an existing run with inspection under the existing lifecycle resource lock and
+`check-harvest` adoption. A terminal verdict alone no longer completes the durable
+continuation: current-head manifest/lifecycle obligations must be released. Loss
+after verdict commit closes as completed, preserving explicit same-head rechecks.
+Required manifests precede Job creation; failed launch/settlement keeps its locator.
+Run-tagged input Secrets plus UID-checked retirement recover the lost-Job-reply gap.
+
+**Ownership actually removed:** this enrolled restart no longer replaces a
+recoverable running Job, and no longer treats verdict persistence as completion
+while its check run still owns release work. Settlement still uses the existing
+harvester and guarded pools. No check executor, timer or shared lock was deleted;
+legacy callers retain their cancellation/re-drive policy. The durable continuation
+kind and existing lifecycle/harvest owners remain necessary.
+
+| Retained item | Removal gate |
+| --- | --- |
+| `recoverExisting` / manifest `durableCli` marker | One supported checks admission/recovery contract plus a retained C8 manifest audit; other callers still use best-effort manifests. |
+| Missing submitted capture locator | Persisted creator closure or explicit operator reconciliation; elapsed time/absence cannot authorize forgetting it or a competing capture. |
+| Legacy harvest global ticker and oldest-50 selection | Inventory legacy obligations and prove fair scheduling/cleanup replacement; targeted enrolled inspection does not replace the global owner. |
+| CLI reducer v1 replay snapshot, v2 current guard | Retained work/exported-trace audit; no permanent support obligation inferred from an experimental checkpoint. |
+| Post-verdict diagnostics/media, shots and merge/release | Keep their documented independent owners; checks completion does not guarantee delivery of every subsequent artifact. |
+
+Actual isolated Chromium Job recovery, verdict-commit interruption and stale-output
+rejection are demonstrated. Unit-suite Job/private-user/public-edge/production
+compatibility remain unproved. A submitted Job that never appears stays pending
+for reconciliation; this safety containment is an explicit liveness limit. Default
+off, no broader caller migration or rollout. See the C9 contract and local ledger.

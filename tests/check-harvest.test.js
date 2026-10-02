@@ -681,15 +681,15 @@ test('the leader boot sequence seats orphans before the stale sweep looks, and t
     'a session being harvested is never re-driven by the stale sweep');
 });
 
-test('captureForSession records a manifest before its Jobs exist and clears it on every exit path', () => {
+test('captureForSession records before launch and retains uncertain enrolled CLI submissions', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
-  const provisional = src.indexOf('manifest: { launched: false');
+  const provisional = src.search(/manifest: \{\s*launched: false/);
   const full = src.indexOf('launched: true');
   const launch = src.indexOf('kubernetes.runCaptureJob(');
   assert.ok(provisional > 0 && full > provisional && launch > full,
     'provisional manifest, then the full one, then the Job launch — in that order');
-  assert.match(src, /finally \{[\s\S]{0,1200}if \(harvestable\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
-    'the manifest is cleared in the run\'s finally');
+  assert.match(src, /if \(harvestable && \(!cliLaunchRecorded \|\| captureSettled\)\) \{\s*await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
+    'successful runs clear their manifest; uncertain enrolled launches retain their locator');
   assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the harvester finds them');
 });
 
@@ -699,4 +699,67 @@ test('the schema carries the check_runs manifest table', () => {
   assert.match(schema, /session_id\s+INTEGER NOT NULL REFERENCES chat_sessions\(id\) ON DELETE CASCADE/);
   assert.match(schema, /heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);
   assert.match(schema, /CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs \(session_id\)/);
+});
+
+test('C9 a submitted CLI capture that is absent keeps its locator and never re-drives', async t => {
+  const row = orphanRow();
+  row.manifest.durableCli = true;
+  const pool = makePool({ session: sessionRow() });
+  stub(t, kubernetes, { findCheckJobs: async () => ({ capture: null, unitSuite: null }) });
+  stub(t, stagingRecovery, { recheckSessionChecks: async () => assert.fail('Absence does not prove creation stopped') });
+  const result = await harvest.adopt(config, pool, row);
+  assert.equal(result.outcome, 'waiting');
+  assert.deepEqual(pool.deleted, []);
+});
+
+test('C9 loss during owned input/lifecycle release retains the checks locator', async t => {
+  const row = orphanRow();
+  row.manifest.durableCli = true;
+  const pool = makePool({ session: sessionRow({ check_state: 'passing' }) });
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'old' } }),
+    cancelPreviewChecks: async (_config, id, run, options) => {
+      assert.equal(id, row.session_id);
+      assert.equal(run, row.run_id);
+      assert.equal(options.releaseInputs, true);
+      throw new Error('Injected retirement reply loss');
+    },
+  });
+  const result = await harvest.adopt(config, pool, row);
+  assert.equal(result.outcome, 'failed');
+  assert.deepEqual(pool.deleted, []);
+});
+
+test('C9 supersession retains a submitted-but-absent capture for later retirement', async t => {
+  const row = orphanRow();
+  row.manifest.durableCli = true;
+  const pool = makePool({ session: sessionRow({ checks_commit_sha: 'successor' }) });
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: null, unitSuite: null }),
+    cancelPreviewChecks: async () => assert.fail('Absence does not close submission'),
+  });
+  assert.equal((await harvest.adopt(config, pool, row)).outcome, 'waiting');
+  assert.deepEqual(pool.deleted, []);
+});
+
+test('C9 a persisted current verdict closes as completed, allowing later same-head rechecks', async t => {
+  const row = orphanRow();
+  row.manifest.durableCli = true;
+  const pool = makePool({ session: sessionRow({ check_state: 'failing' }) });
+  const lifecycle = require('../src/services/preview-lifecycle');
+  let settlement;
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'old' } }),
+    cancelPreviewChecks: async () => {},
+  });
+  stub(t, lifecycle, {
+    enabled: () => true,
+    settleAdopted: async (_config, operation, outcome) => {
+      assert.equal(operation.runId, row.run_id);
+      settlement = outcome;
+    },
+  });
+  assert.equal((await harvest.adopt(config, pool, row)).outcome, 'moot');
+  assert.deepEqual(settlement, { result: { state: 'failing' } });
+  assert.deepEqual(pool.deleted, [row.run_id]);
 });
