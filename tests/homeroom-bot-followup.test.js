@@ -192,7 +192,8 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.match(h.calls.posts[0].text, /Because the platform uses it/);
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'answer');
-  assert.equal(insert.params.at(-1), 5001, 'tied to the proposal');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
+  assert.equal(insert.params[21], null, 'not a checks follow-up');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });

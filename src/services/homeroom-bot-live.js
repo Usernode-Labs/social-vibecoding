@@ -928,6 +928,37 @@ async function post({
 }
 
 /**
+ * One message from the bot in a proposal's own discussion, recorded like
+ * every post (homeroom_bot_posts) but said nowhere else: no GitHub comment
+ * and nothing in the issue's thread. For news that is the proposal's alone,
+ * such as a revision that fixed its failing checks. Never throws on the
+ * send; resolves { postId, thread }.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId }) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id ?? null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  if (postId && message?.id) {
+    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
+      .catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
+  return { postId, thread: !!message };
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1079,7 +1110,24 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
 ]);
 
-function buildPrompt({ seed, buildNote, spec = null }) {
+// A build of the platform's own repository runs its tests the way that
+// repository's AGENTS.md asks every agent to: the suites that pin what it
+// changed, never the whole suite, which the platform runs on every proposal
+// anyway. Half the platform's shadow builds ran out of time (2026-10-02),
+// several in a mapped run of thousands of tests chasing failures that were
+// not theirs. Said in the build prompt as well as in AGENTS.md because a
+// build that reads past it loses its whole clock.
+const PLATFORM_TEST_NOTE = Object.freeze([
+  '',
+  'This is the platform\'s own repository, which is large, and the platform runs its whole test suite on the',
+  'proposal by itself. Do not run `npm test` or the whole suite. Run only the suites for the files you changed:',
+  '`npm run test:changed -- --files <the files you changed, comma-separated>` (add `--list` first to see what it',
+  'would run), or `node --test <test file>` for the test files that name them. If that maps to more than a few',
+  'hundred tests because you changed shared code, run only the test files that name your changed files. A',
+  'failure in a suite that does not read anything you changed is not yours: name it in your summary and move on.',
+]);
+
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
   const specBlock = spec
     ? [
       '',
@@ -1109,6 +1157,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
     }),
+    ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -1216,7 +1265,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null, proposalCeiling = null,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1365,7 +1414,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1485,6 +1534,7 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,
@@ -1494,6 +1544,7 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
   draftSpec,

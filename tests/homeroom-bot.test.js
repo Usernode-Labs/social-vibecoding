@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id[,)]/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1052,7 +1052,10 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
+  // ...except a row the bot queued for itself (a restart's, a failing
+  // check's) on an issue that is open, unchanged and nobody else's: #2.
+  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2]]);
   assert.equal(out.removed, 2);
 });
 

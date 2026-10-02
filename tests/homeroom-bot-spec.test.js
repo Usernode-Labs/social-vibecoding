@@ -431,7 +431,7 @@ test('a shadow build records the spec on its run', async (t) => {
   assert.equal(rec.params[8], SPEC);
 });
 
-test('a shadow build records a failed spec on its run, and the platform gets double clocks (#3396)', async (t) => {
+test('a shadow build records a failed spec on its run, and the platform gets longer clocks (#3396)', async (t) => {
   bot._resetForTests();
   const queries = [];
   const apps = {
@@ -450,7 +450,7 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   const seen = [];
   let outcome;
   live.buildAndPropose = async (args) => {
-    seen.push({ slug: args.app.slug, turnBudgetMs: args.turnBudgetMs, specBudgetMs: args.specBudgetMs });
+    seen.push({ slug: args.app.slug, turnBudgetMs: args.turnBudgetMs, specBudgetMs: args.specBudgetMs, platformRepo: args.platformRepo });
     return outcome;
   };
   const deps = {
@@ -477,7 +477,7 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   }), 'shadow_built');
   assert.equal(record().params[1], true);
   assert.equal(record().params[5], note, 'built from the plan, and the run says why');
-  assert.deepEqual(seen.pop(), { slug: APP.slug, turnBudgetMs: 1200 * 1000, specBudgetMs: live.SPEC_TURN_MAX_MS }, 'an app keeps its clocks');
+  assert.deepEqual(seen.pop(), { slug: APP.slug, turnBudgetMs: 1200 * 1000, specBudgetMs: live.SPEC_TURN_MAX_MS, platformRepo: false }, 'an app keeps its clocks');
 
   outcome = { ok: false, sessionId: 6002, costUsd: null, error: 'the build produced no change to propose', specNote: note };
   assert.equal(await bot.runQueuedBuild(pool, {}, {
@@ -485,8 +485,8 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   }), 'shadow_failed');
   assert.equal(record().params[5], `the build produced no change to propose; ${note}`, 'the failure first, then why there was no spec');
   assert.deepEqual(seen.pop(), {
-    slug: 'homeroom', turnBudgetMs: 2 * 1200 * 1000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS,
-  }, 'the platform gets double both clocks');
+    slug: 'homeroom', turnBudgetMs: 3 * 1200 * 1000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS, platformRepo: true,
+  }, 'the platform gets three times both clocks (2026-10-02: at double, half its builds ran out of time), and its test note');
 
   outcome = { ok: true, sessionId: 6003, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
   await bot.runQueuedBuild(pool, {}, { bot: BOT, claim: { id: 902, app_id: 9, issue_number: 14, build_note: 'x' }, settings, deps });
@@ -502,15 +502,16 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   const link = queries.find((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql));
   assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists');
 
-  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 120_000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS });
+  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 180_000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS });
   assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });
 });
 
 test('the spec turn is its own telemetry component, the run keeps the spec, and the dashboard shows it', () => {
   assert.match(read('src/services/llm-telemetry.js'), /'homeroom_bot_spec',/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;/);
-  assert.equal(bot.EXPORT_COLUMNS.at(-2), 'build_spec_md');
-  assert.equal(bot.EXPORT_COLUMNS.at(-1), 'build_session_id', '#3385: a build can be looked up');
+  const cols = bot.EXPORT_COLUMNS;
+  assert.equal(cols[cols.indexOf('build_session_id') - 1], 'build_spec_md');
+  assert.ok(cols.includes('build_session_id'), '#3385: a build can be looked up');
   assert.match(read('src/services/homeroom-bot.js'), /r\.build_spec_md,\n\s+r\.build_session_id,/);
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   const fn = tsx.slice(tsx.indexOf('function BuildSpec('), tsx.indexOf('function VerdictBody('));
@@ -518,4 +519,19 @@ test('the spec turn is its own telemetry component, the run keeps the spec, and 
   assert.match(fn, /\{run\.build_spec_md\}/, 'plain text, as the rest of the table is');
   assert.doesNotMatch(fn, /dangerouslySetInnerHTML/);
   assert.match(tsx, /<BuildSpec run=\{run\} \/>/);
+});
+
+test('a build of the platform repository runs the suites for what it changed, never the whole suite', () => {
+  const platform = live.buildPrompt({ seed: 'SEED', buildNote: 'plan', platformRepo: true });
+  assert.match(platform, /Do not run `npm test` or the whole suite\./);
+  assert.match(platform, /`npm run test:changed -- --files <the files you changed, comma-separated>`/);
+  assert.match(platform, /A\nfailure in a suite that does not read anything you changed is not yours/);
+  assert.ok(platform.indexOf('test:changed') < platform.indexOf('==== DESCRIPTION ===='), 'with the rules, before the summary block');
+  for (const line of live.PLATFORM_TEST_NOTE) assert.ok(!/\u2014/.test(line), line);
+  const app = live.buildPrompt({ seed: 'SEED', buildNote: 'plan' });
+  assert.doesNotMatch(app, /test:changed/, 'an app\'s own instructions decide its tests');
+  assert.equal(platform.replace(`${live.PLATFORM_TEST_NOTE.join('\n')}\n`, ''), app, 'the note is the only difference');
+  // The live path passes it too.
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /proposalCeiling,\n\s+platformRepo: isPlatformRepo\(app, config\),/);
 });
