@@ -1,0 +1,308 @@
+'use strict';
+
+// #3692: the activity tray in the Homeroom bot's DM, against the full
+// PostgreSQL schema and through the real route. What it pins first is WHOSE
+// work it reads: the signed-in person's, and nobody else's, whatever the
+// request asks for. Then what it reads:
+//
+//   - NOW is a claimed queue row on a request of theirs (recorded for them,
+//     or an issue they filed that the loop has not recorded yet), on an app
+//     the bot acts on for real, with its step (looking, then building once
+//     its spec is posted during this turn); and a project of theirs still
+//     being set up for its first version. Shadow triage is not work for
+//     anybody.
+//   - HISTORY is the bot's live runs on their requests, newest first, each
+//     with what came of it and where it opens (the proposal once people can
+//     open it, else the request). Shadow runs are not shown.
+//   - an app they can no longer view is left out of both.
+//
+// Skips when no PostgreSQL is reachable, like the repository's other
+// postgres tests.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const express = require('express');
+
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
+  || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+
+const pushes = [];
+const wsId = require.resolve('../src/services/ws');
+require.cache[wsId] = {
+  id: wsId, filename: wsId, loaded: true,
+  exports: {
+    pushConversationEvent(memberIds) { return memberIds.length; },
+    pushToUser(userId, payload) { pushes.push([userId, payload]); return 1; },
+    pushNotificationToUser() { return 1; },
+  },
+};
+const pushId = require.resolve('../src/services/mobile-push');
+require.cache[pushId] = {
+  id: pushId, filename: pushId, loaded: true,
+  exports: { scheduleBadgeSync() { return false; } },
+};
+
+let routePool = null;
+const poolMod = require('../src/db/pool');
+poolMod.getPool = () => routePool;
+
+const tray = require('../src/services/homeroom-bot-tray');
+const homeroomBot = require('../src/services/homeroom-bot');
+const { conversationRoutes } = require('../src/routes/conversations');
+
+async function openDatabase(t) {
+  let pg;
+  try { pg = require('pg'); } catch { t.skip('the pg driver is not installed'); return null; }
+  const admin = new pg.Pool({ connectionString: DSN, connectionTimeoutMillis: 3000, max: 1 });
+  try {
+    await admin.query('SELECT 1');
+  } catch (err) {
+    await admin.end().catch(() => {});
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip(`no postgres reachable at ${DSN}: ${err.message}`);
+    return null;
+  }
+  const name = `hrbot_tray_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new pg.Pool({ connectionString: String(url), max: 8 });
+  pool.on('error', () => {});
+  t.after(async () => {
+    await pool.end().catch(() => {});
+    await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
+    await admin.end().catch(() => {});
+  });
+  await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+  return pool;
+}
+
+test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the real route', { timeout: 120000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  routePool = pool;
+
+  let seq = 0;
+  async function user(prefix, { synthetic = false } = {}) {
+    const { rows } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, is_synthetic)
+       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+      [synthetic ? prefix : `${prefix}_${++seq}`, synthetic],
+    );
+    return rows[0];
+  }
+  async function setting(key, value) {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, value],
+    );
+  }
+  async function project(slug, owner, { visibility = 'public' } = {}) {
+    const { rows: [inserted] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+       VALUES ($1, $2, 'running', $3, $4, $5, $5) RETURNING id`,
+      [slug.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()), slug, owner.id,
+        `https://github.com/usernode-bot/${slug}`, visibility],
+    );
+    const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [inserted.id]);
+    return app;
+  }
+
+  const bot = await user('homeroom_bot', { synthetic: true });
+  const ada = await user('ada');
+  const sam = await user('sam');
+  const seeds = await project('seed-swap', ada);
+  const notes = await project('note-board', ada);
+  const samsApp = await project('sam-shop', sam);
+  // Private, and ada is not (or no longer) a collaborator there.
+  const hidden = await project('hidden-lab', sam, { visibility: 'private' });
+  // Not on the live list: the bot only triages it in the background.
+  const shadowApp = await project('shadow-app', ada);
+  const ear = await project('ear-trainer', ada);
+  await setting('homeroom_bot_mode', 'shadow');
+  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
+  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'note-board', 'sam-shop', 'hidden-lab']));
+
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
+       ($1, 3, $4, 'Sort by date'), ($1, 4, $4, 'Dark mode'), ($2, 5, $4, 'Pin notes'),
+       ($3, 9, $5, 'Sam''s secret'), ($6, 2, $4, 'Hidden thing')`,
+    [seeds.id, notes.id, samsApp.id, ada.id, sam.id, hidden.id],
+  );
+  // An issue ada filed on Homeroom that the loop has not recorded yet, and
+  // one on the app it only triages in the background.
+  await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES
+       ($1, 7, 'Export as CSV', $3), ($2, 1, 'Shadow request', $3)`,
+    [notes.id, shadowApp.id, ada.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at) VALUES
+       ($1, 3, 1, 'new', NOW() - INTERVAL '5 minutes'),
+       ($2, 6, 2, 'changed', NULL),
+       ($2, 7, 1, 'new', NOW() - INTERVAL '2 minutes'),
+       ($3, 9, 1, 'new', NOW()),
+       ($4, 1, 1, 'new', NOW()),
+       ($5, 2, 1, 'new', NOW())`,
+    [seeds.id, notes.id, samsApp.id, shadowApp.id, hidden.id],
+  );
+  const { rows: [proposal] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at)
+     VALUES ($1, $2, 'b', 'promoted', 'Pin notes', NOW()) RETURNING id`,
+    [notes.id, bot.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, created_at) VALUES
+       ($1, 4, 'live', 'question', NULL, NOW() - INTERVAL '3 hours'),
+       ($2, 5, 'live', 'ready', $5, NOW() - INTERVAL '1 hour'),
+       ($1, 3, 'shadow', 'question', NULL, NOW() - INTERVAL '2 days'),
+       ($3, 9, 'live', 'ready', NULL, NOW() - INTERVAL '10 minutes'),
+       ($4, 2, 'live', 'empty', NULL, NOW() - INTERVAL '20 minutes')`,
+    [seeds.id, notes.id, samsApp.id, hidden.id, proposal.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status) VALUES ($1, $2, 'An ear trainer', 'waiting')`,
+    [ear.id, ada.id],
+  );
+
+  const asAda = { id: ada.id, username: ada.username, isAdmin: false };
+  const asSam = { id: sam.id, username: sam.username, isAdmin: false };
+  const key = (job) => `${job.appSlug}#${job.issueNumber ?? 'first'}`;
+
+  await t.test('now: their claimed requests on apps the bot acts on, and their project being set up', async () => {
+    const work = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(work.now.map(key), ['seed-swap#3', 'note-board#7', 'ear-trainer#first']);
+    const [sort, csv, first] = work.now;
+    assert.equal(sort.phase, 'looking');
+    assert.equal(sort.title, 'Sort by date');
+    assert.equal(sort.href, '#app/seed-swap/dev/issues/3');
+    assert.ok(sort.since, 'and since when');
+    assert.equal(csv.title, 'Export as CSV', 'an issue they filed, read off the issue before the loop records it');
+    assert.equal(first.phase, 'setting_up');
+    assert.equal(first.firstVersion, true);
+    assert.equal(first.href, '#app/ear-trainer/app');
+
+    // Its spec posted during this turn of work: it is building.
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at) VALUES ($1, 3, 'spec', NOW())`,
+      [seeds.id],
+    );
+    const later = await tray.workFor(pool, { user: asAda });
+    assert.equal(later.now[0].phase, 'building');
+  });
+
+  await t.test('history: their live runs, newest first, each with what came of it and where it opens', async () => {
+    const work = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(work.history.map(key), ['note-board#5', 'seed-swap#4'], 'no shadow run, nobody else\'s');
+    const [pin, dark] = work.history;
+    assert.equal(pin.outcome, 'proposed');
+    assert.equal(pin.proposalId, proposal.id);
+    assert.equal(pin.href, `#app/note-board/dev/proposals/${proposal.id}`, 'a proposal up for a vote opens itself');
+    assert.equal(dark.outcome, 'question');
+    assert.equal(dark.href, '#app/seed-swap/dev/issues/4', 'anything else opens its request');
+    assert.ok(Date.parse(pin.at) > Date.parse(dark.at));
+
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [proposal.id]);
+    const merged = await tray.workFor(pool, { user: asAda });
+    assert.equal(merged.history[0].outcome, 'live');
+    await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [proposal.id]);
+    const closed = await tray.workFor(pool, { user: asAda });
+    assert.equal(closed.history[0].outcome, 'closed');
+    assert.equal(closed.history[0].href, '#app/note-board/dev/issues/5', 'a closed proposal opens its request instead');
+    assert.equal(closed.history[0].proposalId, undefined);
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [proposal.id]);
+  });
+
+  await t.test('never anybody else\'s, and never an app they cannot view', async () => {
+    const ours = await tray.workFor(pool, { user: asAda });
+    const all = [...ours.now, ...ours.history].map((job) => job.appSlug);
+    assert.ok(!all.includes('sam-shop'), 'sam\'s work is not ada\'s');
+    assert.ok(!all.includes('hidden-lab'), 'a private app she cannot view is left out');
+    assert.ok(!all.includes('shadow-app'), 'background triage is not work for her');
+
+    const sams = await tray.workFor(pool, { user: asSam });
+    assert.deepEqual(sams.now.map(key), ['sam-shop#9'],
+      'sam\'s own claimed request: hidden-lab#2 is ada\'s, even on sam\'s app');
+    assert.deepEqual(sams.history.map(key), ['sam-shop#9']);
+    assert.ok(![...sams.now, ...sams.history].some((job) => ['seed-swap', 'note-board', 'ear-trainer'].includes(job.appSlug)));
+
+    // Once she can view it, her request there shows.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`,
+      [hidden.id, ada.id],
+    );
+    const member = await tray.workFor(pool, { user: asAda });
+    assert.ok(member.history.some((job) => key(job) === 'hidden-lab#2' && job.outcome === 'empty'));
+    assert.ok(member.now.some((job) => key(job) === 'hidden-lab#2'));
+    await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [hidden.id, ada.id]);
+
+    assert.deepEqual(await tray.workFor(pool, { user: null }), { now: [], history: [] });
+  });
+
+  await t.test('the bot switched off is working on nothing; its history stays', async () => {
+    await setting('homeroom_bot_mode', 'off');
+    const off = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(off.now, []);
+    assert.equal(off.history.length, 2);
+    await setting('homeroom_bot_mode', 'shadow');
+  });
+
+  await t.test('the route answers for the signed-in person only, whatever it is asked', async () => {
+    const app = express();
+    app.use(express.json());
+    let actor = asAda;
+    app.use((req, _res, next) => { req.user = actor; next(); });
+    app.use(conversationRoutes({}, { pool }));
+    const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+    t.after(() => server.close());
+    const call = async (as, url) => {
+      actor = as;
+      const res = await fetch(`http://127.0.0.1:${server.address().port}${url}`);
+      return { status: res.status, body: await res.json(), headers: res.headers };
+    };
+    const own = await call(asAda, '/api/conversations/homeroom-bot/work');
+    assert.equal(own.status, 200);
+    assert.equal(own.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual(own.body, JSON.parse(JSON.stringify(await tray.workFor(pool, { user: asAda }))));
+    // Asking for somebody else changes nothing: there is no such parameter.
+    for (const query of [`?user_id=${sam.id}`, `?userId=${sam.id}`, `?username=${sam.username}`]) {
+      const asked = await call(asAda, `/api/conversations/homeroom-bot/work${query}`);
+      assert.deepEqual(asked.body, own.body, query);
+    }
+    const his = await call(asSam, '/api/conversations/homeroom-bot/work');
+    assert.deepEqual(his.body.history.map(key), ['sam-shop#9']);
+    // Off staging, `?demo=1` is the real answer too.
+    const demo = await call(asAda, '/api/conversations/homeroom-bot/work?demo=1');
+    assert.deepEqual(demo.body, own.body);
+
+    // The conversation with the bot says it is one, so the tray is drawn
+    // there; a DM with a person, or with another synthetic account, does not.
+    const conversations = require('../src/services/conversations');
+    const other = await user('demo_partner', { synthetic: true });
+    const withBot = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const withOther = await conversations.ensureAdmittedDirect(pool, other.id, ada.id);
+    const withSam = await conversations.createDirect(pool, sam, ada.id);
+    await conversations.respond(pool, asAda, withSam.conversationId, 'accept');
+    const list = await call(asAda, '/api/conversations');
+    const flag = (id) => list.body.conversations.find((c) => c.id === id)?.homeroomBot;
+    assert.equal(flag(withBot.conversationId), true);
+    assert.equal(flag(withOther.conversationId), undefined);
+    assert.equal(flag(withSam.conversationId), undefined);
+    const one = await call(asAda, `/api/conversations/${withBot.conversationId}`);
+    assert.equal(one.body.conversation.homeroomBot, true);
+  });
+
+  await t.test('the live loop says when work for a person starts and ends', async () => {
+    pushes.length = 0;
+    assert.equal(tray.noteWorkChanged(ada.id), 1);
+    assert.deepEqual(pushes, [[ada.id, { type: 'homeroom_bot_work_changed' }]]);
+    assert.equal(tray.noteWorkChanged(null), 0, 'an issue nobody on Homeroom filed tells nobody');
+    assert.equal(tray.noteWorkChanged('x'), 0);
+    const settings = await homeroomBot.readSettings(pool);
+    assert.ok(settings.liveApps.includes('seed-swap'));
+  });
+});

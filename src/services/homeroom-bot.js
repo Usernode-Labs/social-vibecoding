@@ -57,6 +57,9 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
+// #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
+// module is: it reads this module's settings.
+function tray() { return require('./homeroom-bot-tray'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -4293,6 +4296,9 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         );
         if (!claimed.length) continue;
         seen.add(Number(pick.id));
+        // #3692: the person it is for sees it start (and end, below) in the
+        // activity tray of their DM with the bot, if it is open.
+        tray().noteWorkChanged(pick.person_id, deps);
         const item = {
           id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
           reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
@@ -4302,10 +4308,14 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
           lane: 'live', appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
           itemId: Number(pick.id), startedAt: new Date().toISOString(), followUp: !!pick.followUp,
         }, async () => {
-          const r = await triageOne(pool, config, { bot, app, item, deps });
-          const o = outcomeOf(r, { app, item });
-          if (['budget', 'refused', 'mode_off', NOT_FOLLOW_UP].includes(r?.reason)) await releaseClaim(pool, item.id);
-          return o;
+          try {
+            const r = await triageOne(pool, config, { bot, app, item, deps });
+            const o = outcomeOf(r, { app, item });
+            if (['budget', 'refused', 'mode_off', NOT_FOLLOW_UP].includes(r?.reason)) await releaseClaim(pool, item.id);
+            return o;
+          } finally {
+            tray().noteWorkChanged(pick.person_id, deps);
+          }
         }));
       }
     }

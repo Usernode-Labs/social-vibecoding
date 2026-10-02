@@ -745,6 +745,9 @@ async function conversationRow(db, user, conversationId) {
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
             peer_avatar.id AS peer_avatar_id,
+            -- #3692: a direct conversation with the Homeroom bot's own
+            -- account, which carries the bot's activity tray.
+            (peer_user.is_synthetic IS TRUE AND peer_user.username = 'homeroom_bot') AS peer_is_homeroom_bot,
             latest.id AS latest_message_id,
             -- QA 2026-09-24 Q2: a pending direct request allows ONE opening
             -- message, deleted or not (sendMessage counts every row), so the
@@ -865,6 +868,9 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
       && !(awaitingAcceptance && row.has_messages),
     canInvite: row.kind === 'group' && row.membership_status === 'member' && row.status === 'active',
     canManage: row.kind === 'group' && row.my_role === 'owner' && row.membership_status === 'member',
+    // #3692: named only on the conversation with the Homeroom bot, once it
+    // is the viewer's (frontend/src/features/messages/bot-work.tsx).
+    ...(accepted && row.kind === 'direct' && row.peer_is_homeroom_bot ? { homeroomBot: true } : {}),
   };
 }
 

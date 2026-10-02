@@ -36,6 +36,45 @@ export interface HomeroomBotMeta {
   link?: string;
 }
 
+/**
+ * #3692: the Homeroom bot's work for the viewer, as its DM's activity tray
+ * reads it (services/homeroom-bot-tray.js). A job is one request of theirs,
+ * or a project's first version; `href` is where it opens (its proposal once
+ * people can open one, else the request), or null for one that opens
+ * nowhere (the staging demo's).
+ */
+export type HomeroomBotPhase = 'looking' | 'building' | 'following_up' | 'setting_up';
+export type HomeroomBotOutcome =
+  | 'question' | 'ready' | 'proposed' | 'live' | 'closed' | 'build_failed'
+  | 'person' | 'empty' | 'failed' | 'answer' | 'revise';
+
+export interface HomeroomBotJob {
+  appSlug: string | null;
+  appName: string;
+  issueNumber: number | null;
+  title: string | null;
+  firstVersion: boolean;
+  href: string | null;
+}
+
+/** What the bot is doing for them now, and since when. */
+export interface HomeroomBotCurrentJob extends HomeroomBotJob {
+  phase: HomeroomBotPhase;
+  since: string | null;
+}
+
+/** One of the bot's past turns on their work: what came of it, and when. */
+export interface HomeroomBotPastJob extends HomeroomBotJob {
+  id: number;
+  outcome: HomeroomBotOutcome;
+  at: string | null;
+}
+
+export interface HomeroomBotWork {
+  now: HomeroomBotCurrentJob[];
+  history: HomeroomBotPastJob[];
+}
+
 export interface ConversationMember extends ConversationUser {
   role: MemberRole;
   status: MembershipStatus;
@@ -186,6 +225,8 @@ export interface ConversationSummary {
   archived?: boolean;
   /** A channel's `#handle` (`general`); null for everything else. */
   channelKey?: string | null;
+  /** #3692: the viewer's direct conversation with the Homeroom bot, which carries its activity tray. */
+  homeroomBot?: boolean;
 }
 
 export interface ConversationDetail extends ConversationSummary {

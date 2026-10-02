@@ -21,6 +21,7 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
+import { BotWorkTray, newestBotMessageId, setBotWorkOpen } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -1169,6 +1170,10 @@ function ThreadHeader() {
               : active.kind === 'direct'
                 ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
                 : null}
+            {/* #3692: the bot's activity tray, opened from here when nothing is in flight (its strip is hidden then). */}
+            {active.kind === 'direct' && active.homeroomBot && active.membershipStatus === 'member'
+              ? <button type="button" role="menuitem" data-bot-work-open="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); setBotWorkOpen(true); }}>Activity &amp; history</button>
+              : null}
             {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: `@${peer.username}`, userId: peer.id }); }}>Report user</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
           </div>
@@ -1647,6 +1652,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // safe-area test pins. It no longer changes the rows' shape: every kind is
   // the same named-row transcript (#2783).
   const kind = snap.active?.kind || 'direct';
+  // #3692: a conversation with the Homeroom bot carries its activity tray.
+  const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
+    && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
@@ -1726,6 +1734,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
       {embedded ? null : <ThreadHeader />}
       <InvitationBanner />
+      {botDm ? <BotWorkTray conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard
           inset (`platform-kb-column` above). The kit adds the class itself
           once useComposerKeyboard attaches (#3571), as it does to

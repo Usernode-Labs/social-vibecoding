@@ -113,6 +113,22 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #3692: the activity tray at the top of the Homeroom bot's DM: what the
+  // bot is working on for the signed-in person now, and what it did for them
+  // before (services/homeroom-bot-tray.js). Their own work only: it takes no
+  // user parameter, and reads every row by req.user's id. Not a conversation
+  // id: the segment is a word, and no route takes `/:id/work`.
+  router.get('/api/conversations/homeroom-bot/work', async (req, res) => {
+    try {
+      const tray = require('../services/homeroom-bot-tray');
+      if (isDemo(req)) return res.json(tray.demoWork());
+      return res.json(await tray.workFor(pool, { user: req.user }));
+    } catch (err) {
+      log.error('conversations', 'homeroom bot work failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #3660: what the Homeroom links in a message are, for this viewer.
   //
   //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |
