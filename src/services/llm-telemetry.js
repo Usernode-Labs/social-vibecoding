@@ -21,6 +21,8 @@ const COMPONENTS = new Set([
   'mayor_phase_1',
   'mayor_data_iteration',
   'mayor_phase_2',
+  // The one extra Mayor round asked for when a turn ended with no reply text.
+  'mayor_empty_retry',
   'headless_decision',
   'headless_wrapup',
   'quick_replies',

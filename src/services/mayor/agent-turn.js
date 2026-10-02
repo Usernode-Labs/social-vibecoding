@@ -59,6 +59,11 @@ const INTERRUPTED_TEXT = 'The Mayor was interrupted by a platform update before 
 // answer, and the user asked for one.
 const RETRY_NOTE = '[HOMEROOM] Your last answer to this was cut off by a platform restart before it finished, and '
   + 'the user pressed Retry. Answer their last message now. Do not mention the restart unless it matters.';
+// What the model is told when a round ends the turn with no words for the
+// person: some models call tools (suggest_replies among them), then end the
+// next round with nothing to say. It gets one more round, without tools.
+const EMPTY_REPLY_NOTE = '[HOMEROOM] Your last reply had no text for the person. Answer them now in plain words, '
+  + 'using what the tools returned. Do not call more tools.';
 
 // The wrap-up is offered no tool but suggest_replies, so it cannot act on a
 // dispatch that failed. Without this it has promised "Retrying now."
@@ -814,8 +819,12 @@ async function runAgentTurn({
     let dispatchUse = null;
     let pendingResults = null;
     let claimChecked = false;
+    let emptyNudged = false;
     for (let round = 0; ; round += 1) {
-      const lastRound = round >= MAX_TOOL_ROUNDS;
+      // The nudge round is the turn's last whatever its number: it may be
+      // one past MAX_TOOL_ROUNDS, and it runs at most once.
+      const nudgeRound = emptyNudged;
+      const lastRound = nudgeRound || round >= MAX_TOOL_ROUNDS;
       const offer = await toolOffer();
       roundText = '';
       const result = await mayor.client.streamChat({
@@ -829,7 +838,7 @@ async function runAgentTurn({
         apiKey: mayor.apiKey,
         telemetryContext: {
           pool, appId: null, sessionId: null, backend: 'mayor',
-          component: round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration',
+          component: nudgeRound ? 'mayor_empty_retry' : (round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration'),
         },
       });
       const cents = costOf(mayor, result, d);
@@ -853,6 +862,15 @@ async function runAgentTurn({
             : withTrailingUserText(convo, note);
           continue;
         }
+      }
+      // The turn is ending with no words for the person: ask once more,
+      // without tools, before falling back to EMPTY_REPLY_TEXT. An empty
+      // assistant message is not replayable, so the note joins the last
+      // user message.
+      if ((!toolUses.length || lastRound) && !stop.stopped && !visibleText && !cards.length && !emptyNudged) {
+        emptyNudged = true;
+        convo = withTrailingUserText(convo, EMPTY_REPLY_NOTE);
+        continue;
       }
       if (stop.stopped || !toolUses.length || lastRound) break;
 
@@ -1212,6 +1230,7 @@ module.exports = {
   EMPTY_REPLY_TEXT,
   INTERRUPTED_TEXT,
   RETRY_NOTE,
+  EMPTY_REPLY_NOTE,
   IMMEDIATE_WRITE_TOOLS,
   SWITCH_ACTIVE_CHANGE_TOOL,
   SET_FOCUS_APP_TOOL,
