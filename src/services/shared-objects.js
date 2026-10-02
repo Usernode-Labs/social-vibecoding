@@ -286,10 +286,20 @@ async function hydrateForMessages(pool, user, messageIds) {
       ORDER BY message_id, position, id`,
     [ids]
   );
+  // One read per distinct card on the page, not one per message carrying it
+  // (#3705, #3706). The Homeroom bot puts a request's card under every
+  // message about that request, and an issue card is a live GitHub read
+  // whenever the issue is not in the open-issues cache (a closed one never
+  // is), so a page of its DM asked GitHub the same question again and again,
+  // one after another. That page was slow enough for the service worker to
+  // answer a realtime re-read with its stale copy. A card depends only on
+  // its reference and the viewer, so one answer serves every message.
+  const cards = new Map();
   for (const ref of rows) {
-    const card = await hydrateOne(pool, user, ref);
+    const key = [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
+    if (!cards.has(key)) cards.set(key, await hydrateOne(pool, user, ref));
     if (!out.has(ref.message_id)) out.set(ref.message_id, []);
-    out.get(ref.message_id).push(card);
+    out.get(ref.message_id).push({ ...cards.get(key) });
   }
   return out;
 }

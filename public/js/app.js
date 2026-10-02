@@ -2196,6 +2196,13 @@ const App = {
         return !!el && !el.classList.contains('hidden');
       };
 
+      // Messages (#3705): a conversation opened on a slow link is drawn from
+      // the worker's copy, which is missing whatever arrived since. Not a
+      // `return`: a room embedded in its community's page shares the screen
+      // with the app view's own loader below.
+      const messages = window.UsernodeReact?.messages;
+      if (messages?.showing?.()) messages.resync?.();
+
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
       // paint, revalidate the open App tab just as the branches below refresh
@@ -2684,8 +2691,10 @@ const App = {
     // list is the Improve panel's, which reloads only while it is open.
     if (window.Improve) Improve.onSessionStateChanged?.();
     // Messages owns a global drawer unread badge even while its screen is
-    // closed, so reconcile its summary after a disconnect in every view.
-    window.UsernodeReact?.messages?.refresh?.();
+    // closed, so reconcile its summary after a disconnect in every view —
+    // and the conversation open on it (#3705): a message that arrived while
+    // the socket was down never drew there until the reader reloaded.
+    window.UsernodeReact?.messages?.resync?.();
     // An open agent session learns about its changes from this socket's
     // notices: whatever it missed while the socket was down, it reads now.
     window.UsernodeReact?.agentSession?.resync?.();

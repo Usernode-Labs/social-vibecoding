@@ -304,6 +304,30 @@ function demoQuery(path: string): string {
   return `${path}${path.includes('?') ? '&' : '?'}demo=1`;
 }
 
+/**
+ * How a read is asked for (#3705, #3706). `fresh` is a read made because
+ * something CHANGED — a realtime event, a send settling, a reconnect — and it
+ * needs the server's answer, not the service worker's.
+ *
+ * The worker answers an ordinary GET /api/* from its offline copy once the
+ * network has taken a second (public/sw.js, API_TIMEOUT_MS). For a read like
+ * this one that copy is the transcript from BEFORE the change: the message the
+ * event announced is missing, and the store, taking the page as the server's
+ * word, dropped the sender's own just-confirmed row with it. The Homeroom
+ * bot's DM is where it showed, because its page is the slowest to answer.
+ *
+ * `cache: 'no-store'` is the worker's existing "leave this to the network"
+ * signal: its fetch handler returns before classifying such a request. A
+ * first open keeps the ordinary read, and with it the offline copy.
+ */
+export interface ReadOptions {
+  fresh?: boolean;
+}
+
+function readInit(options?: ReadOptions): RequestInit {
+  return options?.fresh ? { cache: 'no-store' } : {};
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !(init.body instanceof Blob)) {
@@ -320,13 +344,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-export async function listConversations(): Promise<ConversationSummary[]> {
-  const data = record(await request<unknown>('/api/conversations'));
+export async function listConversations(options?: ReadOptions): Promise<ConversationSummary[]> {
+  const data = record(await request<unknown>('/api/conversations', readInit(options)));
   return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
 }
 
-export async function getConversation(id: number): Promise<ConversationDetail> {
-  const data = record(await request<unknown>(`/api/conversations/${id}`));
+export async function getConversation(id: number, options?: ReadOptions): Promise<ConversationDetail> {
+  const data = record(await request<unknown>(`/api/conversations/${id}`, readInit(options)));
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
@@ -374,10 +398,10 @@ export async function leaveConversation(id: number): Promise<void> {
   await request<unknown>(`/api/conversations/${id}/leave`, { method: 'POST', body: '{}' });
 }
 
-export async function listMessages(id: number, before?: number | null): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
+export async function listMessages(id: number, before?: number | null, options?: ReadOptions): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
@@ -400,14 +424,14 @@ export async function sendMessage(id: number, input: { content: string; replyToI
  * window is around the thread's first message and `focus.threadRootId` names
  * it, so the thread opens beside it.
  */
-export async function listMessagesAround(id: number, messageId: number): Promise<{
+export async function listMessagesAround(id: number, messageId: number, options?: ReadOptions): Promise<{
   messages: ConversationMessage[];
   nextBefore: number | null;
   nextAfter: number | null;
   focus: { messageId: number; threadRootId: number | null };
 }> {
   const params = new URLSearchParams({ limit: '50', around: String(messageId) });
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   const focus = record(pick(data, 'focus'));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
@@ -431,14 +455,14 @@ export async function listMessagesAfter(id: number, after: number): Promise<{ me
 }
 
 /** A thread: the message it hangs off, and its replies oldest first (#2387). */
-export async function listThread(id: number, rootId: number, before?: number | null): Promise<{
+export async function listThread(id: number, rootId: number, before?: number | null, options?: ReadOptions): Promise<{
   root: ConversationMessage | null;
   messages: ConversationMessage[];
   nextBefore: number | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
-  const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`, readInit(options)));
   const root = pick(data, 'root');
   return {
     root: root ? normalizeMessage(root, id) : null,
