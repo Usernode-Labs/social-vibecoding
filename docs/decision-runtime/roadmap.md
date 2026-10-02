@@ -3,6 +3,8 @@
 2 October 2026. Canonical main `d600eb4308b0d283ba050addf4c19c915078086c`
 integrated into accepted admission checkpoint `2bf702dbd8651f9877d492f0d21645c24a444668`.
 See the [integration record](canonical-integration.md) for fixes and evidence.
+PostgreSQL-only tests additionally require [verified disposable ownership](postgres-test-isolation.md);
+a URL or test flag does not authorize mutations.
 The Kubernetes/kpack native CLI cohort remains default-off. No production
 compatibility or rollout is claimed. Checkpoint numbers identify historical
 evidence; progress means guarantees demonstrated **and replaced machinery removed**.

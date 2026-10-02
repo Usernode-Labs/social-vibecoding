@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID, randomBytes } = require('node:crypto');
@@ -29,6 +30,8 @@ async function waitFor(predicate) {
 }
 
 async function resources(t) {
+  await verifyDisposablePostgres(databaseUrl);
+
   const url = new URL(databaseUrl);
   assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname), 'disposable local PostgreSQL only');
   url.searchParams.delete('options');

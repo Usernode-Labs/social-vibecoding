@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -57,6 +58,8 @@ test('server starts native resource recovery under leader duties and drains it b
 });
 
 test('native cleanup across Docker and Kubernetes with independent PostgreSQL resource locks', { skip: !databaseUrl }, async t => {
+  await verifyDisposablePostgres(databaseUrl);
+
   const root = new Pool({ connectionString: databaseUrl });
   const schema = `preview_cleanup_test_${process.pid}`;
   await root.query(`CREATE SCHEMA ${schema}`);

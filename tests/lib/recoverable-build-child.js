@@ -1,5 +1,7 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./disposable-postgres');
+
 const { Pool } = require('pg');
 const { createPreviewWork } = require('../../src/services/preview-flow/work');
 const { createExecutionStore } = require('../../src/services/execution/store');
@@ -35,6 +37,8 @@ process.once('message', async ({ databaseUrl, config, apiUrl, runScript = null }
       if (!localApi || !localDatabase || !scopedDatabase) {
         throw new Error('Injected child requires explicit loopback API and database destinations');
       }
+      await verifyDisposablePostgres(databaseUrl);
+
       const k8s = require('@kubernetes/client-node');
       const kc = new k8s.KubeConfig();
       kc.loadFromOptions({

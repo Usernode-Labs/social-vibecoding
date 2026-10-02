@@ -1,11 +1,14 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // The version predicate and the author/lifecycle gate run against PostgreSQL,
 // including two simultaneous browser/connector saves of the same version.
 test('description API on PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, async (t) => {
+  await verifyDisposablePostgres(process.env.TEST_DATABASE_URL);
+
   const { Pool } = require('pg');
   const schema = `description_edit_${process.pid}_${Date.now()}`;
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL, connectionTimeoutMillis: 2000, max: 1 });

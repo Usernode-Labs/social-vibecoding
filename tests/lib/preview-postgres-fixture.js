@@ -1,8 +1,9 @@
 'use strict';
 
 // PostgreSQL decision tests inject every external operation. They may run in
-// the CI service database without provisioning Kubernetes. Actual-resource tests
+// an owned disposable database without provisioning Kubernetes. Actual-resource tests
 // retain their separate fail-closed cluster/database/registry preflight.
+const { verifyDisposablePostgres } = require('./disposable-postgres');
 const { verifyIsolatedBuildFixture } = require('./isolated-kpack-fixture');
 
 const enabled = process.env.RUN_ISOLATED_KPACK_TEST === '1'
@@ -27,6 +28,8 @@ async function readPreviewPostgresFixture() {
   if (process.env.PREVIEW_CONTRACT_POSTGRES_ONLY !== '1' || !databaseUrl) {
     throw new Error('An explicit disposable PostgreSQL contract destination is required');
   }
+  await verifyDisposablePostgres(databaseUrl);
+
   return {
     databaseUrl,
     config: {

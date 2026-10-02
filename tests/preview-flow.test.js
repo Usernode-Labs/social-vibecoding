@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -194,6 +195,8 @@ test('native policy preserves paused submission and promotion only on the review
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
 
 test('preview flow transactions across independent PostgreSQL connections', { skip: !databaseUrl }, async t => {
+  await verifyDisposablePostgres(databaseUrl);
+
   // Isolated schema on an explicitly supplied disposable DB, never DATABASE_URL.
   const root = new Pool({ connectionString: databaseUrl });
   const schema = `preview_flow_test_${process.pid}`;

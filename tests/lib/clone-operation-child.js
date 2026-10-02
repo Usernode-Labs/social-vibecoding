@@ -1,5 +1,7 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./disposable-postgres');
+
 const { createCloneOperations } = require('../../src/services/preview-flow/clone-operation');
 const { createPreviewWork } = require('../../src/services/preview-flow/work');
 const { createExecutionWorker } = require('../../src/services/execution/worker');
@@ -24,6 +26,9 @@ async function runAdmittedWork(platformUrl, config, clones) {
 
 process.on('message', async ({ databaseUrl, intent, password, stopAfter, platformUrl, config }) => {
   try {
+    await verifyDisposablePostgres(databaseUrl, { maintenanceDatabase: true });
+    if (platformUrl) await verifyDisposablePostgres(platformUrl);
+
     const clones = createCloneOperations({
       databaseUrl,
       maintenanceDatabase: 'postgres',

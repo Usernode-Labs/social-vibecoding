@@ -22,6 +22,7 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
   for (const file of SUITES) assert.ok(fs.existsSync(file), file);
   assert.equal(new Set(SUITES).size, SUITES.length);
   for (const file of [
+    'tests/disposable-postgres.test.js',
     'tests/decision-runtime.test.js',
     'tests/execution-worker.test.js',
     'tests/review-work.test.js',
@@ -50,6 +51,8 @@ test('focused CI triggers for its suites, shared owners and operation contracts'
     'src/db/schema.sql',
     'sql-dynamic-baseline.json',
     'scripts/preview-preparation-worker.js',
+    'scripts/preview-postgres-fixture.js',
+    'tests/lib/disposable-postgres.js',
     'tests/lib/preview-postgres-fixture.js',
   ]) {
     assert.ok(fs.existsSync(file), file);

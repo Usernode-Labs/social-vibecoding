@@ -34,9 +34,11 @@ checks/retirement, isolation and relevant canonical adapters. Path filters follo
 those owners and test helpers. A coverage test checks that the selected suites
 exist and their changes trigger the job.
 
-Admission/CLI tests now support an explicit PostgreSQL-only mode with every
-external operation injected. They run in CI's disposable loopback PostgreSQL
-service instead of skipping for lack of Kubernetes. The runner refuses a general
+Admission/CLI tests support PostgreSQL-only mode with every external operation
+injected. The initial explicit-URL-only service boundary had an ownership gap;
+the [ownership correction](postgres-test-isolation.md) now requires verified
+disposable container and PostgreSQL identity in the runner and direct suites.
+CI provisions that owned database instead of skipping for lack of Kubernetes. The runner refuses a general
 SQL fallback; it supplies one explicit database to its suites. Actual-resource
 tests retain their full dedicated kubeconfig/cluster/database/registry preflight.
 No production admission switch or resource-preflight bypass was added.

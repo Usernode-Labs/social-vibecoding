@@ -3,9 +3,11 @@
 
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { verifyDisposablePostgres, verifiedTestEnvironment } = require('../tests/lib/disposable-postgres');
 
 const SUITES = [
   'tests/preview-contract-ci.test.js',
+  'tests/disposable-postgres.test.js',
   'tests/decision-runtime.test.js',
   'tests/execution-worker.test.js',
   'tests/preview-admission.test.js',
@@ -44,7 +46,7 @@ const SUITES = [
   'tests/kpack-local-fixture.test.js',
 ];
 
-function main() {
+async function main() {
   // This job cannot claim success by skipping its transaction races. External
   // operations are injected; actual-resource evidence uses its isolated harness.
   // Require the explicit service DB instead of inheriting a general SQL fallback.
@@ -54,6 +56,9 @@ function main() {
     process.exitCode = 1;
     return;
   }
+
+  await verifyDisposablePostgres(databaseUrl);
+
   const result = spawnSync(process.execPath, [
     '--require', './tests/lib/test-net.js',
     '--test',
@@ -64,19 +69,16 @@ function main() {
   ], {
     cwd: path.resolve(__dirname, '..'),
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      PREVIEW_CONTRACT_POSTGRES_ONLY: '1',
-      PREVIEW_FLOW_TEST_DATABASE_URL: databaseUrl,
-      PREVIEW_LIFECYCLE_TEST_DATABASE_URL: databaseUrl,
-      TEST_DATABASE_URL: databaseUrl,
-      SQL_CHECK_CONNECTION_URL: databaseUrl,
-    },
+    env: verifiedTestEnvironment(process.env, databaseUrl),
   });
   if (result.error) console.error(result.error.message);
   process.exitCode = result.status ?? 1;
 }
 
-if (require.main === module) main();
+if (require.main === module) main().catch(error => {
+  console.error(error.message.startsWith('Disposable PostgreSQL preflight:')
+    ? error.message : 'Disposable PostgreSQL preflight failed');
+  process.exitCode = 1;
+});
 
 module.exports = { SUITES };

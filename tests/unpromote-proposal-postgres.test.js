@@ -7,13 +7,14 @@
 // against a REAL PostgreSQL: a mock pool cannot show that the merge claim and
 // the move back exclude each other, or that a voided vote stops counting.
 //
-// Set TEST_DATABASE_URL to run the database tests; without a reachable server
-// they skip (the unit-suite container has none). The source-level checks at
+// Set TEST_DATABASE_URL and the dedicated fixture manifest to run the database
+// tests. Without a URL they skip; an unverified destination fails closed. The source-level checks at
 // the bottom run everywhere.
 //
 // Run with: node --test tests/unpromote-proposal-postgres.test.js
 
 const test = require('node:test');
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,8 +28,7 @@ const APP_VIEW_SRC = read('public/js/app-view.js');
 
 const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
 
-const DSN = process.env.TEST_DATABASE_URL
-  || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+const DSN = process.env.TEST_DATABASE_URL;
 const SCHEMA_NAME = `unpromote_test_${process.pid}`;
 
 // The merge claim and the promote CAS, lifted out of routes/votes.js rather
@@ -59,6 +59,9 @@ function stubModule(id, exports) {
 }
 
 async function connectPool() {
+  if (!DSN) return { skip: 'No disposable PostgreSQL fixture configured.' };
+  await verifyDisposablePostgres(DSN);
+
   let Pool;
   try { ({ Pool } = require('pg')); } catch { return { skip: 'the pg driver is not installed' }; }
   const probe = new Pool({ connectionString: DSN, connectionTimeoutMillis: 1500, max: 1 });

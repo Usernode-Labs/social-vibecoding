@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,6 +17,8 @@ const deferred = () => {
 // Use a disposable database, never the application's DATABASE_URL. Two guard
 // instances use independent PostgreSQL sessions, as two platform Pods do.
 test('preview lifecycle across independent owners', { skip: !url }, async t => {
+  await verifyDisposablePostgres(url);
+
   const pool = new Pool({ connectionString: url });
   const oldFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
   process.env.PREVIEW_LIFECYCLE_ENABLED = 'true';

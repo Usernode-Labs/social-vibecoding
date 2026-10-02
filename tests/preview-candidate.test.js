@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -156,6 +157,8 @@ test('completed isolated cleanup authorizes another observation while frozen B1 
 });
 
 test('native isolated candidates and activation recovery on real PostgreSQL', { skip: !databaseUrl }, async t => {
+  await verifyDisposablePostgres(databaseUrl);
+
   const root = new Pool({ connectionString: databaseUrl });
   const schema = `preview_candidate_test_${process.pid}`;
   await root.query(`CREATE SCHEMA ${schema}`);

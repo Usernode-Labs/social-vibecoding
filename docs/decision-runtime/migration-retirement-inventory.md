@@ -126,10 +126,11 @@ or made less restricted.
 
 Focused CI now includes shared decision/execution, complete runtime, CLI admission,
 checks/retirement and isolation safeguards, with matching path filters. PostgreSQL
-tests with injected external operations run without a Kubernetes fixture and cannot
+tests with injected external operations require verified disposable container/server
+ownership ([contract](postgres-test-isolation.md)), run without a Kubernetes fixture and cannot
 silently skip the CLI contract. Actual-resource tests still require full dedicated
-preflight and remain separate evidence. The workflow uses a disposable loopback
-PostgreSQL service for its interruption child tests. Its command runs locally;
+preflight and remain separate evidence. The workflow provisions an owned tmpfs PostgreSQL container with a verified loopback
+destination for its interruption child tests. Its command runs locally;
 GitHub execution is unverified until a separately authorized push.
 
 Review the net diff and explicit supported/retained contracts before PR readiness.

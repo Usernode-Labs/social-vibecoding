@@ -1,5 +1,7 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./disposable-postgres');
+
 const { Pool } = require('pg');
 const { randomUUID } = require('node:crypto');
 const { createPreviewWork } = require('../../src/services/preview-flow/work');
@@ -7,6 +9,8 @@ const { createExecutionWorker } = require('../../src/services/execution/worker')
 const { createExecutionStore } = require('../../src/services/execution/store');
 
 process.on('message', async ({ databaseUrl, stopAfterCreate }) => {
+  await verifyDisposablePostgres(databaseUrl);
+
   const pool = new Pool({ connectionString: databaseUrl });
   const config = { databaseUrl, appRuntime: 'docker', dataEncryptionKey: 'test-encryption-key' };
   const store = createExecutionStore(pool, { leaseMs: 1000 });

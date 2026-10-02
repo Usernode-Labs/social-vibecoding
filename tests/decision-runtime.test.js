@@ -1,5 +1,6 @@
 'use strict';
 
+const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -106,6 +107,8 @@ test('review actions and reducer make ownership, status and vote invalidation ex
 });
 
 test('preview and review share one decision runtime over real PostgreSQL', { skip: !databaseUrl }, async t => {
+  await verifyDisposablePostgres(databaseUrl);
+
   const schema = `decision_runtime_test_${process.pid}`;
   const root = new Pool({ connectionString: databaseUrl });
   await root.query(`CREATE SCHEMA ${schema}`);

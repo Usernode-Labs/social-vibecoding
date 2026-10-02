@@ -2,8 +2,11 @@
 
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { verifyDisposablePostgres } = require('./disposable-postgres');
 
 async function createExecutionDatabase(databaseUrl) {
+  await verifyDisposablePostgres(databaseUrl);
+
   const root = new Pool({ connectionString: databaseUrl });
   const schema = `execution_${process.pid}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   await root.query(`CREATE SCHEMA ${schema}`);
