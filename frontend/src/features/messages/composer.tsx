@@ -475,7 +475,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* The count's line is always laid out, empty or not: it appearing
           with the first keystroke pushed the whole composer up by a line. */}
-      <div className="mt-1 px-1 flex justify-end h-[15px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+      <div className="mt-0.5 px-1 flex justify-end h-[12px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[12px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>

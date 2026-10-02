@@ -1703,6 +1703,22 @@ form.agent-session-composer:focus-within {
 .messages-send svg { width: 20px; height: 20px; stroke-width: 2.4; }
 .messages-send:hover { background: var(--accent-light); }
 .messages-send:disabled { opacity: .35; }
+
+/* #3735 — PHONE-WIDTH COMPOSER. The one-line bar carried ~19px of padding
+   and a 40px send disc, all of it air around a field that is itself only
+   22px of text. On a phone that air is conversation. These overrides sit
+   after the base rules above, so they win the cascade there and desktop
+   (768px+) keeps every size it has. The card keeps its own padding on a
+   notched phone — the BAR carries the home-indicator inset, not the card —
+   and the field keeps its text alignment with the "+" glyph (12px in, 12px
+   out). The send disc drops to 36px to match the "+" beside it; the glyph
+   inside stays 20px. Auto-grow and its 140px ceiling are untouched. */
+@media (max-width: 767px) {
+  .messages-composer { padding: 4px 12px 6px; }
+  .messages-composer-card { padding: 5px 6px 5px 12px; }
+  .messages-composer-input { min-height: 28px; padding: 5px 4px; }
+  .messages-send { width: 36px; height: 36px; }
+}
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
