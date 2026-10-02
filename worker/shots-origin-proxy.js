@@ -17,6 +17,7 @@ const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { parseHostedOriginsFile } = require('./shots-hosted-origins');
 const { vetPublicDestination } = require('./shots-boundary');
+const shotsMemory = require('./shots-memory');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 
@@ -238,11 +239,24 @@ function identityToken(persona, target, headers) {
   return personaTokens[persona] || null;
 }
 
+// What kind of host a refused destination was, as one of a few fixed words:
+// one of the pair's or the catalog's own hosts on another port or scheme
+// (a browser trying https:// first, say), a loopback address, or anything
+// else. Never the host itself.
+function hostKind(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  const hostOf = (origin) => { try { return new URL(origin).hostname.replace(/^\[(.*)\]$/, '$1'); } catch { return null; } };
+  if (originList.some((origin) => hostOf(origin) === host)) return 'pair_host';
+  if ([...hostedOrigins].some((origin) => hostOf(origin) === host)) return 'catalog_host';
+  if (host === 'localhost' || host === '::1' || /^127\./.test(host)) return 'loopback';
+  return 'other';
+}
+
 // A destination outside the pair and the catalog: reachable only when public.
-// The refusal is counted by reason, never with the destination.
+// The refusal is counted by reason and kind of host, never with the destination.
 async function vetOutside(hostname, targetPort) {
   const vetted = await vetPublicDestination(hostname, targetPort);
-  if (!vetted.ok) diagnostic({ kind: 'egress_blocked', blockReason: vetted.reason });
+  if (!vetted.ok) diagnostic({ kind: 'egress_blocked', blockReason: vetted.reason, hostKind: hostKind(hostname) });
   return vetted;
 }
 
@@ -377,6 +391,10 @@ Promise.all([
   ...personaServers.map(({ server: personaServer, personaPort }) => listening(personaServer, personaPort)),
 ]).then(([sharedPort]) => {
   if (readyFile) fs.writeFileSync(readyFile, String(sharedPort), { mode: 0o600 });
+  // The worker's memory through the turn (shots-memory.js), when the runner
+  // asks for it: the proxy lives as long as the turn does.
+  const sampleMs = Number(process.env.SHOTS_MEMORY_SAMPLE_MS);
+  if (Number.isFinite(sampleMs) && sampleMs > 0) shotsMemory.startSampler(diagnostic, { intervalMs: sampleMs });
 }, () => {
   process.stderr.write('Shots proxy could not listen on its ports.\n');
   process.exit(1);

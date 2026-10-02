@@ -424,6 +424,10 @@ if [ "$MODE" = "shots" ]; then
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
+  # The proxy also samples the worker's memory every 5 seconds into the
+  # shots trace (shots-memory.js), so a turn that dies says whether memory
+  # ran out.
+  export SHOTS_MEMORY_SAMPLE_MS=5000
   node /usr/local/bin/shots-origin-proxy.js &
   SHOTS_PROXY_PID=$!
   trap cleanup_shots EXIT INT TERM

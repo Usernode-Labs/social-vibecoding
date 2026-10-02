@@ -192,7 +192,54 @@ test('the columns are pinned in order, so an analysis that reads them by positio
     'overridden_by', 'overridden_at', 'override_reason',
     'intent_json', 'diagnostics_path',
     'interrupted_by',
+    'agent_exit_code', 'agent_exit_cause',
+    'worker_memory_limit_mb', 'worker_memory_peak_mb', 'worker_memory_last_mb',
+    'worker_oom_kills', 'worker_memory_by_process_json',
+    'egress_blocked_json',
   ]);
+});
+
+test('a shots agent that died says how, with the worker\'s memory and what the proxy refused', () => {
+  const died = shotsExport.exportRecord({
+    ...runs[1],
+    state: 'failed',
+    failure_code: 'shots_agent_failed',
+    trace_summary: {
+      failure: { code: 'shots_agent_failed', detail: { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' } },
+      agentDispatches: [
+        { requestedBackend: 'claude_code', outcome: 'failed', code: 'shots_agent_failed', exitCode: -1, exitCause: 'oom_killed' },
+      ],
+      workerMemory: {
+        samples: 14, limitMb: 2048, peakUsedMb: 2041, lastUsedMb: 2030, containerPeakMb: 2047,
+        oomKillsDuringTurn: 1, peakRssMb: { browser: 1450, agent: 400, mcp: 110, proxy: 40, other: 30 },
+      },
+      agentActivity: { egressBlocked: { 'private_address:pair_host': 3, 'dns:other': 1 } },
+    },
+  });
+  assert.equal(died.agent_exit_code, -1);
+  assert.equal(died.agent_exit_cause, 'oom_killed');
+  assert.equal(died.worker_memory_limit_mb, 2048);
+  assert.equal(died.worker_memory_peak_mb, 2041);
+  assert.equal(died.worker_memory_last_mb, 2030);
+  assert.equal(died.worker_oom_kills, 1);
+  assert.deepEqual(JSON.parse(died.worker_memory_by_process_json),
+    { browser: 1450, agent: 400, mcp: 110, proxy: 40, other: 30 });
+  assert.deepEqual(JSON.parse(died.egress_blocked_json), { 'private_address:pair_host': 3, 'dns:other': 1 });
+
+  // A run from before these were recorded still gives its exit code.
+  const older = shotsExport.exportRecord({ ...runs[1], trace_summary: { failure: { detail: 'exit -1' } } });
+  assert.equal(older.agent_exit_code, -1);
+  assert.equal(older.agent_exit_cause, null);
+  // And a run with none of it leaves every new column blank.
+  const quiet = shotsExport.exportRecord(runs[1]);
+  for (const column of ['agent_exit_code', 'agent_exit_cause', 'worker_memory_limit_mb', 'worker_memory_peak_mb',
+    'worker_memory_last_mb', 'worker_oom_kills', 'worker_memory_by_process_json', 'egress_blocked_json']) {
+    assert.equal(quiet[column], null, column);
+  }
+  // Only a fixed word is copied out as the cause.
+  const forged = shotsExport.exportRecord({ ...runs[1], trace_summary: {
+    agentDispatches: [{ exitCode: -1, exitCause: '=HYPERLINK("x")' }] } });
+  assert.equal(forged.agent_exit_cause, null);
 });
 
 test('a run a Homeroom restart interrupted says so; anything else leaves the column blank', () => {
