@@ -122,7 +122,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // description carries it at the point of use, and the brief below has no
     // budget left to spend on a clause a caller reads next to the clipped
     // body itself.
-    text: 'Start from list_apps to see what the user can build on, and list_requests before filing a new request so you do not duplicate one that already exists. Pass `query` to search the requests by their text, and keep paging with `nextCursor` until it comes back null — a check that stopped at the first page has not ruled a duplicate out. list_requests scans a board and clips the bodies it prints, so when the user asks about a particular request, call get_request for it: that returns its description in full.',
+    text: 'Start from list_apps to see what the user can build on, and list_requests before filing a new request so you do not duplicate one that already exists. Pass `query` to search the requests by their text, and keep paging with `nextCursor` until it comes back null — a check that stopped at the first page has not ruled a duplicate out. list_requests scans a board and clips the bodies it prints, so when the user asks about a particular request, call get_request for it: that returns its description in full, and any screenshots the reporter attached on Homeroom as images you can look at.',
   },
   {
     id: 'conventions-pointer',
