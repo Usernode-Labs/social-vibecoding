@@ -146,7 +146,7 @@ const DEMO_NOTICES = Object.freeze({
   }],
   week: {
     at: null,
-    line: 'This week on Staging demo: 1 change went live: Staging demo change (staging-demo-builder). One proposal is waiting for eyes: Staging demo proposal.',
+    line: 'This week on Staging demo: 1 change went live: Staging demo change. One proposal is waiting for eyes: Staging demo proposal.',
     mergedTotal: 1,
     openTotal: 1,
     merged: [{ title: 'Staging demo change', author: 'staging-demo-builder' }],

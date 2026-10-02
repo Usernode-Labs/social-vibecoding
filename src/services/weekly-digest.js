@@ -59,13 +59,6 @@ function isPostingTime(now) {
   return now.getUTCDay() === POST_DAY_UTC && now.getUTCHours() >= POST_HOUR_UTC;
 }
 
-/** "alice", "alice and bob", "alice, bob and carol". */
-function nameList(names) {
-  const list = (names || []).filter(Boolean);
-  if (list.length <= 1) return list.join('');
-  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
-}
-
 /**
  * What the card says, for one app: the changes that merged in the window
  * (newest first, with who made them and whose Yes counted) and the
@@ -123,10 +116,7 @@ async function gather(pool, app, now) {
 function contentLine(digest) {
   const bits = [];
   if (digest.mergedTotal) {
-    const listed = digest.merged.map((m) => {
-      const who = m.author ? ` (${m.author}${m.backers.length ? `, backed by ${nameList(m.backers)}` : ''})` : '';
-      return `${m.title}${who}`;
-    });
+    const listed = digest.merged.map((m) => m.title);
     const more = digest.mergedTotal - digest.merged.length;
     bits.push(`${digest.mergedTotal} ${digest.mergedTotal === 1 ? 'change' : 'changes'} went live: ${listed.join('; ')}${more > 0 ? `; and ${more} more` : ''}.`);
   } else {

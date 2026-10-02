@@ -123,8 +123,8 @@ export function eventTail(msg: TranscriptMessage): string {
 }
 
 /**
- * The Friday card (#1688): what went live this week and who made it, then
- * what is waiting on votes, then the door to the Workshop. A message from
+ * The Friday card (#1688): what went live this week, then what is waiting
+ * on votes, then the door to the Workshop. A message from
  * the app itself, in the event box's surface, with the lines the card
  * carries — never the whole week when it is long; the totals say the rest.
  */
@@ -143,11 +143,6 @@ function WeeklyBox({ w }: { w: NonNullable<ProposalEvent['weekly']> }) {
         {w.merged.map((m, i) => (
           <div key={m.id ?? `m${i}`} className="gc-weekly-line" data-weekly="merged">
             <span className="gc-weekly-line-title">{m.title}</span>
-            {m.author ? (
-              <span className="gc-weekly-line-who">
-                {` · ${m.author}${m.backers.length ? `, backed by ${nameList(m.backers)}` : ''}`}
-              </span>
-            ) : null}
           </div>
         ))}
         {moreMerged > 0 ? <div className="gc-weekly-more">{`and ${moreMerged} more`}</div> : null}

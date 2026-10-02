@@ -10,7 +10,7 @@
 //   3. a quiet app — nothing merged, nothing open — gets no card at all;
 //   4. the claim is the stamp: an app another instance stamped first is
 //      left alone;
-//   5. the plain-text line reads as a sentence, names people, and counts
+//   5. the plain-text line reads as a sentence, and counts
 //      what the card does not list.
 
 const test = require('node:test');
@@ -161,12 +161,12 @@ test('the plain line reads as a sentence and counts what it does not list', () =
     open: [{ id: 44, prNumber: 44, title: 'Dark mode toggle', author: 'dave' }],
     openTotal: 1,
   });
-  assert.match(line, /^This week on Community Tier Lists: 11 changes went live: Change 0 \(evan\); /);
+  assert.match(line, /^This week on Community Tier Lists: 11 changes went live: Change 0; /);
   assert.match(line, /; and 3 more\. One proposal is waiting for eyes: Dark mode toggle \(PR #44\)\.$/);
 
   const named = digest.contentLine({
     app: 'Tiers', merged: [{ id: 1, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: ['alice', 'bob'] }],
     mergedTotal: 1, open: [], openTotal: 0,
   });
-  assert.equal(named, 'This week on Tiers: 1 change went live: Custom tier colors (evan, backed by alice and bob).');
+  assert.equal(named, 'This week on Tiers: 1 change went live: Custom tier colors.');
 });

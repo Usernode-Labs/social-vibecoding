@@ -298,8 +298,8 @@ test('EventRow draws the named merge with its muted tail, and the Friday card wi
   assert.match(card, /class="gc-event-box gc-event-weekly"/);
   assert.match(card, /class="gc-weekly-title">This week on Recipe App</);
   assert.match(card, /gc-weekly-head-live">5 changes went live</);
-  assert.match(card, /data-weekly="merged"><span class="gc-weekly-line-title">Custom tier colors<\/span><span class="gc-weekly-line-who"> · evan, backed by alice and bob<\/span>/);
-  assert.match(card, /data-weekly="merged"><span class="gc-weekly-line-title">Mobile drag fix<\/span><span class="gc-weekly-line-who"> · carol<\/span>/);
+  assert.match(card, /data-weekly="merged"><span class="gc-weekly-line-title">Custom tier colors<\/span><\/div>/);
+  assert.match(card, /data-weekly="merged"><span class="gc-weekly-line-title">Mobile drag fix<\/span><\/div>/);
   assert.match(card, /class="gc-weekly-more">and 3 more</, 'the totals say what the card does not list');
   assert.match(card, /gc-weekly-head-open">One proposal is waiting for eyes</);
   assert.match(card, /data-weekly="open"><span class="gc-weekly-line-title">Dark mode toggle<\/span><span class="gc-weekly-line-who"> · PR #44<\/span>/);
