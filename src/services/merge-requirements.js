@@ -627,7 +627,7 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLiveMainPause(describe(record), s),
+    gates: withLiveApprovals(withLiveMainPause(describe(record), s), s),
     evaluated: true,
     provisional: false,
   };
@@ -645,6 +645,31 @@ function withLiveMainPause(gates, s) {
   const live = mainStep(s);
   if (!live.detail || (!live.detail.paused && !live.detail.passThrough)) return gates;
   return gates.map((g) => (g.key === 'main_healthy' ? live : g));
+}
+
+// #3669: the same class of staleness on the approvals step, from the other
+// direction. A vote cast after a checkAndMerge run neither bumps the approval
+// epoch nor moves the head, so the run's record ("Votes waiting, 0 of 1")
+// stays current by every test recordIsSuperseded knows — and keeps being
+// served until the background run re-stamps and another refresh reads it.
+// The row's live approval columns (the serializers attach them) say when that
+// vote has landed, so a WAITING entry they contradict is rewritten to done
+// with the live tally; every other case stands, and a done recording keeps
+// winning over columns that would have produced a different provisional list
+// (the gate saw the real tally — see the recording test below). The note
+// follows the provisional list's shape (`${yes} of ${required}`), which is
+// what the card renders.
+function withLiveApprovals(gates, s) {
+  const required = intOrNull(s.votes_required) ?? intOrNull(s.approvals_required);
+  const yes = intOrNull(s.qualified_yes_count) != null
+    ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
+  if (required == null || yes == null) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'approvals') : -1;
+  if (idx < 0 || !gates[idx] || gates[idx].state === 'done') return gates;
+  if (yes < required) return gates;
+  return gates.map((entry, i) => (i === idx
+    ? { ...entry, state: 'done', detail: { note: `${yes} of ${required}` } }
+    : entry));
 }
 
 /**
@@ -681,5 +706,6 @@ module.exports = {
   summarize,
   readRequirements,
   recordIsSuperseded,
+  withLiveApprovals,
   store,
 };
