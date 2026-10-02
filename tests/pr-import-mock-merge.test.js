@@ -116,7 +116,7 @@ function loadVotes() {
     }),
   });
   stub(ids.mergeDebug, { startRun: async () => 1, step: async () => {}, endRun: async () => {} });
-  stub(ids.worker, { isInFlight: () => false, destroyCcVolume: async () => {} });
+  stub(ids.worker, { isInFlight: () => false, destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }) });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);

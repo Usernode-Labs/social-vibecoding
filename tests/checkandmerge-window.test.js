@@ -105,7 +105,7 @@ function loadVotes() {
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {}, isInFlight: () => false });
+  stub(ids.worker, { destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }), isInFlight: () => false });
   stub(ids.mergeDebug, {
     startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {},
   });

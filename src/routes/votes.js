@@ -5485,11 +5485,12 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       });
     }
 
-    // Chat session is done — no further turns will reference CC memory,
-    // so drop the persistent `.claude` volume.
+    // Chat session is done: no further turns will reference CC memory, so
+    // drop the worker and its persistent `.claude` volume. A shots run still
+    // working in that worker keeps it until it finishes (worker.retireWorker).
     try {
       const worker = require('../services/worker');
-      await worker.destroyCcVolume(session.id);
+      await worker.retireWorker(session.id);
     } catch (err) {
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }
