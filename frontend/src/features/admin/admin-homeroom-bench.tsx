@@ -578,7 +578,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
           </label>
           <p className={`${AdminUI.muted} mt-2`}>
             Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
-            Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot is using every build slot.
+            Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot's live builds use every build slot.
           </p>
           <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
         </div>
@@ -804,7 +804,7 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
   const [suites, setSuites] = useState<Suite[]>([]);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [models, setModels] = useState<Model[]>([]);
-  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 2 });
+  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 8 });
   const [hiddenChecks, setHiddenChecks] = useState('');
   const [launcher, setLauncher] = useState<LauncherDefaults | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);

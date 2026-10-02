@@ -33,8 +33,11 @@
 //     once nothing needs it (services/bench/lane.js).
 //
 // A trial's session is the bench user's and is archived when the trial
-// ends; a restart in the middle is abandoned, never recovered into the
-// dev-chat tail (server.js adoptOrphanWorker, isBenchSession).
+// ends. A restart in the middle is never recovered into the dev-chat tail
+// (server.js adoptOrphanWorker, isBenchSession): a trial whose interrupted
+// turn is the last one it needs is followed to its end and finished here
+// (recoverStage, then the lane's shared finisher); any other is abandoned
+// and run again from the start (services/bench/lane.js).
 
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
@@ -313,38 +316,33 @@ async function hiddenChecksUnavailable({ task }) {
 
 // ── The stages ──────────────────────────────────────────────────────────
 
-async function triageStage(ctx) {
-  const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
-  const bot = require('../homeroom-bot');
-  const seed = ctx.seedOverride || snapshot.texts.seed;
-  if (!seed) return { status: 'infra_fail', error: 'the snapshot has no seed' };
-  const prompt = bot.triagePromptFor({
-    seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion,
-  });
-  const branch = branchFor(trial);
-  let base;
-  try {
-    base = ctx.baseSha || await pinBranch(deps.github, repo, branch, snapshot.baseSha);
-  } catch (err) {
-    return { status: 'infra_fail', error: `branch: ${err.message}` };
-  }
-  const session = ctx.session || await openSession(pool, config, { user, app, model, branch, title });
-  ctx.onSession?.(session.id);
-  const turn = await runTurn({
-    pool, config, user, session, repo, prompt, mode: 'scout', model, budgetMs: budgets.turnMs, deps,
-  });
-  const out = {
-    session_id: session.id, base_sha: base, build_branch: branch,
+/** What a turn left behind that every stage records, whatever it said. */
+function turnFields(turn) {
+  return {
     cost_usd: turn.costUsd, input_tokens: turn.usage.inputTokens, output_tokens: turn.usage.outputTokens,
     raw_output: rawOf(turn.result.lastResultText),
   };
+}
+
+function triagePrompt(snapshot, seed) {
+  const bot = require('../homeroom-bot');
+  return bot.triagePromptFor({
+    seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion,
+  });
+}
+
+/**
+ * A triage turn's patch, read from how it ended. Shared by the live stage
+ * and by a turn restart recovery followed to its end (recoverStage).
+ */
+function triageResult({ turn, out, prompt, snapshot }) {
+  const bot = require('../homeroom-bot');
   const ended = turnStatus(turn);
-  if (ended) return { ...out, ...ended, session };
+  if (ended) return { ...out, ...ended };
   const parsed = bot.parseVerdict(turn.result.lastResultText);
-  if (!parsed) return { ...out, status: 'model_fail', error: 'unparseable: no verdict block', session };
+  if (!parsed) return { ...out, status: 'model_fail', error: 'unparseable: no verdict block' };
   return {
     ...out,
-    session,
     status: 'ok',
     parsed: {
       verdict: parsed.verdict,
@@ -361,6 +359,27 @@ async function triageStage(ctx) {
   };
 }
 
+async function triageStage(ctx) {
+  const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
+  const seed = ctx.seedOverride || snapshot.texts.seed;
+  if (!seed) return { status: 'infra_fail', error: 'the snapshot has no seed' };
+  const prompt = triagePrompt(snapshot, seed);
+  const branch = branchFor(trial);
+  let base;
+  try {
+    base = ctx.baseSha || await pinBranch(deps.github, repo, branch, snapshot.baseSha);
+  } catch (err) {
+    return { status: 'infra_fail', error: `branch: ${err.message}` };
+  }
+  const session = ctx.session || await openSession(pool, config, { user, app, model, branch, title });
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
+  const turn = await runTurn({
+    pool, config, user, session, repo, prompt, mode: 'scout', model, budgetMs: budgets.turnMs, deps,
+  });
+  const out = { session_id: session.id, base_sha: base, build_branch: branch, ...turnFields(turn), session };
+  return triageResult({ turn, out, prompt, snapshot });
+}
+
 async function specStage(ctx) {
   const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
   const live = require('../homeroom-bot-live');
@@ -372,7 +391,7 @@ async function specStage(ctx) {
     return { status: 'infra_fail', error: `branch: ${err.message}` };
   }
   const session = await openSession(pool, config, { user, app, model, branch, title });
-  ctx.onSession?.(session.id);
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
   let containerName;
   try {
     await deps.worker.ensureWorkerImage();
@@ -398,41 +417,14 @@ async function specStage(ctx) {
   return { ...out, status: infra ? 'infra_fail' : 'model_fail', error: spec.error || 'no spec' };
 }
 
-async function buildStage(ctx) {
-  const { pool, config, snapshot, model, user, app, repo, trial, task, deps, budgets, title } = ctx;
-  const live = require('../homeroom-bot-live');
+/**
+ * A build's patch, from what buildAndPropose returned (or, for a build turn
+ * restart recovery followed to its end, the same shape read back from the
+ * turn's journal): its status, and for a build that landed, the diff from
+ * the base and the hidden checks. Shared so the two cannot drift.
+ */
+async function buildResult({ built, base, branch, sessionId = null, deps, repo, task, trial }) {
   const bot = require('../homeroom-bot');
-  const branch = branchFor(trial);
-  let base = snapshot.baseSha || null;
-  let sessionId = null;
-  // The build's session gets its branch here instead of from
-  // session-lifecycle, which would cut a dev/ branch from main's tip: the
-  // trial's branch is cut at the snapshot's base commit.
-  const sessionLifecycle = {
-    async ensureSessionBranch({ sessionId: id }) {
-      base = await pinBranch(deps.github, repo, branch, base);
-      await pool.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [id, branch]);
-      return { branchName: branch, created: true };
-    },
-  };
-  const built = await live.buildAndPropose({
-    pool, config, bot: user, app, repo, issueNumber: snapshot.issueNumber,
-    issue: { title: snapshot.thread?.issue?.title || `Issue #${snapshot.issueNumber}` },
-    seed: snapshot.texts.seed, buildNote: snapshot.texts.build_note || '',
-    turnBudgetMs: budgets.buildMs, specBudgetMs: budgets.specMs, model,
-    deps: {
-      worker: deps.worker, sessions: deps.sessions, agentTurn: deps.agentTurn,
-      activeWorkers: deps.activeWorkers, sessionLifecycle,
-    },
-    // Never proposed, never posted: no onSpec, no ceiling, no votes router.
-    propose: false,
-    onSpec: null,
-    proposalCeiling: null,
-    platformRepo: !!snapshot.extra?.platformRepo,
-    sessionTitle: title,
-    telemetry: TELEMETRY,
-    onSession: (s) => { sessionId = s.id; ctx.onSession?.(s.id); },
-  });
   const out = {
     session_id: built.sessionId || sessionId, base_sha: base, build_branch: branch,
     cost_usd: built.costUsd ?? null, build_sha: built.sha || null,
@@ -459,46 +451,77 @@ async function buildStage(ctx) {
   };
 }
 
-async function followupStage(ctx, kind) {
-  const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
+async function buildStage(ctx) {
+  const { pool, config, snapshot, model, user, app, repo, trial, task, deps, budgets, title } = ctx;
+  const live = require('../homeroom-bot-live');
+  const branch = branchFor(trial);
+  let base = snapshot.baseSha || null;
+  let sessionId = null;
+  // The build's session gets its branch here instead of from
+  // session-lifecycle, which would cut a dev/ branch from main's tip: the
+  // trial's branch is cut at the snapshot's base commit.
+  const sessionLifecycle = {
+    async ensureSessionBranch({ sessionId: id }) {
+      base = await pinBranch(deps.github, repo, branch, base);
+      await pool.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [id, branch]);
+      // The base is on the trial before either turn runs: a build turn
+      // finished after a restart diffs against it.
+      await ctx.onSession?.(id, { baseSha: base, branch });
+      return { branchName: branch, created: true };
+    },
+  };
+  const built = await live.buildAndPropose({
+    pool, config, bot: user, app, repo, issueNumber: snapshot.issueNumber,
+    issue: { title: snapshot.thread?.issue?.title || `Issue #${snapshot.issueNumber}` },
+    seed: snapshot.texts.seed, buildNote: snapshot.texts.build_note || '',
+    turnBudgetMs: budgets.buildMs, specBudgetMs: budgets.specMs, model,
+    deps: {
+      worker: deps.worker, sessions: deps.sessions, agentTurn: deps.agentTurn,
+      activeWorkers: deps.activeWorkers, sessionLifecycle,
+    },
+    // Never proposed, never posted: no onSpec, no ceiling, no votes router.
+    propose: false,
+    onSpec: null,
+    proposalCeiling: null,
+    platformRepo: !!snapshot.extra?.platformRepo,
+    sessionTitle: title,
+    telemetry: TELEMETRY,
+    onSession: async (s) => { sessionId = s.id; await ctx.onSession?.(s.id, { branch }); },
+  });
+  return buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
+}
+
+/** A follow-up's prompt and mode, rebuilt from its snapshot. */
+function followupTurn(snapshot, kind) {
   const followup = require('../homeroom-bot-followup');
   const seed = snapshot.texts.seed;
-  if (!seed || !snapshot.baseSha) return { status: 'infra_fail', error: 'the snapshot has no seed or no proposal head' };
   const prNumber = snapshot.extra?.prNumber || null;
-  let prompt;
-  let mode;
   if (kind === 'checks_fix') {
     let failing = [];
     try { failing = JSON.parse(snapshot.texts.failing || '[]'); } catch { failing = []; }
-    prompt = followup.checksFixPrompt({
-      seed, proposalBlock: snapshot.texts.proposal_block || '', prNumber, failing, total: snapshot.extra?.total || failing.length,
-    });
-    mode = 'build';
-  } else {
-    let replies = [];
-    try { replies = JSON.parse(snapshot.texts.replies || '[]'); } catch { replies = []; }
-    const canRevise = snapshot.extra?.canRevise !== false;
-    prompt = followup.followUpPrompt({ seed, proposalBlock: snapshot.texts.proposal_block || '', prNumber, replies, canRevise });
-    mode = canRevise ? 'build' : 'scout';
+    return {
+      prompt: followup.checksFixPrompt({
+        seed, proposalBlock: snapshot.texts.proposal_block || '', prNumber, failing, total: snapshot.extra?.total || failing.length,
+      }),
+      mode: 'build',
+    };
   }
-  const branch = branchFor(trial);
-  let base;
-  try {
-    base = await pinBranch(deps.github, repo, branch, snapshot.baseSha);
-  } catch (err) {
-    return { status: 'infra_fail', error: `branch: ${err.message}` };
-  }
-  const session = await openSession(pool, config, { user, app, model, branch, title });
-  ctx.onSession?.(session.id);
-  const turn = await runTurn({
-    pool, config, user, session, repo, prompt, mode, model, budgetMs: budgets.turnMs, deps,
-    commitMsg: `Homeroom benchmark: trial ${trial.id}`,
-  });
-  const out = {
-    session_id: session.id, base_sha: base, build_branch: branch, session,
-    cost_usd: turn.costUsd, input_tokens: turn.usage.inputTokens, output_tokens: turn.usage.outputTokens,
-    raw_output: rawOf(turn.result.lastResultText),
+  let replies = [];
+  try { replies = JSON.parse(snapshot.texts.replies || '[]'); } catch { replies = []; }
+  const canRevise = snapshot.extra?.canRevise !== false;
+  return {
+    prompt: followup.followUpPrompt({ seed, proposalBlock: snapshot.texts.proposal_block || '', prNumber, replies, canRevise }),
+    mode: canRevise ? 'build' : 'scout',
   };
+}
+
+/**
+ * A follow-up or checks-fix turn's patch, read from how it ended: its action
+ * and, when it moved the head, the diff from the base. Shared by the live
+ * stage and by a turn restart recovery followed to its end.
+ */
+async function followupResult({ turn, out, mode, base, branch, repo, deps }) {
+  const followup = require('../homeroom-bot-followup');
   const ended = turnStatus(turn);
   if (ended) return { ...out, ...ended };
   const parsed = followup.parseFollowUp(turn.result.lastResultText);
@@ -522,6 +545,28 @@ async function followupStage(ctx, kind) {
   };
 }
 
+async function followupStage(ctx, kind) {
+  const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
+  const seed = snapshot.texts.seed;
+  if (!seed || !snapshot.baseSha) return { status: 'infra_fail', error: 'the snapshot has no seed or no proposal head' };
+  const { prompt, mode } = followupTurn(snapshot, kind);
+  const branch = branchFor(trial);
+  let base;
+  try {
+    base = await pinBranch(deps.github, repo, branch, snapshot.baseSha);
+  } catch (err) {
+    return { status: 'infra_fail', error: `branch: ${err.message}` };
+  }
+  const session = await openSession(pool, config, { user, app, model, branch, title });
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
+  const turn = await runTurn({
+    pool, config, user, session, repo, prompt, mode, model, budgetMs: budgets.turnMs, deps,
+    commitMsg: `Homeroom benchmark: trial ${trial.id}`,
+  });
+  const out = { session_id: session.id, base_sha: base, build_branch: branch, session, ...turnFields(turn) };
+  return followupResult({ turn, out, mode, base, branch, repo, deps });
+}
+
 const STAGE_RUNNERS = Object.freeze({
   triage: triageStage,
   spec: specStage,
@@ -531,6 +576,88 @@ const STAGE_RUNNERS = Object.freeze({
   // A DM task is a conversation of triage turns (services/bench/dm-sim.js).
   dm: (ctx) => require('./dm-sim').dmStage(ctx),
 });
+
+// ── After a restart ─────────────────────────────────────────────────────
+
+/**
+ * Whether restart recovery can finish a trial from its interrupted turn:
+ * the turn is the trial's last, and nothing after it needs this process's
+ * memory. A triage, a follow-up and a checks fix are one turn; a build is
+ * two, a spec turn (`scout`) and then the build turn (`build`), and only the
+ * second is its last. A DM conversation, a spec stage, or anything unknown is
+ * run again instead. Pure.
+ */
+function resumableTurn(stage, activeTurn) {
+  if (!activeTurn) return false;
+  if (stage === 'triage' || stage === 'followup' || stage === 'checks_fix') return true;
+  if (stage === 'build') return activeTurn.mode === 'build';
+  return false;
+}
+
+/** A journal replay's result in the shape runTurn resolves, so the same readers apply. */
+function recoveredTurn(result = {}, timedOut = false) {
+  const r = result || {};
+  return {
+    routed: { result: r, error: null },
+    result: r,
+    stopped: !!timedOut,
+    infra: false,
+    costUsd: null, // the ledger has it (lane.recordTrial)
+    usage: {
+      inputTokens: Number.isFinite(r.inputTokens) ? r.inputTokens : null,
+      outputTokens: Number.isFinite(r.outputTokens) ? r.outputTokens : null,
+    },
+  };
+}
+
+const RECOVERED_NOTE = ' (finished after a restart)';
+
+/**
+ * A trial's last turn, finished by restart recovery: its patch, read from
+ * the journal replay's `result` by the same readers the live stage uses
+ * (triageResult, followupResult, buildResult). `baseSha` and `branch` are
+ * what the trial recorded before the turn ran. Resolves null for a turn
+ * that is not the trial's last (resumableTurn). Nothing here posts, pushes
+ * or proposes: GitHub is read through the trial's guarded client only.
+ */
+async function recoverStage({
+  stage, snapshot, task, trial, session, activeTurn, result = {}, timedOut = false, repo, deps,
+  baseSha = null, branch = null,
+}) {
+  if (!resumableTurn(stage, activeTurn)) return null;
+  const turn = recoveredTurn(result, timedOut);
+  const br = branch || branchFor(trial);
+  if (stage === 'triage') {
+    const prompt = triagePrompt(snapshot, snapshot.texts.seed);
+    const out = { session_id: session.id, base_sha: baseSha || snapshot.baseSha || null, build_branch: br, ...turnFields(turn) };
+    return triageResult({ turn, out, prompt, snapshot });
+  }
+  if (stage === 'followup' || stage === 'checks_fix') {
+    const base = baseSha || snapshot.baseSha;
+    if (!base) throw new Error('the trial has no base on record');
+    const { mode } = followupTurn(snapshot, stage);
+    const out = { session_id: session.id, base_sha: base, build_branch: br, ...turnFields(turn) };
+    return followupResult({ turn, out, mode, base, branch: br, repo, deps });
+  }
+  // The build turn. The spec turn before it stored its spec on the session.
+  if (!baseSha) throw new Error('the build has no base on record');
+  const r = result || {};
+  const landed = !timedOut && r.pushOk === true && Number(r.ahead) > 0;
+  const specMd = String(session.spec_md || '').trim() ? session.spec_md : null;
+  const built = {
+    ok: landed,
+    sessionId: session.id,
+    sha: landed ? (r.sha || null) : null,
+    commits: landed ? Number(r.ahead) : null,
+    costUsd: null,
+    specMd,
+    specNote: specMd ? null : 'no spec on record; the build worked from the plan',
+    error: landed ? null
+      : timedOut ? `the build ran past its time limit${RECOVERED_NOTE}`
+        : `the build produced no change to propose${RECOVERED_NOTE}`,
+  };
+  return buildResult({ built, base: baseSha, branch: br, sessionId: session.id, deps, repo, task, trial });
+}
 
 /**
  * Run one stage of one task on one model, with nothing leaving the
@@ -585,4 +712,10 @@ module.exports = {
   budgetsFor,
   STAGE_RUNNERS,
   triageStage,
+  triageResult,
+  followupResult,
+  buildResult,
+  resumableTurn,
+  recoveredTurn,
+  recoverStage,
 };

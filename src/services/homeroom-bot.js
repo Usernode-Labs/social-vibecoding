@@ -3191,14 +3191,18 @@ async function queueShadowBackfill(pool, config = {}) {
  * outcome is recorded in the same columns (#3509), never is.
  */
 /**
- * #3654: whether the live bot is using every build slot it has right now:
- * shadow builds in the lane and live builds of ready verdicts, in this
- * process. The benchmark's lane (services/bench/lane.js) starts nothing
- * while it is, so a benchmark never takes a worker the bot is waiting for.
+ * #3654: whether the bot's live builds (ready verdicts on an app it is live
+ * on, which a person is waiting for) fill every build slot it has right now,
+ * in this process. The benchmark's lane (services/bench/lane.js) starts
+ * nothing while they do, so a benchmark never takes a worker a person is
+ * waiting on. Shadow builds in the lane do not count: like a benchmark trial
+ * they are an experiment nobody waits for, and counting them let a busy
+ * shadow lane hold the benchmark back indefinitely. `counts` is for tests.
  */
-function isLiveLaneSaturated(settings = null) {
+function isLiveLaneSaturated(settings = null, counts = null) {
   const limit = clampInt(settings?.buildConcurrency, DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY);
-  return buildsInFlight.size + liveBuildsInFlight.size >= limit;
+  const live = counts && Number.isFinite(counts.live) ? counts.live : liveBuildsInFlight.size;
+  return live >= limit;
 }
 
 async function buildLaneSummary(pool) {

@@ -290,8 +290,12 @@ test('the Core card says where the suite stands, and offers Freeze only when eve
   const html = renderToHtml(createElement(Launcher, {
     suites: [{ id: 4, name: 'other', version: 1, kind: 'frozen', frozen_at: 'x', counts: {}, total: 0, labelled: 0 }, { id: 5, name: 'Core', version: 1, kind: 'frozen', frozen_at: null, counts: { triage: 44 }, total: 44, labelled: 0 }],
     models: [{ id: 'z-ai/glm-5.3-flash', label: 'GLM' }, { id: 'moonshotai/kimi-k2.7-code', label: 'Kimi', stages: ['build', 'spec'] }, { id: 'x/other', label: 'Other' }],
-    defaults: { capUsd: 50, repeats: 3, maxConcurrency: 2 }, launcher, hiddenChecks: '', onLaunched() {}, say() {},
+    defaults: { capUsd: 50, repeats: 3, maxConcurrency: 8 }, launcher, hiddenChecks: '', onLaunched() {}, say() {},
   }));
+  const atOnce = html.match(/<select id="admin-homeroom-bench-launch-concurrency"[^>]*>(.*?)<\/select>/);
+  assert.ok(atOnce, 'the At once select keeps its id');
+  assert.deepEqual([...atOnce[1].matchAll(/<option value="(\d+)"/g)].map((m) => m[1]), ['1', '2', '3', '4', '5', '6', '7', '8'],
+    'At once offers one to eight');
   assert.match(html, /<option value="5" selected="">Core v1 \(not frozen\)<\/option>/);
   assert.equal((html.match(/data-bench-model="[^"]+"><input type="checkbox" class="mt-1" checked=""/g) || []).length, 2, 'the two default models ticked, the other not');
   assert.match(html, /id="admin-homeroom-bench-launch-cap"[^>]*value="50"/);
