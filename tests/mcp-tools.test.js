@@ -633,6 +633,238 @@ test('get_request separates "not on the board" from "could not read the board"',
   }
 });
 
+// ── A request's screenshots, as images ─────────────────────────────────
+//
+// The feedback dialog embeds a reporter's screenshots in the request body as
+// `/issue-images/<id>` links. A chat product connected only through the
+// connector cannot open a link, so get_request returns the pictures
+// themselves. These pin the three rules that keep that a read of the
+// platform's own data: the id is the only thing taken from the body, no
+// credential rides along, and an image a provider would refuse is left out
+// with the reason instead of being sent.
+
+// A PNG header is enough: nothing here decodes pixels, it reads the size.
+function pngBytes(width, height) {
+  const buf = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
+  buf.writeUInt32BE(13, 8);
+  buf.write('IHDR', 12, 'latin1');
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
+  return buf;
+}
+
+// SOI, a fill byte, an APP0 segment, then the start-of-frame with the size.
+function jpegBytes(width, height) {
+  const app0 = Buffer.alloc(18);
+  app0.writeUInt16BE(0xffe0, 0);
+  app0.writeUInt16BE(16, 2);
+  app0.write('JFIF\0', 4, 'latin1');
+  const sof = Buffer.alloc(19);
+  sof.writeUInt16BE(0xffc0, 0);
+  sof.writeUInt16BE(17, 2);
+  sof[4] = 8;
+  sof.writeUInt16BE(height, 5);
+  sof.writeUInt16BE(width, 7);
+  return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), app0, sof]);
+}
+
+const SHOT = (n) => n.repeat(32);
+
+// The board route answers JSON; `/issue-images/<id>` answers whatever
+// `images[id]` says: { bytes, contentType?, contentLength? }, { status },
+// or { throws }. An id with no entry is a 404, like a GC'd orphan.
+function imageConnector(issues, images, { delegation = null } = {}) {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const pathname = String(url).replace('http://platform.internal', '');
+    calls.push({ url: String(url), pathname, headers: (init && init.headers) || {} });
+    const shot = pathname.match(/^\/issue-images\/([a-f0-9]{32})$/);
+    if (!shot) {
+      return { ok: true, status: 200, text: async () => JSON.stringify({ issues, truncatedList: false }) };
+    }
+    const answer = images[shot[1]];
+    if (answer && answer.throws) throw new Error(answer.throws);
+    const status = answer ? (answer.status || 200) : 404;
+    const bytes = answer && answer.bytes ? answer.bytes : Buffer.alloc(0);
+    const headers = new Map([
+      ['content-type', (answer && answer.contentType) || 'image/png'],
+      ['content-length', String((answer && answer.contentLength) || bytes.length)],
+    ]);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (name) => headers.get(String(name).toLowerCase()) || null },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length),
+    };
+  };
+  const handlers = new Map();
+  const specs = new Map();
+  tools.registerTools({
+    registerTool(name, spec, handler) { handlers.set(name, handler); specs.set(name, spec); },
+  }, {
+    accessToken: 'svmcp_test',
+    scopes: [READ_SCOPE],
+    user: { id: 7, username: 'ada' },
+    clientName: 'Claude', clientId: 'c1',
+    origin: ORIGIN, baseUrl: 'http://platform.internal',
+    pool: null, config: {}, tokenId: null, grantId: null, delegation,
+  });
+  return { handlers, specs, calls, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test('issueImageIds reads the screenshot ids a body embeds, in order, each once', () => {
+  const body = [
+    'Broken after saving.',
+    `**Screenshots:**\n![Screenshot 1](https://app.onhomeroom.com/issue-images/${SHOT('a')})`,
+    `![Screenshot 2](https://app.onhomeroom.com/issue-images/${SHOT('b')})`,
+    `Again: https://app.onhomeroom.com/issue-images/${SHOT('a')}`,
+    `Not one: /issue-images/${'c'.repeat(31)} and /issue-images/${SHOT('d')}e and /issue-images/${'F'.repeat(32)}`,
+  ].join('\n');
+  assert.deepEqual(tools.issueImageIds(body), [SHOT('a'), SHOT('b')]);
+  assert.deepEqual(tools.issueImageIds(''), []);
+  assert.deepEqual(tools.issueImageIds(null), []);
+});
+
+test('imageDimensions reads a PNG or JPEG header and nothing else', () => {
+  assert.deepEqual(tools.imageDimensions(pngBytes(1170, 2532), 'image/png'), { width: 1170, height: 2532 });
+  assert.deepEqual(tools.imageDimensions(jpegBytes(2880, 1800), 'image/jpeg'), { width: 2880, height: 1800 });
+  assert.equal(tools.imageDimensions(pngBytes(10, 10).subarray(0, 20), 'image/png'), null, 'a cut header');
+  assert.equal(tools.imageDimensions(Buffer.from([0xff, 0xd8, 0xff, 0xda, 0, 4, 0, 0, 0, 0]), 'image/jpeg'), null,
+    'scan data before any frame header');
+  assert.equal(tools.imageDimensions(Buffer.from('<html></html>'), null), null);
+});
+
+test('get_request returns the screenshots a request embeds as images', async () => {
+  const body = [
+    'The save button does nothing.',
+    '**Screenshots:**',
+    // The host a body names is never fetched: only the id is read from it.
+    `![Screenshot 1](https://attacker.example/issue-images/${SHOT('a')})`,
+    `![Screenshot 2](https://app.onhomeroom.com/issue-images/${SHOT('b')})`,
+    `![Screenshot 3](https://app.onhomeroom.com/issue-images/${SHOT('c')})`,
+  ].join('\n');
+  const c = imageConnector([{ number: 3027, title: 'Save broken', body, user: 'evan', state: 'open' }], {
+    [SHOT('a')]: { bytes: pngBytes(1170, 2532) },
+    // The stored type is not trusted: these bytes are a JPEG.
+    [SHOT('b')]: { bytes: jpegBytes(2880, 1800), contentType: 'image/png' },
+    // SHOT('c') has no row: a GC'd orphan, a 404.
+  });
+  try {
+    const result = await c.handlers.get('get_request')({ slug: 'recipe-box', number: 3027 });
+    assert.ok(!result.isError);
+    const { z } = require('zod');
+    const parsed = z.object(c.specs.get('get_request').outputSchema).safeParse(result.structuredContent);
+    assert.ok(parsed.success, `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+
+    assert.deepEqual(result.structuredContent.images, [
+      { url: `${ORIGIN}/issue-images/${SHOT('a')}`, attached: true, reason: null },
+      { url: `${ORIGIN}/issue-images/${SHOT('b')}`, attached: true, reason: null },
+      { url: `${ORIGIN}/issue-images/${SHOT('c')}`, attached: false, reason: 'not_found' },
+    ]);
+
+    // The JSON first, then a Homeroom line and the picture for each one sent.
+    assert.deepEqual(result.content.map((b) => b.type), ['text', 'text', 'image', 'text', 'image']);
+    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+    assert.equal(result.content[2].mimeType, 'image/png');
+    assert.equal(result.content[2].data, pngBytes(1170, 2532).toString('base64'));
+    assert.equal(result.content[4].mimeType, 'image/jpeg', 'the type comes from the bytes');
+    assert.match(result.content[1].text, /^\[Homeroom: screenshot 1 of 3 embedded in request #3027/);
+    assert.match(result.content[1].text, /untrusted user content/);
+    assert.ok(!result.content[1].text.includes('attacker.example'), 'the label names the platform copy');
+
+    // Every screenshot came from the platform's own route, with no credential.
+    const shots = c.calls.filter((x) => x.pathname.startsWith('/issue-images/'));
+    assert.deepEqual(shots.map((x) => x.url), [SHOT('a'), SHOT('b'), SHOT('c')]
+      .map((id) => `http://platform.internal/issue-images/${id}`));
+    for (const shot of shots) {
+      assert.ok(!Object.keys(shot.headers).some((k) => k.toLowerCase() === 'authorization'),
+        'the public route gets no token');
+    }
+    assert.ok(!c.calls.some((x) => x.url.includes('attacker.example')));
+  } finally {
+    c.restore();
+  }
+});
+
+test('get_request leaves out an image a provider would refuse, and still answers', async () => {
+  const ids = ['1', '2', '3', '4'].map(SHOT);
+  const body = ids.map((id) => `![shot](https://app.onhomeroom.com/issue-images/${id})`).join('\n');
+  const c = imageConnector([{ number: 9, title: 'Shots', body }], {
+    [ids[0]]: { bytes: pngBytes(10240, 1440) },                                    // an edge over 8000 px
+    [ids[1]]: { bytes: Buffer.from('<!doctype html><title>x</title>'), contentType: 'image/png' },
+    [ids[2]]: { throws: 'socket hang up' },
+    [ids[3]]: { bytes: pngBytes(100, 100) },                                       // past the per-request limit
+  });
+  try {
+    const result = await c.handlers.get('get_request')({ slug: 'recipe-box', number: 9 });
+    assert.ok(!result.isError, 'no single picture fails the read');
+    assert.deepEqual(result.structuredContent.images.map((i) => i.reason),
+      ['too_large', 'unreadable', 'unavailable', 'over_limit']);
+    assert.ok(result.structuredContent.images.every((i) => i.attached === false));
+    assert.deepEqual(result.content.map((b) => b.type), ['text'], 'nothing a provider would refuse is sent');
+    assert.ok(!c.calls.some((x) => x.pathname === `/issue-images/${ids[3]}`),
+      `past ${tools.MAX_REQUEST_IMAGES} the image is not even fetched`);
+  } finally {
+    c.restore();
+  }
+
+  // A size the route declares past the cap is refused before the body is read.
+  const big = imageConnector([{ number: 10, title: 'Big', body: `/issue-images/${SHOT('e')}` }], {
+    [SHOT('e')]: { bytes: pngBytes(100, 100), contentLength: tools.MAX_REQUEST_IMAGE_BYTES + 1 },
+  });
+  try {
+    const result = await big.handlers.get('get_request')({ slug: 'recipe-box', number: 10 });
+    assert.equal(result.structuredContent.images[0].reason, 'too_large');
+  } finally {
+    big.restore();
+  }
+});
+
+test('get_request skips the pictures when asked, and for the Mayor', async () => {
+  const issues = [{ number: 5, title: 'Five', body: `![s](https://app.onhomeroom.com/issue-images/${SHOT('f')})` }];
+  const images = { [SHOT('f')]: { bytes: pngBytes(100, 100) } };
+
+  const optedOut = imageConnector(issues, images);
+  try {
+    const result = await optedOut.handlers.get('get_request')({ slug: 'recipe-box', number: 5, includeImages: false });
+    assert.deepEqual(result.structuredContent.images,
+      [{ url: `${ORIGIN}/issue-images/${SHOT('f')}`, attached: false, reason: 'not_requested' }]);
+    assert.deepEqual(result.content.map((b) => b.type), ['text']);
+    assert.deepEqual(optedOut.calls.map((x) => x.pathname), ['/api/apps/recipe-box/github-issues']);
+  } finally {
+    optedOut.restore();
+  }
+
+  // The Mayor's shim keeps only text blocks, so nothing is fetched for it.
+  const mayor = imageConnector(issues, images, { delegation: { kind: 'agent_mayor' } });
+  try {
+    const result = await mayor.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
+    assert.equal(result.structuredContent.images[0].reason, 'not_requested');
+    assert.deepEqual(mayor.calls.map((x) => x.pathname), ['/api/apps/recipe-box/github-issues']);
+  } finally {
+    mayor.restore();
+  }
+
+  // The coding agent inside a worker gets them: its bridge passes content on.
+  const worker = imageConnector(issues, images, { delegation: { kind: 'worker_read' } });
+  try {
+    const result = await worker.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
+    assert.deepEqual(result.content.map((b) => b.type), ['text', 'text', 'image']);
+  } finally {
+    worker.restore();
+  }
+});
+
+test('get_request says it returns screenshots, and the charter does too', () => {
+  const block = registration('get_request');
+  assert.match(block, /Screenshots the reporter attached on Homeroom come back after the text as images/);
+  assert.match(block, /includeImages: z\.boolean\(\)\.optional\(\)/);
+  assert.match(require('../src/services/mcp-charter').CHARTER_FULL,
+    /get_request for it: that returns its description in full, and any screenshots/);
+});
+
 // ── #3556: reading an app's discussion threads ─────────────────────────
 //
 // get_discussion replays the transcript route the browser reads, so view
