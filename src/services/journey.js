@@ -753,6 +753,10 @@ const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, cs.user_id AS author_id, u.
                         AND NOT (uy.id = ANY($4::int[])))
    ORDER BY cs.promoted_at`;
 
+// How many weeks of active-group counts come back with each week, oldest
+// first and ending with that week: the trend beside the North Star.
+const TREND_WEEKS = 8;
+
 /** Group the live changes of one week by project. */
 function groupsForWeek(changes, week) {
   const byProject = new Map();
@@ -811,6 +815,14 @@ async function activeGroups(pool, { week, now = new Date(), leftOutIds = [] } = 
       return { slug, name: g ? g.name : slug, people: g ? g.people : [], lifecycle: 'went_quiet' };
     });
   const homeroom = thisWeek.find((g) => g.selfHosted) || null;
+  // The North Star over the weeks before, from the same rows: every live
+  // change up to the end of `week` is already loaded, so this costs no query.
+  const trend = [];
+  for (let k = TREND_WEEKS - 1; k >= 0; k -= 1) {
+    const start = new Date(week.start.getTime() - k * WEEK_MS);
+    const span = { start, end: new Date(start.getTime() + WEEK_MS) };
+    trend.push({ week: isoDay(start), count: groupsForWeek(changes, span).filter((g) => g.active).length });
+  }
   const { rows: waiting } = await pool.query(WAITING_SQL, params);
   const oneShort = [
     ...thisWeek.filter((g) => !g.selfHosted && !g.active && g.people.length === 1)
@@ -822,6 +834,7 @@ async function activeGroups(pool, { week, now = new Date(), leftOutIds = [] } = 
     week: week.label,
     finished: week.finished,
     count: active.length,
+    trend,
     groups: active,
     wentQuiet,
     homeroom: homeroom ? { changes: homeroom.changes, people: homeroom.people.length } : null,
@@ -1370,6 +1383,7 @@ module.exports = {
   FEW_MOVES,
   GROUP_MAX,
   GROUP_MIN,
+  TREND_WEEKS,
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
   REAL_PERSON_SQL,

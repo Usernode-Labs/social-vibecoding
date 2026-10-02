@@ -107,6 +107,11 @@ function activeGroups() {
     week: '2026-09-28',
     finished: true,
     count: 2,
+    trend: [
+      { week: '2026-08-10', count: 1 }, { week: '2026-08-17', count: 2 }, { week: '2026-08-24', count: 1 },
+      { week: '2026-08-31', count: 3 }, { week: '2026-09-07', count: 2 }, { week: '2026-09-14', count: 2 },
+      { week: '2026-09-21', count: 2 }, { week: '2026-09-28', count: 2 },
+    ],
     groups: [
       { slug: 'trail-log', name: 'Trail Log', selfHosted: false, changes: 3, people: [P.sable, P.rafa, P.mira], active: true, lifecycle: 'new' },
       { slug: 'chore-wheel', name: 'Chore Wheel', selfHosted: false, changes: 2, people: [P.okafor, P.jun], active: true, lifecycle: 'still_active' },

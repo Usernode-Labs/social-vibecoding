@@ -117,6 +117,11 @@ test('stages, groups and coverage for one finished week', { timeout: 120000 }, a
   assert.deepEqual(g.oneShort.map((x) => [x.slug, x.people.map((p) => p.name)[0]]).sort(),
     [['tally', 'dee'], ['tally', 'eve']]);
   assert.deepEqual(g.wentQuiet, []);
+  assert.equal(g.trend.length, journey.TREND_WEEKS, 'eight weeks of the North Star');
+  assert.deepEqual(g.trend.at(-1), { week: '2026-09-21', count: g.count }, 'ending with the week shown');
+  assert.equal(g.trend[0].week, '2026-08-03', 'oldest first, a Monday each');
+  const before = await journey.activeGroups(pool, { week: journey.parseWeek('2026-09-14', now), now });
+  assert.equal(g.trend.at(-2).count, before.count, 'each past week counts as that week would on its own');
 
   const quiet = await journey.activeGroups(pool, { week: journey.parseWeek('2026-09-28', now), now });
   assert.deepEqual(quiet.wentQuiet.map((x) => x.slug), ['run-club'], 'active last week, not this one');

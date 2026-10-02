@@ -8,19 +8,21 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // Journey (#admin/journey, #3369): the user journey and the North Star.
 //
 // One read surface over the endpoints slice 1 shipped under
-// /api/admin/journey/* (src/services/journey.js). The page leads with the
-// three things someone acts on this week: active groups against the week
-// before, newcomers stuck on a step, and open turns. Everything else is one
-// tap away in a dialog, so opening a detail never moves the page under the
-// reader: the first mile per cohort, the seven stages, the loops, the
-// next-step counts, the left-out list and one person.
+// /api/admin/journey/* (src/services/journey.js), drawn as six chart cards
+// so it reads at a glance: the North Star (active groups, with eight weeks
+// of trend and the week's lifecycle as units), whether the number can be
+// trusted, the first mile per admit cohort (one track per newcomer), the
+// seven stages, the change loop as a ring with the open turns' ages, and
+// where newcomers go next. Names are chips that open one person; a stage
+// bar opens its names. Nothing expands inside the page.
 //
 // Three rules from the endpoints are kept on screen, and the section test
 // pins them:
 // - a reading the platform does not record arrives as
 //   `{ recorded: false, reason }` and reads "not recorded yet", never 0;
 // - Hear back arrives as `{ status: 'coming' }` and reads "coming";
-// - counts and names only: no percentages, no charts.
+// - every mark carries its count, and no share is printed as a percentage:
+//   at one to six people a rate claims more than the data holds.
 //
 // Analytics is a separate section with its own definitions; this one does
 // not read or change it. On screen it is "project", never "app".
@@ -105,35 +107,26 @@ const WAYS: Record<string, string> = {
   returned: 'coming back after a break',
 };
 
-const LIFECYCLE: Record<string, { label: string; cls: string }> = {
-  new: { label: 'New', cls: AdminUI.badge.success },
-  back: { label: 'Back', cls: AdminUI.badge.secondary },
-  still_active: { label: 'Still active', cls: AdminUI.badge.default },
-  went_quiet: { label: 'Went quiet', cls: AdminUI.badge.warn },
-};
-
-const ACTIVATE_KINDS: Record<string, string> = { feedback: 'feedback', vote: 'vote', change: 'change' };
-
 // Local class recipes: complete literals, because Tailwind's extractor is a
 // regex over this file's source (see the AdminUI note in admin-console.js).
 const JUI = Object.freeze({
   card: `${AdminUI.card} p-4 sm:p-5`,
   blockTitle: 'text-base font-semibold text-zinc-900 dark:text-zinc-100',
-  headline: 'text-3xl font-bold text-zinc-900 dark:text-zinc-100',
+  headline: 'text-5xl font-bold leading-none tabular-nums text-zinc-900 dark:text-zinc-100',
   label: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
   fine: 'text-xs text-zinc-500 dark:text-zinc-400',
   row: 'flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0',
-  pill: 'inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors',
-  pillWarn: 'inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors',
   name: 'font-medium text-violet-700 dark:text-violet-400 hover:underline',
-  strip: 'flex flex-wrap gap-1.5',
-  stripCell: 'flex flex-col items-start rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2.5 py-1.5 min-w-[4.5rem]',
-  stripCount: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   dialogPanel: 'w-full max-w-2xl max-h-[82vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-2xl p-5 shadow-xl',
-  chip: 'rounded-full px-3 py-1 text-xs font-medium transition-colors',
+  chip: 'inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 py-0.5 pl-0.5 pr-2 text-xs font-medium text-zinc-800 dark:text-zinc-200 transition-colors',
   chipOn: 'bg-violet-600 text-white',
   chipOff: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700',
   path: 'flex flex-wrap gap-1 text-xs',
+  empty: 'bg-zinc-200 dark:bg-zinc-700',
+  avatar: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-500/25 text-[11px] font-semibold text-violet-800 dark:text-violet-200',
+  chipTap: 'hover:bg-zinc-200 dark:hover:bg-zinc-700',
+  chipDashed: 'border border-dashed border-zinc-300 dark:border-zinc-600 bg-transparent dark:bg-transparent text-zinc-500 dark:text-zinc-400',
+  cohort: 'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-colors',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
 });
 
@@ -159,7 +152,8 @@ type Summary = {
   week: string;
   thisWeekSoFar: { week: string; count: number };
   groups: {
-    week: string; finished: boolean; count: number; groups: Group[]; wentQuiet: Group[];
+    week: string; finished: boolean; count: number; trend?: Array<{ week: string; count: number }>;
+    groups: Group[]; wentQuiet: Group[];
     oneShort: Group[]; homeroom: { changes: number; people: number } | null;
   };
   stuck: Stuck[];
@@ -173,7 +167,7 @@ type Summary = {
 };
 
 type OpenPerson = (userId: number) => void;
-type DialogKey = 'mile' | 'stages' | 'loops' | 'next' | 'leftout' | 'checks';
+type DialogKey = 'leftout' | 'checks';
 
 // ── Small pieces ───────────────────────────────────────────────────────
 
@@ -234,27 +228,6 @@ function NameButton({ person, onOpen }: { person: Person | null | undefined; onO
     <button type="button" className={JUI.name} data-journey-person={id} onClick={() => onOpen(id)}>
       {person.name}
     </button>
-  );
-}
-
-function Names({ people, onOpen }: { people: Person[]; onOpen: OpenPerson }) {
-  if (!people.length) return <span className={JUI.fine}>nobody</span>;
-  return (
-    <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
-      {people.map((p, i) => <NameButton key={`${p.userId ?? p.name}-${i}`} person={p} onOpen={onOpen} />)}
-    </span>
-  );
-}
-
-function Block({ id, title, aside, children }: { id: string; title: string; aside?: ReactNode; children: ReactNode }) {
-  return (
-    <section id={id} className={JUI.card}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
-        <h3 className={JUI.blockTitle}>{title}</h3>
-        {aside}
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -325,124 +298,532 @@ function Dialog({ id, title, onClose, children }: { id: string; title: string; o
   );
 }
 
-// ── The page's three leading blocks ────────────────────────────────────
 
-function GroupsBlock({ s, onOpen, onDialog }: { s: Summary; onOpen: OpenPerson; onDialog: (k: DialogKey) => void }) {
-  const g = s.groups;
-  const weekBefore = g.groups.filter((x) => x.lifecycle === 'still_active').length + g.wentQuiet.length;
-  const t = s.trust;
-  const lockstep = t.lockstep.possible || [];
-  return (
-    <Block id="admin-journey-groups" title="Active groups">
-      <div className="flex flex-wrap items-end gap-x-6 gap-y-1 mb-3">
-        <div>
-          <div id="admin-journey-north-star" className={JUI.headline}>{g.count}</div>
-          <div className={JUI.fine}>week of {weekLabel(g.week)}{g.finished ? '' : ', so far'}</div>
-        </div>
-        <div>
-          <div className="text-xl font-semibold text-zinc-700 dark:text-zinc-300">{weekBefore}</div>
-          <div className={JUI.fine}>the week before</div>
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-1.5 mb-3" id="admin-journey-checks">
-        <button type="button" className={t.withoutGroupVote.count ? JUI.pillWarn : JUI.pill} onClick={() => onDialog('checks')}>
-          {t.withoutGroupVote.count} of {t.withoutGroupVote.of} live without a group vote
-        </button>
-        <button type="button" className={JUI.pill} onClick={() => onDialog('checks')}>
-          Team made {t.teamShare.team} of {t.teamShare.of}
-        </button>
-        <button type="button" className={lockstep.length ? JUI.pillWarn : JUI.pill} onClick={() => onDialog('checks')}>
-          Lockstep: {lockstep.length ? `${lockstep.length} possible` : 'none'}
-        </button>
-        <button type="button" className={s.coverage.withNavigation < s.coverage.activePeople ? JUI.pillWarn : JUI.pill}
-          onClick={() => onDialog('checks')}>
-          Navigation from {s.coverage.withNavigation} of {s.coverage.activePeople} active
-        </button>
-      </div>
-      {g.groups.length ? (
-        <div>
-          {g.groups.map((grp) => {
-            const lc = LIFECYCLE[grp.lifecycle] || LIFECYCLE.still_active;
-            return (
-              <div key={grp.slug} className={JUI.row} data-journey-group={grp.slug}>
-                <span className="font-medium">{grp.name}</span>
-                <span className={lc.cls}>{lc.label}</span>
-                <span className={JUI.fine}>{grp.changes} live</span>
-                <span className="basis-full sm:basis-auto"><Names people={grp.people} onOpen={onOpen} /></span>
-              </div>
-            );
-          })}
-        </div>
-      ) : <Empty>No project had an active group this week.</Empty>}
-      {g.wentQuiet.length ? (
-        <div className="mt-3">
-          <div className={JUI.label}>Went quiet: talk to them</div>
-          {g.wentQuiet.map((grp) => (
-            <div key={grp.slug} className={JUI.row} data-journey-quiet={grp.slug}>
-              <span className="font-medium">{grp.name}</span>
-              <span className={AdminUI.badge.warn}>Went quiet</span>
-              <Names people={grp.people} onOpen={onOpen} />
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {g.oneShort.length ? (
-        <div className="mt-3">
-          <div className={JUI.label}>One short</div>
-          {g.oneShort.map((grp) => (
-            <div key={grp.slug} className={JUI.row} data-journey-short={grp.slug}>
-              <span className="font-medium">{grp.name}</span>
-              <Names people={grp.people} onOpen={onOpen} />
-              <span className={JUI.fine}>{grp.why}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <p className={`${JUI.fine} mt-3`}>
-        This week so far: {s.thisWeekSoFar.count}.
-        {g.homeroom ? ` Homeroom itself: ${g.homeroom.changes} live, ${g.homeroom.people} people, not counted.` : ''}
-      </p>
-    </Block>
-  );
+type Cohorts = { cohorts: Array<{ day: string; admitted: number; withAccount: number }>; otherWay: { people: number } };
+type FirstMile = {
+  cohort: string; people: MilePerson[];
+  steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
+  notRecorded?: Record<string, NotRecorded>;
+};
+
+type Stages = {
+  week: string; finished: boolean; counts: Record<string, Count>;
+  stoppedAt: Record<string, Person[]>;
+  people: Array<Person & { activateKinds: string[] }>;
+};
+
+type Coming = { status: 'coming' };
+type Loops = {
+  change: {
+    week: string; steps: string[]; atStep: Record<string, number | Coming>; turnsClosed: Coming | number;
+    live: Turn[]; open: Turn[];
+    perProject: Array<{ slug: string; project: string; thisWeek: number; lastWeek: number; alsoLastWeek: boolean }>;
+  };
+  invite: {
+    steps: string[]; counts: Record<string, number>;
+    pairs: Array<{ host: Person; invitee: Person; letInAt: string; arrived: boolean; didSomething: boolean; invitedSomeone: boolean }>;
+  };
+};
+
+function isComing(v: unknown): v is Coming {
+  return !!v && typeof v === 'object' && (v as Coming).status === 'coming';
 }
 
-function StuckBlock({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
-  return (
-    <Block id="admin-journey-stuck" title="Stuck newcomers" aside={<span className={JUI.fine}>longest first</span>}>
-      {s.stuck.length ? s.stuck.map((p, i) => (
-        <div key={`${p.userId ?? p.name}-${i}`} className={JUI.row} data-journey-stuck={p.stuckAt}>
-          <NameButton person={p} onOpen={onOpen} />
-          <span className="text-sm">before <b className="font-medium">{MILE_STEPS[p.stuckAt] || p.stuckAt}</b></span>
-          <span className={JUI.fine}>{days(p.days)}</span>
-          {p.failedAttempts ? <span className={AdminUI.badge.destructive}>{p.failedAttempts} failed</span> : null}
-          {p.reason ? <span className={`${JUI.fine} basis-full`}>{p.reason} · admitted {weekLabel(p.cohort)}</span> : null}
-        </div>
-      )) : <Empty>No newcomer is stuck.</Empty>}
-    </Block>
-  );
-}
+type NextSteps = {
+  people: number;
+  leftOut: { droppedEvents: number[]; noNavigation: number[] };
+  starts: Array<{ screen: string; visits: number; people: number }>;
+  rows: Array<{
+    screen: string; moves: number; people: number;
+    next: Array<{ to: string; moves: number; people: number }>;
+    other: number; left: { moves: number; people: number }; deadEnd: boolean; few: boolean;
+  }>;
+};
 
-function TurnRow({ turn, onOpen }: { turn: Turn; onOpen: OpenPerson }) {
+// ── Chart pieces ───────────────────────────────────────────────────────
+//
+// Every mark carries its count. At one to six people a share or a rate
+// would claim more than the data holds, so small counts are drawn as units
+// you can count (one cell per change or person) and only a large total
+// becomes a single bar.
+
+const UNIT_MAX = 24;
+
+function UnitBar({ n, of, fill }: { n: number; of: number; fill: string }) {
+  if (of <= 0) return <div className={`h-2 rounded-sm ${JUI.empty}`} />;
+  if (of > UNIT_MAX) {
+    return (
+      <div className={`h-2 rounded-sm overflow-hidden ${JUI.empty}`}>
+        <div className={`h-2 ${fill}`} style={{ width: `${Math.round((n / of) * 100)}%` }} />
+      </div>
+    );
+  }
   return (
-    <div className={JUI.row} data-journey-turn={`${turn.slug}#${turn.number}`}>
-      <span className="font-medium">{turn.project}</span>
-      <span className="text-sm">#{turn.number} {turn.title}</span>
-      <span className={AdminUI.badge.default}>{LOOP_STEPS[turn.step] || turn.step}</span>
-      <span className={JUI.fine}>{days(turn.days)}</span>
-      <span className={`${JUI.fine} basis-full`}>
-        {turn.holder ? `held by ${turn.holder}` : 'nobody holds it'}
-        {turn.reporter ? <> · from <NameButton person={turn.reporter} onOpen={onOpen} /></> : null}
-      </span>
+    <div className="flex gap-0.5">
+      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : JUI.empty}`} />)}
     </div>
   );
 }
 
-function TurnsBlock({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
+function Dot({ cls }: { cls: string }) {
+  return <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} />;
+}
+
+/** A person as a small chip: their initial and name; tapping opens them. */
+function PersonChip({ person, onOpen, dashed = false }: { person: Person; onOpen: OpenPerson; dashed?: boolean }) {
+  const initial = (person.name || '?').replace(/^[^a-z0-9]+/i, '').charAt(0).toUpperCase() || '?';
+  const body = (
+    <>
+      <span aria-hidden="true" className={JUI.avatar}>{initial}</span>
+      <span className="truncate min-w-0 max-w-[7rem]">{person.name}</span>
+    </>
+  );
+  if (person.userId == null) return <span className={`${JUI.chip} max-w-full ${dashed ? JUI.chipDashed : ''}`}>{body}</span>;
+  const id = person.userId;
   return (
-    <Block id="admin-journey-turns" title="Open turns" aside={<span className={JUI.fine}>oldest first</span>}>
-      {s.openTurns.length ? s.openTurns.map((t) => <TurnRow key={`${t.slug}#${t.number}`} turn={t} onOpen={onOpen} />)
-        : <Empty>No open turns.</Empty>}
-    </Block>
+    <button type="button" className={`${JUI.chip} ${JUI.chipTap} max-w-full`} data-journey-person={id} onClick={() => onOpen(id)}>{body}</button>
+  );
+}
+
+function Chips({ people, onOpen }: { people: Person[]; onOpen: OpenPerson }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {people.map((p, i) => <PersonChip key={`${p.userId ?? p.name}-${i}`} person={p} onOpen={onOpen} />)}
+    </span>
+  );
+}
+
+function Card({ id, title, note, action, children }: {
+  id: string; title: string; note?: ReactNode; action?: ReactNode; children: ReactNode;
+}) {
+  return (
+    <section id={id} className={JUI.card}>
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        <h3 className={JUI.blockTitle}>{title}</h3>
+        <span className="flex items-baseline gap-2">
+          {note ? <span className={JUI.fine}>{note}</span> : null}
+          {action}
+        </span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Legend({ items }: { items: Array<[string, string]> }) {
+  return (
+    <div className={`flex flex-wrap gap-x-3 gap-y-1 mt-2 ${JUI.fine}`}>
+      {items.map(([cls, label]) => <span key={label} className="inline-flex items-center gap-1"><Dot cls={cls} />{label}</span>)}
+    </div>
+  );
+}
+
+// ── North Star ─────────────────────────────────────────────────────────
+
+const LIFECYCLE_FILL: Record<string, string> = {
+  new: 'bg-emerald-500',
+  back: 'bg-violet-500',
+  still_active: 'bg-zinc-400 dark:bg-zinc-500',
+  went_quiet: 'bg-amber-400',
+};
+
+function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>; shown: string }) {
+  if (!trend.length) return null;
+  const max = Math.max(1, ...trend.map((t) => t.count));
+  return (
+    <div className="shrink-0" aria-label={`Active groups over ${trend.length} weeks`}>
+      <div className="flex items-end gap-1 h-14">
+        {trend.map((t) => (
+          <div key={t.week} className="flex w-5 flex-col items-center justify-end h-full">
+            <span className="text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{t.count}</span>
+            <div className={`w-full rounded-sm ${t.week === shown ? 'bg-violet-500' : 'bg-zinc-300 dark:bg-zinc-600'}`}
+              style={{ height: `${Math.max(4, Math.round((t.count / max) * 100))}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className={`flex justify-between mt-1 ${JUI.fine}`}>
+        <span>{weekLabel(trend[0].week)}</span><span>{weekLabel(trend[trend.length - 1].week)}</span>
+      </div>
+    </div>
+  );
+}
+
+function NorthStarCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
+  const g = s.groups;
+  const trend = g.trend || [];
+  const prev = trend.length > 1 ? trend[trend.length - 2].count : null;
+  const delta = prev == null ? null : g.count - prev;
+  const by = (k: string) => g.groups.filter((x) => x.lifecycle === k).length;
+  const right: Array<[string, number]> = [['still_active', by('still_active')], ['back', by('back')], ['new', by('new')]];
+  return (
+    <Card id="admin-journey-groups" title="Active groups"
+      note={`week of ${weekLabel(g.week)}${g.finished ? '' : ', so far'}`}>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <div id="admin-journey-north-star" className={JUI.headline}>{g.count}</div>
+          <div className={`${JUI.fine} mt-1`}>
+            {delta == null ? '' : delta === 0 ? 'same as the week before' : `${delta > 0 ? '+' : '−'}${Math.abs(delta)} on the week before`}
+          </div>
+        </div>
+        <Trend trend={trend} shown={g.week} />
+      </div>
+      <div className="flex items-center gap-1.5 mt-4" aria-label="Groups that went quiet, against groups active">
+        <div className="flex flex-1 justify-end gap-1">
+          {g.wentQuiet.map((x) => <span key={x.slug} className={`h-4 w-4 rounded-sm ${LIFECYCLE_FILL.went_quiet}`} />)}
+        </div>
+        <span className="h-6 w-px bg-zinc-300 dark:bg-zinc-600" />
+        <div className="flex flex-1 gap-1">
+          {right.flatMap(([k, n]) => Array.from({ length: n }, (_, i) => <span key={`${k}${i}`} className={`h-4 w-4 rounded-sm ${LIFECYCLE_FILL[k]}`} />))}
+        </div>
+      </div>
+      <Legend items={[
+        [LIFECYCLE_FILL.went_quiet, `went quiet ${g.wentQuiet.length}`],
+        [LIFECYCLE_FILL.still_active, `still active ${by('still_active')}`],
+        [LIFECYCLE_FILL.back, `back ${by('back')}`],
+        [LIFECYCLE_FILL.new, `new ${by('new')}`],
+      ]} />
+      <div className="mt-3 space-y-1.5">
+        {[...g.groups, ...g.wentQuiet].map((grp) => (
+          <div key={grp.slug} className="flex items-center gap-2 min-w-0" data-journey-group={grp.slug}>
+            <Dot cls={LIFECYCLE_FILL[grp.lifecycle] || LIFECYCLE_FILL.still_active} />
+            <span className="text-sm font-medium truncate w-28 shrink-0">{grp.name}</span>
+            <Chips people={grp.people} onOpen={onOpen} />
+          </div>
+        ))}
+        {g.oneShort.map((grp, i) => (
+          <div key={`${grp.slug}-${i}`} className="flex items-center gap-2 min-w-0" data-journey-short={grp.slug}>
+            <Dot cls="border border-dashed border-zinc-400 dark:border-zinc-500" />
+            <span className="text-sm truncate w-28 shrink-0 text-zinc-500 dark:text-zinc-400">{grp.name}</span>
+            <Chips people={grp.people} onOpen={onOpen} />
+            <span className={`${JUI.chip} ${JUI.chipDashed}`} title={grp.why}>one short</span>
+          </div>
+        ))}
+        {!g.groups.length && !g.wentQuiet.length && !g.oneShort.length ? <Empty>No project had a group this week.</Empty> : null}
+      </div>
+      {g.homeroom ? (
+        <p className={`${JUI.fine} mt-3`}>Homeroom itself, not counted: {g.homeroom.changes} live, {g.homeroom.people} people.</p>
+      ) : null}
+    </Card>
+  );
+}
+
+// ── Health ─────────────────────────────────────────────────────────────
+
+function HealthCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerson; onDetails: () => void }) {
+  const t = s.trust;
+  const lockstep = t.lockstep.possible || [];
+  const row = (label: string, n: number, of: number, fill: string) => (
+    <div className="mb-3">
+      <div className="flex justify-between text-sm mb-1"><span>{label}</span><span className="tabular-nums">{n} / {of}</span></div>
+      <UnitBar n={n} of={of} fill={fill} />
+    </div>
+  );
+  return (
+    <Card id="admin-journey-checks" title="Can we trust it"
+      action={<button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={onDetails}>Details</button>}>
+      {row('Live without a group vote', t.withoutGroupVote.count, t.withoutGroupVote.of, 'bg-amber-400')}
+      {row('Made by the team', t.teamShare.team, t.teamShare.of, 'bg-violet-500')}
+      {row('Navigation recorded', s.coverage.withNavigation, s.coverage.activePeople, 'bg-emerald-500')}
+      <div className="flex items-center gap-2 text-sm">
+        <span aria-hidden="true" className={lockstep.length ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
+          {lockstep.length ? '!' : '✓'}
+        </span>
+        <span>Voting in lockstep</span>
+        {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : <span className={JUI.fine}>nobody</span>}
+      </div>
+    </Card>
+  );
+}
+
+// ── First mile ─────────────────────────────────────────────────────────
+
+const MILE_SHORT: Record<string, string> = {
+  admitted: 'admit', mail_sent: 'mail', code_asked: 'code', account: 'acct', access: 'access',
+  opened: 'open', username: 'name', join: 'join', first_act: 'act',
+};
+
+const STEP_FILL: Record<string, string> = {
+  done: 'bg-violet-500',
+  skipped: 'bg-violet-300 dark:bg-violet-400/50',
+  unknown: 'bg-violet-300 dark:bg-violet-400/50',
+  stuck: 'bg-amber-400',
+  not_yet: 'bg-zinc-200 dark:bg-zinc-700',
+};
+
+function FirstMileCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
+  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
+  const [day, setDay] = useState<string | null>(null);
+  const picked = day || cohorts?.cohorts[0]?.day || (cohorts ? 'other_way' : null);
+  const { data: mile, failed } = useJourney<FirstMile>(picked ? `/api/admin/journey/first-mile?admitted=${picked}` : null);
+  const stuckIn = (c: string) => s.stuck.filter((p) => p.cohort === c).length;
+  const n = mile?.people.length || 0;
+  return (
+    <Card id="admin-journey-mile" title="First mile" note="admit mail to first act">
+      {cohorts ? (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {[...cohorts.cohorts.map((c) => [c.day, weekLabel(c.day), c.admitted] as const),
+            ['other_way', 'Another way', cohorts.otherWay.people] as const].map(([v, label, count]) => (
+            <button key={v} type="button" aria-pressed={picked === v}
+              className={`${JUI.cohort} ${picked === v ? JUI.chipOn : JUI.chipOff}`} onClick={() => setDay(v)}>
+              {label} · {count}
+              {stuckIn(v) ? <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[11px] text-amber-950">{stuckIn(v)}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {mile ? (n ? (
+        <>
+          <div className="flex items-end gap-1 h-16" aria-label="How many reached each step">
+            {mile.steps.map((st, i) => (
+              <div key={st.key} className="flex flex-1 flex-col items-center justify-end h-full" data-journey-mile-step={st.key}>
+                <span className="text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{st.passed}</span>
+                <div className={`w-full rounded-sm ${i === mile.steps.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
+                  style={{ height: `${Math.max(4, Math.round((st.passed / n) * 100))}%` }} />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1 mt-1">
+            {mile.steps.map((st) => <span key={st.key} className="flex-1 min-w-0 text-center text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[st.key] || st.key}</span>)}
+          </div>
+          <div className="mt-4 space-y-2">
+            {mile.people.map((p, i) => {
+              const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
+              return (
+                <div key={`${p.userId ?? p.name}-${i}`} className="flex items-center gap-2">
+                  <span className="w-28 shrink-0 min-w-0"><PersonChip person={p} onOpen={onOpen} /></span>
+                  <div className="flex flex-1 gap-0.5">
+                    {p.steps.map((st) => <span key={st.key} title={MILE_STEPS[st.key]} className={`h-2.5 flex-1 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />)}
+                  </div>
+                  <span className={`w-12 shrink-0 text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <Legend items={[[STEP_FILL.done, 'done'], [STEP_FILL.stuck, 'stuck, days since'], [STEP_FILL.not_yet, 'not yet']]} />
+        </>
+      ) : <Empty>Nobody in this cohort.</Empty>) : picked ? <Loading failed={failed} what="the first mile" /> : null}
+    </Card>
+  );
+}
+
+// ── Stages ─────────────────────────────────────────────────────────────
+
+function StagesCard({ week, onNames }: { week: string | null; onNames: (n: NamesList) => void }) {
+  const { data, failed } = useJourney<Stages>(`/api/admin/journey/stages${week ? `?week=${week}` : ''}`);
+  if (!data) return <Card id="admin-journey-stages" title="Stages"><Loading failed={failed} what="the stages" /></Card>;
+  const nums = STAGES.map(([k]) => data.counts[k]).filter((v): v is number => typeof v === 'number');
+  const max = Math.max(1, ...nums);
+  return (
+    <Card id="admin-journey-stages" title="Stages" note="one yes or no per person">
+      <div className="space-y-1.5">
+        {STAGES.map(([key, label, means]) => {
+          const v = data.counts[key];
+          // Reaching the last stage is the end of the journey, not a stop.
+          const stopped = key === STAGES[STAGES.length - 1][0] ? [] : (data.stoppedAt[key] || []);
+          const reached = data.people.filter((p) => (p as unknown as Record<string, unknown>)[key] === true);
+          const open = () => onNames({ title: label, note: means, sections: [
+            { label: 'Went no further', people: stopped },
+            { label: 'Reached it', people: reached },
+          ] });
+          return (
+            <button key={key} type="button" className="grid w-full grid-cols-[4.5rem_1fr_1.5rem] items-center gap-2 text-left text-sm rounded hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+              data-journey-stage={key} onClick={open}>
+              <span>{label}</span>
+              {typeof v === 'number' ? (
+                <span className="flex h-3.5" style={{ width: `${Math.max(2, Math.round((v / max) * 100))}%` }}>
+                  <span className="h-full flex-1 rounded-l-sm bg-violet-300 dark:bg-violet-400/50" />
+                  {stopped.length ? <span className="h-full rounded-r-sm bg-amber-400" style={{ width: `${Math.round((Math.min(stopped.length, v) / Math.max(1, v)) * 100)}%` }} /> : null}
+                </span>
+              ) : <span className={`h-3.5 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600 ${JUI.fine} text-[11px] leading-3 px-1`}>not recorded yet</span>}
+              <span className="text-right tabular-nums"><Num v={typeof v === 'number' ? v : null} /></span>
+            </button>
+          );
+        })}
+      </div>
+      <Legend items={[['bg-violet-300 dark:bg-violet-400/50', 'reached'], ['bg-amber-400', 'went no further']]} />
+    </Card>
+  );
+}
+
+// ── Change loop ────────────────────────────────────────────────────────
+
+function LoopRing({ loops }: { loops: Loops }) {
+  const cx = 160; const cy = 105; const r = 68;
+  const steps = loops.change.steps;
+  const at = (i: number, rad: number) => {
+    const a = ((-90 + (i * 360) / steps.length) * Math.PI) / 180;
+    return { x: cx + rad * Math.cos(a), y: cy + rad * Math.sin(a), cos: Math.cos(a) };
+  };
+  return (
+    <svg viewBox="0 0 320 210" className="w-full max-w-sm mx-auto" role="img" aria-label="The change loop, turns at each step">
+      <circle cx={cx} cy={cy} r={r} fill="none" className="stroke-zinc-200 dark:stroke-zinc-700" strokeWidth={2} />
+      {steps.map((key, i) => {
+        const mid = ((-90 + ((i + 0.5) * 360) / steps.length) * Math.PI) / 180;
+        const deg = (-90 + ((i + 0.5) * 360) / steps.length) + 90;
+        return (
+          <polygon key={`arrow-${key}`} points="-4,-4 3,0 -4,4" className="fill-zinc-300 dark:fill-zinc-600"
+            transform={`translate(${cx + r * Math.cos(mid)} ${cy + r * Math.sin(mid)}) rotate(${deg})`} />
+        );
+      })}
+      {steps.map((key, i) => {
+        const p = at(i, r);
+        const l = at(i, r + 32);
+        const v = loops.change.atStep[key];
+        const coming = isComing(v);
+        const live = key === 'go_live';
+        const anchor = l.cos > 0.3 ? 'start' : l.cos < -0.3 ? 'end' : 'middle';
+        return (
+          <g key={key} data-journey-loop-step={key}>
+            <circle cx={p.x} cy={p.y} r={20} strokeWidth={1.5} strokeDasharray={coming ? '3 3' : undefined}
+              className={coming ? 'fill-white dark:fill-zinc-900 stroke-zinc-400 dark:stroke-zinc-500'
+                : live ? 'fill-emerald-100 dark:fill-emerald-500/25 stroke-emerald-500' : 'fill-violet-100 dark:fill-violet-500/25 stroke-violet-500'} />
+            <text x={p.x} y={p.y + (coming ? 3.5 : 5)} textAnchor="middle" fontSize={coming ? 10 : 15} fontWeight={coming ? 400 : 600}
+              className={coming ? 'fill-zinc-500 dark:fill-zinc-400' : 'fill-zinc-900 dark:fill-zinc-100'}>
+              {coming ? 'coming' : String(v)}
+            </text>
+            <text x={l.x} y={l.y + 4} textAnchor={anchor} fontSize={12} className="fill-zinc-500 dark:fill-zinc-400">
+              {LOOP_STEPS[key] || key}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function LoopCard({ week, onOpen }: { week: string | null; onOpen: OpenPerson }) {
+  const { data, failed } = useJourney<Loops>(`/api/admin/journey/loops${week ? `?week=${week}` : ''}`);
+  if (!data) return <Card id="admin-journey-loop" title="Change loop"><Loading failed={failed} what="the loops" /></Card>;
+  const open = data.change.open;
+  const maxDays = Math.max(1, ...open.map((t) => t.days || 0));
+  const inv = data.invite;
+  return (
+    <Card id="admin-journey-loop" title="Change loop" note="turns at each step">
+      <LoopRing loops={data} />
+      <div className={`${JUI.label} mt-2 mb-1.5`}>Open turns, days waiting</div>
+      {open.length ? (
+        <div className="space-y-2" id="admin-journey-turns">
+          {open.map((t) => (
+            <div key={`${t.slug}#${t.number}`} data-journey-turn={`${t.slug}#${t.number}`}>
+              <div className="flex items-baseline gap-2 text-sm min-w-0">
+                <span className="truncate">{t.project} #{t.number} {t.title}</span>
+                <span className={`${JUI.fine} shrink-0`}>{LOOP_STEPS[t.step] || t.step}</span>
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex-1">
+                  <div className={`h-2 rounded-sm ${t.holder ? 'bg-violet-300 dark:bg-violet-400/50' : 'bg-amber-400'}`}
+                    style={{ width: `${Math.max(4, Math.round(((t.days || 0) / maxDays) * 100))}%` }} />
+                </div>
+                <span className="w-24 shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                  {days(t.days)}{t.holder ? ` · ${t.holder}` : ''}
+                </span>
+              </div>
+            </div>
+          ))}
+          <Legend items={[['bg-violet-300 dark:bg-violet-400/50', 'someone holds it'], ['bg-amber-400', 'nobody holds it']]} />
+        </div>
+      ) : <Empty>No open turns.</Empty>}
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Invite loop</div>
+      <div className="flex items-center gap-1">
+        {inv.steps.map((key, i) => (
+          <div key={key} className="contents">
+            {i ? <span aria-hidden="true" className="text-zinc-300 dark:text-zinc-600">›</span> : null}
+            <div className="flex-1 text-center">
+              <div className="text-lg font-semibold tabular-nums">{inv.counts[key]}</div>
+              <div className="text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">{INVITE_STEPS[key] || key}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {inv.pairs.length ? (
+        <div className="mt-2 space-y-1">
+          {inv.pairs.map((p, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-xs">
+              <PersonChip person={p.host} onOpen={onOpen} /><span aria-hidden="true">→</span><PersonChip person={p.invitee} onOpen={onOpen} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+// ── Next steps ─────────────────────────────────────────────────────────
+
+const NEXT_FILLS = ['bg-violet-500', 'bg-violet-300 dark:bg-violet-400/60', 'bg-violet-200 dark:bg-violet-400/30'];
+const OTHER_FILL = 'bg-zinc-300 dark:bg-zinc-600';
+const LEFT_FILL = 'bg-red-300 dark:bg-red-400/70';
+
+function NextCard() {
+  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
+  const [scope, setScope] = useState<string | null>(null);
+  const { data, failed } = useJourney<NextSteps>(`/api/admin/journey/next-steps${scope ? `?admitted=${scope}` : ''}`);
+  const scopes: Array<[string | null, string]> = [[null, 'All newcomers'],
+    ...(cohorts ? cohorts.cohorts.map((c) => [c.day, weekLabel(c.day)] as [string, string]) : []),
+    ...(cohorts ? [['other_way', 'Another way'] as [string, string]] : [])];
+  return (
+    <Card id="admin-journey-next" title="Where newcomers go next" note="first 28 days">
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {scopes.map(([v, label]) => (
+          <button key={v ?? 'all'} type="button" aria-pressed={scope === v}
+            className={`${JUI.cohort} ${scope === v ? JUI.chipOn : JUI.chipOff}`} onClick={() => setScope(v)}>{label}</button>
+        ))}
+      </div>
+      {data ? (data.rows.length ? (
+        <div className="space-y-3">
+          {data.rows.slice(0, 6).map((r) => {
+            const parts: Array<[string, number, string]> = [
+              ...r.next.map((n, i) => [screenLabel(n.to), n.moves, NEXT_FILLS[i] || NEXT_FILLS[2]] as [string, number, string]),
+              ...(r.other ? [['other', r.other, OTHER_FILL] as [string, number, string]] : []),
+              ['left', r.left.moves, LEFT_FILL],
+            ];
+            const total = Math.max(1, parts.reduce((a, [, n]) => a + n, 0));
+            return (
+              <div key={r.screen} data-journey-next={r.screen} className={r.few ? 'opacity-60' : ''}>
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="font-medium">{screenLabel(r.screen)}{r.deadEnd ? <span className="ml-1.5 text-amber-600 dark:text-amber-400" title="mostly left or went back">▲</span> : null}</span>
+                  <span className={JUI.fine}>{r.moves} moves · {r.people} people{r.few ? ' · few' : ''}</span>
+                </div>
+                <div className="flex gap-0.5 mt-1">
+                  {parts.filter(([, n]) => n > 0).map(([label, n, fill]) => (
+                    <span key={label} className={`h-3 rounded-sm ${fill}`} style={{ width: `${Math.round((n / total) * 100)}%` }} />
+                  ))}
+                </div>
+                <div className={`mt-0.5 ${JUI.fine}`}>
+                  {parts.filter(([, n]) => n > 0).map(([label, n], i) => (
+                    <span key={label}>{i ? ' · ' : ''}<span className={label === 'left' ? 'text-red-700 dark:text-red-400' : ''}>{label} {n}</span></span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <p className={JUI.fine}>
+            <span className="text-amber-600 dark:text-amber-400">▲</span> most moves left or went back.
+            {data.leftOut.droppedEvents.length ? ` ${plural(data.leftOut.droppedEvents.length, 'person', 'people')} left out: telemetry lost.` : ''}
+          </p>
+        </div>
+      ) : <Empty>No navigation recorded for these people yet.</Empty>) : <Loading failed={failed} what="the next steps" />}
+    </Card>
+  );
+}
+
+// ── Names ──────────────────────────────────────────────────────────────
+
+type NamesList = { title: string; note?: string; sections: Array<{ label: string; people: Person[] }> };
+
+function NamesDialog({ list, onOpen, onClose }: { list: NamesList; onOpen: OpenPerson; onClose: () => void }) {
+  return (
+    <Dialog id="admin-journey-names-dialog" title={list.title} onClose={onClose}>
+      {list.note ? <p className={`${AdminUI.muted} mb-3`}>{list.note}</p> : null}
+      {list.sections.map((sec) => (
+        <div key={sec.label} className="mb-3">
+          <div className={`${JUI.label} mb-1.5`}>{sec.label} · {sec.people.length}</div>
+          {sec.people.length ? <Chips people={sec.people} onOpen={onOpen} /> : <Empty>Nobody.</Empty>}
+        </div>
+      ))}
+    </Dialog>
   );
 }
 
@@ -494,256 +875,6 @@ function ChecksDialog({ s, onOpen, onClose }: { s: Summary; onOpen: OpenPerson; 
   );
 }
 
-type Cohorts = { cohorts: Array<{ day: string; admitted: number; withAccount: number }>; otherWay: { people: number } };
-type FirstMile = {
-  cohort: string; people: MilePerson[];
-  steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
-  notRecorded?: Record<string, NotRecorded>;
-};
-
-function CohortChips({ cohorts, value, onPick, all }: {
-  cohorts: Cohorts | null; value: string | null; onPick: (v: string | null) => void; all?: string;
-}) {
-  if (!cohorts) return null;
-  const chip = (v: string | null, label: string) => (
-    <button key={v ?? 'all'} type="button" className={`${JUI.chip} ${value === v ? JUI.chipOn : JUI.chipOff}`}
-      aria-pressed={value === v} onClick={() => onPick(v)}>{label}</button>
-  );
-  return (
-    <div className="flex flex-wrap gap-1.5 mb-3">
-      {all ? chip(null, all) : null}
-      {cohorts.cohorts.map((c) => chip(c.day, `${weekLabel(c.day)} · ${c.admitted}`))}
-      {chip('other_way', `Came in another way · ${cohorts.otherWay.people}`)}
-    </div>
-  );
-}
-
-function MileDialog({ onOpen, onClose }: { onOpen: OpenPerson; onClose: () => void }) {
-  const { data: cohorts, failed: cohortsFailed } = useJourney<Cohorts>('/api/admin/journey/cohorts');
-  const [day, setDay] = useState<string | null>(null);
-  const picked = day || cohorts?.cohorts[0]?.day || (cohorts ? 'other_way' : null);
-  const { data: mile, failed } = useJourney<FirstMile>(picked ? `/api/admin/journey/first-mile?admitted=${picked}` : null);
-  return (
-    <Dialog id="admin-journey-mile-dialog" title="First mile" onClose={onClose}>
-      <p className={`${AdminUI.muted} mb-3`}>A cohort is everyone admitted on the same day. Each person sits at the furthest step they reached.</p>
-      {cohorts ? <CohortChips cohorts={cohorts} value={picked} onPick={(v) => setDay(v)} /> : <Loading failed={cohortsFailed} what="cohorts" />}
-      {mile ? (
-        <>
-          {mile.people.length ? (
-            <div className="mb-4">
-              {mile.steps.map((st) => (
-                <div key={st.key} className={JUI.row} data-journey-mile-step={st.key}>
-                  <span className="text-sm w-44 shrink-0">{MILE_STEPS[st.key] || st.key}</span>
-                  <span className="font-semibold">{st.passed}</span>
-                  {st.stuck.length ? (
-                    <span className="basis-full sm:basis-auto text-sm">
-                      stuck before it: <Names people={st.stuck} onOpen={onOpen} />
-                    </span>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : <Empty>Nobody in this cohort.</Empty>}
-          {mile.people.map((p, i) => (
-            <div key={`${p.userId ?? p.name}-${i}`} className={JUI.row}>
-              <NameButton person={p} onOpen={onOpen} />
-              <span className={JUI.fine}>furthest: {p.furthest ? MILE_STEPS[p.furthest] || p.furthest : 'none yet'}</span>
-              {p.stuckReason ? <span className={AdminUI.badge.warn}>{p.stuckReason}</span> : null}
-            </div>
-          ))}
-          {Object.values(mile.notRecorded || {}).map((n, i) => <p key={i} className={`${JUI.fine} mt-3`}>Not recorded yet: {n.reason}</p>)}
-        </>
-      ) : picked ? <Loading failed={failed} what="the first mile" /> : null}
-    </Dialog>
-  );
-}
-
-type Stages = {
-  week: string; finished: boolean; counts: Record<string, Count>;
-  stoppedAt: Record<string, Person[]>;
-  people: Array<Person & { activateKinds: string[] }>;
-};
-
-function StagesDialog({ week, onOpen, onClose }: { week: string | null; onOpen: OpenPerson; onClose: () => void }) {
-  const { data, failed } = useJourney<Stages>(`/api/admin/journey/stages${week ? `?week=${week}` : ''}`);
-  return (
-    <Dialog id="admin-journey-stages-dialog" title="Stages" onClose={onClose}>
-      {data ? (
-        <>
-          <p className={`${AdminUI.muted} mb-3`}>Week of {weekLabel(data.week)}{data.finished ? '' : ', so far'}. One yes or no per person.</p>
-          <div className={`${JUI.strip} mb-4`}>
-            {STAGES.map(([key, label]) => (
-              <div key={key} className={JUI.stripCell} data-journey-stage={key}>
-                <span className={JUI.label}>{label}</span>
-                <span className={JUI.stripCount}><Num v={data.counts[key]} /></span>
-              </div>
-            ))}
-          </div>
-          {STAGES.map(([key, label, means]) => {
-            const stopped = data.stoppedAt[key] || [];
-            return (
-              <div key={key} className={JUI.row}>
-                <span className="text-sm w-20 shrink-0 font-medium">{label}</span>
-                <span className={`${JUI.fine} basis-full sm:basis-auto sm:flex-1`}>{means}</span>
-                {stopped.length ? (
-                  <span className="basis-full text-sm">stopped here: <Names people={stopped} onOpen={onOpen} /></span>
-                ) : null}
-              </div>
-            );
-          })}
-          {data.people.some((p) => p.activateKinds.length) ? (
-            <>
-              <div className={`${JUI.label} mt-4`}>How they activated</div>
-              {data.people.filter((p) => p.activateKinds.length).map((p) => (
-                <div key={p.userId ?? p.name} className={JUI.row}>
-                  <NameButton person={p} onOpen={onOpen} />
-                  {p.activateKinds.map((k) => <span key={k} className={AdminUI.badge.secondary}>{ACTIVATE_KINDS[k] || k}</span>)}
-                </div>
-              ))}
-            </>
-          ) : null}
-        </>
-      ) : <Loading failed={failed} what="the stages" />}
-    </Dialog>
-  );
-}
-
-type Coming = { status: 'coming' };
-type Loops = {
-  change: {
-    week: string; steps: string[]; atStep: Record<string, number | Coming>; turnsClosed: Coming | number;
-    live: Turn[]; open: Turn[];
-    perProject: Array<{ slug: string; project: string; thisWeek: number; lastWeek: number; alsoLastWeek: boolean }>;
-  };
-  invite: {
-    steps: string[]; counts: Record<string, number>;
-    pairs: Array<{ host: Person; invitee: Person; letInAt: string; arrived: boolean; didSomething: boolean; invitedSomeone: boolean }>;
-  };
-};
-
-function isComing(v: unknown): v is Coming {
-  return !!v && typeof v === 'object' && (v as Coming).status === 'coming';
-}
-
-function LoopsDialog({ week, onOpen, onClose }: { week: string | null; onOpen: OpenPerson; onClose: () => void }) {
-  const { data, failed } = useJourney<Loops>(`/api/admin/journey/loops${week ? `?week=${week}` : ''}`);
-  return (
-    <Dialog id="admin-journey-loops-dialog" title="Loops" onClose={onClose}>
-      {data ? (
-        <>
-          <div className={JUI.label}>Change loop, in turns</div>
-          <p className={`${AdminUI.muted} mb-2`}>Each piece of feedback or request, at the step it has reached.</p>
-          <div className={`${JUI.strip} mb-4`}>
-            {data.change.steps.map((key) => {
-              const v = data.change.atStep[key];
-              return (
-                <div key={key} className={JUI.stripCell} data-journey-loop-step={key}>
-                  <span className={JUI.label}>{LOOP_STEPS[key] || key}</span>
-                  <span className={isComing(v) ? `${JUI.fine} py-1` : JUI.stripCount}>{isComing(v) ? 'coming' : v}</span>
-                </div>
-              );
-            })}
-          </div>
-          <p className={`${JUI.fine} -mt-2 mb-4`}>
-            Hear back closes a turn: the person who noticed is told it went live, and what they notice next starts the
-            next turn. It is coming, so no turn closes yet.
-          </p>
-          {data.change.perProject.length ? (
-            <>
-              <div className={JUI.label}>Turns per project</div>
-              {data.change.perProject.map((p) => (
-                <div key={p.slug} className={JUI.row}>
-                  <span className="font-medium">{p.project}</span>
-                  <span className="text-sm">{p.thisWeek} this week</span>
-                  <span className={JUI.fine}>{p.lastWeek} the week before</span>
-                </div>
-              ))}
-            </>
-          ) : null}
-          {data.change.live.length ? (
-            <>
-              <div className={`${JUI.label} mt-4`}>Went live</div>
-              {data.change.live.map((t) => <TurnRow key={`${t.slug}#${t.number}`} turn={t} onOpen={onOpen} />)}
-            </>
-          ) : null}
-          <div className={`${JUI.label} mt-4`}>Open</div>
-          {data.change.open.length ? data.change.open.map((t) => <TurnRow key={`${t.slug}#${t.number}`} turn={t} onOpen={onOpen} />)
-            : <Empty>No open turns.</Empty>}
-          <div className={`${JUI.label} mt-5`}>Invite loop</div>
-          <div className={`${JUI.strip} mb-2 mt-1`}>
-            {data.invite.steps.map((key) => (
-              <div key={key} className={JUI.stripCell}>
-                <span className={JUI.label}>{INVITE_STEPS[key] || key}</span>
-                <span className={JUI.stripCount}>{data.invite.counts[key]}</span>
-              </div>
-            ))}
-          </div>
-          {data.invite.pairs.map((p, i) => (
-            <div key={i} className={JUI.row}>
-              <NameButton person={p.host} onOpen={onOpen} />
-              <span className={JUI.fine}>let in</span>
-              <NameButton person={p.invitee} onOpen={onOpen} />
-              <span className={JUI.fine}>
-                {[p.arrived ? 'arrived' : 'not arrived', p.didSomething ? 'did something' : null, p.invitedSomeone ? 'invited someone' : null]
-                  .filter(Boolean).join(' · ')}
-              </span>
-            </div>
-          ))}
-        </>
-      ) : <Loading failed={failed} what="the loops" />}
-    </Dialog>
-  );
-}
-
-type NextSteps = {
-  people: number;
-  leftOut: { droppedEvents: number[]; noNavigation: number[] };
-  starts: Array<{ screen: string; visits: number; people: number }>;
-  rows: Array<{
-    screen: string; moves: number; people: number;
-    next: Array<{ to: string; moves: number; people: number }>;
-    other: number; left: { moves: number; people: number }; deadEnd: boolean; few: boolean;
-  }>;
-};
-
-function NextDialog({ onClose }: { onClose: () => void }) {
-  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
-  const [scope, setScope] = useState<string | null>(null);
-  const { data, failed } = useJourney<NextSteps>(`/api/admin/journey/next-steps${scope ? `?admitted=${scope}` : ''}`);
-  return (
-    <Dialog id="admin-journey-next-dialog" title="Next steps" onClose={onClose}>
-      <p className={`${AdminUI.muted} mb-3`}>Where newcomers went from each screen in their first 28 days. Moves, with the people who made them.</p>
-      <CohortChips cohorts={cohorts} value={scope} onPick={setScope} all="All newcomers" />
-      {data ? (
-        <>
-          <p className={`${JUI.fine} mb-2`}>
-            {data.people} people.
-            {data.leftOut.droppedEvents.length ? ` ${data.leftOut.droppedEvents.length} left out: some of their telemetry was lost.` : ''}
-            {data.leftOut.noNavigation.length ? ` ${data.leftOut.noNavigation.length} with no navigation recorded.` : ''}
-          </p>
-          {data.starts.length ? (
-            <p className="text-sm mb-3">
-              Visits start on {data.starts.map((st) => `${screenLabel(st.screen)} ${st.visits}`).join(', ')}.
-            </p>
-          ) : null}
-          {data.rows.length ? data.rows.map((r) => (
-            <div key={r.screen} className={JUI.row} data-journey-next={r.screen}>
-              <span className="font-medium w-28 shrink-0">{screenLabel(r.screen)}</span>
-              <span className={JUI.fine}>{r.moves} moves, {r.people} people</span>
-              {r.deadEnd ? <span className={AdminUI.badge.warn}>mostly left or back</span> : null}
-              {r.few ? <span className={AdminUI.badge.outline}>few</span> : null}
-              <span className="basis-full text-sm">
-                {r.next.map((n) => `${screenLabel(n.to)} ${n.moves}`).join(', ')}
-                {r.other ? `, Other ${r.other}` : ''}
-                {`, Left ${r.left.moves}`}
-              </span>
-            </div>
-          )) : <Empty>No navigation recorded for these people yet.</Empty>}
-        </>
-      ) : <Loading failed={failed} what="the next steps" />}
-    </Dialog>
-  );
-}
 
 type LeftOutEntry = { userId: number; username: string | null; reason: string; note: string | null; addedBy: string | number | null; addedAt: string };
 type Suggestion = { id: number; username: string; matched_on?: string };
@@ -974,6 +1105,7 @@ function PersonDialog({ userId, onClose }: { userId: number; onClose: () => void
   );
 }
 
+
 // ── The section ────────────────────────────────────────────────────────
 
 function addDays(iso: string, n: number): string {
@@ -986,58 +1118,50 @@ function JourneySection() {
   const [week, setWeek] = useState<string | null>(null);
   const { data: s, failed, reload } = useJourney<Summary>(`/api/admin/journey/summary${week ? `?week=${week}` : ''}`);
   const [dialog, setDialog] = useState<DialogKey | null>(null);
+  const [names, setNames] = useState<NamesList | null>(null);
   const [person, setPerson] = useState<number | null>(null);
   const openPerson = useCallback((id: number) => setPerson(id), []);
   const closeDialog = useCallback(() => setDialog(null), []);
+  const closeNames = useCallback(() => setNames(null), []);
   const closePerson = useCallback(() => setPerson(null), []);
 
   const shown = s?.groups.week || week;
   const current = s?.thisWeekSoFar.week || null;
   const canNext = !!(shown && current && shown < current);
 
-  const more: Array<[DialogKey, string]> = [
-    ['mile', 'First mile'], ['stages', 'Stages'], ['loops', 'Loops'], ['next', 'Next steps'], ['leftout', 'Left out'],
-  ];
-
   return (
     <div id="admin-journey" className="space-y-4">
-      <div className={JUI.card}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className={AdminUI.cardTitle}>Journey</h2>
-            <p className={AdminUI.cardDescription}>Active groups are the North Star. Counts and names, no rates.</p>
-          </div>
-          <div className="flex items-center gap-1">
-            <button type="button" className={AdminUI.btn.outlineSm} aria-label="Week before"
-              disabled={!shown} onClick={() => shown && setWeek(addDays(shown, -7))}>‹</button>
-            <span id="admin-journey-week" className="text-sm px-2 whitespace-nowrap">
-              {shown ? `Week of ${weekLabel(shown)}` : '…'}
-            </span>
-            <button type="button" className={`${AdminUI.btn.outlineSm} disabled:opacity-40`} aria-label="Week after"
-              disabled={!canNext} onClick={() => shown && setWeek(addDays(shown, 7))}>›</button>
-            <button type="button" className={`${AdminUI.btn.link} text-xs ml-2`} onClick={reload}>Refresh</button>
-          </div>
+      <div className={`${JUI.card} flex flex-wrap items-center justify-between gap-3`}>
+        <div className="flex items-center gap-2">
+          <h2 className={AdminUI.cardTitle}>Journey</h2>
+          {s?.demo ? <span className={AdminUI.badge.warn}>demo</span> : null}
         </div>
-        {s?.demo ? <p className={`${AdminUI.badge.warn} mt-2`}>Demo: invented people</p> : null}
-        <div className="flex flex-wrap gap-1.5 mt-3" id="admin-journey-more">
-          {more.map(([key, label]) => (
-            <button key={key} type="button" className={JUI.pill} data-journey-open={key} onClick={() => setDialog(key)}>{label}</button>
-          ))}
+        <div className="flex items-center gap-1">
+          <button type="button" className={AdminUI.btn.outlineSm} aria-label="Week before"
+            disabled={!shown} onClick={() => shown && setWeek(addDays(shown, -7))}>‹</button>
+          <span id="admin-journey-week" className="text-sm px-2 whitespace-nowrap">
+            {shown ? `Week of ${weekLabel(shown)}` : '…'}
+          </span>
+          <button type="button" className={`${AdminUI.btn.outlineSm} disabled:opacity-40`} aria-label="Week after"
+            disabled={!canNext} onClick={() => shown && setWeek(addDays(shown, 7))}>›</button>
+          <button type="button" className={`${AdminUI.btn.ghost} text-xs ml-2`} data-journey-open="leftout"
+            onClick={() => setDialog('leftout')}>Left out</button>
+          <button type="button" className={`${AdminUI.btn.link} text-xs ml-2`} onClick={reload}>Refresh</button>
         </div>
       </div>
       {s ? (
-        <>
-          <GroupsBlock s={s} onOpen={openPerson} onDialog={setDialog} />
-          <StuckBlock s={s} onOpen={openPerson} />
-          <TurnsBlock s={s} onOpen={openPerson} />
-        </>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+          <NorthStarCard s={s} onOpen={openPerson} />
+          <HealthCard s={s} onOpen={openPerson} onDetails={() => setDialog('checks')} />
+          <FirstMileCard s={s} onOpen={openPerson} />
+          <StagesCard week={week} onNames={setNames} />
+          <LoopCard week={week} onOpen={openPerson} />
+          <NextCard />
+        </div>
       ) : <div className={JUI.card}><Loading failed={failed} what="the journey" /></div>}
       {dialog === 'checks' && s ? <ChecksDialog s={s} onOpen={openPerson} onClose={closeDialog} /> : null}
-      {dialog === 'mile' ? <MileDialog onOpen={openPerson} onClose={closeDialog} /> : null}
-      {dialog === 'stages' ? <StagesDialog week={week} onOpen={openPerson} onClose={closeDialog} /> : null}
-      {dialog === 'loops' ? <LoopsDialog week={week} onOpen={openPerson} onClose={closeDialog} /> : null}
-      {dialog === 'next' ? <NextDialog onClose={closeDialog} /> : null}
       {dialog === 'leftout' ? <LeftOutDialog onOpen={openPerson} onClose={closeDialog} /> : null}
+      {names ? <NamesDialog list={names} onOpen={openPerson} onClose={closeNames} /> : null}
       {person != null ? <PersonDialog userId={person} onClose={closePerson} /> : null}
     </div>
   );

@@ -16,7 +16,8 @@
 //    person for the left-out list) and writes only the left-out list;
 //  - a reading the platform does not record reads "not recorded yet", and
 //    Hear back reads "coming", never a number;
-//  - counts and names: no percentages, no charts;
+//  - it is drawn as six chart cards, and every mark carries its count: a
+//    percentage only ever sizes a mark, it is never printed;
 //  - nothing from the API becomes a link;
 //  - the demo payloads ride on ?demo=1, and the demo list cannot be edited;
 //  - details open in dialogs, so nothing expands inside the page;
@@ -68,15 +69,25 @@ test('it reads the Journey routes and writes only the left-out list', () => {
 
 test('a missing record reads "not recorded yet", and Hear back reads "coming"', () => {
   assert.match(src, /function Num\(\{ v \}: \{ v: Count \}\) \{\n  if \(isNotRecorded\(v\)\) return <span className=\{JUI\.fine\} title=\{v\.reason\}>not recorded yet<\/span>;/,
-    'a stage count that is not recorded never renders as a number');
-  assert.match(src, /\{isComing\(v\) \? 'coming' : v\}/, 'a loop step that is coming says so');
+    'a count that is not recorded never renders as a number');
+  assert.match(src, /typeof v === 'number' \? \([\s\S]{0,900}?not recorded yet<\/span>/,
+    'a stage that is not recorded draws a dashed "not recorded yet" bar, not an empty one');
+  assert.match(src, /\{coming \? 'coming' : String\(v\)\}/, 'a loop step that is coming says so on its node');
+  assert.match(src, /const coming = isComing\(v\);/);
   assert.match(src, /\(v as Coming\)\.status === 'coming'/);
-  assert.match(src, /<Num v=\{data\.counts\[key\]\} \/>/, 'the stage strip goes through Num');
 });
 
-test('counts and names only: no percentages, no charts, no links from data', () => {
-  assert.ok(!src.includes('%'), 'no percentage is drawn');
-  assert.ok(!/<svg|<canvas|from '[^']*chart/i.test(src), 'no chart');
+test('six chart cards, every mark counted, no percentage printed, no links from data', () => {
+  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'next']) {
+    assert.ok(src.includes(`id="admin-journey-${id}"`), `the ${id} card`);
+  }
+  for (const line of src.split('\n').filter((l) => l.includes('%'))) {
+    assert.match(line, /(width|height): `\$\{[^`]*\}%`/, `a percentage only sizes a mark: ${line.trim()}`);
+  }
+  assert.match(src, /<Trend trend=\{trend\} shown=\{g\.week\} \/>/, 'the North Star carries its eight weeks');
+  assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
+  assert.match(src, /role="img" aria-label="The change loop, turns at each step"/, 'the loop is drawn as a ring');
+  assert.ok(!/<canvas|from '[^']*chart/i.test(src), 'no chart library: plain elements and one SVG');
   assert.ok(!/<a[\s>]|href=/.test(src), 'nothing is rendered as an anchor');
   assert.match(src, /location\.hash = `#admin\/support\/\$\{p\.userId\}`/,
     'the one jump is to Support, by a numeric id, through the hash');
@@ -88,11 +99,11 @@ test('the demo rides on ?demo=1 and cannot be edited', () => {
   assert.match(src, /`\$\{path\}\$\{path\.includes\('\?'\) \? '&' : '\?'\}demo=1`/);
   assert.match(src, /const canWrite = !DEMO && !!consoleApi\(\)\?\.canWrite\?\.\(\);/,
     'the left-out controls need a full admin and real data');
-  assert.match(src, /Demo: invented people/);
+  assert.match(src, /\{s\?\.demo \? <span className=\{AdminUI\.badge\.warn\}>demo<\/span> : null\}/);
 });
 
 test('details open in dialogs, one at a time on top', () => {
-  for (const id of ['mile', 'stages', 'loops', 'next', 'leftout', 'checks', 'person']) {
+  for (const id of ['names', 'leftout', 'checks', 'person']) {
     assert.ok(src.includes(`id="admin-journey-${id}-dialog"`), `${id} is a dialog`);
   }
   assert.match(src, /if \(open\[open\.length - 1\] === panel\.current\) onClose\(\);/,
