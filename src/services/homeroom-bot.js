@@ -266,6 +266,13 @@ const APP_AGAIN_REASON = 'app_again';
 // The queue reason of an issue whose bot proposal's checks settled failing
 // on its current head (noteProposalChecks): a follow-up turn fixes them.
 const CHECKS_REASON = 'checks_failing';
+// The queue reason of a CLOSED issue whose bot proposal's thread saw a
+// person's message the last run has not looked at (#3703): a read-only
+// follow-up answers it there. Like a restart's and a failing check's row,
+// it is the bot's own doing, so a refresh that runs before the turn keeps
+// it — a closed issue is otherwise never quiet, and the refresh would
+// delete its own row on the next pass.
+const PROPOSAL_REPLY_REASON = 'proposal_reply';
 // Rows the bot queued for itself rather than for anything on the issue: a
 // restart's (#3471) and a failing check's. The issue has not changed since
 // the bot last looked, which is exactly what a refresh reads as "nothing
@@ -273,7 +280,7 @@ const CHECKS_REASON = 'checks_failing';
 // open and nobody else has it. It used to delete a restart's row on the
 // very pass its wake started, which is how a live build a restart
 // interrupted was never looked at again (recipebot #48, run 613).
-const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON]);
+const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, PROPOSAL_REPLY_REASON]);
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -944,10 +951,10 @@ async function threadActivityByIssue(pool, appId) {
 
 /**
  * #3264: the newest person's message in the discussion of each of the bot's
- * open proposals on this app, by the issue it answers. Messages only
- * (`msg_type = 'message'`), so the promote and vote-reset notices never
- * re-queue it, and from people only (#3288): the bot's own replies there are
- * ordinary messages too.
+ * proposals on this app — up for a vote, merging, or merged (#3703) — by
+ * the issue it answers. Messages only (`msg_type = 'message'`), so the
+ * promote and vote-reset notices never re-queue it, and from people only
+ * (#3288): the bot's own replies there are ordinary messages too.
  */
 async function proposalThreadActivityByIssue(pool, appId, botId) {
   const { rows } = await pool.query(
@@ -958,7 +965,7 @@ async function proposalThreadActivityByIssue(pool, appId, botId) {
          ON m.app_id = cs.app_id AND m.thread_type = 'session' AND m.thread_ref = cs.id
         AND m.msg_type = 'message' AND m.deleted_at IS NULL
        LEFT JOIN users author ON author.id = m.user_id
-      WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'
+      WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status IN ('promoted', 'merging', 'merged')
         AND author.is_synthetic IS NOT TRUE
       GROUP BY n`,
     [appId, botId],
@@ -1051,6 +1058,30 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
     if (verdict.eligible) eligible.push({ n, ...verdict });
     else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
     if (verdict.reason === 'unchanged' || verdict.reason === 'held') quiet.push(n);
+    // #3703: a closed issue queued for a proposal-thread reply stays
+    // queued until the follow-up answers it: its run row's thread_seen_at
+    // catches up then, and the reply stops being new.
+    if (verdict.reason === 'closed' && toMs(proposalThreads.get(n)) > toMs(lastRun?.thread_seen_at)) {
+      quiet.push(n);
+    }
+  }
+  // #3703: a closed issue whose bot-proposal thread saw a person's message
+  // after the last run looked is queued anyway — the follow-up answers it
+  // read-only, and the run row's thread_seen_at then catches up, so the
+  // same reply does not loop. classifyIssue drops closed issues before
+  // this, on purpose: the proposal is the only door a reply through a
+  // closed issue still has.
+  if (capRoom) {
+    for (const issue of issues) {
+      const n = Number(issue.number);
+      if (!issue.state || issue.state === 'open') continue;
+      if (busy.has(n)) continue;
+      const lastRun = lastRuns.get(n);
+      const activityAt = toMs(proposalThreads.get(n));
+      if (!activityAt) continue;
+      if (lastRun && activityAt <= toMs(lastRun.thread_seen_at)) continue;
+      eligible.push({ n, eligible: true, reason: PROPOSAL_REPLY_REASON, priority: 2, threadSeenAt: new Date(activityAt).toISOString() });
+    }
   }
   if (capRoom) {
     const room = { ...capRoom };
@@ -1765,7 +1796,14 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 
   const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
   const issue = fetched?.issue || null;
-  if (!issue || (issue.state && issue.state !== 'open')) {
+  // #3703: a closed issue is still answered when the bot has its own
+  // proposal for it — a reply on that proposal's thread after the merge
+  // deserves an answer (read-only; see runFollowUp). Only an issue with no
+  // bot proposal stays dropped as not open. In shadow mode nothing follows
+  // up, so the old gate stands.
+  const closedWithProposal = !!issue && issue.state && issue.state !== 'open'
+    && liveMode && await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+  if (!issue || (issue.state && issue.state !== 'open' && !closedWithProposal)) {
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     return { ran: false, reason: 'not_open' };
   }
@@ -1799,23 +1837,18 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       // One proposal per issue: the group is already voting on the bot's
       // answer, and a second build would be a second, competing proposal.
       // What people said since it proposed is answered ON that proposal
-      // (#3264), while it is still up for a vote.
-      if (open.status === 'promoted') {
-        return runFollowUp(pool, config, {
-          bot, app, repo, item, issue, proposal: open, runMode,
-          model: stageModel(settings, config, 'followup'), turnBudgetMs, startedMs,
-          recordFailure,
-          deps: {
-            github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
-            activeWorkers, votes: deps.votes || null, ...liveD,
-          },
-        });
-      }
-      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
-      log.info('homeroom-bot', 'Issue\'s bot proposal is merging; not looking again', {
-        app: app.slug, issueNumber, sessionId: open.id,
+      // (#3264). While it is up for a vote the follow-up may still revise;
+      // once it is merging or has merged the turn runs read-only (#3703),
+      // so a question there is never met with silence.
+      return runFollowUp(pool, config, {
+        bot, app, repo, item, issue, proposal: open, proposalStatus: open.status, runMode,
+        model: stageModel(settings, config, 'followup'), turnBudgetMs, startedMs,
+        recordFailure,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
+          activeWorkers, votes: deps.votes || null, ...liveD,
+        },
       });
-      return { ran: false, reason: 'has_proposal' };
     }
     // An issue a restart sent back (#3471) was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
@@ -3239,7 +3272,7 @@ async function buildLaneSummary(pool) {
  * as seen and nothing is posted or spent.
  */
 async function runFollowUp(pool, config, {
-  bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
+  bot, app, repo, item, issue, proposal, proposalStatus = 'promoted', runMode, model, turnBudgetMs, startedMs,
   recordFailure, deps,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
@@ -3302,11 +3335,12 @@ async function runFollowUp(pool, config, {
   }
 
   // The proposal as every revision path reads it (cs.* plus the app's
-  // identity), and only while it is still the bot's open proposal.
+  // identity), while it is still the bot's proposal: up for a vote,
+  // merging, or already merged (#3703).
   const { rows: sessionRows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status IN ('promoted', 'merging', 'merged')`,
     [proposal.id, bot.id],
   );
   const session = sessionRows[0];
@@ -3320,7 +3354,12 @@ async function runFollowUp(pool, config, {
       WHERE proposal_session_id = $1 AND verdict = 'revise'`,
     [session.id],
   );
-  const canRevise = (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
+  // While it is up for a vote the turn may still revise (build) until the
+  // revisions are spent; once it is merging or merged, it never touches the
+  // code again (#3703): scout, so headMoved is false and nothing is pushed
+  // or reconciled, whatever the turn's stub reports.
+  const readOnly = proposalStatus !== 'promoted';
+  const canRevise = !readOnly && (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
@@ -3342,6 +3381,7 @@ async function runFollowUp(pool, config, {
   });
   const prompt = followup.followUpPrompt({
     seed, proposalBlock, prNumber: session.pr_number, replies, canRevise,
+    proposalState: proposalStatus,
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -3354,7 +3394,7 @@ async function runFollowUp(pool, config, {
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
     },
-    extra: { model, canRevise, prNumber: session.pr_number || null, mode },
+    extra: { model, canRevise, prNumber: session.pr_number || null, mode, proposalState: proposalStatus },
   };
 
   const turn = await followup.runFollowUpTurn({
@@ -4562,15 +4602,16 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
 
 /**
  * #3264: somebody wrote in a proposal's discussion. When that proposal is
- * the bot's own and still up for a vote, it is activity on the issue it
- * answers; any other proposal's thread is none of the bot's business and
- * costs one indexed lookup. Never throws.
+ * the bot's own — still up for a vote, merging, or already merged (#3703)
+ * — it is activity on the issue it answers; any other proposal's thread is
+ * none of the bot's business and costs one indexed lookup. Never throws.
  */
 async function noteProposalActivity(pool, { appId, sessionId } = {}) {
   try {
     const { rows } = await pool.query(
       `SELECT cs.linked_issues FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
-        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.status = 'promoted' AND u.username = $3`,
+        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.status IN ('promoted', 'merging', 'merged')
+        AND u.username = $3`,
       [Number(sessionId), Number(appId), BOT_USERNAME],
     );
     const issueNumber = Array.isArray(rows[0]?.linked_issues) ? rows[0].linked_issues[0] : null;
@@ -5239,6 +5280,7 @@ module.exports = {
   announceBuilt,
   RESTART_REASON,
   APP_AGAIN_REASON,
+  PROPOSAL_REPLY_REASON,
   CHECKS_REASON,
   SELF_QUEUED_REASONS,
   noteProposalChecks,

@@ -106,7 +106,7 @@ function describeReply(r) {
  * discussion. The new replies are listed again at the end so the model
  * answers THEM, not the issue from scratch.
  */
-function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [], canRevise = true }) {
+function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [], canRevise = true, proposalState = null }) {
   const pr = prNumber ? `PR #${prNumber}` : 'a proposal';
   const actions = canRevise
     ? '"answer" | "ask" | "revise" | "person"'
@@ -129,6 +129,14 @@ function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [
   if (canRevise) {
     lines.push(
       '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again.',
+    );
+  } else if (proposalState === 'merging') {
+    lines.push(
+      '- This proposal is merging right now. You can no longer change it in place: a change now would race the merge, and its votes are already spent. If they want another change, choose "person" and say what they asked for, so a person can take it over. Change no files.',
+    );
+  } else if (proposalState === 'merged') {
+    lines.push(
+      '- This proposal has already merged. You can no longer change it in place: another change needs a new proposal, which is not this turn\'s job. If they want another change, choose "person" and say what they asked for, so a person can take it over. Change no files.',
     );
   } else {
     lines.push(

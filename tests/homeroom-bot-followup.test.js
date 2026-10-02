@@ -60,6 +60,14 @@ test('the prompt lists the replies, and offers revise only while revisions remai
   assert.doesNotMatch(capped, /- "revise":/);
   assert.match(capped, /"action": "answer" \| "ask" \| "person"/);
   assert.match(capped, /already revised this proposal as many times as you may/);
+
+  const merging = followup.followUpPrompt({ seed: 'SEED', prNumber: 25, replies, canRevise: false, proposalState: 'merging' });
+  assert.match(merging, /This proposal is merging right now/);
+  assert.doesNotMatch(merging, /already revised this proposal as many times as you may/);
+
+  const merged = followup.followUpPrompt({ seed: 'SEED', prNumber: 25, replies, canRevise: false, proposalState: 'merged' });
+  assert.match(merged, /This proposal has already merged/);
+  assert.doesNotMatch(merged, /already revised this proposal as many times as you may/);
 });
 
 test('the action is the last fenced block; anything else is not guessed', () => {
@@ -108,7 +116,7 @@ function harness({
       }
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
-        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
+        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: proposalStatus, branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
@@ -255,11 +263,54 @@ test('after MAX_REVISIONS the turn runs read-only, and can only hand over', asyn
   assert.equal(followup.MAX_REVISIONS, 3);
 });
 
-test('a proposal that is merging is left alone', async (t) => {
-  const h = harness({ proposalStatus: 'merging', comments: [{ author: 'evan', body: 'x', createdAt: '2026-09-26T11:30:00Z' }] });
+// #3703: past the vote the bot still answers, read-only. The turn runs
+// scout on the proposal's own session and branch, the prompt offers no
+// revise and says why, an answer posts where it was asked, the run row is
+// tied to the proposal, and nothing is reconciled even when the turn's
+// stub reports a pushed head.
+async function assertReadOnlyTurn(t, proposalState) {
+  const h = harness({
+    proposalStatus: proposalState,
+    proposalThread: [{ author: 'evan', body: 'does the order make sense though?', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"answer","reply":"It is the same intervals, harder."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
   const out = await run(t, h);
-  assert.deepEqual(out, { ran: false, reason: 'has_proposal' });
-  assert.equal(h.calls.exec.length, 0);
+  assert.equal(out.verdict, 'answer');
+  assert.equal(h.calls.exec.length, 1);
+  assert.equal(h.calls.exec[0].id, 5001, 'on the proposal\'s own session');
+  assert.equal(h.calls.exec[0].opts.branchName, 'dev/homeroom_bot-5001', 'on its branch');
+  assert.equal(h.calls.loop.mode, 'scout', 'no commit, no push');
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /- "revise":/);
+  assert.match(h.calls.exec[0].opts.prompt, proposalState === 'merging'
+    ? /This proposal is merging right now/
+    : /This proposal has already merged/);
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /already revised this proposal as many times as you may/);
+  assert.equal(h.calls.reconciled.length, 0, 'the pushed head is not reconciled');
+  assert.equal(h.calls.posts.length, 1);
+  assert.equal(h.calls.posts[0].kind, 'followup_answer');
+  assert.equal(h.calls.posts[0].proposalSessionId, 5001, 'asked in the proposal thread, answered there too');
+  assert.match(h.calls.posts[0].text, /It is the same intervals, harder/);
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'answer');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+}
+
+test('a person\'s reply while the proposal is merging is answered read-only (#3703)', async (t) => {
+  await assertReadOnlyTurn(t, 'merging');
+});
+
+test('a person\'s reply after the proposal merged is answered read-only (#3703)', async (t) => {
+  await assertReadOnlyTurn(t, 'merged');
+});
+
+test('a closed issue with a bot proposal follows up instead of returning not_open (#3703)', async (t) => {
+  const h = harness({ proposalStatus: 'merged', comments: [{ author: 'evan', body: 'one more question', createdAt: '2026-09-26T11:30:00Z' }] });
+  h.deps.github.fetchPublicIssue = async () => ({ issue: { number: 24, title: 'Use darker color', body: 'darker please', state: 'closed' } });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer', 'the turn ran; the issue was not dropped as not_open');
+  assert.equal(h.calls.exec.length, 1);
+  assert.equal(h.calls.loop.mode, 'scout');
 });
 
 // ── Getting it queued ────────────────────────────────────────────────────
@@ -290,12 +341,13 @@ test('on a live app, a person\'s message in the bot proposal\'s thread is activi
   assert.equal(inserts.length, 0, 'a shadow app never follows up');
 });
 
-test('a message in the bot\'s proposal thread wakes it; any other proposal\'s does not', async () => {
+test('a message in the bot\'s proposal thread wakes it, promoted or past the vote (#3703); any other proposal\'s does not', async () => {
   const asked = [];
   const pool = (rows) => ({ async query(sql, params) { asked.push({ s: String(sql), params }); return { rows }; } });
   assert.equal(await bot.noteProposalActivity(pool([{ linked_issues: [24] }]), { appId: 9, sessionId: 5001 }), true);
   assert.deepEqual(asked[0].params, [5001, 9, 'homeroom_bot']);
-  assert.match(asked[0].s, /cs\.status = 'promoted'/);
+  assert.match(asked[0].s, /cs\.status IN \('promoted', 'merging', 'merged'\)/,
+    'a reply on a merging or merged proposal\'s thread wakes the issue too');
   assert.equal(await bot.noteProposalActivity(pool([]), { appId: 9, sessionId: 6000 }), false);
   const ws = read('src/services/ws.js');
   assert.match(ws, /if \(thread && thread\.type === 'session'\) noteProposalActivityForBot\(pool, client\.appId, thread\.ref\);/);
@@ -310,7 +362,7 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));
   assert.match(activity, /m\.msg_type = 'message'/);
-  assert.match(activity, /cs\.status = 'promoted'/);
+  assert.match(activity, /cs\.status IN \('promoted', 'merging', 'merged'\)/,
+    'a merging or merged proposal\'s newest person message counts as the issue\'s activity');
   assert.match(activity, /author\.is_synthetic IS NOT TRUE/, 'the bot\'s own reply there does not re-queue it');
 });
-

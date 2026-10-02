@@ -1128,6 +1128,48 @@ test('refreshApp leaves held issues alone on a shadow app', async () => {
   assert.equal(out.queued, 0, 'no capRoom, no retries: in shadow a hold is only a number on the dashboard');
 });
 
+test('refreshApp queues a closed issue whose bot proposal\'s thread saw a person\'s reply (#3703)', async () => {
+  const inserts = [];
+  // #7's last run looked before evan replied on the proposal's thread;
+  // #8 is closed with nothing new on any bot proposal's thread.
+  let runs = [{ issue_number: 7, thread_seen_at: '2026-09-01T00:00:00Z', cap_suppressed: null, created_at: '2026-09-01T00:00:00Z' }];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM issue_claims|UNNEST\(cs\.linked_issues\) AS n\s+FROM chat_sessions cs JOIN users|headless_issue_number AS n|created_from_issue_number AS n/.test(s)) return { rows: [] };
+      if (/CROSS JOIN LATERAL UNNEST\(cs\.linked_issues\)/.test(s)) {
+        return { rows: [{ n: 7, last_at: '2026-09-02T00:00:00Z' }] };
+      }
+      if (/FROM chat_messages/.test(s)) return { rows: [] };
+      if (/FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: runs };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
+      throw new Error(`unexpected query: ${s.slice(0, 80)}`);
+    },
+  };
+  const github = {
+    async fetchPublicIssues() {
+      return { issues: [
+        { number: 7, state: 'closed', updatedAt: '2026-09-01T00:00:00Z' },
+        { number: 8, state: 'closed', updatedAt: '2026-09-01T00:00:00Z' },
+      ] };
+    },
+  };
+  await bot.refreshApp(pool, { id: 9, slug: 'rss-reader-4113da', repo_url: 'https://github.com/usernode-bot/rss-reader' },
+    { github, bot: { id: 77 }, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+  assert.deepEqual(inserts, [[9, 7, 2, 'proposal_reply', '2026-09-02T00:00:00.000Z', bot.SELF_QUEUED_REASONS]],
+    'the closed issue is queued for the reply, with the reply\'s time as thread_seen_at; the quiet closed one stays out');
+
+  // The follow-up answered, so the run row's thread_seen_at caught up to
+  // the reply: the same activity queues nothing the next time.
+  inserts.length = 0;
+  runs = [{ issue_number: 7, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: null, created_at: '2026-09-02T00:00:00Z' }];
+  await bot.refreshApp(pool, { id: 9, slug: 'rss-reader-4113da', repo_url: 'https://github.com/usernode-bot/rss-reader' },
+    { github, bot: { id: 77 }, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+  assert.deepEqual(inserts, [], 'a reply the last run already looked at does not loop');
+});
+
 test('#3624: on a live import, the issues it came with wait until something happens on them', async () => {
   const IMPORTED = '2026-09-05T00:00:00Z';
   const inserts = [];

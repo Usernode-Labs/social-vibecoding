@@ -477,7 +477,8 @@ test('the route it dispatches into is the real Propose handler, and the bot must
 
 test('an issue with an open bot proposal is left alone', () => {
   const q = LIVE_SRC.slice(LIVE_SRC.indexOf('async function openBotProposal'));
-  assert.match(q.slice(0, 600), /user_id = \$2 AND \$3 = ANY\(linked_issues\)\s+AND status IN \('promoted', 'merging'\)/);
+  assert.match(q.slice(0, 600), /user_id = \$2 AND \$3 = ANY\(linked_issues\)\s+AND status IN \('promoted', 'merging', 'merged'\)/,
+    '#3703: a merged proposal is still the bot\'s own, so a reply on its thread is answered');
 });
 
 // ── The build ────────────────────────────────────────────────────────────

@@ -1030,7 +1030,7 @@ async function openBotProposal(pool, botId, appId, issueNumber) {
   const { rows } = await pool.query(
     `SELECT id, status, pr_number FROM chat_sessions
       WHERE app_id = $1 AND user_id = $2 AND $3 = ANY(linked_issues)
-        AND status IN ('promoted', 'merging') AND is_headless = FALSE
+        AND status IN ('promoted', 'merging', 'merged') AND is_headless = FALSE
       ORDER BY id DESC LIMIT 1`,
     [appId, botId, issueNumber],
   );
