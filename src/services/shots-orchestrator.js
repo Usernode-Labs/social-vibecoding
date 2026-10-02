@@ -954,6 +954,7 @@ async function executeRun(config, options, injected = {}) {
   let app = options.app;
   let pair = null;
   let registration = null;
+  let workerHold = null;
   let failurePhase = 'load_run';
   let temporaryWorkerAttempted = false;
   const metrics = newRunMetrics();
@@ -972,6 +973,10 @@ async function executeRun(config, options, injected = {}) {
       ({ session, app } = publicSessionAndApp(row));
       run = current;
     }
+    // The agent works in the proposal's own worker. Hold it for the whole
+    // run, so a merge meanwhile retires it once the run is done rather than
+    // under the agent (worker.holdWorker).
+    workerHold = deps.worker.holdWorker?.(session.id) || null;
     if (run.current_run_id && run.current_run_id !== run.id) {
       throw new ShotsOrchestrationError('stale_shots_operation', 'A newer run took over these before/after shots before this one started.');
     }
@@ -1301,7 +1306,17 @@ async function executeRun(config, options, injected = {}) {
         }
       }
     } finally {
-      if (temporaryWorkerAttempted) {
+      let retired = false;
+      if (workerHold) {
+        try { retired = await workerHold.release(); }
+        catch (error) {
+          log.warn('shots', 'Could not retire the worker the run kept through its merge', {
+            sessionId: session.id, runId: run?.id || options.runId || null,
+            error: error.message,
+          });
+        }
+      }
+      if (temporaryWorkerAttempted && !retired) {
         try {
           await deps.worker.destroyCcVolume(session.id);
           log.info('shots', 'Temporary preview worker released', {
