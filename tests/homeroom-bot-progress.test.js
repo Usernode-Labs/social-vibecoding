@@ -101,6 +101,8 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ proposal_status: 'merged' }), 'approved and live');
   assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'the build ran past its time limit' }),
     'the build did not succeed: the build ran past its time limit');
+  assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'skipped: the request was closed before its build started' }),
+    'not built: the request was closed before its build started');
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 

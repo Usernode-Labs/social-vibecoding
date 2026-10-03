@@ -218,6 +218,9 @@ function outcomeOf(row) {
       }
       if (row.build_ok === true) return 'proposed';
       if (row.build_ok === false) {
+        // A build its request was closed before (homeroom-bot.js buildOne)
+        // never started: the work stopped, nothing went wrong in it.
+        if (/^skipped:/.test(String(row.build_error || ''))) return 'stopped';
         return /^blocked:/.test(String(row.build_error || '')) ? 'blocked' : 'build_failed';
       }
       return null;
@@ -379,7 +382,8 @@ async function cardsFor(pool, { user, settings = null, config = null, deps = {},
 // which the bot is working on it this minute: reading it, then the plan and
 // the build a ready verdict starts. Each is one the tray lists under Now
 // (homeroom-bot-tray.js, as 'looking' or 'building'). Not a request waiting
-// in the queue (its card comes when its look starts), not a follow-up on
+// in the queue (its card comes when its look starts) or a ready verdict
+// waiting its turn to be built (when its build starts), not a follow-up on
 // its proposal or a merge (the card before them ended at "proposal up"),
 // and nothing waiting on the person, the group or a cap.
 const UNDER_WAY_STAGES = Object.freeze(['reading', 'starting', 'planning', 'building', 'proposing']);

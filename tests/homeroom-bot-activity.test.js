@@ -56,6 +56,8 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true })), 'proposed', 'built, its proposal a moment from recorded');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'turn timed out' })), 'build_failed');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'blocked: needs a paid API' })), 'blocked');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request was closed before its build started' })), 'stopped',
+    'a build its request was closed before never started: nothing went wrong in it');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', cap_suppressed: 'proposals_per_app' })), 'held');
   assert.equal(activity.outcomeOf(run({ verdict: 'question', cap_suppressed: 'questions_per_day' })), 'held',
     'a question held back by a cap was never asked');
@@ -234,10 +236,11 @@ test('work under way is a look being read, or the plan and build its ready verdi
     assert.ok(['looking', 'building'].includes(traySvc.PHASE_OF_STAGE[stage]), stage);
   }
   // Everything else the tray lists under Now is not a look of the request's
-  // own: waiting in the queue, a follow-up on its proposal, a merge, a
-  // project being set up. None of them is given a card.
+  // own: waiting in the queue, a ready verdict waiting its turn to be built,
+  // a follow-up on its proposal, a merge, a project being set up. None of
+  // them is given a card.
   const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !activity.UNDER_WAY_STAGES.includes(stage)).sort();
-  assert.deepEqual(others, ['fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
+  assert.deepEqual(others, ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
 });
 
 test('a look being read is keyed as the loop keys its card; a plan or build by its run, begun when its look began', () => {
@@ -261,7 +264,7 @@ test('a look being read is keyed as the loop keys its card; a plan or build by i
     'a backlog pass that went on to build is work under way like any other');
   assert.equal(activity.pieceOf({ ...ran, run_id: null }, { stage: 'building' }), null);
 
-  for (const stage of ['queued', 'question', 'held', 'stalled', 'revising', 'fixing', 'followup_queued', 'fix_queued', 'merging', 'checks', 'vote', 'setting_up']) {
+  for (const stage of ['queued', 'build_queued', 'question', 'held', 'stalled', 'revising', 'fixing', 'followup_queued', 'fix_queued', 'merging', 'checks', 'vote', 'setting_up']) {
     assert.equal(activity.pieceOf({ ...row, ...ran }, { stage }), null, stage);
   }
   assert.equal(activity.pieceOf(ran, { stage: 'building', waitingOn: 'them' }), null);

@@ -256,6 +256,9 @@ function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
   if (row.proposal_status === 'closed') return 'its proposal was closed without merging';
   if (row.mode !== 'live') return null;
+  if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
+    return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
+  }
   if (row.build_ok === false) return `the build did not succeed${row.build_error ? `: ${String(row.build_error).slice(0, 200)}` : ''}`;
   switch (row.verdict) {
     case 'person': return 'left for the group to decide';

@@ -97,6 +97,7 @@ test('what a run came to, in the activity cards\' words', () => {
   assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: true }), 'proposed', 'a build that finished is a proposal');
   assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: false }), 'build_failed');
   assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: false, build_error: 'blocked: needs a secret' }), 'blocked');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request was closed before its build started' }), 'stopped');
   assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: null }), null, 'a build nothing has finished yet');
   assert.equal(tray.outcomeOf({ verdict: 'question', cap_suppressed: 'questions_per_app' }), 'held', 'a held verdict was never sent');
   for (const verdict of ['question', 'person', 'empty', 'failed', 'answer', 'revise']) {
