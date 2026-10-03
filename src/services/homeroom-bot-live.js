@@ -1433,19 +1433,27 @@ async function draftSpec({
   const read = readSpec(routed.result?.lastResultText);
   if (!read.ok) return { ...read, costUsd };
   const { specMd } = read;
-  let version = null;
+  const version = await publishSpec({ pool, sessions, session, specMd, model });
+  return { ok: true, specMd, version, costUsd };
+}
+
+/**
+ * Store a spec on its build's session with the same three effects a
+ * person's scout has: spec_md, a numbered version, and the spec card in the
+ * session's own transcript. Resolves the version, or null when it could not
+ * be stored (the build goes on from the spec either way).
+ */
+async function publishSpec({ pool, sessions, session, specMd, model }) {
   try {
-    // The same three effects a person's scout has: spec_md, a numbered
-    // version, and the spec card in the session's own transcript.
     const published = await sessions.persistScoutPublication({
       pool, sessionId: session.id, content: specMd, hadSpec: false,
       agentBackend: 'codex_openrouter', agentModel: model,
     });
-    version = published?.specVersion ?? null;
+    return published?.specVersion ?? null;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not store the spec; building from it anyway', { sessionId: session.id, err: err.message });
+    return null;
   }
-  return { ok: true, specMd, version, costUsd };
 }
 
 async function buildAndPropose({
@@ -1570,9 +1578,15 @@ async function buildAndPropose({
 
   // A spec already written, by a spec turn a restart interrupted and
   // recovery finished (#3401), is built from as it is, not written again.
+  // A live build's (`propose`) was never said: the process that wrote it
+  // went with the restart before it could post it. So it is stored on this
+  // session and said below, once, as a spec just written would be.
   if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   spec = presetSpec
-    ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
+    ? {
+      ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
+      version: propose ? await publishSpec({ pool, sessions, session, specMd: String(presetSpec), model: specModel || model }) : null,
+    }
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion,
@@ -1592,7 +1606,7 @@ async function buildAndPropose({
   const skippedEarly = await skipNow();
   if (skippedEarly) return { ...(await fail(skippedEarly)), skipped: skippedEarly, costUsd: spec.costUsd ?? null };
   if (spec.ok) {
-    if (onSpec && !spec.preset) {
+    if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
         await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd });

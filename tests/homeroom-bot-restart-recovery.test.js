@@ -118,13 +118,17 @@ function turn(extra = {}) {
 }
 
 /** A pool that answers the session read, the run lookup and the cost sum. */
-function makePool({ session, run = RUN, cost = 0.42, liveRun = null }) {
+function makePool({ session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [] }) {
   const calls = [];
   return {
     calls,
     async query(sql, params = []) {
       const s = String(sql);
       calls.push({ sql: s, params });
+      // The request's earlier live builds, newest first (restartedBuildsBefore).
+      if (/SELECT build_error FROM homeroom_bot_runs/.test(s)) return { rows: earlierBuilds };
+      // A live run put back in line with its kept plan (resumeLiveBuildFromSpec).
+      if (/SET build_spec_md = \$2, build_cost_usd = \$3, build_session_id = NULL/.test(s)) return { rows: [{ id: params[0] }] };
       if (/SELECT cs\.\*/.test(s) && /FROM chat_sessions cs/.test(s)) return { rows: session ? [session] : [] };
       if (/WHERE build_session_id = \$1 AND mode = 'live'/.test(s)) return { rows: liveRun ? [liveRun] : [] };
       if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1/.test(s)) return { rows: run ? [run] : [] };
@@ -439,15 +443,36 @@ test('a live build that pushed nothing says so on the issue, instead of going si
   assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)));
 });
 
-test('a live spec turn sends the issue back to be triaged, and a BLOCKED one says so', async () => {
+const SPEC_TEXT = '# Spec\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny';
+const resumes = (pool) => pool.calls.filter((c) => /SET build_spec_md = \$2, build_cost_usd = \$3, build_session_id = NULL/.test(c.sql));
+
+test('a live spec turn that wrote a plan keeps it, and the build goes on from it', async () => {
   stubLive();
-  journalTail = async () => ({ lastResultText: '# Spec\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny', exitCode: 0 });
+  journalTail = async () => ({ lastResultText: SPEC_TEXT, exitCode: 0 });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.deepEqual(requeues(pool), [], 'not sent back to be triaged and planned again');
+  const [resume] = resumes(pool);
+  assert.ok(resume, 'its run is back in line for its build');
+  assert.deepEqual(resume.params, [950, SPEC_TEXT, 0.42], 'with the plan, and what writing it cost');
+  assert.match(resume.sql, /live_build_waiting_at = NOW\(\)/);
+  assert.match(resume.sql, /WHERE id = \$1 AND mode = 'live' AND build_ok IS NULL AND proposal_session_id IS NULL/);
+  assert.equal(liveOutcome(pool), undefined, 'no outcome recorded: the build is not over');
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said on the issue yet: the build says the plan when it starts');
+  assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)), 'the interrupted session is put away');
+});
+
+test('a live spec turn with no usable plan sends the issue back to be triaged, and a BLOCKED one says so', async () => {
+  stubLive();
+  journalTail = async () => ({ lastResultText: '', exitCode: 0 });
   let session = botSession({ active_turn: turn({ mode: 'scout' }) });
   let pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await adopt(pool, session);
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
+  assert.deepEqual(resumes(pool), []);
   assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
 
   stubLive();
@@ -461,6 +486,7 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   assert.deepEqual(liveOutcome(pool).slice(0, 2), [950, false]);
   assert.match(liveOutcome(pool)[2], /^blocked: the app keeps no scores to rank\./);
   assert.deepEqual(requeues(pool), []);
+  assert.deepEqual(resumes(pool), []);
 });
 
 test('a live build whose worker did not survive sends the issue back to be triaged', async () => {
@@ -470,6 +496,62 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+});
+
+// Restarts that keep cutting one request's builds short before there is a
+// plan to keep, or taking the worker with them: the third in a row is not
+// sent round again, but said as a failed build.
+const sentBack = (why) => ({ build_error: `interrupted: ${why} ${bot.RESTARTED_BUILD_NOTE}` });
+
+test('the third build in a row a restart cuts short is said to have failed, not sent round again', async () => {
+  stubLive();
+  journalTail = async () => ({ lastResultText: '', exitCode: 0 });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({
+    session, run: null, liveRun: LIVE_RUN,
+    earlierBuilds: [sentBack('the spec turn was cut short'), sentBack('the worker did not survive')],
+  });
+  await adopt(pool, session);
+  assert.deepEqual(requeues(pool), [], 'not back in the queue');
+  const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
+  assert.ok(failed, 'the person is told, as for any failed build');
+  assert.match(failed[2], /the platform restarted in the middle of each of its last 3 tries at building this/);
+  const outcome = liveOutcome(pool);
+  assert.deepEqual(outcome.slice(0, 2), [950, false]);
+  assert.equal(outcome[2], 'the platform restarted in the middle of each of its last 3 tries at building this');
+  assert.ok(!outcome[2].endsWith(bot.RESTARTED_BUILD_NOTE), 'the activity card stops on it rather than reading past it');
+  // The count reads this request's earlier live builds, newest first, in the window.
+  const lookup = pool.calls.find((c) => /SELECT build_error FROM homeroom_bot_runs/.test(c.sql));
+  assert.match(lookup.sql, /mode = 'live' AND id < \$3/);
+  assert.match(lookup.sql, /build_session_id IS NOT NULL/);
+  assert.deepEqual(lookup.params, [5, 12, 950, 24, 2]);
+});
+
+test('a lost build after two sent back is stopped the same way', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({
+    session, run: null, liveRun: LIVE_RUN,
+    earlierBuilds: [sentBack('the spec turn was cut short'), sentBack('the spec turn was cut short')],
+  });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(requeues(pool), []);
+  assert.ok(liveCalls.some((c) => c[0] === 'post' && c[1] === 'build_failed'));
+});
+
+test('restarts that are not back to back still send the build round again', async () => {
+  stubLive();
+  journalTail = async () => ({ lastResultText: '', exitCode: 0 });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({
+    session, run: null, liveRun: LIVE_RUN,
+    // Newest first: one sent back, then a build that ended some other way.
+    earlierBuilds: [sentBack('the spec turn was cut short'), { build_error: 'the build ran past its time limit' }],
+  });
+  await adopt(pool, session);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
+  assert.ok(liveOutcome(pool)[2].endsWith(bot.RESTARTED_BUILD_NOTE));
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {
