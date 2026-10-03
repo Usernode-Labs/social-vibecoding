@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ClockIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
@@ -27,12 +27,16 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  *   - a STATUS LINE in the chat header, under the bot's name where a DM says
  *     "Direct message": what it is working on for them ("Working on Ear
  *     Trainer #5 · following up"), else what waits on them, else the last
- *     thing it did. The header's name block is the toggle, so the panel
- *     opens from there at any time, working or not. A phone gets a short
- *     form of the same line.
+ *     thing it did. A phone gets a short form of the same line. It is words
+ *     only (#3770): the name block it sits in used to be the toggle, and
+ *     nobody read a name as a control.
+ *   - an ACTIVITY DISC among the header's discs, on every width, which opens
+ *     the panel at any time, working or not. Its badge is the live dot while
+ *     the bot works, or the number of requests that wait on the viewer.
  *   - the PANEL it opens: a sheet that drops over the transcript at the
  *     pane's full width (the conversation under it does not move), closed
- *     again by the header, Escape, or a press anywhere else. Its tiles are
+ *     again by the disc, Escape, or a press anywhere else but the full-width
+ *     toggle beside it, which only widens the pane under it. Its tiles are
  *     the activity cards' language (./bot-activity.tsx): the ring with the
  *     step while the bot works, then Done / Needs you / Ended / Didn't
  *     finish, the request, what came of it, and where to open it. Each
@@ -50,10 +54,10 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  * tray re-reads its endpoint under the viewer's own session. Opening the
  * panel reads it too.
  *
- * ONE STATE, TWO PLACES. The header's status line and the panel are drawn
- * by different parts of the thread pane, so what was read, whether the
- * panel is open and whether History is unfolded live in one small store
- * here, which BotWorkSync keeps current.
+ * ONE STATE, THREE PLACES. The header's status line, its disc and the
+ * panel are drawn by different parts of the thread pane, so what was read,
+ * whether the panel is open and whether History is unfolded live in one
+ * small store here, which BotWorkSync keeps current.
  *
  * OWNERSHIP. Every node here is React's, inside the thread pane React already
  * owns; nothing outside writes into it. Nothing is read until the sync's
@@ -242,10 +246,10 @@ function PingDot() {
 }
 
 /**
- * The line under the bot's name, a pure render. It sits inside the header's
- * name button (index.tsx ThreadHeader), which is the toggle.
+ * The line under the bot's name, a pure render. Words only: the Activity
+ * disc beside it is the toggle (#3770).
  */
-export function BotWorkStatusView({ status, open }: { status: TrayStatus; open: boolean }) {
+export function BotWorkStatusView({ status }: { status: TrayStatus }) {
   const loud = status.kind === 'working' || status.kind === 'you';
   return (
     <div
@@ -257,14 +261,59 @@ export function BotWorkStatusView({ status, open }: { status: TrayStatus; open: 
         <span className="hidden sm:inline">{status.long}</span>
         <span className="sm:hidden">{status.short}</span>
       </span>
-      <ChevronDownIcon className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
     </div>
   );
 }
 
 export function BotWorkStatusLine() {
+  const { work } = useBotWork();
+  return <BotWorkStatusView status={trayStatus(work)} />;
+}
+
+// ── The disc ─────────────────────────────────────────────────────────────
+
+/**
+ * #3770: the toggle, a disc among the header's discs (index.tsx
+ * ThreadHeader), drawn on a phone too. A press on it is not "outside" the
+ * panel, and Escape hands focus back to it: both find it by
+ * `data-bot-work-toggle`. Its badge carries the tray's state as
+ * `data-bot-work-status`, as the line does: the number of requests that
+ * wait on the viewer, the accent's job (AGENTS.md), else the live dot while
+ * the bot works, else nothing. A pure render.
+ */
+export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotWork | null; open: boolean; onToggle?: () => void }) {
+  const { kind } = trayStatus(work);
+  const waiting = work ? work.needsYou.length : 0;
+  let badge: ReactNode = null;
+  if (waiting) {
+    badge = (
+      <span className="messages-bot-work-badge messages-bot-work-count" data-bot-work-status={kind} aria-hidden="true">
+        {waiting > 9 ? '9+' : waiting}
+      </span>
+    );
+  } else if (kind === 'working') {
+    badge = <span className="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status={kind}><PingDot /></span>;
+  }
+  return (
+    <button
+      type="button"
+      className="messages-thread-action messages-bot-work-button"
+      aria-label="Activity"
+      title="Activity"
+      aria-expanded={open}
+      aria-controls={BOT_WORK_PANEL_ID}
+      data-bot-work-toggle=""
+      onClick={onToggle}
+    >
+      <ClockIcon aria-hidden="true" />
+      {badge}
+    </button>
+  );
+}
+
+export function BotWorkButton() {
   const { work, open } = useBotWork();
-  return <BotWorkStatusView status={trayStatus(work)} open={open} />;
+  return <BotWorkButtonView work={work} open={open} onToggle={toggleBotWork} />;
 }
 
 // ── The panel ────────────────────────────────────────────────────────────
@@ -483,7 +532,10 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
  * The panel in the bot's DM, under the chat header: drawn over the
  * transcript from a zero-height anchor, so opening it moves nothing. A
  * press anywhere but the panel and the header's toggle shuts it, as does
- * Escape, which hands focus back to the toggle.
+ * Escape, which hands focus back to the toggle. The full-width toggle
+ * beside it (`data-bot-work-keep`) leaves it open (#3770): that one widens
+ * the pane the panel is drawn in, and closing the panel too made it read as
+ * the panel's own collapse control.
  */
 export function BotWorkPanel() {
   const { work, failed, open, historyOpen } = useBotWork();
@@ -492,7 +544,7 @@ export function BotWorkPanel() {
     if (!open) return undefined;
     const onDown = (event: Event) => {
       const target = event.target as Element | null;
-      if (!target || anchor.current?.contains(target) || target.closest?.('[data-bot-work-toggle]')) return;
+      if (!target || anchor.current?.contains(target) || target.closest?.('[data-bot-work-toggle], [data-bot-work-keep]')) return;
       setBotWorkOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {

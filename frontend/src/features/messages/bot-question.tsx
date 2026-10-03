@@ -24,7 +24,9 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * #3624 stage 2: an OFFER (kind `confirm`) uses the same buttons: File it
  * and Not now under a request the bot offers to file. Nothing is posted
  * anywhere until File it, so it has no public note, no "suggested" and no
- * Something else (anything typed is read by the bot instead).
+ * Something else (anything typed is read by the bot instead). #3770: File
+ * it is the act, filled in the accent; Not now is the neutral fill beside
+ * it. A question's answers keep one look: none of them is the act.
  */
 
 export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
@@ -68,7 +70,13 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
       {open ? (
         <div className="messages-bot-answers" role="group" aria-label={offer ? 'File this request?' : 'Suggested answers'}>
           {answers.map((answer, index) => (
-            <button key={answer} type="button" data-bot-answer={index === 0 ? 'default' : 'other'} onClick={() => choose(answer)}>
+            <button
+              key={answer}
+              type="button"
+              className={offer ? (index === 0 ? 'messages-bot-primary' : 'messages-bot-secondary') : undefined}
+              data-bot-answer={index === 0 ? 'default' : 'other'}
+              onClick={() => choose(answer)}
+            >
               <span>{answer}</span>
               {index === 0 && !offer ? <span className="messages-bot-default">suggested</span> : null}
             </button>

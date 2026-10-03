@@ -105,10 +105,13 @@ function proposalHref(slug, sessionId) {
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
  * `joined` to work already under way (catchUpCards) lands at the end of the
- * DM, after the work began, so it says the work was started earlier.
+ * DM, after the work began, so it says the work was started earlier. A card
+ * started by filing the request (#3767) says it was filed, not that the
+ * work began: it may wait in the queue first, and the card says so.
  */
-function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { joined = false } = {}) {
+function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { joined = false, filed = false } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
+  if (filed) return `${line}\n\nFiled. This card follows it from here.`;
   const it = firstVersion ? 'the first version' : 'this';
   return joined
     ? `${line}\n\nI started on ${it} earlier and I'm still working on it. This card updates as I go.`
@@ -126,7 +129,7 @@ function jobCardKey(jobKey) {
  * work already under way, is when that work began: the card is read from
  * then (cardRows). Resolves what sendDm did, or null.
  */
-async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt = null, dm }) {
+async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt = null, filed = false, dm }) {
   const context = {
     appName: app.name || app.slug,
     issueNumber,
@@ -136,7 +139,7 @@ async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
-    content: cardText(context, dm, { joined: !!startedAt }),
+    content: cardText(context, dm, { joined: !!startedAt, filed }),
     metadata: {
       kind: KIND,
       appSlug: app.slug,
@@ -168,21 +171,23 @@ async function recordCard(pool, sent, { userId, appId, issueNumber }) {
 /**
  * The bot started a piece of work on one of `requester`'s requests: their
  * card, in their DM with it, when they are somebody it talks to there.
- * `jobKey` is the queue row the work was claimed from. Never throws: a card
- * that could not be sent costs the work nothing. Resolves what sendDm did,
- * or null.
+ * `jobKey` is the queue row the work was claimed from. #3767: a request
+ * filed from the DM gets its card when it is filed (`filed`), under the key
+ * the work will start from, so the start finds it already sent. Never
+ * throws: a card that could not be sent costs the work nothing. Resolves
+ * what sendDm did, or null.
  */
-async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, deps = {} }) {
+async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, filed = false, deps = {} }) {
   try {
     const n = Number(issueNumber);
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.isDmUser(s, requester.username)) return null;
-    const sent = await sendCard(pool, { app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), dm });
+    const sent = await sendCard(pool, { app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, dm });
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
-    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId });
+    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed });
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {

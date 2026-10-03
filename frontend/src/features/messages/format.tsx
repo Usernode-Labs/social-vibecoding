@@ -37,8 +37,13 @@ function fallbackMarkdown(value: string): string {
  * `#name` that names one of the viewer's channels as a link to it. Built on
  * the sanitized HTML with DOM APIs (./channels.ts `decorateRefs`), never by a
  * regex over markup.
+ *
+ * `appSlug`: the project the message is about, when it names one (#3770, a
+ * Homeroom bot message's request). Its `#N` chips then open that project's
+ * requests, and record this conversation as where they were opened from, as
+ * a shared card does (`recordObjectOrigin`).
  */
-export function MessageMarkdown({ content, channels }: { content: string; channels?: ReadonlySet<string> }) {
+export function MessageMarkdown({ content, channels, appSlug }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null }) {
   const html = useMemo(() => {
     const rendered = typeof window !== 'undefined' && window.DevChat?.renderMarkdown
       ? window.DevChat.renderMarkdown(content, { breaks: true })
@@ -47,15 +52,19 @@ export function MessageMarkdown({ content, channels }: { content: string; channe
     const root = document.createElement('div');
     root.innerHTML = rendered;
     const me = String(window.App?.user?.username || '').toLowerCase();
-    decorateRefs(root, channels || NO_CHANNELS, me);
+    decorateRefs(root, channels || NO_CHANNELS, me, appSlug);
     return root.innerHTML;
-  }, [content, channels]);
+  }, [content, channels, appSlug]);
   // The SAME object while the html is unchanged. React 19 compares this prop
   // by identity and reassigns innerHTML when it differs, so an inline
   // `{ __html }` tore down and rebuilt every message body on every render of
   // its row, even with identical text (board-frame.tsx documents the same).
   const inner = useMemo(() => ({ __html: html }), [html]);
-  return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={inner} />;
+  const openRef = (event: MouseEvent<HTMLDivElement>) => {
+    const href = (event.target as Element | null)?.closest?.('a.gc-ref[href]')?.getAttribute('href');
+    if (href) recordObjectOrigin(event, href);
+  };
+  return <div className="messages-markdown gc-msg-content" onClick={appSlug ? openRef : undefined} dangerouslySetInnerHTML={inner} />;
 }
 
 /**
@@ -139,7 +148,10 @@ function objectGlyph(type: SharedObjectCard['type']): string {
 // which is drawn on the app's own pages as well as in this inbox. There the
 // page's own back already leads to the discussion, so the card records an
 // origin only while the discussion is open here.
-export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: string, inboxOnly = false): void {
+//
+// #3770: a request's `#N` chip in a message about its project records one
+// too (MessageMarkdown), from a press on the message body.
+export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inboxOnly = false): void {
   const w = window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
     App?: { embeddedPanel?: boolean };

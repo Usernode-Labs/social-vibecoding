@@ -2239,6 +2239,8 @@ module.exports = {
   applyLinkedIssues,
   // #3344's author summary, likewise.
   applyProposedSummary,
+  // #3767: the Homeroom bot names its own proposal again after a revision.
+  applyProposedTitle,
   syncSummaryIntoBody,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,

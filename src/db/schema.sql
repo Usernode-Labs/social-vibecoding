@@ -9862,6 +9862,46 @@ CREATE TABLE IF NOT EXISTS bench_grades (
 CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
 COMMENT ON TABLE bench_grades IS 'staging:private';
 
+-- #3737: the benchmark's taste eval (services/bench/taste.js). Two more
+-- task kinds: `first_version`, the bot's whole first-version path (triage
+-- note, spec, build) from a brief on today's starter template, and
+-- `capture`, an existing app at a commit with no build (the "before" arm).
+-- Both end in the screenshot step (services/bench/capture.js). Widening a
+-- CHECK never rejects a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_tasks DROP CONSTRAINT IF EXISTS bench_tasks_stage_check;
+  ALTER TABLE bench_tasks ADD CONSTRAINT bench_tasks_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture'));
+END $$;
+-- What the screenshot step measured, without the images: whether the app
+-- booted (and why not), each screenshot's viewport, look and state, the
+-- automatic checks as numbers, and the source lint for the known tells.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS capture JSONB;
+
+-- The screenshots themselves, stored the way the before and after shots are
+-- (shot_artifacts): one row per image in a table of their own, never inside
+-- the trial's row, and gone with the trial. Read only through the admin
+-- console and the admin-only grading tools. Private: an app's screens can
+-- show any of its data.
+CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  trial_id      INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  shot_id       VARCHAR(64) NOT NULL,
+  viewport      VARCHAR(16) NOT NULL,
+  look          VARCHAR(8) NOT NULL CHECK (look IN ('light', 'dark')),
+  state         VARCHAR(16) NOT NULL CHECK (state IN ('populated', 'empty', 'error', 'loading')),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes > 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (trial_id, shot_id)
+);
+COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+
 -- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
 -- One row per answer it wrote: what it cost (counted in the person's weekly
 -- allowance with their requests' runs), how many model calls and which

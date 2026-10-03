@@ -1,0 +1,41 @@
+{
+  "key": "taste-v1",
+  "name": "Taste v1",
+  "version": 1,
+  "kind": "frozen",
+  "notes": "#3737: a taste eval for first versions. Each task is a first version built from its brief on today's starter template, by the bot's real first-version path, then screenshotted. A brief that starts with \"placeholder:\" is not run until an admin replaces it with the original. Add a capture task per app (its repository at its first version's commit) for the before arm.",
+  "tasks": [
+    {
+      "ref": "bread-bot",
+      "kind": "first_version",
+      "app_slug": "bread-bot-3e3f5c",
+      "app_name": "Bread Bot",
+      "template": "empty",
+      "brief": "placeholder: replace with the original brief (Bread Bot's first-version request, its pull request #4). A helper for baking bread at home: choose a bread and when it should be ready, and see every step from mixing through proofing, shaping and baking on a schedule."
+    },
+    {
+      "ref": "rss-reader",
+      "kind": "first_version",
+      "app_slug": "rss-reader-4113da",
+      "app_name": "RSS Reader",
+      "template": "empty",
+      "brief": "placeholder: replace with the original brief (RSS Reader's first-version request, its pull request #2). An RSS reader: add feeds by their address, see their newest articles together, and read an article in comfort."
+    },
+    {
+      "ref": "ear-trainer",
+      "kind": "first_version",
+      "app_slug": "ear-trainer-9aee0d",
+      "app_name": "Ear Trainer",
+      "template": "empty",
+      "brief": "An app to learn relative notes / chords, and then basic chord progressions. Chord progressions to learn should be taken from popular songs, and hymns. Learning progressions should take more different notes / chords / chord progressions first, and then add in the ones that sound closer until you are being quizzed on the full set. You should be able to select how big the set is from a list of lessons that get progressively harder for each lesson type."
+    },
+    {
+      "ref": "block-game",
+      "kind": "first_version",
+      "app_slug": "block-game-54d305",
+      "app_name": "block-game",
+      "template": "empty",
+      "brief": "placeholder: replace with the original brief (block game's first-version request, its pull request #1). A 3D voxel creative building world."
+    }
+  ]
+}

@@ -23,7 +23,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync } from './bot-activity';
-import { BOT_WORK_PANEL_ID, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId, toggleBotWork, useBotWork } from './bot-work';
+import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -1034,6 +1034,9 @@ function InvitationBanner() {
  * The glyph is the verb a press performs: arrows out while the list is
  * shown, arrows in once it is hidden. A phone shows one pane at a time
  * already, so there it is not drawn (app.css).
+ *
+ * It only widens the pane, so the bot's activity panel open over that pane
+ * stays open through it (`data-bot-work-keep`, #3770; ./bot-work.tsx).
  */
 function FullWidthToggle() {
   const snap = useMessagesSnapshot();
@@ -1055,6 +1058,7 @@ function FullWidthToggle() {
       aria-pressed={collapsed}
       aria-label={label}
       title={label}
+      data-bot-work-keep=""
       onClick={() => setListCollapsed(!collapsed)}
     >
       {collapsed ? <ArrowsPointingInIcon aria-hidden="true" /> : <ArrowsPointingOutIcon aria-hidden="true" />}
@@ -1087,8 +1091,6 @@ function ThreadHeader() {
   // after this header first draws (channel-hub.ts), so it is subscribed to;
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
-  // #3692: in the bot's DM the name block opens its activity panel.
-  const botWorkOpen = useBotWork().open;
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1139,8 +1141,9 @@ function ThreadHeader() {
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
   // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
-  // "Direct message", and the name block above it opens the activity panel
-  // (./bot-work.tsx), working or not.
+  // "Direct message", and its Activity disc, before the full-width toggle,
+  // opens the activity panel (./bot-work.tsx), working or not. #3770: the
+  // disc, not the name block, which nobody read as a control.
   const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
@@ -1164,15 +1167,13 @@ function ThreadHeader() {
       <button
         type="button"
         className="min-w-0 text-left flex-1"
-        onClick={() => { if (botDm) toggleBotWork(); else if (active.kind === 'group') openDialog('messagesMembers'); }}
-        aria-expanded={botDm ? botWorkOpen : undefined}
-        aria-controls={botDm ? BOT_WORK_PANEL_ID : undefined}
-        data-bot-work-toggle={botDm ? '' : undefined}
+        onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
+      {botDm ? <BotWorkButton /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>

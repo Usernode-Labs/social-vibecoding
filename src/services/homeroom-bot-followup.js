@@ -44,6 +44,8 @@ const { parseStopMentioning, failedClaudeTurn } = require('./homeroom-bot-live')
 // votes the proposal had, so an unbounded loop of "one more tweak" costs the
 // group its review every time. After this many, the turn runs read-only.
 const MAX_REVISIONS = 3;
+// #3767: the longest name a revision may give its proposal.
+const MAX_TITLE_CHARS = 120;
 
 const ACTIONS = Object.freeze(['answer', 'ask', 'revise', 'person']);
 
@@ -133,7 +135,7 @@ function specLines(spec) {
  * issue from scratch.
  */
 function followUpPrompt({
-  seed, proposalBlock = '', spec = '', prNumber = null, replies = [], canRevise = true,
+  seed, proposalBlock = '', spec = '', prNumber = null, replies = [], canRevise = true, design = '',
 }) {
   const pr = prNumber ? `PR #${prNumber}` : 'a proposal';
   const actions = canRevise
@@ -157,7 +159,7 @@ function followUpPrompt({
   ];
   if (canRevise) {
     lines.push(
-      '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again.',
+      '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again. When the change alters what the proposal does, give it a new `title` that says what it does now (its name on the vote; the old one stays otherwise).',
     );
   } else {
     lines.push(
@@ -167,8 +169,9 @@ function followUpPrompt({
   lines.push(
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
+    ...(canRevise && design ? [design, ''] : []),
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
-    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
+    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "title": "for revise only, when what the proposal does changed: its new short title", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
     '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. `resume_mentioning`: anybody who, after asking the bot to stop, asked to be tagged again; list a person in whichever they asked for most recently, never both. If that is all a reply says, "answer" with a short acknowledgement.',
   );
@@ -195,8 +198,11 @@ function parseFollowUp(text) {
     if (!ACTIONS.includes(action)) continue;
     const reply = clipText(obj.reply, 3000);
     if (!reply) continue;
+    // #3767: a revision that changed what the proposal does names it again.
+    const title = action === 'revise' ? clipText(String(obj.title || '').replace(/\s+/g, ' '), MAX_TITLE_CHARS) : '';
     return {
       action, reply, summary: clipText(obj.summary, 600) || null,
+      ...(title.length >= 3 ? { title } : {}),
       // #3624: an ask's suggested answers, as a triage question's.
       ...(action === 'ask' ? {
         answers: Array.isArray(obj.answers)

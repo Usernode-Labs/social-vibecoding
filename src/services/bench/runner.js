@@ -100,6 +100,17 @@ function guardedGithub(github) {
       assertBenchBranch(branch);
       return github.deleteBenchBranch(owner, repo, branch);
     },
+    // #3737: a first-version trial's starting point, a commit with no
+    // history holding the rendered starter, and the trial's branch pointed
+    // at it (any earlier attempt's branch of the same trial removed first).
+    // Resolves the commit's sha.
+    async createBenchScaffold(owner, repo, branch, files, message) {
+      assertBenchBranch(branch);
+      const sha = await github.createRootCommit(owner, repo, files, { message });
+      await github.deleteBenchBranch(owner, repo, branch);
+      await github.ensureBranchAtSha(owner, repo, branch, sha);
+      return sha;
+    },
   };
   return new Proxy({}, {
     get(_target, prop) {
@@ -370,6 +381,8 @@ function triagePrompt(snapshot, seed, readsImages = false) {
   const bot = require('../homeroom-bot');
   return bot.triagePromptFor({
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
+    // #3772: who decided on the project when the original look ran.
+    decider: snapshot.extra?.decider || null,
   });
 }
 
@@ -616,6 +629,119 @@ async function followupStage(ctx, kind) {
   return followupResult({ turn, out, mode, base, branch, repo, deps });
 }
 
+// ── The taste eval (#3737, services/bench/taste.js) ─────────────────────
+
+/**
+ * The screenshot step on a session's worker (services/bench/capture.js).
+ * Resolves { ok: true, capture } (booted or not: an app that would not boot
+ * is a result) or { ok: false, error } when the platform could not run it.
+ */
+async function screenshotStep(ctx, sessionId) {
+  const { pool, deps, trial, app, repo } = ctx;
+  let containerName;
+  try {
+    await deps.worker.ensureWorkerImage();
+    containerName = await deps.worker.ensureWorker(sessionId, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName: branchFor(trial), temporary: true, onProgress: () => {},
+    });
+  } catch (err) {
+    return { ok: false, error: `worker: ${err.message}` };
+  }
+  const step = deps.captureStep || ((args) => require('./capture').captureTrial(args));
+  return step({ pool, trialId: trial.id, worker: deps.worker, containerName, appId: app.id });
+}
+
+/**
+ * A capture trial (the "before" arm): the app's repository at the task's
+ * commit, in a sealed worker, and only the screenshot step. No model turn,
+ * so nothing is spent on a model.
+ */
+async function captureStage(ctx) {
+  const { pool, config, snapshot, model, user, app, repo, trial, deps, title } = ctx;
+  const input = require('./taste').inputOf(snapshot);
+  if (!input.sha) return { status: 'infra_fail', error: 'the task names no commit' };
+  const branch = branchFor(trial);
+  let base;
+  try {
+    base = await pinBranch(deps.github, repo, branch, input.sha);
+  } catch (err) {
+    return { status: 'infra_fail', error: `branch: ${err.message}` };
+  }
+  const session = await openSession(pool, config, { user, app, model, branch, title });
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
+  const out = { session_id: session.id, base_sha: base, build_branch: branch, cost_usd: 0, session };
+  const shot = await screenshotStep(ctx, session.id);
+  if (!shot.ok) return { ...out, status: 'infra_fail', error: shot.error };
+  return { ...out, status: 'ok', parsed: { captured: true }, capture: shot.capture };
+}
+
+/**
+ * A first-version trial: the bot's real first-version path from a brief.
+ * Today's starter rendered for the app's name as a commit with no history
+ * on the trial's branch; the brief filed as the new project's request; the
+ * triage with the first-version note; when it is ready, the spec and the
+ * build on the first version's longer clocks (buildAndPropose, never
+ * proposed); then the screenshot step on the build's worker. A triage that
+ * does not answer `ready` builds nothing, as the bot would not, and the
+ * trial says what it answered instead.
+ */
+async function firstVersionStage(ctx) {
+  const { snapshot, repo, trial, deps, budgets } = ctx;
+  const taste = require('./taste');
+  const input = taste.inputOf(snapshot);
+  if (!input.brief || !input.appName) return { status: 'infra_fail', error: 'the task has no brief' };
+  const branch = branchFor(trial);
+  let base;
+  try {
+    base = await deps.github.createBenchScaffold(
+      repo.owner, repo.repo, branch, taste.scaffoldFiles(input), `Initialize ${input.appName} from Homeroom template`,
+    );
+  } catch (err) {
+    return { status: 'infra_fail', error: `scaffold: ${err.message}` };
+  }
+  const botLogin = await require('../homeroom-bot-live').botUsernameOf(deps.github).catch(() => null);
+  const request = taste.firstVersionRequest(input);
+  const seed = taste.seedFor(input, botLogin);
+  const replay = {
+    ...snapshot, issueNumber: taste.ISSUE_NUMBER, baseSha: base, promptHash: null,
+    texts: { seed, build_note: '' }, thread: { issue: { title: request.title } },
+    extra: { ...(snapshot.extra || {}), firstVersion: true },
+  };
+  const triaged = await triageStage({ ...ctx, snapshot: replay, baseSha: base });
+  const sessionIds = [triaged.session_id].filter(Boolean);
+  const common = { base_sha: base, build_branch: branch, session_ids: sessionIds };
+  const triage = triaged.parsed ? {
+    verdict: triaged.parsed.verdict, question: triaged.parsed.question || null, buildNote: triaged.parsed.buildNote || null,
+    reason: triaged.parsed.reason || null, assumptions: triaged.parsed.assumptions || [],
+  } : null;
+  if (triaged.status !== 'ok') return { ...triaged, ...common, session: undefined, parsed: { triage, built: false } };
+  if (triage.verdict !== 'ready') {
+    return {
+      ...common, session_id: triaged.session_id, status: 'ok', cost_usd: triaged.cost_usd,
+      raw_output: triaged.raw_output, parsed: { triage, built: false },
+    };
+  }
+  const built = await buildStage({
+    ...ctx,
+    snapshot: { ...replay, texts: { seed, build_note: triage.buildNote || '' } },
+    // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
+    budgets: budgets.firstVersion || budgets,
+  });
+  const ids = [...sessionIds, built.session_id].filter(Boolean);
+  const cost = [triaged.cost_usd, built.cost_usd].filter(Number.isFinite);
+  const merged = {
+    ...built, base_sha: base, build_branch: branch, session_id: built.session_id || triaged.session_id, session_ids: [...new Set(ids)],
+    cost_usd: cost.length ? cost.reduce((a, b) => a + b, 0) : null,
+    parsed: { ...(built.parsed || {}), triage },
+  };
+  if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return merged;
+  const shot = await screenshotStep(ctx, built.session_id);
+  // The platform failing to run the step is not the build's fault: the
+  // trial is a fault, kept out of quality, with its build still recorded.
+  if (!shot.ok) return { ...merged, status: 'infra_fail', error: shot.error };
+  return { ...merged, capture: shot.capture };
+}
+
 const STAGE_RUNNERS = Object.freeze({
   triage: triageStage,
   spec: specStage,
@@ -624,6 +750,8 @@ const STAGE_RUNNERS = Object.freeze({
   checks_fix: (ctx) => followupStage(ctx, 'checks_fix'),
   // A DM task is a conversation of triage turns (services/bench/dm-sim.js).
   dm: (ctx) => require('./dm-sim').dmStage(ctx),
+  first_version: firstVersionStage,
+  capture: captureStage,
 });
 
 // ── After a restart ─────────────────────────────────────────────────────
@@ -746,7 +874,12 @@ function budgetsFor(settings, app, config, stage) {
   const bot = require('../homeroom-bot');
   const turnMs = 1000 * (Number(settings?.turnSeconds) || bot.DEFAULTS.turnSeconds);
   const built = bot.buildBudgets(app, config, turnMs);
-  return { turnMs: stage === 'build' || stage === 'spec' ? built.turnBudgetMs : turnMs, buildMs: built.turnBudgetMs, specMs: built.specBudgetMs };
+  const budgets = { turnMs: stage === 'build' || stage === 'spec' ? built.turnBudgetMs : turnMs, buildMs: built.turnBudgetMs, specMs: built.specBudgetMs };
+  if (stage !== 'first_version') return budgets;
+  // A first version's triage has a triage's clock; its spec and build get
+  // the longer ones the bot gives a first version.
+  const first = bot.buildBudgets(app, config, turnMs, { firstVersion: true });
+  return { ...budgets, firstVersion: { turnMs, buildMs: first.turnBudgetMs, specMs: first.specBudgetMs } };
 }
 
 module.exports = {
@@ -775,6 +908,9 @@ module.exports = {
   budgetsFor,
   STAGE_RUNNERS,
   triageStage,
+  firstVersionStage,
+  captureStage,
+  screenshotStep,
   triageResult,
   followupResult,
   buildResult,

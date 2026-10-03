@@ -549,6 +549,11 @@ function dmText(kind, dm, context) {
       return `${line}\n\nI tried to build ${it} but couldn't finish (${clip(dm.reason, 300) || 'unknown reason'}). `
         + 'A person can pick it up from here.';
     case 'person':
+      // #3772: and what to do about it. "Left for the group" was a dead end
+      // for somebody who was the group: a reply here is posted on the
+      // request, and the bot looks at it again with it.
+      return `${line}\n\nThis needs a person to decide, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
+        + 'If you decide to go ahead (or the group does), reply to this message and say so, and I\'ll look at it again.';
     case 'followup_person':
       return `${line}\n\nThis needs a person to decide, so I've left it for the group: ${clip(dm.reason, 600)}`;
     case 'empty':
@@ -624,6 +629,27 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
   });
 }
 
+// #3767: the news an activity card that is still the newest message about
+// its request already says, so it is not sent again.
+const CARD_SAYS = new Set(['spec']);
+
+/**
+ * #3767: whether a person's DM has an activity card for this request:
+ * null, or { messageId, conversationId, current } where `current` is true
+ * while the card is the newest thing the DM says about the request.
+ */
+async function cardShown(pool, userId, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT message_id, conversation_id, kind FROM homeroom_bot_dm_messages
+      WHERE user_id = $1 AND app_id = $2 AND issue_number = $3
+      ORDER BY message_id DESC LIMIT 20`,
+    [userId, appId, issueNumber],
+  );
+  const card = rows.find((r) => r.kind === 'activity');
+  if (!card) return null;
+  return { messageId: card.message_id, conversationId: card.conversation_id, current: rows[0] === card };
+}
+
 /**
  * Called by the bot's post on a request (homeroom-bot-live.js `post`) when
  * the post carries `dm`: the same news, in the requester's DM, when they
@@ -645,6 +671,18 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   };
   const content = dmText(kind, dm, context);
   if (!content) return null;
+  // #3767: the request's activity card already shows it. While the card is
+  // the newest thing in the DM about the request, "I'm building this now"
+  // repeats it word for word, so it is not sent; and no news about the
+  // request carries the request's card again under it. Said to the post as
+  // told (it is in front of them), so the post does not tag them instead.
+  const shown = await cardShown(pool, requester.userId, app.id, issueNumber);
+  if (shown?.current && CARD_SAYS.has(kind)) {
+    return {
+      conversationId: shown.conversationId, messageId: shown.messageId, duplicate: true,
+      userId: requester.userId, username: requester.username, card: true,
+    };
+  }
   const asks = QUESTION_KINDS.has(kind);
   const answers = asks ? (Array.isArray(dm.answers) ? dm.answers : []).filter((a) => typeof a === 'string' && a.trim()) : [];
   const metadata = {
@@ -665,7 +703,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     content,
     metadata,
     idempotencyKey: postId ? `hrbot-post-${postId}` : null,
-    objects: cardsFor(kind, dm, app, issueNumber),
+    objects: cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
@@ -788,20 +826,23 @@ function mirroredText(content, { question = false } = {}) {
  * Post a person's words on a request's discussion, as their own message:
  * an answer to the bot's open question there, or a reply about the request.
  * That is what wakes the bot, and the request goes to the front of its
- * queue (#3624 stage 2) so the answer is looked at next. Resolves
+ * queue (#3624 stage 2) so the answer is looked at next. `prepared` text
+ * already says it was sent from the chat (#3768, the model's
+ * comment_on_request); `reason` is the queue's. Resolves
  * { ok, app, line, question } or { ok: false, why, app, line }.
  */
-async function postOnRequest(pool, { user, target, text, deps = {} }) {
+async function postOnRequest(pool, { user, target, text, prepared = false, reason = 'dm_answer', deps = {} }) {
   const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
   const app = apps[0];
   if (!app) return { ok: false, why: 'gone', app: null, line: null };
   const line = `${app.name || app.slug} request #${target.issue_number}`;
   const question = target.question_status === 'open';
   const ws = deps.ws || require('./ws');
+  const content = prepared ? clip(text, 3900) : mirroredText(text, { question });
   const posted = await ws.handleMessage(
     pool,
     { user, appId: app.id, appSlug: app.slug, postedVia: null },
-    { type: 'chat', content: mirroredText(text, { question }), thread: { type: 'issue', ref: Number(target.issue_number) } },
+    { type: 'chat', content, thread: { type: 'issue', ref: Number(target.issue_number) } },
   ).catch((err) => ({ ok: false, code: err.message }));
   if (!posted?.ok) {
     log.warn('homeroom-bot-dm', 'Could not post a DM answer on its request', {
@@ -825,7 +866,7 @@ async function postOnRequest(pool, { user, target, text, deps = {} }) {
   }
   try {
     await settingsModule().enqueueFront(pool, {
-      appId: app.id, issueNumber: Number(target.issue_number), userId: user.id, reason: 'dm_answer',
+      appId: app.id, issueNumber: Number(target.issue_number), userId: user.id, reason,
     });
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not put the answered request first', { app: app.slug, err: err.message });
@@ -951,8 +992,17 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
     const target = await quotedTarget(pool, user.id, quoted);
     if (target) return answerOnRequest(pool, { bot, user, target, message, deps });
   }
+  // #3772: "file it" typed under a draft decides it as the tap does. Typed,
+  // it went to the model, which answered "Filed: … #14" for a request that
+  // was never filed.
+  let turnDeps = deps;
+  if (!quoted && typeof mayor.decideTyped === 'function') {
+    const typed = await mayor.decideTyped(pool, config, { bot, user, settings, conversationId, message, deps });
+    if (typed?.sent) return typed.sent;
+    if (typed?.decisionWithoutOffer) turnDeps = { ...deps, decisionWithoutOffer: true };
+  }
   if (settings.dmChat !== false) {
-    return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps });
+    return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps: turnDeps });
   }
   const target = await newestOpenQuestion(pool, user.id);
   if (!target) {
@@ -1014,6 +1064,27 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
 }
 
 /**
+ * The request a project's description is filed as: its title and body.
+ * Pure. Shared with the benchmark's taste eval (services/bench/taste.js),
+ * whose first-version trials are given the same request the bot reads.
+ */
+function firstVersionIssue({ name, username, brief, botBuilds = true }) {
+  return {
+    title: clip(`First version of ${name}`, 200),
+    body: [
+      `**Source:** Homeroom user (${username})`,
+      '',
+      brief,
+      '',
+      '---',
+      botBuilds
+        ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
+        : `${username} described this when they created the project.`,
+    ].join('\n'),
+  };
+}
+
+/**
  * File one project's first request, once the project is running: a GitHub
  * issue under the creator's name and the platform's issue row. When the bot
  * builds it, the creator is recorded as its requester (so the bot's news
@@ -1040,17 +1111,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
   const botBuilds = row.bot_builds !== false;
-  const title = clip(`First version of ${name}`, 200);
-  const body = [
-    `**Source:** Homeroom user (${username})`,
-    '',
-    row.brief,
-    '',
-    '---',
-    botBuilds
-      ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
-      : `${username} described this when they created the project.`,
-  ].join('\n');
+  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds });
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
       || (() => {
@@ -1205,6 +1266,7 @@ module.exports = {
   mirroredText,
   noteUserMessage,
   normalizeBrief,
+  firstVersionIssue,
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,

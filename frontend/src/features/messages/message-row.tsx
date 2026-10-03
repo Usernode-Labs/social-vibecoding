@@ -13,7 +13,7 @@ import {
 import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { BotActivityCard, isActivityMessage } from './bot-activity';
-import { BotQuestion } from './bot-question';
+import { BotQuestion, botMeta } from './bot-question';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -229,6 +229,12 @@ export const MessageRow = memo(function MessageRow({
   // the header above it already said which day.
   const shortTime = timeOfDay(message.createdAt);
 
+  // The words, as markdown. A Homeroom bot message about a request names its
+  // project, so its `#N` chips open that project's requests (#3770).
+  const words = message.content
+    ? <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />
+    : null;
+
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
@@ -242,8 +248,9 @@ export const MessageRow = memo(function MessageRow({
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).
-        <BotActivityCard message={message} />
-      ) : message.content ? <MessageMarkdown content={message.content} channels={channels} /> : null}
+        // #3770: a card with nothing on record keeps its words.
+        <BotActivityCard message={message} words={words} />
+      ) : words}
     </>
   );
 

@@ -22,7 +22,9 @@ const graders = require('./graders');
 const stats = require('./stats');
 
 const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source']);
-const REPEATED_STAGES = Object.freeze(['triage', 'dm', 'followup', 'checks_fix']);
+// A first version (#3737) is built `repeats` times, so pass^k reads how
+// reliably each brief comes out well, as the research behind it asks.
+const REPEATED_STAGES = Object.freeze(['triage', 'dm', 'followup', 'checks_fix', 'first_version']);
 
 /**
  * Whose answer a DM trial's simulated requester gave: 'scripted' when it was
@@ -63,7 +65,8 @@ async function runTrials(pool, runId) {
             tr.input_tokens, tr.output_tokens, tr.duration_ms, tr.deterministic, tr.error,
             tr.build_branch, tr.build_sha, tr.build_commits, tr.created_at, tr.finished_at,
             tk.stage, tk.tags, tk.issue_number, a.slug AS app_slug,
-            tk.reference->'dm_script'->>'source' AS dm_answer_source
+            tk.reference->'dm_script'->>'source' AS dm_answer_source,
+            CASE WHEN tk.stage IN ('first_version', 'capture') THEN tr.capture END AS capture
        FROM bench_trials tr
        JOIN bench_tasks tk ON tk.id = tr.task_id
        LEFT JOIN apps a ON a.id = tk.app_id
@@ -72,7 +75,7 @@ async function runTrials(pool, runId) {
     [Number(runId)],
   );
   const { rows: grades } = await pool.query(
-    `SELECT g.id, g.trial_id, g.grader, g.verdict, g.created_at
+    `SELECT g.id, g.trial_id, g.grader, g.verdict, g.criteria, g.created_at
        FROM bench_grades g JOIN bench_trials tr ON tr.id = g.trial_id
       WHERE tr.run_id = $1`,
     [Number(runId)],
@@ -94,8 +97,62 @@ async function runTrials(pool, runId) {
       final: graders.finalVerdict({ status: t.status, deterministic: t.deterministic, grades: gs }),
       opus: latest('opus')?.verdict || null,
       human: latest('human')?.verdict || null,
+      // The rubric's criteria as the grade that counts recorded them: a
+      // person's over the judge's.
+      criteria: (latest('human') && Object.keys(latest('human').criteria || {}).length ? latest('human') : latest('opus'))?.criteria || null,
     };
   });
+}
+
+// ── The taste eval's averages (#3737) ─────────────────────────────────────
+
+function mean(values) {
+  const v = values.filter((x) => Number.isFinite(x));
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+
+/**
+ * One taste cell's averages, for comparing arms: each rubric criterion's
+ * share of true among the grades that answered it, the share of trials whose
+ * app booted, and each automatic check and tell as a mean over the trials
+ * that measured it. Pure over runTrials' rows.
+ */
+function tasteAggregates(trials) {
+  const done = trials.filter((t) => t.status === 'ok');
+  const criteria = {};
+  for (const t of done) {
+    for (const [id, value] of Object.entries(t.criteria || {})) {
+      if (typeof value !== 'boolean') continue;
+      if (!criteria[id]) criteria[id] = { yes: 0, n: 0 };
+      criteria[id].n += 1;
+      if (value) criteria[id].yes += 1;
+    }
+  }
+  const caps = done.map((t) => t.capture).filter(Boolean);
+  const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  const avg = (pick) => {
+    const m = mean(caps.map((c) => num(pick(c))));
+    return m == null ? null : Math.round(m * 100) / 100;
+  };
+  return {
+    trials: done.length,
+    criteria: Object.fromEntries(Object.entries(criteria).map(([id, c]) => [id, { rate: c.yes / c.n, n: c.n }])),
+    bootedRate: caps.length ? caps.filter((c) => c.booted).length / caps.length : null,
+    checks: {
+      consoleErrors: avg((c) => c.checks?.consoleErrors?.count),
+      overflowAt360px: avg((c) => c.checks?.overflow360?.worst),
+      tapTargetsUnder44px: avg((c) => c.checks?.smallTapTargets?.small),
+      lowContrastLight: avg((c) => c.checks?.lowContrast?.light?.low),
+      lowContrastDark: avg((c) => c.checks?.lowContrast?.dark?.low),
+      cardsNestedInCards: avg((c) => c.checks?.nestedCards?.worst),
+    },
+    tells: {
+      emojiIcons: avg((c) => c.tells?.emojiIcons?.count),
+      uppercaseEyebrows: avg((c) => c.tells?.uppercaseEyebrows?.count),
+      arbitraryTextSizes: avg((c) => c.tells?.arbitraryTextSizes?.count),
+      hexColours: avg((c) => c.tells?.hexColours?.count),
+    },
+  };
 }
 
 /** One cell of the results table: a stage on a model. */
@@ -183,7 +240,10 @@ async function runReport(pool, runId, { slice = 'verdict', trials: loaded = null
     for (const model of run.models) {
       const mine = ofStage.filter((t) => t.model === model);
       if (!mine.length) continue;
-      const row = { stage, model, baseline: model === run.baseline_model, ...summarize(mine, { stage, k }) };
+      const row = {
+        stage, model, baseline: model === run.baseline_model, ...summarize(mine, { stage, k }),
+        ...(stage === 'first_version' || stage === 'capture' ? { taste: tasteAggregates(mine) } : {}),
+      };
       rows.push(row);
       points.push({ key: `${stage}|${model}`, stage, model, cost: row.costPerAttempt, accuracy: row.accuracy });
       if (model !== run.baseline_model) {
@@ -315,6 +375,7 @@ async function runAggregates(pool, runId, { slice = 'verdict', agreement = null 
       p50Ms: r.p50Ms,
       p95Ms: r.p95Ms,
       paretoFrontier: frontier.has(`${r.stage}|${r.model}`),
+      ...(r.taste ? { taste: r.taste } : {}),
     };
   });
   const run = report.run;
@@ -382,6 +443,7 @@ module.exports = {
   summarize,
   answerSource,
   sliceGroups,
+  tasteAggregates,
   taskScores,
   runReport,
   reasonText,

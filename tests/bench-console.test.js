@@ -147,3 +147,56 @@ test('the judge line holds when a rate has no trials behind it', () => {
     'Agrees with people on 100% of the 1 trial a person also graded. Of those a person passed, it passed 100%. A person has failed none of them yet.');
   assert.doesNotMatch(judgeLine({ n: 6, agreement: 0.5, tpr: null, tnr: 0 }), /not yet/);
 });
+
+// #3737: the taste eval in the console.
+test('a taste suite says its first versions and captures, its tasks show their brief, and a run shows its arms side by side', () => {
+  const { isTasteSuite, stageLabel, TasteTable, TasteTaskForm, TasteShots, SuitesCard, Launcher, TASTE_CRITERIA } = loadBench();
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  assert.equal(isTasteSuite({ counts: { first_version: 4 } }), true);
+  assert.equal(isTasteSuite({ counts: { triage: 40 } }), false);
+  assert.equal(stageLabel('capture'), 'Capture (before)');
+  assert.equal(stageLabel('taste'), 'Taste', 'a grade item never says which arm');
+  assert.deepEqual(TASTE_CRITERIA.map((c) => c.id), require('../src/services/bench/grading').RUBRICS.taste.criteria.map((c) => c.id),
+    'the console names the rubric\'s own criteria');
+
+  const suite = { id: 9, name: 'Taste v1', version: 1, kind: 'frozen', frozen_at: null, counts: { first_version: 4, capture: 2 }, total: 6, labelled: 6, deletable: false };
+  const suitesHtml = renderToHtml(createElement(SuitesCard, { canWrite: true, suites: [suite], coreSuiteId: null, onChanged() {}, say() {} }));
+  assert.match(suitesHtml, /data-bench-suite="9" data-bench-suite-taste="9"/);
+  assert.match(suitesHtml, /First versions 4 · Captures 2/);
+
+  const form = renderToHtml(createElement(TasteTaskForm, { suiteId: 9, act: async () => {} }));
+  assert.match(form, /id="admin-homeroom-bench-taste-form"/);
+  assert.match(form, /<option value="first_version" selected="">First version from a brief<\/option>/);
+  assert.match(form, /Capture an app at a commit \(before\)/);
+  assert.match(form, /id="admin-homeroom-bench-taste-brief"/);
+
+  const launcher = renderToHtml(createElement(Launcher, {
+    suites: [suite], models: [{ id: 'a/glm', label: 'GLM' }],
+    defaults: { capUsd: 50, repeats: 3, maxConcurrency: 8 },
+    launcher: { suiteId: 9, models: ['a/glm'], stages: ['first_version', 'capture'], repeats: 3, repeatStages: ['triage'], capUsd: 50 },
+    hiddenChecks: 'x', onLaunched() {}, say() {},
+  }));
+  assert.match(launcher, /Taste v1 v1 \(not frozen\) · 1 model · First version ×3 · Capture \(before\)/, 'first versions are repeated');
+  assert.match(launcher, />Repeats</);
+
+  const cell = (rate) => ({
+    trials: 4, criteria: { would_ship: { rate, n: 4 }, hierarchy: { rate: 1, n: 4 } }, bootedRate: 1,
+    checks: { consoleErrors: 0.5, overflowAt360px: 0, tapTargetsUnder44px: 2, lowContrastLight: 1, lowContrastDark: 3.25, cardsNestedInCards: 0 },
+    tells: { emojiIcons: 7, uppercaseEyebrows: 1, arbitraryTextSizes: 0, hexColours: 4 },
+  });
+  const table = renderToHtml(createElement(TasteTable, {
+    rows: [{ stage: 'first_version', model: 'a/glm', taste: cell(0.75) }, { stage: 'capture', model: 'a/glm', taste: cell(0.25) }],
+    name: () => 'GLM',
+  }));
+  assert.match(table, /id="admin-homeroom-bench-taste-table"/);
+  assert.match(table, /First version, GLM/);
+  assert.match(table, />Capture \(before\)<\/th>/, 'a capture runs no model, so its column names none');
+  assert.match(table, />Would ship<\/td><td[^>]*>75% of 4<\/td><td[^>]*>25% of 4</);
+  assert.match(table, /1 \/ 3\.3/, 'low-contrast text per look');
+  assert.match(table, /7 · 1 · 0 · 4/);
+  assert.match(table, />Spacing<\/td><td[^>]*>–</, 'a criterion nobody graded is a dash');
+
+  const shots = renderToHtml(createElement(TasteShots, { shots: [{ caption: 'Phone 390×844, dark look, empty (no data yet)', artifactId: 'a'.repeat(32) }] }));
+  assert.match(shots, new RegExp(`src="/api/admin/homeroom-bot/bench/artifacts/${'a'.repeat(32)}"`));
+  assert.match(shots, /alt="Phone 390×844, dark look, empty \(no data yet\)"/);
+});

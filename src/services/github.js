@@ -590,6 +590,21 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   return newCommit;
 }
 
+// #3737: a commit with NO parent holding exactly `files`, written to the
+// repository's object store with no branch pointing at it; the caller names
+// it (services/bench/runner.js, the benchmark's scaffold, which only ever
+// points a `bench/` branch at it). Without a parent, a checkout of it holds
+// that one commit and none of the repository's history. Resolves its sha.
+async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+  const octokit = await getOctokit(owner);
+  const tree = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
+  const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, tree });
+  const { data: commit } = await octokit.rest.git.createCommit({
+    owner, repo, message: safeMention(message), tree: newTree.sha, parents: [],
+  });
+  return commit.sha;
+}
+
 // Read a single file's decoded text contents from a repo at `ref`
 // (default the repo's default branch). Returns the string, or null when
 // the file doesn't exist (404) so callers can branch on "create vs
@@ -2441,6 +2456,7 @@ module.exports = {
   createRepo,
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
+  createRootCommit,
   getFileContent,
   createBranch,
   ensureBranchAtSha,

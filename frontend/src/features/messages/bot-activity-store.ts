@@ -35,9 +35,11 @@ export interface BotActivitySnapshot {
   loaded: boolean;
   /** The last read failed (what was read before is kept). */
   failed: boolean;
+  /** Which read `cards` came from, counted as `readsAsked` counts them; 0 for none. */
+  landed: number;
 }
 
-const EMPTY: BotActivitySnapshot = { cards: new Map(), loaded: false, failed: false };
+const EMPTY: BotActivitySnapshot = { cards: new Map(), loaded: false, failed: false, landed: 0 };
 let snapshot: BotActivitySnapshot = EMPTY;
 const listeners = new Set<() => void>();
 
@@ -63,12 +65,17 @@ export function useBotActivity(): BotActivitySnapshot {
 let seq = 0;
 let inFlight: Promise<void> | null = null;
 
+/** How many reads have been asked for so far: the number of the newest. */
+export function readsAsked(): number {
+  return seq;
+}
+
 /** Read every card's state again. `fresh`: past the worker's offline copy. */
 export function loadBotActivity({ fresh = true }: { fresh?: boolean } = {}): Promise<void> {
   const mine = ++seq;
   const run: Promise<void> = api.getHomeroomBotActivity({ fresh }).then((cards) => {
     if (mine !== seq) return;
-    publish({ cards: new Map(cards.map((card) => [card.messageId, card])), loaded: true, failed: false });
+    publish({ cards: new Map(cards.map((card) => [card.messageId, card])), loaded: true, failed: false, landed: mine });
   }).catch(() => {
     if (mine === seq) publish({ ...snapshot, failed: true });
   }).finally(() => {
@@ -96,6 +103,28 @@ export function catchUpBotActivity(conversationId: number): Promise<void> {
     handleEvent({ type: 'conversation_message_created', conversationId });
     void loadBotActivity();
   }).catch(() => {});
+}
+
+/**
+ * #3770: what the reads say of the card on message `messageId`, which was
+ * drawn when `drawnAt` reads had been asked for (`readsAsked`):
+ *
+ *   - `record`: its state;
+ *   - `none`: nothing, from a read that knew of the card. The server answers
+ *     for the newest cards only (services/homeroom-bot-activity.js
+ *     MAX_CARDS), so a card older than one it answered for has no state, and
+ *     neither has one a read asked for since it was drawn did not return;
+ *   - `pending`, or `failed`: no read that knew of it has landed. A card the
+ *     bot has just sent is newer than the last read until the read its news
+ *     starts lands, and is not `none` meanwhile.
+ */
+export function cardRecord(snap: BotActivitySnapshot, messageId: number, drawnAt: number): 'record' | 'none' | 'pending' | 'failed' {
+  if (snap.cards.has(messageId)) return 'record';
+  if (snap.loaded) {
+    if (snap.landed > drawnAt) return 'none';
+    for (const id of snap.cards.keys()) if (id > messageId) return 'none';
+  }
+  return snap.failed ? 'failed' : 'pending';
 }
 
 /**

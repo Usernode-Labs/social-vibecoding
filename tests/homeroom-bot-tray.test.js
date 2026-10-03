@@ -14,11 +14,13 @@
 //     finishes their work (the tray's realtime), and app.js turning that
 //     announcement into the window event the tray listens for;
 //   - the tray's render: the status line under the bot's name in each state,
-//     the panel's groups and tiles, History folded away, its loading and
-//     failed states, and links that only ever go to the platform's own
-//     addresses;
-//   - where it is mounted: the bot's DM only, its header's name block the
-//     toggle, the panel dropped over the transcript from under the header.
+//     the Activity disc and its badge, the panel's groups and tiles, History
+//     folded away, its loading and failed states, and links that only ever
+//     go to the platform's own addresses;
+//   - where it is mounted: the bot's DM only, its header's Activity disc the
+//     toggle (#3770; the name block no longer is), the panel dropped over
+//     the transcript from under the header and left open by the full-width
+//     toggle.
 //
 // Run with: node --test tests/homeroom-bot-tray.test.js
 
@@ -368,18 +370,54 @@ test('the status line says what the bot is working on, else what waits on them, 
     { kind: 'last', long: 'Last: answered on Ear Trainer #9 · 16h ago', short: 'Last: answered on #9 · 16h ago' });
 });
 
-test('the status line under the bot\'s name: a dot while it works, both lengths, and the chevron', () => {
+test('the status line under the bot\'s name: a dot while it works, both lengths, and words only', () => {
   const { BotWorkStatusView, trayStatus } = loadTsx(TRAY);
-  const draw = (w, open) => renderToHtml(createElement(BotWorkStatusView, { status: trayStatus(w, NOW), open }));
-  const busy = draw(work({ now: [working({ issueNumber: 14, phase: 'building' })] }), false);
+  const draw = (w) => renderToHtml(createElement(BotWorkStatusView, { status: trayStatus(w, NOW) }));
+  const busy = draw(work({ now: [working({ issueNumber: 14, phase: 'building' })] }));
   assert.match(busy, /^<div class="messages-thread-sub [^"]*text-\[color:var\(--brand-ink\)\]" data-bot-work-status="working">/);
   assert.match(busy, /animate-ping/);
   assert.match(busy, /<span class="hidden sm:inline">Working on Ear Trainer #14 · building<\/span><span class="sm:hidden">Working on #14<\/span>/);
-  assert.doesNotMatch(busy, /rotate-180/);
-  assert.match(draw(work({ now: [working({ issueNumber: 14 })] }), true), /rotate-180/, 'open');
-  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }), false);
+  // #3770: the Activity disc is the toggle, so the line draws no chevron of one.
+  assert.doesNotMatch(busy, /<svg|rotate-180/);
+  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
   assert.match(quiet, /data-bot-work-status="last"/);
   assert.doesNotMatch(quiet, /animate-ping|brand-ink/);
+});
+
+test('#3770: the Activity disc opens the panel, and its badge is the live dot, or what waits on the viewer', () => {
+  const { BotWorkButtonView } = loadTsx(TRAY);
+  const draw = (w, open = false) => renderToHtml(createElement(BotWorkButtonView, { work: w, open }));
+  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
+  assert.match(quiet, /^<button type="button" class="messages-thread-action messages-bot-work-button" aria-label="Activity" title="Activity" aria-expanded="false" aria-controls="messages-bot-work-panel" data-bot-work-toggle="">/,
+    'one of the header\'s discs, named, and the toggle the panel\'s Escape and outside press find');
+  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M12 6v6h4\.5m4\.5 0a9 9 0 11-18 0 9 9 0 0118 0z"><\/path><\/svg><\/button>$/,
+    'the clock, and no badge with nothing going on');
+  assert.equal(draw(null), quiet, 'before the first read, the same');
+  assert.match(draw(work({}), true), /aria-expanded="true"/, 'open');
+
+  // The bot working: the live dot, carrying the state the declared check
+  // (dapp.json homeroom-bot-dm-activity-tray) selects the toggle by.
+  const busy = draw(work({ now: [working({ issueNumber: 14 })] }));
+  assert.match(busy, /<span class="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status="working"><span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">/);
+  assert.match(busy, /animate-ping/);
+
+  // Something waiting on the viewer: how many, which wins over the dot.
+  const both = draw(work({ now: [working({ issueNumber: 14 })], needsYou: [past({ issueNumber: 7, outcome: 'question' })] }));
+  assert.match(both, /<span class="messages-bot-work-badge messages-bot-work-count" data-bot-work-status="working" aria-hidden="true">1<\/span><\/button>$/);
+  assert.doesNotMatch(both, /animate-ping/);
+  const waiting = draw(work({ needsYou: [past({ issueNumber: 7 }), past({ issueNumber: 8 })] }));
+  assert.match(waiting, /data-bot-work-status="you" aria-hidden="true">2<\/span>/);
+  const many = draw(work({ needsYou: Array.from({ length: 12 }, (_, i) => past({ issueNumber: i + 1 })) }));
+  assert.match(many, /aria-hidden="true">9\+<\/span>/);
+
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
+  assert.match(check.expectSelector, /> \.messages-thread-header \[data-bot-work-toggle\]\[aria-expanded=false\]:has\(\[data-bot-work-status=working\]\)$/,
+    'the check finds the disc, closed, with the bot at work');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-bot-work-button \{ position: relative; \}/);
+  assert.match(css, /\.messages-bot-work-count \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, 'a number for the viewer, in the accent');
+  assert.doesNotMatch(css, /\.messages-bot-work-button[^{]*\{[^}]*display: none/, 'drawn on a phone too, unlike the full-width toggle');
 });
 
 test('the panel: Now with the step it is at, Needs you, and History folded away', () => {
@@ -537,7 +575,7 @@ test('a conversation is the bot\'s DM only when the server says so, and only a d
 
 // ── Where it is mounted ───────────────────────────────────────────────
 
-test('only a conversation with the Homeroom bot carries the tray: its name block toggles the panel, which drops from under the header', () => {
+test('only a conversation with the Homeroom bot carries the tray: its Activity disc toggles the panel, which drops from under the header', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const botDm = !!snap\.active && snap\.active\.id === conversationId && snap\.active\.kind === 'direct'\s*&& snap\.active\.membershipStatus === 'member' && snap\.active\.homeroomBot === true;/);
   // The panel's anchor sits right under the header, so the panel covers the transcript and moves nothing.
@@ -546,12 +584,23 @@ test('only a conversation with the Homeroom bot carries the tray: its name block
 
   const header = screen.slice(screen.indexOf('function ThreadHeader()'), screen.indexOf('function isCardMessage('));
   assert.match(header, /const botDm = active\.kind === 'direct' && !!active\.homeroomBot && active\.membershipStatus === 'member';/);
-  assert.match(header, /onClick=\{\(\) => \{ if \(botDm\) toggleBotWork\(\); else if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
-  assert.match(header, /aria-expanded=\{botDm \? botWorkOpen : undefined\}\s*aria-controls=\{botDm \? BOT_WORK_PANEL_ID : undefined\}\s*data-bot-work-toggle=\{botDm \? '' : undefined\}/);
-  assert.match(header, /\{botDm \? <BotWorkStatusLine \/> : <div className="messages-thread-sub">\{subtitle\}<\/div>\}/);
-  // The useBotWork hook runs before the header's early return, so hook order is stable.
-  assert.ok(header.indexOf('useBotWork()') < header.indexOf('if (!active) return null;'));
+  // #3770: the disc, just before the full-width toggle; the name block above
+  // the status line is no longer a toggle, and draws no chevron.
+  assert.match(header, /\{botDm \? <BotWorkButton \/> : null\}\s*<FullWidthToggle \/>/);
+  const nameBlock = header.slice(header.indexOf('className="min-w-0 text-left flex-1"'), header.indexOf('</button>', header.indexOf('className="min-w-0 text-left flex-1"')));
+  assert.match(nameBlock, /onClick=\{\(\) => \{ if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
+  assert.doesNotMatch(nameBlock, /toggleBotWork|aria-expanded|aria-controls|data-bot-work-toggle|ChevronDownIcon/);
+  assert.match(nameBlock, /\{botDm \? <BotWorkStatusLine \/> : <div className="messages-thread-sub">\{subtitle\}<\/div>\}/);
+  assert.doesNotMatch(header, /useBotWork\(\)|toggleBotWork|BOT_WORK_PANEL_ID/, 'the disc reads the tray\'s store itself');
   assert.doesNotMatch(header, /Activity &amp; history|data-bot-work-open/, 'the ⋯ menu no longer needs a way in');
+
+  // A press on the full-width toggle widens the pane under the panel and leaves it open.
+  const fullWidth = screen.slice(screen.indexOf('function FullWidthToggle()'), screen.indexOf('function ThreadHeader()'));
+  assert.match(fullWidth, /title=\{label\}\s*data-bot-work-keep=""/);
+  const tray = read(TRAY);
+  const panel = tray.slice(tray.indexOf('export function BotWorkPanel()'), tray.indexOf('export function BotWorkSync('));
+  assert.match(panel, /target\.closest\?\.\('\[data-bot-work-toggle\], \[data-bot-work-keep\]'\)\) return;\s*setBotWorkOpen\(false\);/);
+  assert.match(panel, /setBotWorkOpen\(false\);\s*document\.querySelector<HTMLElement>\('\[data-bot-work-toggle\]'\)\?\.focus/, 'Escape hands focus back to the disc');
 
   const { BOT_WORK_PANEL_ID } = loadTsx(TRAY);
   assert.equal(BOT_WORK_PANEL_ID, 'messages-bot-work-panel');
