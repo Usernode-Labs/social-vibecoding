@@ -12,6 +12,9 @@ const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+// #11 (WP3): the platform issue and its receipt, shared with the Homeroom
+// bot's report_problem, which files through the service rather than here.
+const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('../services/feedback-reports');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -150,21 +153,9 @@ function normalizeQueuedAt(raw, nowMs) {
   return new Date(t).toISOString();
 }
 
-// Derive `owner/repo` from a github.com URL. We do this at module
-// load (well, at route-factory load) so a malformed
-// USERNODE_PLATFORM_REPO fails the platform fast at startup rather
-// than 500-ing the first time a user clicks "Send feedback".
-function parseGitHubRepo(url) {
-  const u = new URL(url);
-  if (u.hostname !== 'github.com' && u.hostname !== 'www.github.com') {
-    throw new Error(`Expected github.com URL, got: ${url}`);
-  }
-  const parts = u.pathname.replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2) {
-    throw new Error(`Expected /<owner>/<repo> path, got: ${url}`);
-  }
-  return { owner: parts[0], repo: parts[1] };
-}
+// parseGitHubRepo lives in services/feedback-reports.js: the route parses
+// the platform repo at route-factory load, so a malformed
+// USERNODE_PLATFORM_REPO fails the platform fast at startup.
 
 // #125 announce (cache seed + issue_update broadcast) lives in
 // services/issue-announce.js — shared with the platform-issue draft
@@ -225,34 +216,9 @@ async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
   }
 }
 
-// A local receipt for a report that reached GitHub.
-//
-// The issue is still the real output; this row exists because the issue
-// cannot answer the two questions the season's feedback challenge asks. It
-// was filed by the platform's bot account, so GitHub does not know WHO on
-// this platform wrote it, and reading every issue back over the API once a
-// tick to find out would be absurd. Written only after the issue exists, so
-// the scorer can never pay for feedback that reached nobody.
-//
-// Best-effort like the acknowledgement below it: the report is filed and the
-// person has been helped, so a bookkeeping failure must not turn their
-// submission into an error and invite a duplicate.
-async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description }) {
-  if (!user?.id) return;
-  try {
-    await pool.query(
-      `INSERT INTO feedback_reports
-         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [user.id, app ? 'app' : 'platform', app ? app.id : null,
-        owner || null, repo || null,
-        Number.isSafeInteger(issueNumber) ? issueNumber : null,
-        title ? String(title).slice(0, 512) : null, description]
-    );
-  } catch (err) {
-    log.warn('feedback', 'Feedback report record failed', { issueNumber, message: err.message });
-  }
-}
+// recordFeedbackReport (services/feedback-reports.js) writes the local
+// receipt for a report that reached GitHub: who on this platform wrote it,
+// which the issue, filed by the platform's bot account, cannot say.
 
 // ── "Your feedback" (#3186) ─────────────────────────────────────────────
 //
@@ -803,42 +769,22 @@ function feedbackRoutes(config) {
         });
       }
 
-      const ghRes = await fetch(`https://api.github.com/repos/${issueOwner}/${issueRepo}/issues`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `token ${pat}`,
-          'User-Agent': 'usernode-social-vibecoding',
-        },
-        // This hand-rolled fetch bypasses github.js's write helpers, so
-        // apply safeMention here — the user-typed description/title are
-        // free-form text that could carry live @mentions (#723).
-        body: JSON.stringify({
-          title: github.safeMention(title),
-          body: github.safeMention(`**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}`),
-          labels: ['usernode'],
-        }),
+      // The platform repo, with the bot's token (services/feedback-reports.js
+      // createPlatformIssue): a hand-rolled call that applies safeMention to
+      // the user-typed title and description itself (#723).
+      const created = await createPlatformIssue({
+        owner: issueOwner,
+        repo: issueRepo,
+        title,
+        body: `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}`,
+        pat,
       });
+      // The underlying status is in the client-facing error (the hint), so
+      // a 404 (no access to the feedback repo) reads apart from a 401 (PAT
+      // revoked) or a 403 (rate limited) without spelunking server logs.
+      if (!created.ok) return res.status(502).json({ error: `Failed to create GitHub issue: ${created.hint}` });
 
-      if (!ghRes.ok) {
-        const err = await ghRes.text();
-        log.error('feedback', 'GitHub API error', { status: ghRes.status, body: err });
-        // Surface the underlying status in the client-facing error so we
-        // don't have to spelunk server logs to tell "bot has no access to
-        // the feedback repo" (404) from "PAT revoked" (401) from rate
-        // limiting (403). Never include the raw body — it can leak repo
-        // metadata — but the status alone is safe + actionable.
-        const hint = ghRes.status === 404
-          ? 'feedback repo not visible to the bot. Add usernode-bot as a collaborator or install the GitHub App on it'
-          : ghRes.status === 401
-            ? 'GITHUB_BOT_TOKEN is invalid or expired'
-            : ghRes.status === 403
-              ? 'bot lacks Issues:write on the feedback repo, or is rate-limited'
-              : `GitHub returned ${ghRes.status}`;
-        return res.status(502).json({ error: `Failed to create GitHub issue: ${hint}` });
-      }
-
-      const issue = await ghRes.json();
+      const issue = created.issue;
       await queueTitleHeal(issueOwner, issueRepo, issue.number);
       await linkScreenshot(issueOwner, issueRepo, issue.number);
       // Platform feedback: the platform repo is itself an app on

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
+import { WORK_CHANGED_EVENT } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
@@ -1822,6 +1823,13 @@ function showing(): boolean {
  * opened on a slow link is drawn from the worker's offline copy after a
  * second, and the worker's word that the server has since said otherwise had
  * nothing on this screen listening to it.
+ *
+ * #8 (WP3): and, in the Homeroom bot's DM, its activity tray and cards
+ * (./bot-work.tsx, ./bot-activity-store.ts): their reads are the worker's to
+ * correct too, and the header's status line read from a stale copy said
+ * "Working on…" for work long done. Through the window event both already
+ * re-read on, fresh: this module cannot import them, since the cards' store
+ * imports this one.
  */
 export async function resync(): Promise<void> {
   void loadAppDiscussions();
@@ -1831,6 +1839,7 @@ export async function resync(): Promise<void> {
     reads.push(loadThread(conversationId, true));
     const rootId = state.route.threadRootId;
     if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
+    if (typeof window !== 'undefined' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(WORK_CHANGED_EVENT));
   }
   await Promise.all(reads);
 }

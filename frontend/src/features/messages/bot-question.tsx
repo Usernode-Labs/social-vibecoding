@@ -27,6 +27,8 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * Something else (anything typed is read by the bot instead). #3770: File
  * it is the act, filled in the accent; Not now is the neutral fill beside
  * it. A question's answers keep one look: none of them is the act.
+ * #11 (WP3): an offer to withdraw one of the bot's proposals is the same
+ * pair, Withdraw it and Keep it, named by its own question.
  */
 
 export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
@@ -68,7 +70,7 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={offer ? 'File this request?' : 'Suggested answers'}>
+        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || 'File this request?') : 'Suggested answers'}>
           {answers.map((answer, index) => (
             <button
               key={answer}

@@ -107,6 +107,21 @@ test('each filter admits exactly its own kind, and All admits every one', () => 
   assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
 });
 
+test('#18 (WP3): the Homeroom bot\'s DM is filed under Agents, not People, and is still drawn as a DM', () => {
+  const conversations = [
+    { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
+    { id: 2, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-03T00:00:00Z') },
+  ];
+  const sessions = [{ key: 's7', lastActivityAt: at('2026-01-01T00:00:00Z') }];
+  const build = (filter) => inbox.buildInbox({ conversations, discussions: [], agents: [], sessions, filter });
+  assert.deepEqual(build('agents').map((e) => e.key), ['person:2', 'session:s7'], 'Agents lists it, on the same clock');
+  assert.deepEqual(build('people').map((e) => e.key), ['person:1'], 'People does not');
+  assert.deepEqual(build('all').map((e) => e.key), ['person:2', 'person:1', 'session:s7'], 'All lists it once');
+  const [bot] = build('agents');
+  assert.deepEqual([bot.kind, bot.section], ['person', 'chats'], 'drawn by the conversation row, as before');
+  assert.match(SCREEN, /conversations: snap\.conversations,/, 'the screen hands the merge the summaries that carry the mark');
+});
+
 test('agent chats are read, not copied', () => {
   // Through a selector, the two fields it draws, so a turn streaming in the
   // chat does not redraw the list.

@@ -31,6 +31,8 @@
 // Nothing here guesses. A step has a time limit when the platform enforces
 // one (a reading turn, a plan, a build), which is the most it can take, not
 // an estimate, and a record the bot cannot read is left out, not filled in.
+// How long a step usually takes is a fixed range per step (typicalMinutes,
+// #19), said as that and nothing finer.
 //
 // #3734: the DM's activity tray (homeroom-bot-tray.js) lists under Now what
 // this module says is in flight (inFlight below), so the tray and the bot's
@@ -167,12 +169,27 @@ function links(domain, { slug, number = null, proposal = null }) {
 }
 
 /**
+ * Pure (#8, WP3): whether a request's queue row is left over from before its
+ * proposal merged: put there before the merge (a reply, a look again), and
+ * moot once it went live. It read as "waiting in the queue" in the DM's
+ * header long after. A row put there after the merge is new work.
+ */
+function leftOverQueue(row) {
+  if (row.proposal_status !== 'merged' || !row.queue_id || !row.merged_at) return false;
+  const ms = (value) => (value instanceof Date ? value.getTime() : Date.parse(value || ''));
+  const queued = ms(row.enqueued_at || row.started_at);
+  const merged = ms(row.merged_at);
+  return Number.isFinite(queued) && Number.isFinite(merged) && queued <= merged;
+}
+
+/**
  * Pure: the stage of one of the person's requests, from one row of
  * requestRows below, or null when nothing about it is in progress.
  * `{ stage, since, doing, waitingOn?, limit? }`, where `limit` names which
  * clock applies ('reading', 'plan' or 'build').
  */
-function stageOf(row, { now = new Date() } = {}) {
+function stageOf(input, { now = new Date() } = {}) {
+  const row = leftOverQueue(input) ? { ...input, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null } : input;
   const proposalOpen = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
   const it = row.first_version ? 'the description' : 'the request';
   if (proposalOpen) {
@@ -283,6 +300,35 @@ function limitsFor(row, { settings, config, botSvc }) {
   } catch {
     return {};
   }
+}
+
+// #19 (WP3, D5): how long each step usually takes, in minutes, by stage: a
+// fixed range for now, to be read from recent runs later. "How long will it
+// take?" is answered with this. A step's time limit is the most it can take
+// before it is stopped, and a reply that quoted it as the wait ("about 40
+// minutes") was answering a different question.
+const TYPICAL_MINUTES = Object.freeze({
+  setting_up: Object.freeze([2, 6]),
+  reading: Object.freeze([1, 3]),
+  starting: Object.freeze([1, 5]),
+  planning: Object.freeze([3, 8]),
+  building: Object.freeze([10, 25]),
+  proposing: Object.freeze([1, 3]),
+  checks: Object.freeze([5, 20]),
+  revising: Object.freeze([5, 20]),
+  fixing: Object.freeze([5, 20]),
+});
+
+/**
+ * Pure: how long a stage's step usually takes, `{ from, to }` in minutes, or
+ * null for a stage that waits on somebody (a queue, a question, the vote)
+ * rather than takes a while. Never past the step's time limit.
+ */
+function typicalMinutes(stage, limit = null) {
+  const range = TYPICAL_MINUTES[stage];
+  if (!range) return null;
+  const to = Number.isFinite(limit) && limit > 0 ? Math.min(range[1], limit) : range[1];
+  return { from: Math.min(range[0], to), to };
 }
 
 /**
@@ -701,6 +747,7 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
   const step = stepNumber(state.stage, firstVersion);
   const minutes = minutesSince(state.since, now);
   const limit = state.limit && Number.isFinite(limits[state.limit]) ? limits[state.limit] : null;
+  const typical = state.waitingOn ? null : typicalMinutes(state.stage, limit);
   return {
     project: row.slug,
     projectName: row.name || row.slug,
@@ -715,6 +762,7 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     busyNow: BUSY_STAGES.has(state.stage) && !state.waitingOn,
     ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
     ...(limit ? { stepTimeLimitMinutes: limit } : {}),
+    ...(typical ? { typicalMinutes: typical } : {}),
     ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
     ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
     ...(proposal ? { proposal } : {}),
@@ -886,4 +934,8 @@ module.exports = {
   requestStates,
   progressFor,
   progressText,
+  // #8, #19 (WP3)
+  TYPICAL_MINUTES,
+  leftOverQueue,
+  typicalMinutes,
 };

@@ -151,6 +151,92 @@ test('every kind the DM carries reads plainly, names the request, and has no em 
   }
 });
 
+test('#20 (WP3): beside the proposal\'s card the news points at the card; the address is written out only without one', () => {
+  const context = { appName: 'Seed swap', issueNumber: 7, issueTitle: 'Sort by date', firstVersion: false };
+  const withCard = { ...KINDS.proposal, sessionId: 9 };
+  assert.equal(dm.dmText('proposal', withCard, context),
+    '**Seed swap** · request #7: Sort by date\n\nIt\'s built. Open the proposal below to try the preview and vote on it.\n\n'
+      + 'It goes live once it is approved.');
+  assert.deepEqual(dm.cardsFor('proposal', withCard, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }],
+    'the card it points at is the one that goes under it');
+  const revised = dm.dmText('followup_revise', { ...KINDS.followup_revise, sessionId: 9 }, context);
+  assert.match(revised, /I changed the proposal after the latest replies: Made it darker\.\n\nTake another look at it below\.$/);
+  for (const text of [dm.dmText('proposal', withCard, context), revised]) {
+    assert.doesNotMatch(text, /https?:|onhomeroom/, 'no raw address beside the card, in the DM or its push');
+    assert.doesNotMatch(text, DASH);
+  }
+  // No card (no session to name): the address is the way to it.
+  assert.match(dm.dmText('proposal', KINDS.proposal, context), /vote on it: https:\/\/app\.onhomeroom\.com\/#app\/x\/dev\/proposals\/9/);
+  assert.match(dm.dmText('followup_revise', KINDS.followup_revise, context), /Take another look: https:/);
+});
+
+test('#20 (WP3): a message whose card cannot go says what it says without it', async (t) => {
+  const conversations = require('../src/services/conversations');
+  const saved = { ensureAdmittedDirect: conversations.ensureAdmittedDirect, sendMessage: conversations.sendMessage };
+  t.after(() => Object.assign(conversations, saved));
+  const sends = [];
+  conversations.ensureAdmittedDirect = async () => ({ conversationId: 5, created: false });
+  conversations.sendMessage = async (_pool, _user, _id, input) => {
+    sends.push(input);
+    return input.objects ? null : { messageId: 70, duplicate: true };
+  };
+  const sent = await dm.sendDm({ query: async () => ({ rows: [] }) }, {
+    bot: { id: 1 }, userId: 2, content: 'Open the proposal below.', withoutCards: 'Open the proposal: https://x/9',
+    objects: [{ type: 'proposal', appId: 3, sessionId: 9 }],
+  });
+  assert.equal(sent.messageId, 70);
+  assert.deepEqual(sends.map((s) => [s.content, !!s.objects]), [['Open the proposal below.', true], ['Open the proposal: https://x/9', false]]);
+  // relayIssuePost hands it the same news without the card: the address.
+  const src = read('src/services/homeroom-bot-dm.js');
+  assert.match(src, /withoutCards: dmText\(kind, \{ \.\.\.dm, sessionId: null \}, context\),/);
+});
+
+test('#7 (WP3): "live now" only once the app answered on the merge it deployed, and the platform\'s own app says a few minutes', async () => {
+  const line = '**Plant Pal** · request #3: Watering reminders';
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true }),
+    `${line}\n\nIt was approved and is live now. Open Plant Pal below to try it.`);
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: false }),
+    `${line}\n\nIt was approved and merged, and it'll be live in a few minutes. Open Plant Pal below to try it then.`);
+  assert.equal(dm.mergedText({ line, appName: 'Homeroom', live: false, platform: true }),
+    `${line}\n\nIt was approved and merged, and it'll be live in a few minutes.`);
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true, card: false }), `${line}\n\nIt was approved and is live now.`);
+  for (const live of [true, false]) assert.doesNotMatch(dm.mergedText({ line, appName: 'Plant Pal', live }), DASH);
+  // The app first, to open it, then the proposal; the platform's own, its proposal alone.
+  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7),
+    [{ type: 'app', appId: 3 }, { type: 'proposal', appId: 3, sessionId: 9 }]);
+  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9 }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
+
+  // Its health, read a few times a few seconds apart, on the build the merge deployed.
+  const probes = [];
+  const waits = [];
+  const runtime = (answers) => ({
+    productionRef: (_config, app) => ({ runtimeKind: 'kubernetes', runtimeName: `app-${app.slug}` }),
+    async probeHealth(_config, ref) { probes.push(ref.runtimeName); return answers.shift(); },
+  });
+  const deps = (answers) => ({ applicationRuntime: runtime(answers), sleep: async (ms) => { waits.push(ms); } });
+  const app = { id: 3, slug: 'plant-pal', self_hosted: false };
+  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([true]) }), true);
+  assert.deepEqual([probes, waits], [['app-plant-pal'], []]);
+  probes.length = 0;
+  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([false, false, true]) }), true, 'starting up');
+  assert.deepEqual(waits, [dm.LIVE_PROBE_WAIT_MS, dm.LIVE_PROBE_WAIT_MS]);
+  probes.length = 0;
+  waits.length = 0;
+  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([false, false, false, true]) }), false, 'not yet: a few minutes');
+  assert.equal(probes.length, dm.LIVE_PROBES);
+  probes.length = 0;
+  assert.equal(await dm.liveAfterMerge({}, { ...app, self_hosted: true }, { sha: 'abc', deps: deps([true]) }), false,
+    'the platform releases after the merge, elsewhere');
+  assert.equal(await dm.liveAfterMerge({}, app, { sha: null, deps: deps([true]) }), false, 'nothing deployed to confirm');
+  assert.equal(await dm.liveAfterMerge(null, app, { sha: 'abc', deps: deps([true]) }), false);
+  assert.deepEqual(probes, [], 'none of those reads its health');
+
+  // The merge passes what it deployed, and its config to read the health with.
+  const votes = read('src/routes/votes.js');
+  assert.match(votes, /sha = result\.sha;\n\s+deployedSha = sha \|\| null;/);
+  assert.match(votes, /require\('\.\.\/services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, session, \{ config, sha: deployedSha \}\)/);
+});
+
 test('an answer is posted on the request saying where it came from', () => {
   assert.equal(dm.mirroredText('Oldest first', { question: true }), 'Oldest first\n\n(Answered in a chat with Homeroom bot.)');
   assert.equal(dm.mirroredText('Also add dates'), 'Also add dates\n\n(Sent in a chat with Homeroom bot.)');
@@ -362,7 +448,9 @@ test('a question in the DM draws its answers, the default marked, and says an an
     answers: ['File it', 'Not now'], status: 'open',
   } } };
   const offered = renderToHtml(createElement(BotQuestion, { message: offer, conversationId: 3 }));
-  assert.match(offered, /aria-label="File this request\?"/);
+  // #11 (WP3): the pair is named by the offer's own question, since an offer
+  // to withdraw a proposal draws the same pair.
+  assert.match(offered, /aria-label="File this as a request on Seed swap\?"/);
   assert.match(offered, /<span>File it<\/span><\/button>/);
   assert.match(offered, /<span>Not now<\/span>/);
   assert.doesNotMatch(offered, /suggested|Something else|public discussion/);

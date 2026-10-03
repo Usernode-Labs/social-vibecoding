@@ -99,10 +99,18 @@ const PROPOSAL_PHASES = new Set(['follow_up_queued', 'following_up', 'merging'])
 const OUTCOMES = activitySvc.OUTCOMES;
 // The endings that wait on the person: the cards' "Needs you".
 const NEEDS_YOU = new Set(['question', 'blocked', 'empty']);
+// #8 (WP3): what a History entry says when none of its runs has come to
+// anything yet (the bot is switched off, or a build has gone quiet), in
+// place of an ending it has not had.
+const NOT_FINISHED = 'not finished yet';
 
 // A proposal people can open: the same states shared-objects.js lets anybody
 // who can view the app open the bot's proposal in.
 const OPENABLE_PROPOSAL = new Set(['promoted', 'merging', 'merged']);
+// A proposal that ended without merging: closed, or withdrawn (archived:
+// set aside by the vote, withdrawn from the DM, or replaced by another
+// proposal for the same request).
+const CLOSED_PROPOSAL = new Set(['closed', 'archived']);
 
 function settingsModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
@@ -195,7 +203,7 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
-        if (row.proposal_status === 'closed') return 'closed';
+        if (CLOSED_PROPOSAL.has(row.proposal_status)) return 'closed';
         return 'proposed';
       }
       if (row.build_ok === true) return 'proposed';
@@ -247,21 +255,54 @@ function groupRuns(rows) {
   return groups;
 }
 
+function ms(value) {
+  if (!value) return NaN;
+  return value instanceof Date ? value.getTime() : Date.parse(value);
+}
+
+/**
+ * Pure (#8, WP3): the run whose ending is a request's news, from its runs,
+ * newest first. Once the request went live, that is: a second build of it
+ * begun before then, withdrawn or stopped, read as its last news after it
+ * was live (a run begun after it went live is new work, and is the news).
+ * Otherwise the newest run, unless it has come to nothing yet (a build still
+ * going, or waiting its turn, that Now does not show): History used to lead
+ * with that as "stopped", and the header said "Last: stopped on Plant Pal
+ * #3" while the bot was still building it. Then a proposal of the request's
+ * still up for a vote is its news; an older ending it has moved past (a
+ * question since answered) is not, and the unfinished run leads, saying so.
+ */
+function leadOf(runs) {
+  const newest = runs[0];
+  const settled = runs.filter((row) => outcomeOf(row));
+  const live = settled.find((row) => outcomeOf(row) === 'live');
+  if (live) {
+    const wentLive = ms(live.merged_at);
+    const since = Number.isFinite(wentLive) ? settled.find((row) => ms(row.created_at) > wentLive) : null;
+    if (!since) return live;
+  }
+  if (outcomeOf(newest)) return newest;
+  return settled.find((row) => outcomeOf(row) === 'proposed') || newest;
+}
+
 /**
  * Pure: one request's runs (newest first) as an entry of Needs you or
  * History: what came of it last, when, where it opens, and its other runs.
  * A follow-up's answer on a proposal that has since been merged or closed
- * is not the news: the proposal's end is.
+ * is not the news: the proposal's end is. A request none of whose runs has
+ * come to anything yet says so, never that it stopped.
  */
 function entryOfRuns(runs) {
   const newest = runs[0];
   const withProposal = runs.find((row) => row.proposal_session_id);
-  let lead = newest;
-  if (withProposal && withProposal !== newest && ['answer', 'revise'].includes(newest.verdict)
-    && ['merged', 'closed'].includes(withProposal.proposal_status)) {
+  let lead = leadOf(runs);
+  if (withProposal && withProposal !== lead && ['answer', 'revise'].includes(lead.verdict)
+    && (withProposal.proposal_status === 'merged' || CLOSED_PROPOSAL.has(withProposal.proposal_status))) {
     lead = withProposal;
   }
-  const outcome = outcomeOf(lead) || 'stopped';
+  const outcome = outcomeOf(lead);
+  // The newest run, still going, is not one of its earlier runs either.
+  const going = outcomeOf(newest) ? null : newest;
   const proposalRow = withProposal && OPENABLE_PROPOSAL.has(withProposal.proposal_status) ? withProposal : null;
   const firstVersion = !!newest.first_version;
   const issueNumber = Number(newest.issue_number) || null;
@@ -275,12 +316,12 @@ function entryOfRuns(runs) {
     title: firstVersion ? null : (newest.issue_title || null),
     firstVersion,
     outcome,
-    doing: null,
+    doing: outcome ? null : NOT_FINISHED,
     at: atOf(lead, outcome),
     ...(proposalRow ? { proposalId: Number(proposalRow.proposal_session_id) } : {}),
     href: links.proposal || links.request || links.project,
     links,
-    earlier: runs.filter((row) => row !== lead).slice(0, EARLIER_LIMIT).map(runOf),
+    earlier: runs.filter((row) => row !== lead && row !== going).slice(0, EARLIER_LIMIT).map(runOf),
   };
 }
 
@@ -501,6 +542,6 @@ function demoWork(now = Date.now()) {
 
 module.exports = {
   workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork,
-  jobOfProgress, needsYouOfProgress, entryOfRuns, outcomeOf, hrefOf, keyOf,
-  OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT,
+  jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf,
+  OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
 };

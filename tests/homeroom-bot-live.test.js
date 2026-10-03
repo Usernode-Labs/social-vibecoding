@@ -794,7 +794,9 @@ test('WP1: what the run has seen moves past its own plan comment as soon as it i
 test('WP1: a merge stops the rest of the bot\'s work on its request, in a block of its own after the merged DM', () => {
   const votes = read('src/routes/votes.js');
   const fn = votes.slice(votes.indexOf('async function finalizeMerge('));
-  const dmAt = fn.indexOf("require('../services/homeroom-bot-dm').noteProposalMerged(pool, session)");
+  // The merged DM's call, whatever it is handed after the session (WP3 adds
+  // what the merge deployed).
+  const dmAt = fn.indexOf("require('../services/homeroom-bot-dm').noteProposalMerged(pool, session");
   const netAt = fn.indexOf("require('../services/homeroom-bot').noteRequestMerged(pool, session)");
   assert.ok(dmAt > -1 && netAt > dmAt, 'beside the merged DM, after it');
   assert.ok(netAt > fn.indexOf("UPDATE chat_sessions SET status = 'merged', merged_at = NOW()"), 'once the session reads merged');
