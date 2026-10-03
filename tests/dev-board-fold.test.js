@@ -1531,7 +1531,8 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
   // #2080 gave the Needs-you deck's three dialogs the bare `.dev-ws-sheet` —
   // the name the fold's OPEN CARD has carried since the Workshop shipped —
   // so the dialog's geometry landed on every unfolded card on every Workshop
-  // surface: `position: fixed; inset: 0` at `z-index: 30`, which took the
+  // surface: `position: fixed; inset: 0` at the modal's z-index (40 — the
+  // sheets-and-dialogs layer, above the tab bar's 30), which took the
   // card out of its column or its strip, painted its own fill across the
   // viewport and swallowed every click underneath. On By stage and By
   // category that reads as the whole board going opaque and dead; on Current
@@ -1539,7 +1540,7 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
   //
   // One rule, three screens — so the full-screen geometry is keyed on the
   // deck's OWN base class and the bare name stays the fold's.
-  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 40;/,
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');

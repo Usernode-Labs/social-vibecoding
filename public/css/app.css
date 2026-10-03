@@ -17186,7 +17186,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    It resolves to 0 with no keyboard, so no `html.un-kb` guard is needed here.
    The wide block below makes these panels `position: relative; inset: auto`,
    which drops this `bottom` with it — a docked panel has no floor to lift. */
-.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 40; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+/* The vote sheet is the rail's child, so its z-index only counts inside the
+   rail's own (z-index: 3) stacking context — a tab bar at 30 painted over
+   the sheet's Cancel / Vote row no matter what the sheet said (#3758). While
+   the sheet is up, lift the rail to the sheets layer with it; the rail's
+   other buttons sit under the sheet's scrim. The ask, comments and
+   description sheets are not the rail's children, so they need no lift. The
+   wide block below makes the rail `z-index: auto`, and its vote popover
+   keeps its own layer there, so this stays a phone rule. */
+@media (max-width: 699.98px) {
+  .dev-ws-rail:has(.dev-ws-sheet-modal) { z-index: 40; }
+}
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);

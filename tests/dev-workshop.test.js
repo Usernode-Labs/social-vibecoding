@@ -4516,7 +4516,13 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
     'the workshop sheet must not re-derive the keyboard: read --un-kb-inset');
   assert.match(WORKSHOP, /classList\.contains\('un-kb'\)/);
   assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
-  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
+  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 40;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
+  // The vote sheet renders INSIDE the rail, so its own z-index only counts
+  // within the rail's stacking context — #3758: a sheet that said 40 while
+  // its parent said 3 still sat under the tab bar's 30. While the sheet is
+  // up, the rail rides to the sheets layer with it.
+  assert.match(CSS, /\.dev-ws-rail:has\(\.dev-ws-sheet-modal\) \{ z-index: 40; \}/,
+    'the rail lifts with its vote sheet, or the sheet stays under the tab bar');
   assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
   assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'and the floor clears the home indicator');
