@@ -71,7 +71,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { currentVotePredicateSql } = require('../services/pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
 const { governanceKindsSql } = require('../services/governance-kinds');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -324,10 +324,10 @@ const NEEDS_FEED_SQL = `
            cs.last_activity_at AS at,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-               AND ${currentVotePredicateSql('pv', 'cs')})::int AS yes,
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${currentVotePredicateSql('pv', 'cs')})::int AS no
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}

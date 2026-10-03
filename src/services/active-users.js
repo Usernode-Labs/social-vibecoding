@@ -344,6 +344,11 @@ async function getAppMeta(pool, appId) {
   };
 }
 
+// The vote denominator. A test account (services/test-accounts.js) is left
+// out of it on an app a real person made, by the same predicate that leaves
+// its vote out of the tally (counts_toward_outcome, schema.sql): an admin who
+// can mint accounts must not be able to raise a real app's threshold with
+// them. On an app a test account made, test accounts count like anybody.
 async function getActiveUserStats(pool, appId) {
   const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
 
@@ -357,6 +362,7 @@ async function getActiveUserStats(pool, appId) {
                WHERE b.user_id = a.user_id
                  AND b.seconds_spent >= 60
              )
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
@@ -382,6 +388,7 @@ async function getActiveUserStats(pool, appId) {
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
              ))
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
@@ -491,7 +498,10 @@ async function isCommunityMember(pool, appId, userId) {
 
 // The full set of user ids currently counted as active for an app,
 // using the same definition as getActiveUserStats (so "who gets the
-// vote-request ping" matches "whose votes count"). Returns a bare
+// vote-request ping" matches "whose votes count"). The one deliberate
+// difference: a test account active on a real app is still listed here, so
+// it is pinged like a newcomer would be, though its vote will not count
+// (counts_toward_outcome in getActiveUserStats above). Returns a bare
 // array of ids. self_hosted apps fan out across every app's activity,
 // mirroring getActiveUserStats's union semantics.
 async function listActiveUserIds(pool, appId) {

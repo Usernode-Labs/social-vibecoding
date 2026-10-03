@@ -13051,6 +13051,9 @@ const AppView = {
     // The button then asks "Still yes?" instead of "Vote".
     const prior = pr.my_vote == null && (pr.my_prior_vote === 'yes' || pr.my_prior_vote === 'no')
       ? { prior: pr.my_prior_vote } : {};
+    // Test accounts: the viewer's vote here is recorded but not counted
+    // (my_vote_uncounted on the /promoted row); the picker says so.
+    const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
     return [
       {
         key: 'yes',
@@ -13058,6 +13061,7 @@ const AppView = {
         title: yesT.tip, label: `Yes (${yesT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
+        ...uncounted,
       },
       {
         key: 'no',
@@ -20109,7 +20113,7 @@ const AppView = {
     // so voters can re-cast or preview after voting.
     if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
       const choice = pr.my_vote === 'yes' ? 'Yes' : 'No';
-      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>`;
+      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
     }
     // In the chat, a merging/merged PR has closed voting — don't render live
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
@@ -20148,7 +20152,16 @@ const AppView = {
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
-    return preview + retryPreview + yesBtn + noBtn + adminMerge;
+    return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
+  },
+
+  // Test accounts: one line beside the legacy vote controls when the viewer's
+  // vote on this proposal is recorded but not counted (my_vote_uncounted).
+  // The board card's picker carries the same words (VotePicker).
+  _uncountedVoteNoteHtml(pr) {
+    return pr && pr.my_vote_uncounted === true
+      ? '<span class="gc-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</span>'
+      : '';
   },
 
   // #866: the Preview slot has three states, not two.

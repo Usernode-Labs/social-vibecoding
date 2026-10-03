@@ -215,6 +215,20 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
   { method: 'POST', pattern: '/api/bot-bench/runs' },
   { method: 'POST', pattern: '/api/bot-bench/runs/:id/cancel' },
+  // Test accounts for first-run testing (routes/test-accounts.js). The third
+  // deliberate exception: these make, list and retire ACCOUNTS — a new
+  // sign-in, handed back once to the admin who asked. They may because of the
+  // gate every handler puts first, which the policy tests pin:
+  // requireAdminWrite (a full platform admin, never a view-only one), then a
+  // per-admin limiter, then the same-origin browser guard. What they make is
+  // fenced from every real outcome (services/test-accounts.js), at most 25
+  // are live at once, and retiring one takes only accounts flagged as test
+  // accounts, with the apps they made. Outside /api/admin and /api/auth only
+  // because a connector can reach neither, and with no `password` segment,
+  // which the canonical-target wall refuses anyway.
+  { method: 'POST', pattern: '/api/test-accounts' },
+  { method: 'GET', pattern: '/api/test-accounts' },
+  { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────
