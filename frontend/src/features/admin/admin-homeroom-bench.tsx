@@ -42,11 +42,28 @@ import { AdminUI } from './admin-console.js';
 
 const BASE = '/api/admin/homeroom-bot/bench';
 
-type Stage = 'triage' | 'spec' | 'build' | 'followup' | 'checks_fix' | 'dm';
+type Stage = 'triage' | 'spec' | 'build' | 'followup' | 'checks_fix' | 'dm' | 'first_version' | 'capture';
 const STAGE_LABEL: Record<Stage, string> = {
   triage: 'Triage', spec: 'Spec', build: 'Build', followup: 'Follow-up', checks_fix: 'Checks fix', dm: 'DM',
+  first_version: 'First version', capture: 'Capture (before)',
 };
-const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm'];
+const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture'];
+// #3737: the taste eval's two kinds, made from a brief or a commit rather
+// than sampled from the bot's runs (services/bench/taste.js).
+const TASTE_STAGES: Stage[] = ['first_version', 'capture'];
+const SAMPLE_STAGES: Stage[] = STAGES.filter((st) => !TASTE_STAGES.includes(st));
+// What a grade item calls a taste trial of either kind: the judge is never
+// told which.
+export function stageLabel(stage: string): string {
+  return STAGE_LABEL[stage as Stage] || (stage === 'taste' ? 'Taste' : stage);
+}
+// The taste rubric's criteria (services/bench/grading.js RUBRICS.taste), short.
+export const TASTE_CRITERIA: { id: string; label: string }[] = [
+  { id: 'hierarchy', label: 'Hierarchy' }, { id: 'type_scale', label: 'Type scale' }, { id: 'spacing', label: 'Spacing' },
+  { id: 'accent', label: 'One accent' }, { id: 'both_looks', label: 'Both looks' }, { id: 'states', label: 'Empty, loading, error' },
+  { id: 'copy', label: 'Copy' }, { id: 'no_tells', label: 'No tells' }, { id: 'works_at_390', label: 'Works at 390' },
+  { id: 'kit_use', label: 'Kit use' }, { id: 'domain_fit', label: 'Domain fit' }, { id: 'would_ship', label: 'Would ship' },
+];
 
 // The bot's own model setting each benchmark stage informs (#3654 KEY_MODELS
 // in services/homeroom-bot.js). A checks fix is a follow-up turn on the bot's
@@ -65,6 +82,12 @@ interface Suite {
 interface Task {
   id: number; stage: Stage; issue_number: number | null; app_slug: string | null; tags: Record<string, unknown>;
   reference: Record<string, unknown>; reference_source: string | null; snapshot_source: string | null;
+  // A taste task's inputs (#3737).
+  taste?: { appName: string; brief: string; template: string | null; sha: string | null; placeholder: boolean };
+}
+interface TasteCell {
+  trials: number; criteria: Record<string, { rate: number; n: number }>; bootedRate: number | null;
+  checks: Record<string, number | null>; tells: Record<string, number | null>;
 }
 interface Model {
   id: string; label: string; role: string | null; stages: string[] | null; contextTokens: number | null;
@@ -81,6 +104,7 @@ interface Row {
   unlabelled: number; notApplicable: number; skippedCap: number; accuracy: number | null;
   passK: { k: number; tasks: number; value: number | null }; costUsd: number; costPerTask: number | null; costPerAttempt: number | null;
   costPerSuccess: number | null; p50Ms: number | null; p95Ms: number | null; timeoutRate: number | null; infraRate: number | null;
+  taste?: TasteCell;
 }
 interface Paired { stage: Stage; model: string; baselineModel: string; n: number; apps: number; diff: number | null; low: number | null; high: number | null }
 interface Point { key: string; stage: Stage; model: string; cost: number | null; accuracy: number | null; frontier: boolean }
@@ -116,7 +140,12 @@ interface Estimate {
 }
 interface Review {
   trialId: number;
-  item: { stage: Stage; task: { request: string; issueTitle: string | null }; candidate: Record<string, unknown>; reference: Record<string, unknown> };
+  item: {
+    stage: Stage | 'taste'; task: { request?: string; issueTitle?: string | null; appName?: string; brief?: string };
+    candidate: Record<string, unknown>; reference: Record<string, unknown>;
+    // A taste item's screenshots, by stored id (#3737).
+    shots?: { caption: string; artifactId: string }[];
+  };
   opus: { verdict: string; critique: string | null } | null;
   human: { verdict: string; critique: string | null } | null;
 }
@@ -336,6 +365,65 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
   );
 }
 
+/** A suite of the taste eval's tasks (#3737). Pure. */
+export function isTasteSuite(s: Pick<Suite, 'counts'>): boolean {
+  return TASTE_STAGES.some((st) => (s.counts?.[st] || 0) > 0);
+}
+
+// #3737: one more task for the taste eval: a first version built from a
+// brief on today's starter, or an app's repository captured at a commit (the
+// before arm). A capture left without a brief takes the brief of the suite's
+// first-version task on the same app.
+export function TasteTaskForm({ suiteId, act }: {
+  suiteId: number; act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
+}) {
+  const [form, setForm] = useState({ kind: 'first_version', appSlug: '', appName: '', brief: '', sha: '' });
+  const capture = form.kind === 'capture';
+  return (
+    <div className="space-y-2" id="admin-homeroom-bench-taste-form">
+      <p className={AdminUI.label}>Taste eval: add a first version from a brief, or an app captured at a commit</p>
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <label className={AdminUI.label} htmlFor="admin-homeroom-bench-taste-kind">Kind</label>
+          <select id="admin-homeroom-bench-taste-kind" className={`${AdminUI.select} mt-1`} value={form.kind}
+            onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+            <option value="first_version">First version from a brief</option>
+            <option value="capture">Capture an app at a commit (before)</option>
+          </select>
+        </div>
+        <div>
+          <label className={AdminUI.label} htmlFor="admin-homeroom-bench-taste-app">App</label>
+          <input id="admin-homeroom-bench-taste-app" className={`${AdminUI.input} mt-1`} value={form.appSlug} placeholder="app slug"
+            onChange={(e) => setForm({ ...form, appSlug: e.target.value })} />
+        </div>
+        <div>
+          <label className={AdminUI.label} htmlFor="admin-homeroom-bench-taste-name">Name</label>
+          <input id="admin-homeroom-bench-taste-name" className={`${AdminUI.input} mt-1`} value={form.appName} maxLength={80}
+            placeholder={capture ? 'from its first version' : 'Ear Trainer'} onChange={(e) => setForm({ ...form, appName: e.target.value })} />
+        </div>
+        {capture ? (
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bench-taste-sha">Commit</label>
+            <input id="admin-homeroom-bench-taste-sha" className={`${AdminUI.input} mt-1`} value={form.sha} maxLength={40}
+              placeholder="40-character sha" onChange={(e) => setForm({ ...form, sha: e.target.value })} />
+          </div>
+        ) : null}
+      </div>
+      <label className={AdminUI.label} htmlFor="admin-homeroom-bench-taste-brief">Brief</label>
+      <textarea id="admin-homeroom-bench-taste-brief" className={AdminUI.textarea} rows={4} value={form.brief}
+        placeholder={capture ? 'Left empty: the brief of this suite\'s first-version task on the same app' : 'What the app\'s creator asked for, word for word'}
+        onChange={(e) => setForm({ ...form, brief: e.target.value })} />
+      <button type="button" className={AdminUI.btn.outlineSm} disabled={!form.appSlug.trim()} onClick={() => act(async () => {
+        await send(`${BASE}/suites/${suiteId}/taste-tasks`, 'POST', {
+          kind: form.kind, appSlug: form.appSlug.trim(), appName: form.appName.trim() || undefined,
+          brief: form.brief.trim() || undefined, ...(capture ? { sha: form.sha.trim() } : { template: 'empty' }),
+        });
+        setForm({ ...form, appName: '', brief: '', sha: '' });
+      }, capture ? 'Capture task added: a run screenshots the app at that commit, once, with no model.' : 'First-version task added.')}>Add task</button>
+    </div>
+  );
+}
+
 export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
   canWrite: boolean; suites: Suite[]; coreSuiteId: number | null; onChanged: () => void; say: (text: string, tone?: Tone) => void;
 }) {
@@ -348,6 +436,7 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
   const [candidates, setCandidates] = useState<{ id: number; appSlug: string; issueNumber: number; tags: Record<string, string> }[] | null>(null);
   const [picked, setPicked] = useState<Record<number, boolean>>({});
   const [imp, setImp] = useState({ appSlug: '', issueNumber: '', prNumber: '' });
+  const [editing, setEditing] = useState<{ id: number; appName: string; brief: string; sha: string } | null>(null);
   const suite = suites.find((s) => s.id === selected) || null;
 
   const loadTasks = useCallback(async (id: number) => {
@@ -380,6 +469,12 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
     } catch (err: any) { say(err.message, 'err'); }
   };
   const target = (s: Suite, stage: string, want: number) => `${STAGE_LABEL[stage as Stage] || stage} ${s.counts?.[stage] || 0} of ${want}`;
+  const saveEdit = () => editing && act(async () => {
+    await send(`${BASE}/tasks/${editing.id}/taste`, 'PATCH', {
+      appName: editing.appName, brief: editing.brief, ...(editing.sha ? { sha: editing.sha } : {}),
+    });
+    setEditing(null);
+  }, 'Saved: the next run uses the new brief; trials already run keep the one they ran on.');
 
   return (
     <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-suites">
@@ -399,7 +494,7 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
           </thead>
           <tbody>
             {suites.map((s) => (
-              <tr className={AdminUI.trHover} key={s.id} data-bench-suite={s.id}>
+              <tr className={AdminUI.trHover} key={s.id} data-bench-suite={s.id} data-bench-suite-taste={isTasteSuite(s) ? s.id : undefined}>
                 <td className={AdminUI.td}>
                   <button type="button" className={AdminUI.btn.link} onClick={() => setSelected(selected === s.id ? null : s.id)}>
                     {`${s.name} v${s.version}`}
@@ -407,9 +502,11 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   <div className={AdminUI.muted}>{s.kind === 'rotating' ? 'Rotating set' : 'Core'}</div>
                 </td>
                 <td className={`${AdminUI.td} text-sm`}>
-                  {s.kind === 'rotating'
-                    ? `${s.total} of 20`
-                    : [target(s, 'triage', 40), target(s, 'build', 20), `Follow-ups ${(s.counts?.followup || 0) + (s.counts?.checks_fix || 0)} of 5`, target(s, 'dm', 5)].join(' · ')}
+                  {isTasteSuite(s)
+                    ? `First versions ${s.counts?.first_version || 0} · Captures ${s.counts?.capture || 0}`
+                    : s.kind === 'rotating'
+                      ? `${s.total} of 20`
+                      : [target(s, 'triage', 40), target(s, 'build', 20), `Follow-ups ${(s.counts?.followup || 0) + (s.counts?.checks_fix || 0)} of 5`, target(s, 'dm', 5)].join(' · ')}
                 </td>
                 <td className={AdminUI.td}>{`${s.labelled} of ${s.total}`}</td>
                 <td className={AdminUI.td}>
@@ -472,7 +569,53 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks.map((t) => (
+                  {tasks.map((t) => (t.taste ? (
+                    <tr className={AdminUI.trHover} key={t.id} data-bench-task={t.id} data-bench-taste-task={t.stage}>
+                      <td className={AdminUI.td}>{STAGE_LABEL[t.stage]}</td>
+                      <td className={AdminUI.td} colSpan={2}>
+                        {editing?.id === t.id ? (
+                          <div className="space-y-2">
+                            <input aria-label="The app's name" className={AdminUI.input} value={editing.appName} maxLength={80}
+                              onChange={(e) => setEditing({ ...editing, appName: e.target.value })} />
+                            <textarea aria-label="The brief" className={AdminUI.textarea} rows={5} value={editing.brief}
+                              onChange={(e) => setEditing({ ...editing, brief: e.target.value })} />
+                            {t.stage === 'capture' ? (
+                              <input aria-label="Commit" className={AdminUI.input} value={editing.sha} maxLength={40}
+                                onChange={(e) => setEditing({ ...editing, sha: e.target.value })} />
+                            ) : null}
+                          </div>
+                        ) : (
+                          <>
+                            <span className="font-medium">{t.taste.appName}</span>
+                            <span className={`${AdminUI.muted} ml-1`}>{t.app_slug || 'an app no longer here'}</span>
+                            {t.taste.placeholder ? <span className={`${AdminUI.badge.warn} ml-1`} data-bench-taste-placeholder={t.id}>placeholder brief: not run</span> : null}
+                            {t.stage === 'capture' && t.taste.sha ? <span className={`${AdminUI.badge.outline} ml-1`}>{`at ${t.taste.sha.slice(0, 7)}`}</span> : null}
+                            <span className={`${AdminUI.muted} block`}>{t.taste.brief.length > 180 ? `${t.taste.brief.slice(0, 179)}…` : t.taste.brief}</span>
+                          </>
+                        )}
+                      </td>
+                      <td className={`${AdminUI.td} text-sm`}>
+                        {editing?.id === t.id ? (
+                          <span className="inline-flex gap-1">
+                            <button type="button" className={AdminUI.btn.primarySm} onClick={saveEdit}>Save</button>
+                            <button type="button" className={AdminUI.btn.outlineSm} onClick={() => setEditing(null)}>Cancel</button>
+                          </span>
+                        ) : (
+                          <>
+                            Judged against its brief
+                            {canWrite && !suite.frozen_at ? (
+                              <>
+                                <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`} data-bench-taste-edit={t.id}
+                                  onClick={() => setEditing({ id: t.id, appName: t.taste!.appName, brief: t.taste!.brief, sha: t.taste!.sha || '' })}>edit</button>
+                                <button type="button" className={`${AdminUI.btn.ghost} ml-1 text-xs`}
+                                  onClick={() => act(() => send(`${BASE}/tasks/${t.id}`, 'DELETE'), 'Task removed.')}>remove</button>
+                              </>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
                     <tr className={AdminUI.trHover} key={t.id} data-bench-task={t.id}>
                       <td className={AdminUI.td}>{STAGE_LABEL[t.stage]}</td>
                       <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}{scriptedAnswer(t) ? <span className={`${AdminUI.badge.outline} ml-1`} data-bench-scripted={t.id}>scripted answer</span> : null}</td>
@@ -485,7 +628,7 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                         ) : null}
                       </td>
                     </tr>
-                  ))}
+                  )))}
                   {!tasks.length ? <tr><td className={AdminUI.td} colSpan={4}>No tasks yet.</td></tr> : null}
                 </tbody>
               </table>
@@ -498,7 +641,7 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   <label className={AdminUI.label} htmlFor="admin-homeroom-bench-sample-stage">Propose tasks at</label>
                   <select id="admin-homeroom-bench-sample-stage" className={`${AdminUI.select} mt-1`} value={sampleStage}
                     onChange={(e) => setSampleStage(e.target.value as Stage)}>
-                    {STAGES.map((st) => <option key={st} value={st}>{STAGE_LABEL[st]}</option>)}
+                    {SAMPLE_STAGES.map((st) => <option key={st} value={st}>{STAGE_LABEL[st]}</option>)}
                   </select>
                 </div>
                 <div>
@@ -557,6 +700,7 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
                   return data;
                 }, 'Imported: the request as it stood when the PR opened, its base commit, and the checks it added as hidden checks.')}>Import</button>
               </div>
+              <TasteTaskForm suiteId={suite.id} act={act} />
             </>
           ) : null}
         </div>
@@ -608,7 +752,9 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
   const body = {
     suiteId: Number(suiteId), models: modelIds, stages,
     repeats: Number(repeats), capUsd: Number(cap), concurrency: Number(concurrency),
-    repeatStages: repeatAll ? REPEATED : (launcher?.repeatStages || ['triage']),
+    // A first version is built `repeats` times too (#3737): the taste eval
+    // reads each brief's spread, not one build.
+    repeatStages: [...(repeatAll ? REPEATED : (launcher?.repeatStages || ['triage'])), ...(stages.includes('first_version') ? ['first_version'] : [])],
   };
   const bodyKey = JSON.stringify({ ...body, capUsd: 0 });
 
@@ -643,7 +789,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
     finally { setLaunching(false); }
   };
   const tick = (st: Stage, on: boolean) => setStagesPicked({ ...Object.fromEntries(stages.map((s) => [s, true])), [st]: on });
-  const stageWords = stages.map((st) => (st === 'triage' && Number(repeats) > 1 ? `Triage ×${repeats}` : STAGE_LABEL[st])).join(' · ');
+  const stageWords = stages.map((st) => ((st === 'triage' || st === 'first_version') && Number(repeats) > 1 ? `${STAGE_LABEL[st]} ×${repeats}` : STAGE_LABEL[st])).join(' · ');
 
   return (
     <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-launch">
@@ -724,7 +870,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
             </div>
             <div className="grid grid-cols-3 gap-2 mt-3">
               <div>
-                <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-repeats">Triage repeats</label>
+                <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-repeats">{stages.includes('first_version') ? 'Repeats' : 'Triage repeats'}</label>
                 <input id="admin-homeroom-bench-launch-repeats" type="number" min="1" max="5" className={`${AdminUI.input} mt-1`}
                   value={repeats} onChange={(e) => setRepeats(e.target.value)} />
               </div>
@@ -750,7 +896,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onL
               <span>Repeat DM and follow-ups too</span>
             </label>
             <p className={`${AdminUI.muted} mt-2`}>
-              Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
+              Repeats apply to triage (pass^k is read from them) and first versions, and to DM and follow-ups when ticked; everything else runs once per model, and a capture once a run.
               The bench waits while the bot&apos;s live builds use every build slot.
             </p>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
@@ -945,6 +1091,67 @@ export function judgeLine(a: Report['agreement']): string {
   return parts.join(' ');
 }
 
+// #3737: a taste trial's screenshots in the spot check, as the judge saw
+// them: captioned with their screen size, look and state, nothing else.
+export function TasteShots({ shots }: { shots: { caption: string; artifactId: string }[] }) {
+  return (
+    <div className="mt-2 flex gap-2 overflow-x-auto" data-bench-taste-shots>
+      {shots.map((sh) => (
+        <figure key={sh.artifactId} className="shrink-0 w-32">
+          <a href={`${BASE}/artifacts/${sh.artifactId}`} target="_blank" rel="noopener noreferrer">
+            <img src={`${BASE}/artifacts/${sh.artifactId}`} alt={sh.caption} loading="lazy"
+              className="w-32 h-auto rounded-md ring-1 ring-zinc-200 dark:ring-zinc-700" />
+          </a>
+          <figcaption className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{sh.caption}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+const pctOrDash = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v * 100)}%`);
+const numOrDash = (v: number | null | undefined) => (v == null ? '–' : String(Math.round(v * 10) / 10));
+
+// #3737: the taste eval's arms side by side: how often each rubric criterion
+// held, and the automatic checks and tells as averages per trial.
+export function TasteTable({ rows, name }: { rows: Row[]; name: (id: string) => string }) {
+  const line = (label: string, value: (t: TasteCell) => string, key: string) => (
+    <tr className={AdminUI.trHover} key={key}>
+      <td className={DENSE_TD}>{label}</td>
+      {rows.map((r) => <td className={`${DENSE_TD} tabular-nums`} key={`${r.stage}-${r.model}`}>{value(r.taste as TasteCell)}</td>)}
+    </tr>
+  );
+  return (
+    <div id="admin-homeroom-bench-taste">
+      <p className={AdminUI.label}>Taste, arm by arm</p>
+      <div className={AdminUI.tableWrap}>
+        <table className={AdminUI.table} id="admin-homeroom-bench-taste-table">
+          <thead className={AdminUI.thead}>
+            <tr>
+              <th className={DENSE_TH}>Criterion</th>
+              {/* A capture runs no model: its column is the arm alone. */}
+              {rows.map((r) => <th className={DENSE_TH} key={`${r.stage}-${r.model}`}>{r.stage === 'capture' ? STAGE_LABEL[r.stage] : `${STAGE_LABEL[r.stage]}, ${name(r.model)}`}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {TASTE_CRITERIA.map((c) => line(c.label, (t) => {
+              const got = t.criteria?.[c.id];
+              return got ? `${pctOrDash(got.rate)} of ${got.n}` : '–';
+            }, c.id))}
+            {line('Booted', (t) => pctOrDash(t.bootedRate), 'booted')}
+            {line('Console errors', (t) => numOrDash(t.checks?.consoleErrors), 'console')}
+            {line('Overflow at 360 px', (t) => numOrDash(t.checks?.overflowAt360px), 'overflow')}
+            {line('Tap targets under 44 px', (t) => numOrDash(t.checks?.tapTargetsUnder44px), 'tap')}
+            {line('Low-contrast text, light / dark', (t) => `${numOrDash(t.checks?.lowContrastLight)} / ${numOrDash(t.checks?.lowContrastDark)}`, 'contrast')}
+            {line('Tells: emoji, eyebrows, text-[px], hex', (t) => [t.tells?.emojiIcons, t.tells?.uppercaseEyebrows, t.tells?.arbitraryTextSizes, t.tells?.hexColours].map(numOrDash).join(' · '), 'tells')}
+          </tbody>
+        </table>
+      </div>
+      <p className={`${AdminUI.muted} mt-1`}>Criteria: the share of graded trials where the judge (or a person) said it held. Checks and tells: the average per trial.</p>
+    </div>
+  );
+}
+
 function Results({ runId, models, canWrite, say }: { runId: number; models: Model[]; canWrite: boolean; say: (text: string, tone?: Tone) => void }) {
   const [report, setReport] = useState<Report | null>(null);
   const [slice, setSlice] = useState('verdict');
@@ -1029,6 +1236,8 @@ function Results({ runId, models, canWrite, say }: { runId: number; models: Mode
         </table>
       </div>
 
+      {report.rows.some((r) => r.taste) ? <TasteTable rows={report.rows.filter((r) => r.taste)} name={name} /> : null}
+
       <div>
         <p className={AdminUI.label}>Against the baseline</p>
         <div className={AdminUI.tableWrap}>
@@ -1103,7 +1312,8 @@ function Results({ runId, models, canWrite, say }: { runId: number; models: Mode
           <div className="mt-2 space-y-3">
             {review.map((r) => (
               <div key={r.trialId} className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3 text-sm" data-bench-review={r.trialId}>
-                <p className="font-medium">{`${STAGE_LABEL[r.item.stage]}: ${r.item.task.issueTitle || 'a request'}`}</p>
+                <p className="font-medium">{`${stageLabel(r.item.stage)}: ${r.item.task.appName || r.item.task.issueTitle || 'a request'}`}</p>
+                {r.item.shots?.length ? <TasteShots shots={r.item.shots} /> : null}
                 <details className="mt-1">
                   <summary className={`${AdminUI.muted} cursor-pointer`}>What the candidate said (model hidden)</summary>
                   <pre className="whitespace-pre-wrap break-words text-xs mt-1">{JSON.stringify(r.item.candidate, null, 1)}</pre>

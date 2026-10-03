@@ -20,6 +20,7 @@ const { benchGradingLimiter, benchRunLimiter } = require('../middleware/rate-lim
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const report = require('../services/bench/report');
 const core = require('../services/bench/core');
+const taste = require('../services/bench/taste');
 // The CSV writer the other admin exports share: quoting plus the
 // spreadsheet formula-injection guard (model-written text is exactly why).
 const { csvField } = require('./topochain/helpers');
@@ -76,7 +77,8 @@ function homeroomBenchRoutes(config) {
     if (!id) return { ok: false, status: 400, error: 'Invalid suite id' };
     const suite = await suites.suiteRow(pool, id);
     if (!suite) return { ok: false, status: 404, error: 'Suite not found' };
-    return { suite, tasks: await suites.listTasks(pool, id) };
+    // A taste task (#3737) carries its inputs, for the console to show and edit.
+    return { suite, tasks: await taste.withInputs(pool, await suites.listTasks(pool, id)) };
   }));
 
   router.post('/api/admin/homeroom-bot/bench/suites', requireAdminWrite, handler('Create bench suite', async (req) => {
@@ -133,6 +135,59 @@ function homeroomBenchRoutes(config) {
     if (out.ok) log.info('bench', 'Build task imported from a PR', { by: req.user.username, appSlug, prNumber, hidden: out.hiddenChecks });
     return out;
   }));
+
+  // ── The taste eval (#3737, services/bench/taste.js) ─────────────────
+  // A first version from a brief, or an app captured at a commit (the
+  // before arm). A capture with no brief takes the suite's first-version
+  // task on the same app's.
+  router.post('/api/admin/homeroom-bot/bench/suites/:id/taste-tasks', requireAdminWrite, handler('Add taste task', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid suite id' };
+    const b = req.body || {};
+    const out = await taste.addTask(pool, {
+      suiteId: id, kind: b.kind, appSlug: b.appSlug, appName: b.appName, brief: b.brief, template: b.template,
+      description: b.description, sha: b.sha,
+    });
+    if (out.ok) log.info('bench', 'Taste task added', { by: req.user.username, suiteId: id, kind: b.kind, appSlug: b.appSlug });
+    return out;
+  }));
+
+  // Its brief, name, starter or commit, while the suite is open.
+  router.patch('/api/admin/homeroom-bot/bench/tasks/:id/taste', requireAdminWrite, handler('Edit taste task', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid task id' };
+    const b = req.body || {};
+    const out = await taste.editTask(pool, {
+      taskId: id, patch: { appName: b.appName, brief: b.brief, template: b.template, description: b.description, sha: b.sha },
+    });
+    if (out.ok) log.info('bench', 'Taste task edited', { by: req.user.username, taskId: id });
+    return out;
+  }));
+
+  // A trial's screenshot, for the console's spot check. Any admin may read,
+  // as every benchmark read is; the image is the trial's own and is served
+  // as itself, never inline in a page the app could script.
+  router.get('/api/admin/homeroom-bot/bench/artifacts/:id', async (req, res) => {
+    const id = String(req.params.id || '');
+    if (!/^[0-9a-f]{32}$/.test(id)) return res.status(404).json({ error: 'Screenshot not found' });
+    try {
+      const { rows: [row] } = await pool.query(
+        'SELECT content_type, data, sha256 FROM bench_trial_artifacts WHERE id = $1', [id],
+      );
+      if (!row) return res.status(404).json({ error: 'Screenshot not found' });
+      res.set({
+        'Content-Type': row.content_type === 'image/png' ? 'image/png' : 'application/octet-stream',
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'",
+        ETag: `"${row.sha256}"`,
+      });
+      return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
+    } catch (err) {
+      log.error('bench', 'Bench screenshot read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   router.delete('/api/admin/homeroom-bot/bench/tasks/:id', requireAdminWrite, handler('Remove bench task', async (req) => {
     const id = idParam(req.params.id);
@@ -291,7 +346,11 @@ function homeroomBenchRoutes(config) {
     return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20 });
   }));
 
-  router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => grading.getItem(pool, req.params.token)));
+  // `images=1` (the connector's get_bench_item) puts a taste item's
+  // screenshots in it, as base64 PNGs (#3737).
+  router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => (
+    grading.getItem(pool, req.params.token, { images: req.query?.images === '1' })
+  )));
 
   router.post('/api/bot-bench/items/:token/grade', requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly, handler('Bench grade', async (req) => {
     const { verdict, critique, criteria } = req.body || {};
