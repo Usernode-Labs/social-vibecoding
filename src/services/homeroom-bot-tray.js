@@ -449,7 +449,8 @@ function noteWorkChanged(userId, deps = {}) {
 /**
  * The staging demo's tray (`?demo=1`, beside the bot DM fixture in
  * staging-messages.js): one request being built (the step its activity card
- * in the fixture shows), a change asked for on one of its proposals waiting
+ * in the fixture shows), one whose plan was begun before it had a card (the
+ * card opening the DM gives it), a change asked for on one of its proposals waiting
  * its turn (#3734), a question waiting on the viewer, and a few things done
  * before, one of them a request the bot came back to. A staging copy never
  * runs the bot, so without it the tray could not be seen there. Times are
@@ -467,6 +468,12 @@ function demoWork(now = Date.now()) {
       ...request(14, 'Staging demo, show a total under the list'),
       phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
       since: ago(4), ...nowhere, earlier: [],
+    }, {
+      // Begun before it had a card in the DM: opening the demo DM gives it
+      // one (staging-messages.js ensureDemoUnderWayCard).
+      ...request(15, 'Staging demo, add a search box'),
+      phase: 'building', stage: 'planning', step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build',
+      since: ago(7), ...nowhere, earlier: [],
     }, {
       ...request(9, 'Staging demo, show item counts'),
       phase: 'follow_up_queued', stage: 'followup_queued', step: 5, of: 6, stepName: 'Group vote',
