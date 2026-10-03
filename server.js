@@ -2833,7 +2833,12 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     session.active_turn = null;
   }
 
-  if (!['active', 'promoted'].includes(session.status)) {
+  // #1006: except a Homeroom bot session paused under a turn in flight,
+  // which is the bot's to follow or hand back (adoptBotOrphan below).
+  // Destroying it here, in silence and with its turn record left, lost six
+  // platform builds on 10-02 and spent their attempts.
+  if (!['active', 'promoted'].includes(session.status)
+      && !homeroomBotRecovery().isRecoveredBotSession(session)) {
     // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
@@ -5016,9 +5021,14 @@ function startSessionAutoPauseSweeper(config) {
     try {
       const { rows } = await pool.query(
         // pr_number: a reaped TAIL row names the PR its work landed on.
-        `SELECT id, user_id, app_id, status, pr_number, active_turn FROM chat_sessions
-         WHERE active_turn IS NOT NULL
-         ORDER BY (active_turn->>'startedAt') ASC NULLS FIRST
+        // username / user_is_synthetic: a reaped turn of the Homeroom bot's
+        // or of a benchmark trial goes back to its owner, not to a person.
+        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn,
+                u.username, u.is_synthetic AS user_is_synthetic
+           FROM chat_sessions cs
+           LEFT JOIN users u ON u.id = cs.user_id
+         WHERE cs.active_turn IS NOT NULL
+         ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
       );
       const nowMs = Date.now();
@@ -5112,6 +5122,24 @@ function startSessionAutoPauseSweeper(config) {
           if (!reaped) {
             log.warn('server', 'Stale turn changed while watchdog was reaping it', {
               sessionId: row.id,
+            });
+            continue;
+          }
+          // #1006: the bot's turns and a benchmark trial's have an owner that
+          // is not a person. The breadcrumb, retry pills and stalled
+          // notification below are for a person; these go back to the bot's
+          // queue (attempt unspent) or the bench lane instead.
+          if (require('./src/services/bench/runner').isBenchSession(row)) {
+            await require('./src/services/bench/lane').releaseTrialOfSession(pool, row.id, {
+              why: 'the stale-turn watchdog reaped its turn',
+            });
+            log.warn('server', 'Watchdog handed a reaped benchmark turn back to the lane', { sessionId: row.id });
+            continue;
+          }
+          if (homeroomBotRecovery().isRecoveredBotSession(row)) {
+            const outcome = await homeroomBotRecovery().settleReapedTurn({ pool, config, session: row });
+            log.warn('server', 'Watchdog handed a reaped Homeroom bot turn back', {
+              sessionId: row.id, status: row.status, outcome,
             });
             continue;
           }
