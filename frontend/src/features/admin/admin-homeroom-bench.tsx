@@ -8,29 +8,31 @@ import { AdminUI } from './admin-console.js';
 // #3654. Rendered by admin-homeroom-bot.tsx under its Benchmark tab, so it
 // lives in that section's host and needs no host of its own.
 //
-// Five cards, top to bottom, in the order the work goes:
+// Laid out around the two things an admin comes here to do (#3710):
 //
-//   Core v1  the default suite, made from its checked-in definition
-//            (services/bench/core.js): how it was materialized (ready and
-//            skipped per stage, and why each skip), how many of its tasks
-//            are labelled, and Freeze once every one is. Freezing is never
-//            automatic.
-//   Suites   the versioned task sets (frozen core, rotating set), how full
-//            each is against the first version's targets, freeze / new
-//            version, delete (only an unfrozen suite with no runs that
-//            is not the default), the tasks of the one selected, the stratified
-//            sampler, and importing a merged pull request as a build task.
-//   Run      the launcher: suite, models (with what the catalog says of
-//            each: context window, price, the stages it is entered for),
-//            stages, repeats, the dollar cap ($50 unless changed). It starts
-//            on Core v1 with every candidate model, three repeats for triage
-//            and one for the rest (lane.launcherDefaults).
-//   Runs     progress, spend against the cap, cancel.
-//   Results  per stage and model: accuracy, pass^k, cost per attempt and per
-//            success, p50/p95 time, timeouts and platform faults apart,
-//            the paired difference from the baseline with its 95% interval,
-//            a cost-vs-quality chart with the Pareto frontier, slices by a
-//            tag, judge agreement, the spot check, and the CSV.
+//   Run      "Run the full benchmark": the launcher starts on good settings
+//            (every catalog candidate, every stage the suite has tasks at,
+//            triage three times, as many at once as the lane allows) and
+//            shows the trials, the estimated cost, about how long it takes
+//            and the cap BEFORE anything is spent (POST runs/estimate, the
+//            same plan a launch records). The cap follows the estimate plus
+//            15% until it is set by hand. Every other choice sits under
+//            "Change settings".
+//   Answer   "Best model for each stage": the latest graded result for each
+//            stage and model on the suite, merged across runs, a cell with
+//            too few graded tasks marked as such, the best value per stage
+//            outlined, and "Use for <stage>", which fills in the bot's
+//            Settings form; the admin still presses Save there.
+//   Runs     what ran of each run (skipped and cancelled trials said apart,
+//            not counted as done), spend against the cap, cancel, and a run
+//            waiting on the judge says so.
+//   Results  one run in detail: accuracy, pass^k, cost per attempt and per
+//            success, p50/p95 time, timeouts and platform faults apart, the
+//            paired difference from the baseline with its 95% interval, a
+//            cost-vs-quality chart with the Pareto frontier, slices by a tag,
+//            judge agreement, the spot check, and the CSV.
+//   Manage   Core v1's state and the suites (freeze, new version, delete,
+//            tasks, sampler, PR import), folded away: occasional upkeep.
 //
 // PERMISSIONS: any admin reads; every button that writes is gated on
 // AdminConsole.canWrite() here and requireAdminWrite on the server
@@ -46,6 +48,14 @@ const STAGE_LABEL: Record<Stage, string> = {
 };
 const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm'];
 
+// The bot's own model setting each benchmark stage informs (#3654 KEY_MODELS
+// in services/homeroom-bot.js). A checks fix is a follow-up turn on the bot's
+// proposal, so it shares that stage's model. DM has no model of its own: the
+// bot answers DMs on the platform default.
+export const BOT_STAGE_FOR: Partial<Record<Stage, 'triage' | 'spec' | 'build' | 'followup'>> = {
+  triage: 'triage', spec: 'spec', build: 'build', followup: 'followup', checks_fix: 'followup',
+};
+
 interface Suite {
   id: number; name: string; version: number; kind: 'frozen' | 'rotating'; notes: string | null;
   frozen_at: string | null; counts: Record<string, number>; total: number; labelled: number; created_by: string | null;
@@ -60,8 +70,9 @@ interface Model {
   id: string; label: string; role: string | null; stages: string[] | null; contextTokens: number | null;
   inputPerMillion: number | null; outputPerMillion: number | null; inCatalog: boolean;
 }
+export type BenchModel = Model;
 interface Run {
-  id: number; suite_name: string; suite_version: number; models: string[]; baseline_model: string; stages: string[];
+  id: number; suite_id?: number; suite_name: string; suite_version: number; models: string[]; baseline_model: string; stages: string[];
   repeats: number; cap_usd: number; spent_usd: number; status: string; counts: Record<string, number>;
   created_at: string; started_by: string | null; note: string | null;
 }
@@ -98,6 +109,11 @@ interface CoreStatus {
 interface LauncherDefaults {
   suiteId: number | null; models: string[]; stages: string[]; repeats: number; repeatStages: string[]; capUsd: number;
 }
+interface Estimate {
+  trials: number; notApplicable: number; likelyUsd: number; estimateUsd: number; estimatedMs: number;
+  capUsd: number; maxCapUsd: number; suggestedCapUsd: number; calibratedFrom: number;
+  suiteFrozen: boolean; byStage: Record<string, { trials: number; notApplicable: number; estimateUsd: number; likelyUsd: number }>;
+}
 interface Review {
   trialId: number;
   item: { stage: Stage; task: { request: string; issueTitle: string | null }; candidate: Record<string, unknown>; reference: Record<string, unknown> };
@@ -121,15 +137,36 @@ function usd(v: number | null | undefined, digits = 2): string {
 function secs(ms: number | null | undefined): string {
   return ms == null || !Number.isFinite(ms) ? 'not yet' : `${Math.round(ms / 1000)}s`;
 }
+/** About how long, in the largest unit that reads naturally. */
+export function duration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return 'not yet';
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return 'under a minute';
+  if (min < 90) return `${min} min`;
+  const h = ms / 3_600_000;
+  return `${h < 10 ? Math.round(h * 2) / 2 : Math.round(h)} h`;
+}
 function shortModel(id: string, models: Model[]): string {
   return models.find((m) => m.id === id)?.label || id;
 }
-function done(r: Run): number {
+
+// A run's trials by what happened to them. `ran` is the work that was done;
+// skipped and cancelled trials are counted apart, never as progress (#3710:
+// a run the cap emptied read "132 of 132 trials").
+const RAN = ['ok', 'model_fail', 'infra_fail', 'timeout'];
+export function runCounts(r: Pick<Run, 'counts'>): { ran: number; planned: number; running: number; skipped: number; cancelled: number; notApplicable: number } {
   const c = r.counts || {};
-  return ['ok', 'model_fail', 'infra_fail', 'timeout', 'not_applicable', 'skipped_cap', 'cancelled'].reduce((s, k) => s + (c[k] || 0), 0);
-}
-function total(r: Run): number {
-  return Object.values(r.counts || {}).reduce((s, n) => s + n, 0);
+  const n = (k: string) => Number(c[k] || 0);
+  const all = Object.values(c).reduce((s, v) => s + Number(v || 0), 0);
+  const notApplicable = n('not_applicable');
+  return {
+    ran: RAN.reduce((s, k) => s + n(k), 0),
+    planned: all - notApplicable,
+    running: n('running'),
+    skipped: n('skipped_cap'),
+    cancelled: n('cancelled'),
+    notApplicable,
+  };
 }
 /** A DM task whose requester never answered: its answer is written for them when it is labelled. */
 export function scriptedAnswer(t: Pick<Task, 'stage' | 'tags' | 'reference'>): boolean {
@@ -147,6 +184,32 @@ async function send(url: string, method: string, body?: unknown) {
 }
 
 /**
+ * Where each point's name goes: beside the point, moved down a line at a
+ * time while it would overlap a name already placed, so two models at the
+ * same cost and accuracy stay readable (#3710: run 4's labels sat on top of
+ * each other). Pure; widths are estimated from the text at 11px.
+ */
+export function placeLabels(points: { key: string; x: number; y: number; text: string }[], bottom: number): Record<string, number> {
+  const placed: { x0: number; x1: number; y: number }[] = [];
+  const out: Record<string, number> = {};
+  const sorted = [...points].sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const p of sorted) {
+    const x0 = p.x + 9;
+    const x1 = x0 + p.text.length * 6.2;
+    let y = p.y + 4;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const hit = placed.some((q) => x0 < q.x1 && q.x0 < x1 && Math.abs(q.y - y) < 12);
+      if (!hit) break;
+      y += 13;
+    }
+    y = Math.min(y, bottom);
+    placed.push({ x0, x1, y });
+    out[p.key] = y;
+  }
+  return out;
+}
+
+/**
  * Cost per attempt against accuracy, one point per model, for one stage. Model
  * identity is the direct label beside each point, not a colour; the Pareto
  * frontier is the filled points and the line through them. A native title
@@ -161,6 +224,7 @@ export function ParetoChart({ points, models }: { points: Point[]; models: Model
   const y = (a: number) => T + (1 - a) * (H - T - B);
   const frontier = usable.filter((p) => p.frontier).sort((a, b) => a.cost - b.cost);
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const labelY = placeLabels(usable.map((p) => ({ key: p.key, x: x(p.cost), y: y(p.accuracy), text: shortModel(p.model, models) })), H - B - 4);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full max-w-2xl h-auto text-zinc-500 dark:text-zinc-400" role="img"
       aria-labelledby="admin-homeroom-bench-pareto-title" id="admin-homeroom-bench-pareto">
@@ -186,7 +250,7 @@ export function ParetoChart({ points, models }: { points: Point[]; models: Model
           <circle cx={x(p.cost)} cy={y(p.accuracy)} r="9" fill="transparent" />
           <circle cx={x(p.cost)} cy={y(p.accuracy)} r="5" strokeWidth="2"
             stroke={p.frontier ? '#2a78d6' : 'currentColor'} fill={p.frontier ? '#2a78d6' : 'none'} />
-          <text x={x(p.cost) + 9} y={y(p.accuracy) + 4} fontSize="11" className="fill-zinc-700 dark:fill-zinc-300">{shortModel(p.model, models)}</text>
+          <text x={x(p.cost) + 9} y={labelY[p.key]} fontSize="11" className="fill-zinc-700 dark:fill-zinc-300">{shortModel(p.model, models)}</text>
         </g>
       ))}
     </svg>
@@ -501,116 +565,384 @@ export function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
   );
 }
 
+/** The stages a suite has tasks at, in the order the launcher lists them. */
+function stagesWithTasks(suite: Suite | undefined): Stage[] {
+  return suite ? STAGES.filter((st) => (suite.counts?.[st] || 0) > 0) : [];
+}
+
+/**
+ * "Run the full benchmark". It opens on every candidate model and every
+ * stage the suite has tasks at, triage three times (pass^k is read from
+ * those), and as many trials at once as the lane allows. Each change asks
+ * the server what the launch would be (POST runs/estimate), so the trials,
+ * the likely cost (and the most it could cost), about how long it takes and
+ * the cap are on screen before anything is spent. The cap follows the
+ * server's suggestion (services/bench/lane.js suggestCap) until it is set by
+ * hand; a cap below the likely cost says the run will stop early.
+ */
 export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onLaunched, say }: {
   suites: Suite[]; models: Model[]; defaults: { capUsd: number; repeats: number; maxConcurrency: number };
   launcher: LauncherDefaults | null; hiddenChecks: string; onLaunched: () => void; say: (text: string, tone?: Tone) => void;
 }) {
-  // Starts on Core v1, every candidate model, its stages, three repeats for
-  // triage and one for the rest, the $50 cap (lane.launcherDefaults).
   const [suiteId, setSuiteId] = useState(launcher?.suiteId ? String(launcher.suiteId) : '');
   const [chosen, setChosen] = useState<Record<string, boolean>>(() => Object.fromEntries((launcher?.models || []).map((id) => [id, true])));
   const [extra, setExtra] = useState('');
-  const [stages, setStages] = useState<Record<string, boolean>>(() => (launcher?.stages?.length
-    ? Object.fromEntries(launcher.stages.map((st) => [st, true])) : { triage: true }));
+  // null: every stage the picked suite has tasks at. An object once ticked by hand.
+  const [stagesPicked, setStagesPicked] = useState<Record<string, boolean> | null>(null);
   const [repeats, setRepeats] = useState(String(launcher?.repeats ?? defaults.repeats));
   const [repeatAll, setRepeatAll] = useState(false);
   const [cap, setCap] = useState(String(launcher?.capUsd ?? defaults.capUsd));
-  const [concurrency, setConcurrency] = useState('1');
+  const [capByHand, setCapByHand] = useState(false);
+  const [concurrency, setConcurrency] = useState(String(defaults.maxConcurrency));
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [estimateError, setEstimateError] = useState('');
+  const [launching, setLaunching] = useState(false);
   useEffect(() => {
     if (!suiteId && suites.length) setSuiteId(String((suites.find((s) => s.frozen_at) || suites[0]).id));
   }, [suites, suiteId]);
   const suite = suites.find((s) => String(s.id) === suiteId);
+  const allStages = stagesWithTasks(suite);
+  const stages = stagesPicked ? STAGES.filter((st) => stagesPicked[st]) : allStages;
+  const modelIds = [...Object.keys(chosen).filter((k) => chosen[k]), ...extra.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)];
+  const everything = !stagesPicked && !extra.trim() && (launcher?.models || []).every((id) => chosen[id]);
+  const body = {
+    suiteId: Number(suiteId), models: modelIds, stages,
+    repeats: Number(repeats), capUsd: Number(cap), concurrency: Number(concurrency),
+    repeatStages: repeatAll ? REPEATED : (launcher?.repeatStages || ['triage']),
+  };
+  const bodyKey = JSON.stringify({ ...body, capUsd: 0 });
+
+  // Ask for the estimate a moment after the settings settle, not on every keystroke.
+  useEffect(() => {
+    if (!suiteId || !modelIds.length || !stages.length) { setEstimate(null); return undefined; }
+    let alive = true;
+    const handle = window.setTimeout(async () => {
+      try {
+        const data = await send(`${BASE}/runs/estimate`, 'POST', body);
+        if (!alive) return;
+        setEstimate(data);
+        setEstimateError('');
+        if (!capByHand) setCap(String(data.suggestedCapUsd));
+      } catch (err: any) {
+        if (alive) { setEstimate(null); setEstimateError(err.message); }
+      }
+    }, 400);
+    return () => { alive = false; window.clearTimeout(handle); };
+  }, [bodyKey, capByHand]);
+
+  const capUsd = Number(cap);
+  const short = estimate && Number.isFinite(capUsd) && capUsd < estimate.likelyUsd;
+  const tight = estimate && !short && Number.isFinite(capUsd) && capUsd < estimate.estimateUsd;
   const launch = async () => {
-    const ids = [...Object.keys(chosen).filter((k) => chosen[k]), ...extra.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)];
+    setLaunching(true);
     try {
-      const data = await send(`${BASE}/runs`, 'POST', {
-        suiteId: Number(suiteId), models: ids, stages: Object.keys(stages).filter((k) => stages[k]),
-        repeats: Number(repeats), capUsd: Number(cap), concurrency: Number(concurrency),
-        repeatStages: repeatAll ? REPEATED : (launcher?.repeatStages || ['triage']),
-      });
+      const data = await send(`${BASE}/runs`, 'POST', body);
       say(`Run ${data.run.id} launched: ${data.trials} trials (${data.notApplicable} not applicable), estimated $${data.estimateUsd} against a $${Number(data.run.cap_usd).toFixed(2)} cap.${data.suiteFrozen ? '' : ' The suite is not frozen, so these results describe a set that can still change.'}`);
       onLaunched();
     } catch (err: any) { say(`Not launched: ${err.message}`, 'err'); }
+    finally { setLaunching(false); }
   };
+  const tick = (st: Stage, on: boolean) => setStagesPicked({ ...Object.fromEntries(stages.map((s) => [s, true])), [st]: on });
+  const stageWords = stages.map((st) => (st === 'triage' && Number(repeats) > 1 ? `Triage ×${repeats}` : STAGE_LABEL[st])).join(' · ');
+
   return (
     <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-launch">
       <div className={AdminUI.cardHeader}>
-        <h3 className={AdminUI.cardTitle}>Run a benchmark</h3>
+        <h3 className={AdminUI.cardTitle}>Run the full benchmark</h3>
         <span className={AdminUI.cardDescription}>Same prompts, worker and clocks as the bot; nothing is posted</span>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div>
-          <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-suite">Suite</label>
-          <select id="admin-homeroom-bench-launch-suite" className={`${AdminUI.select} mt-1`} value={suiteId} onChange={(e) => setSuiteId(e.target.value)}>
-            {suites.map((s) => <option key={s.id} value={s.id}>{`${s.name} v${s.version}${s.frozen_at ? '' : ' (not frozen)'}`}</option>)}
-          </select>
-          <p className={`${AdminUI.label} mt-3`}>Stages</p>
-          <div className="flex flex-wrap gap-3 mt-1">
-            {STAGES.map((st) => (
-              <label key={st} className="flex items-center gap-1.5 text-sm">
-                <input type="checkbox" checked={!!stages[st]} onChange={(e) => setStages({ ...stages, [st]: e.target.checked })} />
-                <span>{`${STAGE_LABEL[st]}${suite ? ` (${suite.counts?.[st] || 0})` : ''}`}</span>
-              </label>
-            ))}
-          </div>
-          <div className="grid grid-cols-3 gap-2 mt-3">
-            <div>
-              <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-repeats">Repeats</label>
-              <input id="admin-homeroom-bench-launch-repeats" type="number" min="1" max="5" className={`${AdminUI.input} mt-1`}
-                value={repeats} onChange={(e) => setRepeats(e.target.value)} />
-            </div>
-            <div>
-              <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-cap">Cap, dollars</label>
-              <input id="admin-homeroom-bench-launch-cap" type="number" min="0.5" max="1000" step="1" className={`${AdminUI.input} mt-1`}
-                value={cap} onChange={(e) => setCap(e.target.value)} />
-            </div>
-            <div>
-              <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-concurrency">At once</label>
-              <select id="admin-homeroom-bench-launch-concurrency" className={`${AdminUI.select} mt-1`} value={concurrency}
-                onChange={(e) => setConcurrency(e.target.value)}>
-                {Array.from({ length: defaults.maxConcurrency }, (_, i) => String(i + 1)).map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-          </div>
-          <label className="flex items-center gap-1.5 text-sm mt-2">
-            <input type="checkbox" id="admin-homeroom-bench-launch-repeat-all" checked={repeatAll} onChange={(e) => setRepeatAll(e.target.checked)} />
-            <span>Repeat DM and follow-ups too</span>
-          </label>
-          <p className={`${AdminUI.muted} mt-2`}>
-            Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
-            Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot's live builds use every build slot.
-          </p>
-          <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
-        </div>
-        <div>
-          <p className={AdminUI.label}>Models</p>
-          <div className="mt-1 space-y-1" id="admin-homeroom-bench-models">
-            {models.map((m) => (
-              <label key={m.id} className="flex items-start gap-2 text-sm" data-bench-model={m.id}>
-                <input type="checkbox" className="mt-1" checked={!!chosen[m.id]} onChange={(e) => setChosen({ ...chosen, [m.id]: e.target.checked })} />
-                <span>
-                  <span className="font-medium">{m.label}</span>
-                  {m.role ? <span className={`${AdminUI.badge.outline} ml-1`}>{m.role}</span> : null}
-                  <span className={`${AdminUI.muted} block`}>
-                    {[
-                      m.id,
-                      m.contextTokens ? `${Math.round(m.contextTokens / 1000)}K context` : 'context unknown',
-                      m.inputPerMillion != null && m.outputPerMillion != null ? `$${m.inputPerMillion.toFixed(2)} in, $${m.outputPerMillion.toFixed(2)} out per million` : 'price unknown until a trial runs',
-                      m.stages ? `${m.stages.join(' and ')} only` : null,
-                    ].filter(Boolean).join(' · ')}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <label className={`${AdminUI.label} block mt-3`} htmlFor="admin-homeroom-bench-launch-extra">Other OpenRouter models</label>
-          <input id="admin-homeroom-bench-launch-extra" className={`${AdminUI.input} mt-1`} value={extra} placeholder="vendor/model, vendor/model"
-            onChange={(e) => setExtra(e.target.value)} />
-          <button type="button" className={`${AdminUI.btn.primary} mt-4`} id="admin-homeroom-bench-launch-go" disabled={!suiteId} onClick={launch}>Launch</button>
-        </div>
+      <p className="text-sm" id="admin-homeroom-bench-launch-summary">
+        {suite ? `${suite.name} v${suite.version}${suite.frozen_at ? '' : ' (not frozen)'}` : 'No suite yet'}
+        {` · ${modelIds.length} model${modelIds.length === 1 ? '' : 's'} · ${stageWords || 'no stage picked'}`}
+      </p>
+      <div className="flex flex-wrap gap-1.5 mt-2" id="admin-homeroom-bench-launch-models">
+        {modelIds.map((id) => (
+          <span key={id} className={id === launcher?.models?.[0] ? AdminUI.badge.secondary : AdminUI.badge.outline}>
+            {`${shortModel(id, models)}${id === launcher?.models?.[0] ? ', baseline' : ''}`}
+          </span>
+        ))}
       </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4" id="admin-homeroom-bench-estimate">
+        {[
+          ['Trials', estimate ? estimate.trials.toLocaleString() : '…', 'admin-homeroom-bench-estimate-trials',
+            estimate && estimate.notApplicable ? `${estimate.notApplicable} not applicable` : ''],
+          ['Likely cost', estimate ? `$${estimate.likelyUsd.toFixed(2)}` : '…', 'admin-homeroom-bench-estimate-cost',
+            estimate ? `at most $${estimate.estimateUsd.toFixed(2)}` : ''],
+          ['About how long', estimate ? duration(estimate.estimatedMs) : '…', 'admin-homeroom-bench-estimate-time', estimate ? 'at the least' : ''],
+          ['Cap', Number.isFinite(capUsd) ? `$${capUsd.toFixed(2)}` : '…', 'admin-homeroom-bench-estimate-cap', capByHand ? 'set by hand' : 'suggested'],
+        ].map(([label, value, id, sub]) => (
+          <div key={id} className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3" id={id}>
+            <div className={AdminUI.muted}>{label}</div>
+            <div className="text-xl font-semibold mt-0.5 tabular-nums">{value}</div>
+            {sub ? <div className={AdminUI.muted}>{sub}</div> : null}
+          </div>
+        ))}
+      </div>
+      <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bench-estimate-note">
+        {estimateError
+          ? `No estimate: ${estimateError}`
+          : estimate
+            ? `Likely: what each model's trials have cost so far, or, for a model with none yet, its price scaled by how far the price-based guess overshot ${estimate.calibratedFrom ? `on the ${estimate.calibratedFrom} model and stage pairs that have run` : 'on earlier runs (none yet, so it is the guess itself)'}. At most: every trial costing what the dearest tenth have. Time is a floor: live builds a person is waiting for go first.`
+            : 'Working out the estimate…'}
+      </p>
+      {short ? (
+        <p className="text-sm text-amber-800 dark:text-amber-300 mt-1" id="admin-homeroom-bench-cap-warning">
+          {`The cap is below the likely cost. The run stops when the next trial would cross $${capUsd.toFixed(2)}, and every trial left is skipped, so later tasks may not run on any model.`}
+        </p>
+      ) : tight ? (
+        <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-cap-note">
+          The cap covers the likely cost but not the most it could cost: if trials cost more than they have so far, the run stops early at the cap.
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-3 mt-4">
+        <button type="button" className={AdminUI.btn.primary} id="admin-homeroom-bench-launch-go"
+          disabled={!suiteId || !modelIds.length || !stages.length || launching || !Number.isFinite(capUsd)} onClick={launch}>
+          {`${everything ? 'Run everything' : 'Launch'}${Number.isFinite(capUsd) ? `, up to $${capUsd.toFixed(2)}` : ''}`}
+        </button>
+      </div>
+
+      <details className="mt-4" id="admin-homeroom-bench-launch-settings">
+        <summary className={`${AdminUI.btn.link} text-sm cursor-pointer`}>Change settings</summary>
+        <div className="grid gap-4 md:grid-cols-2 mt-3">
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-suite">Suite</label>
+            <select id="admin-homeroom-bench-launch-suite" className={`${AdminUI.select} mt-1`} value={suiteId}
+              onChange={(e) => { setSuiteId(e.target.value); setStagesPicked(null); }}>
+              {suites.map((s) => <option key={s.id} value={s.id}>{`${s.name} v${s.version}${s.frozen_at ? '' : ' (not frozen)'}`}</option>)}
+            </select>
+            <p className={`${AdminUI.label} mt-3`}>Stages</p>
+            <div className="flex flex-wrap gap-3 mt-1">
+              {STAGES.map((st) => (
+                <label key={st} className="flex items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={stages.includes(st)} disabled={!(suite?.counts?.[st])}
+                    onChange={(e) => tick(st, e.target.checked)} />
+                  <span>{`${STAGE_LABEL[st]}${suite ? ` (${suite.counts?.[st] || 0})` : ''}`}</span>
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-3">
+              <div>
+                <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-repeats">Triage repeats</label>
+                <input id="admin-homeroom-bench-launch-repeats" type="number" min="1" max="5" className={`${AdminUI.input} mt-1`}
+                  value={repeats} onChange={(e) => setRepeats(e.target.value)} />
+              </div>
+              <div>
+                <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-cap">Cap, dollars</label>
+                <input id="admin-homeroom-bench-launch-cap" type="number" min="0.5" max="1000" step="1" className={`${AdminUI.input} mt-1`}
+                  value={cap} onChange={(e) => { setCap(e.target.value); setCapByHand(true); }} />
+              </div>
+              <div>
+                <label className={AdminUI.label} htmlFor="admin-homeroom-bench-launch-concurrency">At once</label>
+                <select id="admin-homeroom-bench-launch-concurrency" className={`${AdminUI.select} mt-1`} value={concurrency}
+                  onChange={(e) => setConcurrency(e.target.value)}>
+                  {Array.from({ length: defaults.maxConcurrency }, (_, i) => String(i + 1)).map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            </div>
+            {capByHand ? (
+              <button type="button" className={`${AdminUI.btn.ghost} text-xs mt-1`} id="admin-homeroom-bench-launch-cap-auto"
+                onClick={() => setCapByHand(false)}>Set the cap from the estimate again</button>
+            ) : null}
+            <label className="flex items-center gap-1.5 text-sm mt-2">
+              <input type="checkbox" id="admin-homeroom-bench-launch-repeat-all" checked={repeatAll} onChange={(e) => setRepeatAll(e.target.checked)} />
+              <span>Repeat DM and follow-ups too</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-2`}>
+              Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
+              The bench waits while the bot&apos;s live builds use every build slot.
+            </p>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
+          </div>
+          <div>
+            <p className={AdminUI.label}>Models</p>
+            <div className="mt-1 space-y-1" id="admin-homeroom-bench-models">
+              {models.map((m) => (
+                <label key={m.id} className="flex items-start gap-2 text-sm" data-bench-model={m.id}>
+                  <input type="checkbox" className="mt-1" checked={!!chosen[m.id]} onChange={(e) => setChosen({ ...chosen, [m.id]: e.target.checked })} />
+                  <span>
+                    <span className="font-medium">{m.label}</span>
+                    {m.role ? <span className={`${AdminUI.badge.outline} ml-1`}>{m.role}</span> : null}
+                    <span className={`${AdminUI.muted} block`}>
+                      {[
+                        m.id,
+                        m.contextTokens ? `${Math.round(m.contextTokens / 1000)}K context` : 'context unknown',
+                        m.inputPerMillion != null && m.outputPerMillion != null ? `$${m.inputPerMillion.toFixed(2)} in, $${m.outputPerMillion.toFixed(2)} out per million` : 'price unknown until a trial runs',
+                        m.stages ? `${m.stages.join(' and ')} only` : null,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <label className={`${AdminUI.label} block mt-3`} htmlFor="admin-homeroom-bench-launch-extra">Other OpenRouter models</label>
+            <input id="admin-homeroom-bench-launch-extra" className={`${AdminUI.input} mt-1`} value={extra} placeholder="vendor/model, vendor/model"
+              onChange={(e) => setExtra(e.target.value)} />
+          </div>
+        </div>
+      </details>
     </div>
   );
+}
+
+// ── Best model for each stage ──────────────────────────────────────────
+
+interface Cell {
+  stage: Stage; model: string; runId: number; accuracy: number | null; graded: number; pass: number; pending: number;
+  costPerSuccess: number | null; costPerAttempt: number | null;
+}
+export interface Best {
+  stages: Stage[];
+  models: string[];
+  cells: Record<string, Cell>;
+  // The cell each stage would pick, `stage|model`, or absent when no cell has enough graded tasks.
+  best: Partial<Record<Stage, string>>;
+  // Graded tasks a cell needs before it is compared, per stage.
+  enough: Partial<Record<Stage, number>>;
+}
+
+// A cell with fewer graded tasks than this is shown, not compared: ten, or
+// most of the stage's tasks when the suite has fewer than that (Core v1 has
+// five DM tasks and two checks fixes).
+function enoughFor(stage: Stage, counts: Record<string, number> | undefined): number {
+  const tasks = Number(counts?.[stage] || 0);
+  return tasks ? Math.max(1, Math.min(10, Math.ceil(tasks * 0.8))) : 10;
+}
+
+/**
+ * The latest graded result for each stage and model, merged across the
+ * reports of one suite's runs, newest first; and per stage, the best value:
+ * the cheapest per success among the models within five points of the most
+ * accurate, counting only cells with enough graded tasks. Pure.
+ */
+export function mergeBest(reports: { runId: number; report: Pick<Report, 'rows'> }[], counts?: Record<string, number>, baseline?: string): Best {
+  const cells: Record<string, Cell> = {};
+  const stageSet = new Set<Stage>();
+  const modelSet = new Set<string>();
+  for (const { runId, report } of reports) {
+    for (const r of report.rows || []) {
+      const key = `${r.stage}|${r.model}`;
+      if (cells[key] || (!r.graded && !r.pending)) continue;
+      cells[key] = {
+        stage: r.stage, model: r.model, runId, accuracy: r.accuracy, graded: r.graded, pass: r.pass, pending: r.pending,
+        costPerSuccess: r.costPerSuccess, costPerAttempt: r.costPerAttempt,
+      };
+      stageSet.add(r.stage);
+      modelSet.add(r.model);
+    }
+  }
+  const stages = STAGES.filter((st) => stageSet.has(st));
+  const models = [...modelSet].sort((a, b) => (a === baseline ? -1 : b === baseline ? 1 : a.localeCompare(b)));
+  const best: Partial<Record<Stage, string>> = {};
+  const enough: Partial<Record<Stage, number>> = {};
+  for (const st of stages) {
+    enough[st] = enoughFor(st, counts);
+    const ok = models.map((m) => cells[`${st}|${m}`]).filter((c) => c && c.graded >= (enough[st] as number) && c.accuracy != null) as Cell[];
+    if (!ok.length) continue;
+    const top = Math.max(...ok.map((c) => c.accuracy as number));
+    const near = ok.filter((c) => (c.accuracy as number) >= top - 0.05);
+    near.sort((a, b) => (a.costPerSuccess ?? Infinity) - (b.costPerSuccess ?? Infinity) || (b.accuracy as number) - (a.accuracy as number));
+    best[st] = `${st}|${near[0].model}`;
+  }
+  return { stages, models, cells, best, enough };
+}
+
+/**
+ * The answer, a block per stage: its models ranked by accuracy, each with
+ * how many graded tasks it rests on and what a success cost; one with too
+ * few graded tasks is drawn faint and says so; the best value is outlined
+ * and named in the stage's heading. Blocks of cells rather than a table, so
+ * eight models fit a phone without a sideways scroll. "Use for <stage>"
+ * hands the model to the bot's Settings form, which still needs its Save
+ * (#3710).
+ */
+export function BestModels({ best, models, suiteName, canUse, onUseModel }: {
+  best: Best | null; models: Model[]; suiteName: string;
+  canUse: boolean; onUseModel?: (stage: 'triage' | 'spec' | 'build' | 'followup', model: string) => void;
+}) {
+  const name = (id: string) => shortModel(id, models);
+  return (
+    <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-best">
+      <div className={AdminUI.cardHeader}>
+        <h3 className={AdminUI.cardTitle}>Best model for each stage</h3>
+        <span className={AdminUI.cardDescription}>{suiteName ? `${suiteName}: the latest graded result per stage and model, across runs` : 'Across runs'}</span>
+      </div>
+      {best == null ? <p className={AdminUI.loading}>Loading…</p> : !best.stages.length ? (
+        <p className={AdminUI.muted} id="admin-homeroom-bench-best-empty">Nothing graded on this suite yet. Run the benchmark, then ask an admin&apos;s Claude session to grade it.</p>
+      ) : (
+        <>
+          <div className="space-y-5" id="admin-homeroom-bench-best-list">
+            {best.stages.map((st) => {
+              const botStage = BOT_STAGE_FOR[st];
+              const pick = best.best[st];
+              const enough = best.enough[st] as number;
+              const cells = best.models.map((m) => best.cells[`${st}|${m}`]).filter(Boolean) as Cell[];
+              const rank = (c: Cell) => (c.graded >= enough ? 0 : 1);
+              cells.sort((a, b) => rank(a) - rank(b) || (b.accuracy ?? -1) - (a.accuracy ?? -1));
+              const top = pick ? best.cells[pick] : null;
+              return (
+                <section key={st} data-bench-best-row={st}>
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <h4 className="text-sm font-semibold">{STAGE_LABEL[st]}</h4>
+                    <span className={AdminUI.muted}>
+                      {top
+                        ? `Best value: ${name(top.model)}, ${pct(top.accuracy)} at ${usd(top.costPerSuccess, 3)} a success`
+                        : `Not enough graded yet: a model is compared from ${enough} graded tasks`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-2">
+                    {cells.map((c) => {
+                      const thin = c.graded < enough;
+                      const isBest = pick === `${st}|${c.model}`;
+                      return (
+                        <div key={c.model} data-bench-best-cell={`${st}|${c.model}`} data-best={isBest ? 'true' : 'false'} data-thin={thin ? 'true' : 'false'}
+                          className={`rounded-xl p-3 bg-zinc-50 dark:bg-zinc-800/60 ${isBest ? 'ring-2 ring-violet-500' : ''} ${thin ? 'opacity-60' : ''}`}>
+                          <div className="text-sm font-medium break-words">{name(c.model)}</div>
+                          <div className="text-lg font-semibold tabular-nums">{c.graded ? pct(c.accuracy) : 'not graded'}</div>
+                          <div className={`${AdminUI.muted} tabular-nums`}>
+                            {[
+                              c.graded ? `${c.graded} graded` : null,
+                              c.costPerSuccess != null ? `${usd(c.costPerSuccess, 3)} a success` : null,
+                              c.pending ? `${c.pending} for the judge` : null,
+                            ].filter(Boolean).join(' · ')}
+                          </div>
+                          {thin && c.graded ? <div className={AdminUI.muted}>too few to compare</div> : null}
+                          {isBest ? <span className={`${AdminUI.badge.secondary} mt-1`}>best value</span> : null}
+                          {canUse && onUseModel && botStage && !thin && c.graded ? (
+                            <button type="button" className={`${AdminUI.btn.link} text-xs block mt-1`} data-bench-use={`${st}|${c.model}`}
+                              onClick={() => onUseModel(botStage, c.model)}>
+                              {`Use for ${STAGE_LABEL[botStage]}`}
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+          <p className={`${AdminUI.muted} mt-4`}>
+            The best value is the cheapest success among the models within five points of the most accurate. A faint
+            cell rests on too few graded tasks to compare. Use for a stage fills in the bot&apos;s Settings; nothing changes
+            until you press Save there. A checks fix runs on the bot&apos;s follow-up model; DM answers run on the platform default.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The judge against people, in words that hold when a rate has no trials
+ * behind it yet (#3710: "of those a person failed, it failed not yet").
+ */
+export function judgeLine(a: Report['agreement']): string {
+  const parts = [`Agrees with people on ${pct(a.agreement)} of the ${a.n} trial${a.n === 1 ? '' : 's'} a person also graded.`];
+  parts.push(a.tpr == null ? 'A person has passed none of them yet.' : `Of those a person passed, it passed ${pct(a.tpr)}.`);
+  parts.push(a.tnr == null ? 'A person has failed none of them yet.' : `Of those a person failed, it failed ${pct(a.tnr)}.`);
+  return parts.join(' ');
 }
 
 function Results({ runId, models, canWrite, say }: { runId: number; models: Model[]; canWrite: boolean; say: (text: string, tone?: Tone) => void }) {
@@ -763,9 +1095,7 @@ function Results({ runId, models, canWrite, say }: { runId: number; models: Mode
       <div id="admin-homeroom-bench-judge">
         <p className={AdminUI.label}>The judge</p>
         <p className={AdminUI.muted} id="admin-homeroom-bench-agreement">
-          {a.n
-            ? `Agrees with people on ${pct(a.agreement)} of the ${a.n} trials a person also graded. Of those a person passed, it passed ${pct(a.tpr)}; of those a person failed, it failed ${pct(a.tnr)}.`
-            : 'No person has spot-checked the judge on this run yet.'}
+          {a.n ? judgeLine(a) : 'No person has spot-checked the judge on this run yet.'}
           {' Grades come from an admin\'s Claude session through the Homeroom connector: ask it to "grade the pending benchmark items".'}
         </p>
         <button type="button" className={`${AdminUI.btn.outlineSm} mt-2`} onClick={loadReview} id="admin-homeroom-bench-spot-check">Spot-check judged trials</button>
@@ -800,7 +1130,40 @@ function Results({ runId, models, canWrite, say }: { runId: number; models: Mode
   );
 }
 
-export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
+// How many of a suite's newest runs the matrix reads: enough to cover a full
+// run and the partial ones before it, few enough to load at once.
+const MATRIX_RUNS = 8;
+
+/**
+ * The suite the matrix answers for (the one the launcher starts on, else the
+ * newest run's) and its newest runs that ran anything. Pure, and shared by
+ * the Benchmark tab and the bot's Settings, so both read the same answer.
+ */
+export function matrixRunsFor(runs: Run[], launcher: LauncherDefaults | null): { suiteId: number | null; runs: Run[] } {
+  const suiteId = launcher?.suiteId ?? runs[0]?.suite_id ?? null;
+  return { suiteId, runs: runs.filter((r) => r.suite_id === suiteId && runCounts(r).ran > 0).slice(0, MATRIX_RUNS) };
+}
+
+/**
+ * What the bot's Settings shows beside each model picker: the catalog the
+ * benchmark offers and the merged best-per-stage answer. One read of the
+ * runs and their reports, the same selection the Benchmark tab makes.
+ */
+export async function loadBenchSummary(): Promise<{ models: Model[]; best: Best; defaultModel: string | null }> {
+  const [s, r, m] = await Promise.all([send(`${BASE}/suites`, 'GET'), send(`${BASE}/runs`, 'GET'), send(`${BASE}/models`, 'GET')]);
+  const { suiteId, runs } = matrixRunsFor(r.runs || [], r.launcher || null);
+  const suite = (s.suites || []).find((x: Suite) => x.id === suiteId);
+  const reports = await Promise.all(runs.map(async (run) => {
+    try { return { runId: run.id, report: await send(`${BASE}/runs/${run.id}/report`, 'GET') as Report }; } catch { return null; }
+  }));
+  const ok = reports.filter(Boolean) as { runId: number; report: Report }[];
+  return { models: m.models || [], best: mergeBest(ok, suite?.counts, r.launcher?.models?.[0]), defaultModel: m.baseline || null };
+}
+
+export function BenchmarkArea({ canWrite, onUseModel }: {
+  canWrite: boolean;
+  onUseModel?: (stage: 'triage' | 'spec' | 'build' | 'followup', model: string) => void;
+}) {
   const [suites, setSuites] = useState<Suite[]>([]);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [models, setModels] = useState<Model[]>([]);
@@ -809,6 +1172,7 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
   const [launcher, setLauncher] = useState<LauncherDefaults | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
+  const [reports, setReports] = useState<Record<number, Report>>({});
   const [status, setStatus] = useState<{ text: string; tone: Tone } | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -844,6 +1208,36 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
     }, 20_000);
     return () => window.clearInterval(handle);
   }, [runs, load, loadCore, coreRunning]);
+
+  const { suiteId: matrixSuiteId, runs: matrixRuns } = matrixRunsFor(runs || [], launcher);
+  const matrixSuite = suites.find((s) => s.id === matrixSuiteId);
+  const matrixKey = matrixRuns.map((r) => `${r.id}:${r.status}:${runCounts(r).ran}`).join(',');
+  // Each run's report, for the matrix and for the runs still waiting on the
+  // judge. A finished run's report is read once per visit; a running one
+  // again whenever the list moves.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const want = matrixRuns.filter((r) => !reports[r.id] || r.status === 'running' || r.status === 'queued');
+      if (!want.length) return;
+      const got = await Promise.all(want.map(async (r) => {
+        try { return [r.id, await send(`${BASE}/runs/${r.id}/report`, 'GET')] as const; } catch { return null; }
+      }));
+      if (cancelled || !alive.current) return;
+      setReports((cur) => {
+        const next = { ...cur };
+        for (const g of got) if (g) next[g[0]] = g[1] as Report;
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [matrixKey]);
+  const best = runs == null ? null : mergeBest(
+    matrixRuns.filter((r) => reports[r.id]).map((r) => ({ runId: r.id, report: reports[r.id] })),
+    matrixSuite?.counts, launcher?.models?.[0],
+  );
+  const pendingJudge = (id: number) => (reports[id]?.rows || []).reduce((s, row) => s + (row.pending || 0), 0);
+
   const materializeCore = async () => {
     try {
       await send(`${BASE}/core/materialize`, 'POST', {});
@@ -874,49 +1268,71 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
         {status ? <p className={`mt-2 text-sm ${status.tone === 'err' ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}`} role="status">{status.text}</p> : null}
       </div>
 
-      <CorePanel status={core} canWrite={canWrite} onMaterialize={materializeCore} onFreeze={freezeCore} />
-      <SuitesCard canWrite={canWrite} suites={suites} coreSuiteId={core?.suite?.id ?? null} onChanged={() => { load(); loadCore(); }} say={say} />
       {canWrite && suites.length ? (
         <Launcher key={launcher?.suiteId ?? 'none'} suites={suites} models={models} defaults={defaults} launcher={launcher}
           hiddenChecks={hiddenChecks} onLaunched={load} say={say} />
       ) : null}
 
+      <BestModels best={best} models={models} suiteName={matrixSuite ? `${matrixSuite.name} v${matrixSuite.version}` : ''}
+        canUse={canWrite} onUseModel={onUseModel} />
+
       <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-runs">
         <div className={AdminUI.cardHeader}>
           <h3 className={AdminUI.cardTitle}>Runs</h3>
+          <span className={AdminUI.cardDescription}>Pick one to see its results below</span>
         </div>
         {runs == null ? <p className={AdminUI.loading}>Loading…</p> : (
           <div className={AdminUI.tableWrap}>
             <table className={AdminUI.table} id="admin-homeroom-bench-run-table">
               <thead className={AdminUI.thead}>
-                <tr>{['Run', 'Suite', 'Models', 'Progress', 'Spent', 'State'].map((h) => <th className={AdminUI.th} key={h}>{h}</th>)}</tr>
+                <tr>{['Run', 'Stages', 'Models', 'Ran', 'Spent', 'State'].map((h) => <th className={DENSE_TH} key={h}>{h}</th>)}</tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
-                  <tr className={AdminUI.trHover} key={r.id} data-bench-run={r.id}>
-                    <td className={AdminUI.td}>
-                      <button type="button" className={AdminUI.btn.link} aria-pressed={selectedRun === r.id} onClick={() => setSelectedRun(r.id)}>{`Run ${r.id}`}</button>
-                      {r.note ? <span className={`${AdminUI.muted} block`}>{r.note}</span> : null}
-                    </td>
-                    <td className={AdminUI.td}>{`${r.suite_name} v${r.suite_version}`}</td>
-                    <td className={`${AdminUI.td} text-sm`}>{r.models.map((m) => shortModel(m, models)).join(', ')}</td>
-                    <td className={AdminUI.td}>{`${done(r)} of ${total(r)} trials`}</td>
-                    <td className={AdminUI.td}>{`${usd(r.spent_usd)} of ${usd(r.cap_usd)}`}</td>
-                    <td className={AdminUI.td}>
-                      <span className={r.status === 'running' ? AdminUI.badge.secondary : AdminUI.badge.outline}>{r.status}</span>
-                      {canWrite && (r.status === 'queued' || r.status === 'running') ? (
-                        <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`} onClick={async () => {
-                          try { await send(`${BASE}/runs/${r.id}/cancel`, 'POST', {}); say(`Run ${r.id} cancelled.`); load(); } catch (err: any) { say(err.message, 'err'); }
-                        }}>cancel</button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-                {!runs.length ? <tr><td className={AdminUI.td} colSpan={6} id="admin-homeroom-bench-runs-empty">No runs yet.</td></tr> : null}
+                {runs.map((r) => {
+                  const c = runCounts(r);
+                  const waiting = pendingJudge(r.id);
+                  return (
+                    <tr className={AdminUI.trHover} key={r.id} data-bench-run={r.id}>
+                      <td className={DENSE_TD}>
+                        <button type="button" className={AdminUI.btn.link} aria-pressed={selectedRun === r.id} onClick={() => setSelectedRun(r.id)}>{`Run ${r.id}`}</button>
+                        <span className={`${AdminUI.muted} block`}>{`${r.suite_name} v${r.suite_version}`}</span>
+                        {r.note ? <span className={`${AdminUI.muted} block`}>{r.note}</span> : null}
+                      </td>
+                      <td className={`${DENSE_TD} text-sm`}>{(r.stages || []).map((st) => STAGE_LABEL[st as Stage] || st).join(', ')}</td>
+                      <td className={`${DENSE_TD} text-sm`}>{r.models.map((m) => shortModel(m, models)).join(', ')}</td>
+                      <td className={`${DENSE_TD} tabular-nums`} data-bench-run-ran={r.id}>
+                        {`${c.ran} of ${c.planned}`}
+                        <span className={`${AdminUI.muted} block`}>
+                          {[
+                            c.running ? `${c.running} running` : null,
+                            c.skipped ? `${c.skipped} skipped at the cap` : null,
+                            c.cancelled ? `${c.cancelled} cancelled` : null,
+                          ].filter(Boolean).join(', ')}
+                        </span>
+                      </td>
+                      <td className={`${DENSE_TD} tabular-nums`}>{`${usd(r.spent_usd)} of ${usd(r.cap_usd)}`}</td>
+                      <td className={DENSE_TD}>
+                        <span className={r.status === 'running' ? AdminUI.badge.secondary : r.status === 'capped' ? AdminUI.badge.warn : AdminUI.badge.outline}>{r.status}</span>
+                        {waiting ? <span className={`${AdminUI.badge.warn} ml-1`} data-bench-run-judge={r.id}>{`${waiting} for the judge`}</span> : null}
+                        {canWrite && (r.status === 'queued' || r.status === 'running') ? (
+                          <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`} onClick={async () => {
+                            try { await send(`${BASE}/runs/${r.id}/cancel`, 'POST', {}); say(`Run ${r.id} cancelled.`); load(); } catch (err: any) { say(err.message, 'err'); }
+                          }}>cancel</button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!runs.length ? <tr><td className={DENSE_TD} colSpan={6} id="admin-homeroom-bench-runs-empty">No runs yet.</td></tr> : null}
               </tbody>
             </table>
           </div>
         )}
+        {runs && runs.some((r) => pendingJudge(r.id)) ? (
+          <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bench-judge-prompt">
+            Trials waiting for the judge are graded in an admin&apos;s own Claude session with the Homeroom connector: ask it to &quot;grade the pending benchmark items&quot;.
+          </p>
+        ) : null}
       </div>
 
       {selectedRun ? (
@@ -927,6 +1343,21 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
           <Results key={selectedRun} runId={selectedRun} models={models} canWrite={canWrite} say={say} />
         </div>
       ) : null}
+
+      <details id="admin-homeroom-bench-manage">
+        <summary className={`${AdminUI.card} p-4 block cursor-pointer`}>
+          <span className={AdminUI.cardTitle}>Suites and labelling</span>
+          <span className={`${AdminUI.muted} block mt-1`}>
+            {core?.suite
+              ? `${core.definition.name} v${core.definition.version}: ${core.suite.total} tasks, ${core.suite.labelled} labelled${core.suite.frozen_at ? ', frozen' : ', not frozen yet'}. Making Core, freezing, new versions, sampling tasks and importing a merged pull request.`
+              : 'Making Core, freezing, new versions, sampling tasks and importing a merged pull request.'}
+          </span>
+        </summary>
+        <div className="space-y-4 mt-4">
+          <CorePanel status={core} canWrite={canWrite} onMaterialize={materializeCore} onFreeze={freezeCore} />
+          <SuitesCard canWrite={canWrite} suites={suites} coreSuiteId={core?.suite?.id ?? null} onChanged={() => { load(); loadCore(); }} say={say} />
+        </div>
+      </details>
     </div>
   );
 }

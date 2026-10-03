@@ -111,6 +111,41 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [out.run.id]);
   });
 
+  await t.test('an estimate previews the same plan, per stage, and writes nothing', async () => {
+    const body = {
+      suiteId: suite.id, models: ['z-ai/glm-5.3-flash', 'moonshotai/kimi-k2.7-code'], stages: ['triage', 'build'], repeats: 3,
+    };
+    const runsBefore = (await pool.query('SELECT COUNT(*)::int AS n FROM bench_runs')).rows[0].n;
+    const trialsBefore = (await pool.query('SELECT COUNT(*)::int AS n FROM bench_trials')).rows[0].n;
+    const est = await lane.estimateRun(pool, body);
+    assert.equal(est.ok, true);
+    assert.equal(est.trials, 15, '24 planned, 9 of them not applicable');
+    assert.equal(est.notApplicable, 9);
+    assert.deepEqual(Object.keys(est.byStage).sort(), ['build', 'triage']);
+    assert.equal(est.byStage.triage.trials, 9, 'GLM only: 3 tasks x 3 attempts');
+    assert.equal(est.byStage.triage.notApplicable, 9);
+    assert.equal(est.byStage.build.trials, 6, 'one build per task and model');
+    assert.ok(est.estimateUsd > 0);
+    assert.ok(Math.abs(est.byStage.triage.estimateUsd + est.byStage.build.estimateUsd - est.estimateUsd) < 0.02,
+      'the stages add up to the total');
+    assert.ok(est.estimatedMs > 0);
+    assert.ok(est.likelyUsd > 0 && est.likelyUsd <= est.estimateUsd, 'likely is never more than the most it could cost');
+    assert.ok(est.suggestedCapUsd >= Math.ceil(est.likelyUsd), 'the suggested cap covers the likely cost');
+    assert.equal(est.capUsd, 50);
+    assert.equal(est.suiteFrozen, false);
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM bench_runs')).rows[0].n, runsBefore, 'no run');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM bench_trials')).rows[0].n, trialsBefore, 'no trial');
+
+    const launched = await lane.launchRun(pool, body);
+    assert.equal(launched.estimateUsd, est.estimateUsd, 'the launch records the figure the preview showed');
+    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [launched.run.id]);
+    await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status = 'pending'", [launched.run.id]);
+
+    const refused = await lane.estimateRun(pool, { ...body, models: [] });
+    assert.equal(refused.ok, false, 'the same validation as a launch');
+    assert.equal(refused.status, 400);
+  });
+
   await t.test('the lane waits for the live bot, runs a run\'s trials, debits the run, and finishes it', async () => {
     lane._resetForTests();
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 2 });

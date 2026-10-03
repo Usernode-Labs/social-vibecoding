@@ -524,9 +524,11 @@ test('the export carries the branch, with a compare address to open, after every
 test('the dashboard has the switch, the slots, the platform box, the lane line and the backfill', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-shadow-builds"/);
-  assert.match(tsx, /saveSettings\(\{ shadowBuilds: e\.target\.value === 'on' \}/);
+  assert.match(tsx, /onChange=\{\(e\) => setField\('shadowBuilds', e\.target\.value === 'on'\)\}/);
   assert.match(tsx, /id="admin-homeroom-bot-build-concurrency"/);
-  assert.match(tsx, /saveSettings\(\{ buildConcurrency: n \}/);
+  assert.match(tsx, /onChange=\{\(v\) => setField\('buildConcurrency', v\)\}/);
+  // #3710: the backfill acts on what is SAVED: it waits until shadow builds are on and saved.
+  assert.match(tsx, /disabled=\{busy !== '' \|\| !saved\.shadowBuilds \|\| dirty\.includes\('shadowBuilds'\)\}/);
   assert.match(tsx, /id="admin-homeroom-bot-shadow-build-platform"/);
   assert.match(tsx, /id="admin-homeroom-bot-build-lane"/);
   assert.match(tsx, /id="admin-homeroom-bot-shadow-backfill"/);

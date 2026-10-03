@@ -196,6 +196,13 @@ function homeroomBenchRoutes(config) {
     hiddenChecks: runner.HIDDEN_CHECKS_GAP,
   })));
 
+  // What a launch with these settings would cost and how long it would
+  // take, before anything is spent: the launcher's preview. Nothing is
+  // written, so it is safe to call as the settings change.
+  router.post('/api/admin/homeroom-bot/bench/runs/estimate', requireAdminWrite, handler('Estimate bench run', async (req) => (
+    lane.estimateRun(pool, req.body || {})
+  )));
+
   router.post('/api/admin/homeroom-bot/bench/runs', requireAdminWrite, handler('Launch bench run', async (req) => {
     const out = await lane.launchRun(pool, req.body || {}, { actorId: req.user.id });
     if (out.ok) {
