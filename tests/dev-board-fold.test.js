@@ -1532,7 +1532,7 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
   //
   // One rule, three screens — so the full-screen geometry is keyed on the
   // deck's OWN base class and the bare name stays the fold's.
-  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 40;/,
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
