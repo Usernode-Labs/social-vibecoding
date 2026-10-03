@@ -1575,6 +1575,19 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 }
 
 /**
+ * Whether the thread follows a new message to the bottom. A pure decision so
+ * the tall-reply case (tests/messages-thread-follow.test.js) can execute it:
+ * the ref-based `wasAtBottom` is measured BEFORE the message is in the DOM,
+ * so a reply taller than the threshold still follows where the old
+ * post-commit scrollHeight measurement said "no longer at the bottom".
+ */
+export function shouldFollowThread({ firstLoad, ownSend, wasAtBottom }: {
+  firstLoad: boolean; ownSend: boolean; wasAtBottom: boolean;
+}) {
+  return firstLoad || ownSend || wasAtBottom;
+}
+
+/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
@@ -1592,6 +1605,20 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   useComposerKeyboard(scroller);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
+  // The pre-update answer to "was the reader at the bottom", written on every
+  // scroll of the thread. The follow effect cannot measure distance from the
+  // bottom itself: React commits the new row before effects run, so by then
+  // `scrollHeight` already includes it and a reply taller than the threshold
+  // reads as "scrolled away" even for a reader parked at distance 0. Scroll
+  // events fire on scrolling and on programmatic `scrollTop` writes, never on
+  // plain DOM growth, so this ref always holds the answer from before the
+  // message landed — the same pattern the agent session transcript's `stick`
+  // uses (../../agent-session/index.tsx).
+  const atBottom = useRef(false);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 180;
+  };
   const conversationId = snap.route.conversationId;
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
@@ -1604,6 +1631,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   useEffect(() => {
     if (!conversationId) return;
     previousLast.current = null; initialScroll.current = null;
+    // A fresh conversation opens at the bottom: `true` keeps that first-load
+    // follow from being blocked by whatever the last thread was left at.
+    atBottom.current = true;
   }, [conversationId]);
 
   useEffect(() => {
@@ -1627,7 +1657,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
     // The viewer's own send always lands in view, wherever they had scrolled.
     const sentNow = !!lastMessage?.pending && last !== previousLast.current;
-    if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
+    // `atBottom` is the pre-update answer (see the handler above): the height
+    // this used to measure after the commit already contained the new message,
+    // so a tall reply read as "the reader scrolled away" and the thread never
+    // followed someone parked at the bottom.
+    if (shouldFollowThread({
+      firstLoad: previousLast.current === null,
+      ownSend: sentNow,
+      wasAtBottom: atBottom.current,
+    })) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
     previousLast.current = last;
@@ -1755,7 +1793,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           `#gc-messages`, and app.css's `.platform-kb-column .un-kb-avoid`
           keeps it from padding this scroller with the inset a second time.
           So this className stays constant: React never strips the kit's. */}
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
+      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite" onScroll={onScroll}>
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
