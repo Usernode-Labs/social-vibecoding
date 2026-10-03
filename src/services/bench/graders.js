@@ -131,10 +131,37 @@ function followupGrade({ trial, reference }) {
   return { pass: null, needsJudge: true, criteria, notes: [] };
 }
 
+/**
+ * #3737: a taste trial (services/bench/taste.js). A first version the
+ * triage did not build, or the bot's build did not land, fails; so does an
+ * app that would not boot, or one with no screenshot to look at. Anything
+ * else is the judge's, from the screenshots and the rubric.
+ */
+function tasteGrade({ stage, trial }) {
+  const p = trial.parsed || {};
+  const capture = trial.capture || null;
+  if (stage === 'first_version' && !p.built) {
+    if (p.blocked) return { pass: false, needsJudge: false, criteria: { built: false }, notes: [`blocked: ${p.blocked}`] };
+    const verdict = p.triage?.verdict;
+    return {
+      pass: false, needsJudge: false, criteria: { built: false },
+      notes: [verdict && verdict !== 'ready' ? `the triage answered ${verdict} and built nothing` : 'nothing was built'],
+    };
+  }
+  const shots = Array.isArray(capture?.shots) ? capture.shots.filter((s) => s.artifactId).length : 0;
+  const criteria = { ...(stage === 'first_version' ? { built: true } : {}), booted: !!capture?.booted, screenshots: shots > 0 };
+  if (!capture) return { pass: false, needsJudge: false, criteria, notes: ['no screenshots were taken'] };
+  if (!capture.booted) return { pass: false, needsJudge: false, criteria, notes: [`the app did not boot: ${capture.error || 'no reason given'}`] };
+  if (!shots) return { pass: false, needsJudge: false, criteria, notes: [capture.error || 'no screenshot came back'] };
+  return { pass: null, needsJudge: true, criteria, notes: [] };
+}
+
 /** The deterministic grade of a finished trial, or null when there is none to give (not ok). Pure. */
 function deterministicGrade({ stage, trial, reference, scope = null }) {
   if (trial.status !== 'ok') return null;
   switch (stage) {
+    case 'first_version':
+    case 'capture': return tasteGrade({ stage, trial });
     case 'triage': return triageGrade({ parsed: trial.parsed, reference });
     case 'build': return buildGrade({ trial, reference, scope });
     case 'spec': return specGrade({ trial });
@@ -236,6 +263,7 @@ module.exports = {
   buildGrade,
   specGrade,
   followupGrade,
+  tasteGrade,
   deterministicGrade,
   finalVerdict,
   gradeTrial,

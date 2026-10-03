@@ -1256,6 +1256,9 @@ async function becomeLeader() {
   // the background a little after boot (reads GitHub only; a no-op once it
   // is done). Production and staging, when GitHub is configured.
   require('./src/services/bench/core').startOnBoot(config);
+  // #3737: and the taste eval's suite, from its checked-in briefs (rows
+  // only: no GitHub, model or worker; nothing runs until an admin launches).
+  require('./src/services/bench/taste').startOnBoot(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.

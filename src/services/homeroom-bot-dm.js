@@ -1014,6 +1014,27 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
 }
 
 /**
+ * The request a project's description is filed as: its title and body.
+ * Pure. Shared with the benchmark's taste eval (services/bench/taste.js),
+ * whose first-version trials are given the same request the bot reads.
+ */
+function firstVersionIssue({ name, username, brief, botBuilds = true }) {
+  return {
+    title: clip(`First version of ${name}`, 200),
+    body: [
+      `**Source:** Homeroom user (${username})`,
+      '',
+      brief,
+      '',
+      '---',
+      botBuilds
+        ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
+        : `${username} described this when they created the project.`,
+    ].join('\n'),
+  };
+}
+
+/**
  * File one project's first request, once the project is running: a GitHub
  * issue under the creator's name and the platform's issue row. When the bot
  * builds it, the creator is recorded as its requester (so the bot's news
@@ -1040,17 +1061,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
   const botBuilds = row.bot_builds !== false;
-  const title = clip(`First version of ${name}`, 200);
-  const body = [
-    `**Source:** Homeroom user (${username})`,
-    '',
-    row.brief,
-    '',
-    '---',
-    botBuilds
-      ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
-      : `${username} described this when they created the project.`,
-  ].join('\n');
+  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds });
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
       || (() => {
@@ -1205,6 +1216,7 @@ module.exports = {
   mirroredText,
   noteUserMessage,
   normalizeBrief,
+  firstVersionIssue,
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,

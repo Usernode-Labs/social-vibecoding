@@ -170,6 +170,8 @@ async function migrate(config) {
   // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
   // Its tables are staging:private, so a preview would otherwise show none.
   await require('../services/bench/demo').seedStagingBench(pool);
+  // #3737: and its taste eval, with screenshots to look at.
+  await require('../services/bench/demo').seedStagingTaste(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);

@@ -226,4 +226,189 @@ async function seedStagingBench(pool) {
   }
 }
 
-module.exports = { seedStagingBench, SUITE_ID, RUN_ID };
+// ── #3737: the taste eval, on staging ────────────────────────────────────
+//
+// One open suite with a first-version task and a capture task on the same
+// brief, and a finished run of both, each with its sixteen screenshots
+// (drawn here: a ground in the look's colour and a few bars per state) and
+// the judge's grade, so the results table shows both arms, the spot check
+// shows screenshots, and the suite's tasks show their brief and the form to
+// add another. Its run is older than the core demo's, so the console still
+// opens on that one.
+
+const TASTE_SUITE_ID = 936542;
+const TASTE_RUN_ID = 936550;
+const TASTE_SNAPSHOT_BASE = 936580;
+const TASTE_TASK_BASE = 936582;
+const TASTE_TRIAL_BASE = 9365900;
+const TASTE_GRADE_BASE = 9366900;
+const TASTE_BRIEF = 'Staging demo: a planner for a weekly bake. Pick the breads for the week and see when to start each dough so every loaf is ready on its day.';
+
+/** A PNG of one flat colour with horizontal bars: enough to stand in for a screenshot. Pure. */
+function demoPng(width, height, ground, bars = []) {
+  const zlib = require('zlib');
+  const row = Buffer.alloc(1 + width * 3);
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    const bar = bars.find((b) => y >= b.y && y < b.y + b.h);
+    const [r, g, b] = bar ? bar.rgb : ground;
+    const line = Buffer.from(row);
+    for (let x = 0; x < width; x += 1) {
+      const inBar = bar && x >= 16 && x < width - 16;
+      line[1 + x * 3] = inBar ? r : ground[0];
+      line[2 + x * 3] = inBar ? g : ground[1];
+      line[3 + x * 3] = inBar ? b : ground[2];
+    }
+    rows.push(line);
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32 ? zlib.crc32(body) >>> 0 : crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function crc32(buf) {
+  let c = ~0;
+  for (const byte of buf) {
+    c ^= byte;
+    for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function demoShot(viewport, look, state) {
+  const width = viewport === 'phone' ? 390 : 1280;
+  const height = viewport === 'phone' ? 844 : 800;
+  const ground = look === 'light' ? [250, 250, 249] : [24, 24, 27];
+  const ink = look === 'light' ? [214, 211, 209] : [63, 63, 70];
+  const accent = [217, 119, 6];
+  const bars = state === 'empty' ? [{ y: 120, h: 40, rgb: ink }]
+    : state === 'error' ? [{ y: 120, h: 56, rgb: [220, 38, 38] }]
+      : state === 'loading' ? [0, 1, 2].map((i) => ({ y: 120 + i * 96, h: 72, rgb: ink }))
+        : [{ y: 64, h: 48, rgb: accent }, ...[0, 1, 2, 3].map((i) => ({ y: 160 + i * 112, h: 88, rgb: ink }))];
+  return demoPng(width, height, ground, bars);
+}
+
+async function seedStagingTaste(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return false;
+  try {
+    const { rows: done } = await pool.query('SELECT 1 FROM bench_suites WHERE id = $1', [TASTE_SUITE_ID]);
+    if (done.length) return false;
+    const { rows: [app] } = await pool.query("SELECT id, slug FROM apps WHERE status = 'running' ORDER BY id LIMIT 1");
+    if (!app) return false;
+    const snapshots = require('../homeroom-bot-snapshots');
+    const graders = require('./graders');
+    const capture = require('./capture');
+    const token = () => crypto.randomBytes(12).toString('base64url');
+    await pool.query(
+      `INSERT INTO bench_suites (id, name, version, kind, notes, created_at)
+       VALUES ($1, 'Staging demo taste', 1, 'frozen', 'Staging demo: a taste eval fixture, not real first versions.', NOW() - INTERVAL '3 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [TASTE_SUITE_ID],
+    );
+    const brief = await snapshots.storeBlob(pool, TASTE_BRIEF);
+    const kinds = [
+      { stage: 'first_version', extra: { taste: 'first_version', appName: 'Staging demo bakery', template: 'empty' } },
+      { stage: 'capture', extra: { taste: 'capture', appName: 'Staging demo bakery', sha: 'd'.repeat(40) } },
+    ];
+    for (const [i, k] of kinds.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO homeroom_bot_run_snapshots (id, run_id, stage, app_id, issue_number, base_sha, texts, extra, source)
+         VALUES ($1, NULL, 'build', $2, 1, $3, $4::jsonb, $5::jsonb, 'import')
+         ON CONFLICT (id) DO NOTHING`,
+        [TASTE_SNAPSHOT_BASE + i, app.id, k.extra.sha || null, JSON.stringify({ brief }), JSON.stringify(k.extra)],
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO bench_tasks (id, suite_id, stage, snapshot_id, app_id, issue_number, tags, reference, reference_source, label_token)
+         VALUES ($1, $2, $3, $4, $5, NULL, $6::jsonb, '{}'::jsonb, 'authored', $7)
+         ON CONFLICT (id) DO NOTHING`,
+        [TASTE_TASK_BASE + i, TASTE_SUITE_ID, k.stage, TASTE_SNAPSHOT_BASE + i, app.id,
+          JSON.stringify({ taste: k.stage, app_slug: app.slug, repo_size: 'small', request_type: 'feature', brief_placeholder: false, prompt_chars: TASTE_BRIEF.length }),
+          token()],
+      );
+    }
+    await pool.query(
+      `INSERT INTO bench_runs (id, suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, status, spent_usd,
+                               note, created_at, started_at, finished_at)
+       VALUES ($1, $2, ARRAY['z-ai/glm-5.3-flash'], 'z-ai/glm-5.3-flash', ARRAY['first_version','capture'], 1, 10, 1, 'done', 1.12,
+               'Staging demo taste run: fixture screenshots, not real results.', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [TASTE_RUN_ID, TASTE_SUITE_ID],
+    );
+    const criteria = [
+      { hierarchy: true, type_scale: true, spacing: true, accent: true, both_looks: true, states: false, copy: true, no_tells: true, works_at_390: true, kit_use: false, domain_fit: true, would_ship: false },
+      { hierarchy: false, type_scale: false, spacing: true, accent: false, both_looks: false, states: false, copy: true, no_tells: false, works_at_390: true, kit_use: false, domain_fit: false, would_ship: false },
+    ];
+    for (const [i, k] of kinds.entries()) {
+      const id = TASTE_TRIAL_BASE + i + 1;
+      const shots = capture.plannedShots().map((p) => {
+        const data = demoShot(p.viewport, p.look, p.state);
+        return { ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0 };
+      });
+      const summary = capture.summarize({
+        booted: true, steps: {}, ms: 61_000,
+        checks: {
+          consoleErrors: { count: i, screens: 8, samples: i ? ['Staging demo: Failed to load resource'] : [] },
+          overflow360: { light: 0, dark: i * 24, worst: i * 24 },
+          smallTapTargets: { small: 1 + i * 3, checked: 9, samples: [] },
+          lowContrast: { light: { low: i * 4, checked: 40, worst: i ? 2.8 : 4.9, samples: [] }, dark: { low: 2 + i * 6, checked: 40, worst: 3.6, samples: [] } },
+          nestedCards: { worst: i * 2 },
+        },
+        tells: {
+          files: 3, emojiIcons: { count: i * 7, samples: [] }, uppercaseEyebrows: { count: i * 3, samples: [] },
+          arbitraryTextSizes: { count: i * 4, values: i ? ['15px', '17px'] : [] }, hexColours: { count: i * 9, values: [] },
+        },
+      }, shots, [], {});
+      const parsed = k.stage === 'first_version'
+        ? { built: true, triage: { verdict: 'ready', buildNote: 'Staging demo plan.' }, spec: '# Staging demo bakery' }
+        : { captured: true };
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO bench_trials (id, run_id, task_id, model, attempt, status, item_token, est_cost_usd, parsed, cost_usd,
+                                   duration_ms, build_commits, capture, created_at, started_at, finished_at)
+         VALUES ($1, $2, $3, 'z-ai/glm-5.3-flash', 1, 'ok', $4, $5, $6::jsonb, $5, $7, $8, '{}'::jsonb,
+                 NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')
+         ON CONFLICT (id) DO NOTHING`,
+        [id, TASTE_RUN_ID, TASTE_TASK_BASE + i, token(), k.stage === 'first_version' ? 1.12 : 0, JSON.stringify(parsed),
+          k.stage === 'first_version' ? 1_480_000 : 380_000, k.stage === 'first_version' ? 3 : null],
+      );
+      // eslint-disable-next-line no-await-in-loop
+      const ids = await capture.storeShots(pool, id, shots);
+      const stored = { ...summary, shots: summary.shots.map((sh) => ({ ...sh, artifactId: ids[sh.id] || null })) };
+      const det = graders.deterministicGrade({ stage: k.stage, trial: { status: 'ok', parsed, capture: stored } });
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query('UPDATE bench_trials SET capture = $2::jsonb, deterministic = $3::jsonb WHERE id = $1',
+        [id, JSON.stringify(stored), JSON.stringify(det)]);
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO bench_grades (id, trial_id, grader, grader_label, verdict, critique, criteria, created_at)
+         VALUES ($1, $2, 'opus', 'opus via connector (staging demo)', 'fail', $3, $4::jsonb, NOW() - INTERVAL '2 days')
+         ON CONFLICT (id) DO NOTHING`,
+        [TASTE_GRADE_BASE + i + 1, id, 'Staging demo critique: a clear populated screen, but the empty and error states say nothing.', JSON.stringify(criteria[i])],
+      );
+    }
+    log.info('db', 'Benchmark taste staging fixtures seeded');
+    return true;
+  } catch (err) {
+    log.warn('db', 'Benchmark taste staging fixtures failed', { message: err.message });
+    return false;
+  }
+}
+
+module.exports = {
+  seedStagingBench, seedStagingTaste, demoPng, SUITE_ID, RUN_ID, TASTE_SUITE_ID, TASTE_RUN_ID,
+};

@@ -44,12 +44,18 @@ const crypto = require('crypto');
 const log = require('../logger');
 const snapshots = require('../homeroom-bot-snapshots');
 
-const TASK_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm']);
+// #3737: `first_version` and `capture` are the taste eval's two kinds
+// (services/bench/taste.js), made from a brief or a commit rather than from
+// a run.
+const TASK_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture']);
+const TASTE_STAGES = Object.freeze(['first_version', 'capture']);
 const SUITE_KINDS = Object.freeze(['frozen', 'rotating']);
 // The snapshot a stage replays. A spec task re-runs the spec turn of a
-// build, so it reads the build's snapshot; a DM task re-runs the triage.
+// build, so it reads the build's snapshot; a DM task re-runs the triage. A
+// taste task's snapshot holds its inputs, recorded at the build stage.
 const SNAPSHOT_STAGE = Object.freeze({
   triage: 'triage', spec: 'build', build: 'build', followup: 'followup', checks_fix: 'checks_fix', dm: 'triage',
+  first_version: 'build', capture: 'build',
 });
 // The first version's shape (#3654): ~40 triage, ~20 builds (half on small
 // apps, half on the platform's own repository), ~5 follow-ups or check
@@ -353,6 +359,7 @@ function startingTask(stage, facts, snapshot, config = {}) {
 /** "Add to a benchmark suite" on a run row. */
 async function addTaskFromRun(pool, { suiteId, runId, stage, config = {} } = {}) {
   if (!TASK_STAGES.includes(stage)) return httpError(400, `stage must be one of ${TASK_STAGES.join(', ')}`);
+  if (TASTE_STAGES.includes(stage)) return httpError(400, 'A first-version or capture task is made from a brief or a commit, not from a run');
   const suite = await suiteRow(pool, suiteId);
   if (!suite) return httpError(404, 'Suite not found');
   if (suite.frozen_at) return httpError(409, 'The suite is frozen: make a new version to add tasks');
@@ -826,6 +833,7 @@ async function candidateRuns(pool, { stage, suiteId = null, limit = 2000, config
 /** N proposed tasks for one stage of a suite, for an admin to accept. */
 async function proposeSample(pool, { suiteId = null, stage, n = 10, seed = 1, config = {} } = {}) {
   if (!TASK_STAGES.includes(stage)) return httpError(400, `stage must be one of ${TASK_STAGES.join(', ')}`);
+  if (TASTE_STAGES.includes(stage)) return httpError(400, 'A first-version or capture task is made from a brief or a commit, not sampled from runs');
   const candidates = await candidateRuns(pool, { stage, suiteId, config });
   // A build sample is balanced on the repository first: half small apps,
   // half the platform's own repository, as the first version asks.
@@ -840,6 +848,7 @@ async function proposeSample(pool, { suiteId = null, stage, n = 10, seed = 1, co
 
 module.exports = {
   TASK_STAGES,
+  TASTE_STAGES,
   SUITE_KINDS,
   SNAPSHOT_STAGE,
   TARGETS,

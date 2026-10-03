@@ -58,11 +58,15 @@ const log = require('../logger');
 const catalog = require('./catalog');
 const runner = require('./runner');
 const dmSim = require('./dm-sim');
+const taste = require('./taste');
 const snapshots = require('../homeroom-bot-snapshots');
 
 const MAX_CONCURRENCY = 8;
 // Heavy stages: at most this many of one run's at once.
-const HEAVY_STAGES = Object.freeze(['build', 'checks_fix', 'spec']);
+// A taste trial (#3737) is a container of many minutes too: a first
+// version's triage, spec and build, or a capture's install, boot and
+// screenshots.
+const HEAVY_STAGES = Object.freeze(['build', 'checks_fix', 'spec', 'first_version', 'capture']);
 const MAX_HEAVY_PER_RUN = 3;
 // Every trial in flight in this process, across runs.
 const MAX_IN_FLIGHT = 8;
@@ -74,7 +78,9 @@ const DEFAULT_CAP_USD = 50;
 const DEFAULT_REPEATS = 3;
 // Builds and specs run once per model whatever `repeats` says: they are the
 // expensive stages, and pass^k is a triage measure here.
-const SINGLE_ATTEMPT_STAGES = Object.freeze(['build', 'spec']);
+// A capture (#3737) runs no model, so another attempt would take the same
+// screenshots again.
+const SINGLE_ATTEMPT_STAGES = Object.freeze(['build', 'spec', 'capture']);
 const MAX_CLAIMS = 2;
 const BRANCH_KEEP_DAYS = 7;
 const IDLE_MS = 60 * 1000;
@@ -226,9 +232,13 @@ async function planRun(pool, body = {}) {
   let likely = 0;
   for (const task of tasks) {
     const attempts = attemptsFor(task.stage, v);
-    for (const id of v.models) {
+    // A capture task (#3737) runs no model: once a run, under its baseline,
+    // whatever models the run compares.
+    const runsOn = task.stage === 'capture' ? [v.baseline] : v.models;
+    for (const id of runsOn) {
       const info = catalog.modelInfo(models, id);
-      const reason = dmSim.noAnswerReason(task) || catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
+      const reason = dmSim.noAnswerReason(task) || taste.notRunnableReason(task)
+        || (task.stage === 'capture' ? null : catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars));
       const past = history.get(`${id}|${task.stage}`) || [];
       const est = catalog.estimateTrialCost(info, task.stage, past);
       const probable = catalog.likelyTrialCost(info, task.stage, past, calibration);
@@ -285,6 +295,9 @@ function suggestCap({ likelyUsd, pessimisticUsd, headroomUsd }) {
 // rounded up.
 const TRIAL_MS_FALLBACK = Object.freeze({
   triage: 60_000, dm: 60_000, spec: 300_000, build: 900_000, followup: 180_000, checks_fix: 240_000,
+  // #3737, unmeasured: a first version's triage and doubled build clocks,
+  // and a capture's install, boot and screenshots.
+  first_version: 1_800_000, capture: 420_000,
 });
 
 /** The median duration of finished trials per (model, stage), for the time estimate. */
@@ -560,6 +573,7 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
             duration_ms = $8, session_id = $9, base_sha = $10, build_branch = $11, build_sha = $12,
             build_commits = $13, diff = $14, changed_files = $15::jsonb, checks = $16::jsonb, error = $17,
             recovered_at = CASE WHEN $18::boolean THEN NOW() ELSE tr.recovered_at END,
+            capture = $20::jsonb,
             finished_at = NOW()
        FROM bench_runs r
       WHERE tr.id = $1 AND r.id = tr.run_id AND tr.status = 'running'
@@ -572,7 +586,8 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
       patch.diff ?? null, patch.changed_files ? JSON.stringify(patch.changed_files) : null,
       patch.checks ? JSON.stringify(patch.checks) : null,
       patch.error ? String(patch.error).slice(0, 1000) : null,
-      !!recovered, recovered && sessionId ? Number(sessionId) : null],
+      !!recovered, recovered && sessionId ? Number(sessionId) : null,
+      patch.capture ? JSON.stringify(patch.capture) : null],
   );
   if (cost > 0 && (!recovered || after)) {
     await pool.query('UPDATE bench_runs SET spent_usd = spent_usd + $2 WHERE id = $1', [trialRow.run_id, cost]);

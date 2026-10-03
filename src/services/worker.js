@@ -54,14 +54,21 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-async function execWorkerCommand(runtimeName, command, stdinText = null, { timeoutMs = stdinText === null ? 30000 : 20000 } = {}) {
+// `maxBuffer` lifts the docker path's 1 MB stdout ceiling for a command
+// whose output is large by design (the benchmark's screenshots); the
+// Kubernetes path has no such ceiling.
+async function execWorkerCommand(runtimeName, command, stdinText = null, {
+  timeoutMs = stdinText === null ? 30000 : 20000, maxBuffer = null,
+} = {}) {
   if (usesKubernetesWorkers()) {
     return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
   }
   if (stdinText !== null) {
     return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
   }
-  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: timeoutMs });
+  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], {
+    timeout: timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+  });
 }
 
 // URL the worker container uses to reach the platform's internal API
@@ -4091,6 +4098,34 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
   }
 }
 
+// #3737: the benchmark's screenshot step (services/bench/capture.js). The
+// platform's own script is written into the worker (never baked into its
+// image, so the step is the platform's current one) and run there with
+// node, in the checkout, with `env`: non-secret settings only (the in-loop
+// port and database, the app's id). Resolves its stdout, which carries the
+// screenshots, hence the larger buffer. Outside any agent turn: nothing is
+// committed, pushed or journaled, and the active-turn record is untouched.
+const BENCH_CAPTURE_SCRIPT_PATH = '/tmp/usernode-bench-capture.js';
+const BENCH_ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+function buildBenchCaptureCommand(env = {}) {
+  const pairs = Object.entries(env).map(([key, value]) => {
+    if (!BENCH_ENV_KEY.test(key)) throw new Error(`runBenchCapture: invalid env key ${key}`);
+    return shellQuote(`${key}=${String(value)}`);
+  });
+  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${BENCH_CAPTURE_SCRIPT_PATH}`];
+}
+
+async function runBenchCapture(containerName, { source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024 } = {}) {
+  if (!containerName) throw new Error('runBenchCapture: no worker');
+  if (typeof source !== 'string' || !source) throw new Error('runBenchCapture: no script');
+  const write = buildTurnContextFileScript(source, BENCH_CAPTURE_SCRIPT_PATH);
+  if (usesKubernetesWorkers()) await execWorkerCommand(containerName, ['sh', '-s'], write);
+  else await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'runBenchCapture' });
+  const { stdout } = await execWorkerCommand(containerName, buildBenchCaptureCommand(env), null, { timeoutMs, maxBuffer });
+  return String(stdout || '');
+}
+
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
@@ -4717,6 +4752,10 @@ module.exports = {
   finishTurn,
   isTailPhase,
   evictWorker,
+  // #3737: the benchmark's screenshot step, outside any agent turn
+  runBenchCapture,
+  buildBenchCaptureCommand,
+  BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
   isInFlight,

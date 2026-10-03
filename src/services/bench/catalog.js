@@ -43,6 +43,8 @@ const BASELINE = 'z-ai/glm-5.3-flash';
 // inside the context window.
 const WORKING_TOKENS = Object.freeze({
   triage: 96_000, dm: 96_000, spec: 128_000, build: 160_000, followup: 128_000, checks_fix: 128_000,
+  // #3737: a first version is a triage and then a build on a starter.
+  first_version: 160_000,
 });
 // A rough upper estimate of what one trial reads and writes, for a model
 // with a price and no history yet (p90-ish of the bot's own runs on its
@@ -54,9 +56,12 @@ const TOKEN_BUDGET = Object.freeze({
   build: { input: 6_000_000, output: 120_000 },
   followup: { input: 1_500_000, output: 30_000 },
   checks_fix: { input: 2_000_000, output: 40_000 },
+  // A triage, a spec and a whole first version's build on its longer clock.
+  first_version: { input: 9_000_000, output: 170_000 },
 });
 // And with neither a price nor a history: dollars per trial.
-const FALLBACK_USD = Object.freeze({ triage: 0.3, dm: 0.6, spec: 0.5, build: 2.5, followup: 0.5, checks_fix: 0.6 });
+// A capture trial runs no model at all (services/bench/taste.js).
+const FALLBACK_USD = Object.freeze({ triage: 0.3, dm: 0.6, spec: 0.5, build: 2.5, followup: 0.5, checks_fix: 0.6, first_version: 3, capture: 0 });
 const MIN_HISTORY = 3;
 
 /** OpenRouter's own figures for each id, from the stored catalog. */
