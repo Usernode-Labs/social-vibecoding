@@ -213,7 +213,9 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
-        if (row.proposal_status === 'closed') return 'closed';
+        // WP1: withdrawn (a duplicate of a merged proposal, noteRequestMerged)
+        // reads as closed, never as still up for a vote.
+        if (row.proposal_status === 'closed' || row.proposal_status === 'archived') return 'closed';
         return 'proposed';
       }
       if (row.build_ok === true) return 'proposed';
@@ -248,6 +250,15 @@ function linksOf(row) {
 }
 
 /**
+ * Pure (WP1, #9): whether a card's run is a ready verdict whose build still
+ * waits its turn or runs. Its card is working, whatever came after it.
+ */
+function buildUnderWay(row) {
+  return !!row.run_id && row.verdict === 'ready' && row.build_ok == null && !row.proposal_session_id
+    && !row.cap_suppressed && (!!row.build_waiting_at || row.build_status === 'active' || row.build_status === 'paused');
+}
+
+/**
  * Pure: one card, from its row and (while it has no outcome) the person's
  * progress entry for its request, or null when there is none.
  */
@@ -260,6 +271,23 @@ function cardOf(row, entry) {
     links: linksOf(row),
   };
   let outcome = outcomeOf(row);
+  // WP1 (#9): a card whose build still waits or runs is working, even when
+  // a newer card on the same request began or the request's progress says
+  // something else: it used to read "Didn't finish" the moment a second look
+  // at its request started, with its build healthy and nothing said.
+  const building = !outcome && buildUnderWay(row);
+  if (building && (row.next_at || !entry)) {
+    return {
+      ...base,
+      state: 'working',
+      stage: row.build_waiting_at && row.build_status == null ? 'build_queued' : 'building',
+      step: null,
+      of: null,
+      stepName: null,
+      doing: row.build_waiting_at && row.build_status == null ? 'ready to build; waiting its turn to be built' : 'building it',
+      stepSince: null,
+    };
+  }
   // A newer card on the same request began without this one coming to
   // anything recorded, or nothing about it is in progress any more.
   if (!outcome && (row.next_at || !entry)) outcome = 'stopped';
@@ -303,6 +331,7 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
             nxt.began AS next_at,
             run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
             run.created_at AS run_at, run.proposal_session_id,
+            run.live_build_waiting_at AS build_waiting_at, bs.status AS build_status,
             cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
        FROM cards c
        JOIN apps a ON a.id = c.app_id
@@ -312,7 +341,8 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
           ORDER BY n.message_id LIMIT 1
        ) nxt ON TRUE
        LEFT JOIN LATERAL (
-         SELECT r.id, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.created_at, r.proposal_session_id
+         SELECT r.id, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.created_at, r.proposal_session_id,
+                r.live_build_waiting_at, r.build_session_id
            FROM homeroom_bot_runs r
           WHERE r.app_id = c.app_id AND r.issue_number = c.issue_number AND r.mode = 'live'
             AND r.created_at >= c.began
@@ -321,11 +351,55 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
           ORDER BY r.id LIMIT 1
        ) run ON TRUE
        LEFT JOIN chat_sessions cs ON cs.id = run.proposal_session_id
+       LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
       ORDER BY c.message_id DESC
       LIMIT $2`,
     [userId, limit, RESTARTED_BUILD_NOTE],
   );
   return rows;
+}
+
+// WP1 (#10): what a card shows, in the words the client draws it with
+// (frontend/src/features/messages/bot-activity.tsx: its eyebrow and its
+// status line), for the bot's model, which reads the DM as text and never
+// sees a card. Without it the model answered "Nothing broke" beside a card
+// that read "Didn't finish".
+const OUTCOME_LABELS = Object.freeze({
+  question: 'Asked you a question',
+  proposed: 'Built it. The proposal is up for a vote',
+  live: 'Built it. Approved and live',
+  closed: 'Built it. The proposal was closed',
+  blocked: 'Can\'t build it as it\'s written',
+  build_failed: 'Couldn\'t finish building it',
+  person: 'Left it for the group to decide',
+  empty: 'Found nothing to build yet',
+  failed: 'Couldn\'t finish looking at it',
+  held: 'Ready, but held back for now',
+  stopped: 'Stopped before it finished',
+  answer: 'Answered on its proposal',
+  revise: 'Changed its proposal',
+});
+const OUTCOME_TONES = Object.freeze({
+  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  question: 'you', blocked: 'you', empty: 'you',
+  person: 'ended', held: 'ended', closed: 'ended',
+  build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
+});
+const TONE_WORDS = Object.freeze({ done: 'Done', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
+
+/** Pure: a card (cardOf) as the person reads it, in one line, or null. */
+function cardWords(card) {
+  if (!card) return null;
+  if (card.state === 'working') {
+    const head = card.step && card.of
+      ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}`
+      : 'Working on it';
+    return `${head}: ${card.doing || 'working on it'}`;
+  }
+  if (card.state === 'done' && OUTCOME_LABELS[card.outcome]) {
+    return `${TONE_WORDS[OUTCOME_TONES[card.outcome]]}: ${OUTCOME_LABELS[card.outcome]}`;
+  }
+  return null;
 }
 
 /** The slugs among `slugs` this person can still view. */
@@ -602,7 +676,12 @@ module.exports = {
   outcomeOf,
   endedAt,
   linksOf,
+  buildUnderWay,
   cardOf,
+  cardWords,
+  OUTCOME_LABELS,
+  OUTCOME_TONES,
+  TONE_WORDS,
   cardsFor,
   pieceOf,
   followedRequests,

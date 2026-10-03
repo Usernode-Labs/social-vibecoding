@@ -5361,6 +5361,17 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
     }
 
+    // WP1 (#2): and nothing else of the bot's on the same request goes on: a
+    // build waiting or under way is stopped, another proposal of its for the
+    // request is withdrawn, and the request leaves the bot's queue. Never a
+    // reason the merge fails.
+    try {
+      require('../services/homeroom-bot').noteRequestMerged(pool, session)
+        ?.catch?.((err) => log.warn('votes', 'Homeroom bot merge note failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Homeroom bot merge note threw', { sessionId: session.id, err: err.message });
+    }
+
     // Resolve any open issue bounties for the issues this PR closes (declared
     // through the session's linked_issues → `Closes #N` in the PR body).
     // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
