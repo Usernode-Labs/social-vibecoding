@@ -237,10 +237,24 @@ test('the build session is linked to its run before any turn runs, so a restart 
 
 test('a spec a recovered spec turn wrote is built from as it is: no second spec turn (#3401)', async () => {
   const h = harness();
-  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, onSpec: h.onSpec, presetSpec: SPEC });
-  assert.deepEqual(h.calls.order, ['clear:5001', 'exec:build'], 'no spec turn, and nothing posted again');
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false, presetSpec: SPEC });
+  assert.deepEqual(h.calls.order, ['clear:5001', 'exec:build'], 'no spec turn');
+  assert.deepEqual(h.calls.published, [], 'a shadow build stores nothing');
   assert.ok(h.calls.prompts.build.includes(`==== SPEC (written for this request just before this build; authoritative for what to build) ====\n\n${SPEC}\n\n==== END SPEC ====`));
   assert.equal(out.specMd, SPEC, 'the run still records the spec it was built from');
+});
+
+test('a live build from a plan recovery kept stores it on its session and says it once', async () => {
+  // The process that wrote the plan went with the restart before it could
+  // post it, so the build that goes on from it is the one to say it.
+  const h = harness();
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, onSpec: h.onSpec, presetSpec: SPEC });
+  assert.deepEqual(h.calls.order, ['onSpec', 'clear:5001', 'exec:build'], 'no spec turn, and the plan said once');
+  assert.equal(h.calls.published.length, 1, 'stored on this session');
+  assert.equal(h.calls.published[0].content, SPEC);
+  assert.deepEqual(h.calls.spec, { sessionId: 5001, version: 3, specMd: SPEC });
+  assert.equal(out.specMd, SPEC);
+  assert.equal(out.specVersion, 3, 'so the proposal carries it too');
 });
 
 test('readSpec reads a spec turn\'s message the way the build does', () => {

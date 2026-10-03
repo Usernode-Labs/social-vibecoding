@@ -52,7 +52,10 @@ test('a live build always records its outcome, against the full PostgreSQL schem
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
-  const real = { post: live.post, advanceSeen: live.advanceSeen, mentionTargets: live.mentionTargets };
+  const real = {
+    post: live.post, advanceSeen: live.advanceSeen, mentionTargets: live.mentionTargets,
+    buildAndPropose: live.buildAndPropose, botUsernameOf: live.botUsernameOf,
+  };
   t.after(async () => {
     Object.assign(live, real);
     bot._resetForTests();
@@ -494,6 +497,70 @@ test('a live build always records its outcome, against the full PostgreSQL schem
   });
 
   // WP1 (#9): a build a restart sent back to be built again is said, once.
+  await t.test('a plan a restart interrupted is kept: the build goes on from it, and the request is not planned again', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+    const PLAN = '# Undo a deleted recipe\n\n## User-facing changes\n\nAn Undo button.\n\n## Technical implementation\n\nKeep it a minute.';
+    const sessionId = await session(recipebot);
+    const runId = await liveRun(recipebot, 48, sessionId, { ago: 600 });
+    const told = [];
+    const dm = {
+      async noteBuildRestarted(_pool, args) { told.push(args.runId); },
+      async requesterOf() { return null; },
+    };
+    // The spec turn ran on in its worker through the restart, and recovery
+    // followed it to its end: a plan.
+    assert.equal(await bot.finishRecoveredTurn({
+      pool, session: { id: sessionId }, activeTurn: { mode: 'scout' }, result: { lastResultText: PLAN },
+    }), 'live_pending');
+    assert.equal(await bot.completeRecoveredLive({ pool, config: {}, sessionId, deps: { ...noSpend, dm } }), 'resumed');
+    assert.equal(await statusOf(sessionId), 'archived', 'the interrupted session is put away');
+    const { rows: [kept] } = await pool.query(
+      `SELECT build_ok, build_error, build_session_id, build_spec_md, live_build_waiting_at IS NOT NULL AS waiting
+         FROM homeroom_bot_runs WHERE id = $1`, [runId],
+    );
+    assert.deepEqual(kept, { build_ok: null, build_error: null, build_session_id: null, build_spec_md: PLAN, waiting: true },
+      'the same run waits for its build again, with its plan');
+    assert.deepEqual(await queueRows(), [], 'not sent back to be triaged and planned again');
+    assert.deepEqual(told, [runId], 'its requester hears once that it started again');
+
+    // The lane hands it over with its plan, and the build is made from it.
+    // What the plan cost, as recovery would have recorded it from the
+    // session's usage (none in this database).
+    await pool.query('UPDATE homeroom_bot_runs SET build_cost_usd = 0.42 WHERE id = $1', [runId]);
+    const [pick] = await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] });
+    assert.equal(Number(pick.id), runId);
+    assert.equal(pick.build_spec_md, PLAN);
+    let passed;
+    live.botUsernameOf = async () => 'usernode-bot';
+    live.advanceSeen = async () => {};
+    live.buildAndPropose = async (args) => {
+      passed = args;
+      await args.onSession({ id: sessionId });
+      return { ok: false, skipped: 'skipped: stopped by the test', sessionId, costUsd: 0.05 };
+    };
+    const github = {
+      isEnabled: () => true,
+      async fetchPublicIssue() { return { issue: { number: 48, title: 'Undo', state: 'open' } }; },
+      async fetchIssueComments() { return { comments: [] }; },
+    };
+    const out = await bot.buildOne(pool, {}, {
+      bot: botUser, app: recipebot, run: pick, settings: {},
+      deps: {
+        github, dm, ...noSpend, sessions: { buildHeadlessSeed: () => 'seed' },
+        threadContext: { async loadIssueThread() { return { messages: [] }; } },
+        worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {}, ws: {}, domain: 'app.test',
+      },
+    });
+    assert.equal(out.ran, true);
+    assert.equal(passed.presetSpec, PLAN, 'built from the kept plan, with no second spec turn');
+    const { rows: [cost] } = await pool.query('SELECT build_cost_usd::float8 AS c FROM homeroom_bot_runs WHERE id = $1', [runId]);
+    assert.ok(Math.abs(cost.c - 0.47) < 1e-9, 'the build records the plan\'s cost beside its own');
+    Object.assign(live, real);
+    await pool.query('DELETE FROM homeroom_bot_runs');
+  });
+
   await t.test('WP1 (#9): restart recovery that starts a build again tells its requester', async () => {
     bot._resetForTests();
     const sessionId = await session(recipebot);
