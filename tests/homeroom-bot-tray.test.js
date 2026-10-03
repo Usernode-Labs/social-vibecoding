@@ -44,6 +44,45 @@ test('a claimed request is building once its spec is posted during this turn of 
   assert.equal(tray.phaseOf({ started_at: started, proposal_status: 'closed' }), 'looking');
 });
 
+test('a live build in progress (its run, still turning on an active session) is a now row: building, since the spec was posted', () => {
+  const run = {
+    slug: 'ear-trainer', name: 'Ear Trainer', issue_number: 8,
+    issue_title: 'Remove dark/light mode', first_version: false,
+    spec_at: '2026-10-02T11:56:00Z',
+    build_started_at: '2026-10-02T11:55:00Z',
+    turn_at: '2026-10-02T11:55:30Z',
+  };
+  const row = tray.runNowOf(run);
+  assert.equal(row.phase, 'building');
+  assert.equal(row.since, '2026-10-02T11:56:00.000Z', 'the spec post, as stageOf reads its building stage');
+  assert.deepEqual(
+    { appSlug: row.appSlug, appName: row.appName, issueNumber: row.issueNumber, title: row.title, firstVersion: row.firstVersion, href: row.href },
+    { appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: 8, title: 'Remove dark/light mode', firstVersion: false,
+      href: '#app/ear-trainer/dev/issues/8' },
+    'the row the queue-derived jobs already draw',
+  );
+  // A first version carries no title of its own (the existing jobOf rule).
+  assert.equal(tray.runNowOf({ ...run, first_version: true, issue_title: 'First version of Ear Trainer' }).title, null);
+  assert.equal(tray.runNowOf({ ...run, spec_at: null }).since, '2026-10-02T11:55:30.000Z', 'the build turn started next');
+  assert.equal(tray.runNowOf({ ...run, spec_at: null, turn_at: null }).since, '2026-10-02T11:55:00.000Z', 'the session was created last');
+  // A run the query never selects — no build session, a session not active,
+  // a turn no longer in flight — has none of the three times the query
+  // reads, and maps to no time at all.
+  assert.equal(tray.runNowOf({ ...run, spec_at: null, turn_at: null, build_started_at: null }).since, null);
+});
+
+test('a request whose queue row is back keeps its queue-derived row over the running build', () => {
+  const queued = [{ appSlug: 'ear-trainer', issueNumber: 8 }];
+  const building = [{ appSlug: 'ear-trainer', issueNumber: 8 }, { appSlug: 'note-board', issueNumber: 5 }];
+  assert.deepEqual(tray.dedupeJobs(queued, building), [
+    { appSlug: 'ear-trainer', issueNumber: 8 },
+    { appSlug: 'note-board', issueNumber: 5 },
+  ], 'one row for the pair, the queue row first');
+  assert.deepEqual(tray.dedupeJobs([], [{ appSlug: 'ear-trainer', issueNumber: null }]),
+    [{ appSlug: 'ear-trainer', issueNumber: null }], 'a first version dedupes by its app alone');
+  assert.deepEqual(tray.dedupeJobs([], []), []);
+});
+
 test('what a run came to: a ready verdict is told by its build and its proposal', () => {
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted' }), 'proposed');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging' }), 'proposed');
@@ -92,6 +131,20 @@ test('the route reads the signed-in person and nothing the request names', () =>
   assert.match(body, /tray\.workFor\(pool, \{ user: req\.user \}\)/);
   assert.doesNotMatch(body, /req\.(?:params|body)|req\.query\.(?!demo)/, 'no user, id or slug is read from the request');
   assert.match(read('src/services/homeroom-bot-tray.js'), /WHERE q\.user_id = \$1 AND r\.mode = 'live'/);
+});
+
+test('now reads a live build in progress from its run and its build session, the same liveness the loop trusts', () => {
+  const source = read('src/services/homeroom-bot-tray.js');
+  const start = source.indexOf('SELECT r.id AS run_id');
+  assert.ok(start > -1, 'the runs query exists');
+  const query = source.slice(start, source.indexOf('`', start));
+  assert.match(query, /r\.mode = 'live' AND r\.verdict = 'ready' AND r\.build_ok IS NULL/);
+  assert.match(query, /r\.proposal_session_id IS NULL AND r\.build_session_id IS NOT NULL/);
+  assert.match(query, /JOIN chat_sessions bs ON bs\.id = r\.build_session_id/);
+  assert.match(query, /bs\.status = 'active' AND bs\.active_turn IS NOT NULL/,
+    'a turn still on the session: the same signal releaseStaleBuilds and ABANDONED_LIVE_SQL trust');
+  assert.match(query, /COALESCE\(req\.user_id, i\.created_by\) = \$1/,
+    'the viewer keying: recorded for them, or an issue they filed the loop has not recorded yet');
 });
 
 // ── The realtime: the live loop says when it starts and ends ──────────

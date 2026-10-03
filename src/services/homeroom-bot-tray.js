@@ -13,8 +13,12 @@
 //     started_at) on a request that is this person's, on an app the bot acts
 //     on for real, with the step it is at: looking at it, building it (its
 //     spec was posted during this turn of work), or following up on its
-//     proposal. A project they described that is still being set up (its
-//     first version not filed yet) is in flight too.
+//     proposal. A live build in progress is in flight too: its queue row is
+//     already deleted (runTriage reads a request and drops its row before
+//     the plan and build), so it is read from its run and its build session,
+//     the same read homeroom-bot-progress.js stageOf makes. A project they
+//     described that is still being set up (its first version not filed
+//     yet) is in flight too.
 //   - HISTORY: the bot's live runs on their requests (homeroom_bot_runs),
 //     newest first, each with what came of it and where to open it: the
 //     proposal once there is one people can open, else the request.
@@ -125,6 +129,31 @@ function jobOf(row) {
   };
 }
 
+/**
+ * Pure: one live ready run whose build session is still carrying its turn,
+ * as a now row: building, since its spec was posted (else the build turn
+ * started, else the session was created) — the same precedence stageOf
+ * reads for its building stage (homeroom-bot-progress.js).
+ */
+function runNowOf(row) {
+  return {
+    ...jobOf(row),
+    phase: 'building',
+    since: iso(row.spec_at || row.turn_at || row.build_started_at),
+    href: hrefOf(row),
+  };
+}
+
+/**
+ * Pure: one row per app and request. A request whose queue row is back (a
+ * reply re-queued it while its build still runs) keeps its queue-derived
+ * row, as today: the run row says nothing that one does not.
+ */
+function dedupeJobs(queueJobs, runJobs) {
+  const queued = new Set(queueJobs.map((job) => `${job.appSlug}#${job.issueNumber ?? 'first'}`));
+  return [...queueJobs, ...runJobs.filter((job) => !queued.has(`${job.appSlug}#${job.issueNumber ?? 'first'}`))];
+}
+
 /** The claimed queue rows that are this person's, on apps the bot acts on for real. */
 async function currentJobs(pool, { userId, settings, deps = {} }) {
   const { rows } = await pool.query(
@@ -157,9 +186,9 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
     [userId, NOW_LIMIT],
   );
   const live = liveModule(deps);
-  const jobs = rows
-    // Shadow triage of an app the bot does not act on says nothing to anybody:
-    // it is not work for them.
+  // Shadow triage of an app the bot does not act on says nothing to anybody:
+  // it is not work for them.
+  const queueJobs = rows
     .filter((row) => live.isLiveFor(settings, { slug: row.slug }))
     .map((row) => ({
       ...jobOf(row),
@@ -167,6 +196,42 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
       since: iso(phaseOf(row) === 'building' ? row.spec_at : row.started_at),
       href: hrefOf(row),
     }));
+  // #3734: a live build in progress, whose queue row the loop deleted when
+  // it read the request. A ready live run whose build session still carries
+  // its turn is building right now — including the turn's post-agent tail —
+  // the same liveness signal releaseStaleBuilds and ABANDONED_LIVE_SQL
+  // (homeroom-bot.js) trust. A run with no build session recorded (held or
+  // stalled) and a session that is not active stay out.
+  const { rows: liveRuns } = await pool.query(
+    `SELECT r.id AS run_id, r.issue_number, a.slug, a.name,
+            COALESCE(req.issue_title, i.title) AS issue_title, COALESCE(req.first_version, FALSE) AS first_version,
+            spec.created_at AS spec_at, bs.created_at AS build_started_at,
+            bs.active_turn->>'startedAt' AS turn_at
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN homeroom_bot_requesters req ON req.app_id = r.app_id AND req.issue_number = r.issue_number
+       LEFT JOIN LATERAL (
+         SELECT created_by, title FROM issues
+          WHERE app_id = r.app_id AND github_issue_number = r.issue_number
+          ORDER BY id LIMIT 1
+       ) i ON TRUE
+       JOIN chat_sessions bs ON bs.id = r.build_session_id
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM homeroom_bot_posts
+          WHERE run_id = r.id AND kind = 'spec'
+          ORDER BY id DESC LIMIT 1
+       ) spec ON TRUE
+      WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
+        AND r.proposal_session_id IS NULL AND r.build_session_id IS NOT NULL
+        AND bs.status = 'active' AND bs.active_turn IS NOT NULL
+        AND COALESCE(req.user_id, i.created_by) = $1
+      ORDER BY COALESCE(spec.created_at, (bs.active_turn->>'startedAt')::timestamptz, bs.created_at) DESC, r.id DESC
+      LIMIT $2`,
+    [userId, NOW_LIMIT],
+  );
+  const jobs = dedupeJobs(queueJobs, liveRuns
+    .filter((row) => live.isLiveFor(settings, { slug: row.slug }))
+    .map((row) => runNowOf(row)));
   // A project they described, still being set up: its first version is
   // filed (and the loop above takes it) once the project is running.
   const { rows: firsts } = await pool.query(
@@ -294,5 +359,5 @@ function demoWork(now = Date.now()) {
 
 module.exports = {
   workFor, currentJobs, pastJobs, noteWorkChanged, demoWork,
-  phaseOf, outcomeOf, hrefOf, OUTCOMES, HISTORY_LIMIT,
+  phaseOf, outcomeOf, hrefOf, runNowOf, dedupeJobs, OUTCOMES, HISTORY_LIMIT,
 };

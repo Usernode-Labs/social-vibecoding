@@ -251,6 +251,61 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     await setting('homeroom_bot_mode', 'shadow');
   });
 
+  await t.test('now: a live build in progress, whose queue row the loop deleted when it read the request', async () => {
+    // The queue row is gone (runTriage drops it before the plan and build);
+    // what is left is the run, its build session mid-turn, and the spec post.
+    // (The subtest above left a spec post with no run on this request — an
+    // earlier turn's post, whose run row is gone — and the run-scoped read
+    // below correctly ignores it, so it leaves.)
+    await pool.query(`DELETE FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 3`, [seeds.id]);
+    await pool.query(`DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 3`, [seeds.id]);
+    const { rows: [session] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_at)
+       VALUES ($1, $2, 'b', 'active', NOW() - INTERVAL '6 minutes') RETURNING id`,
+      [seeds.id, bot.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id, created_at)
+       VALUES ($1, 3, 'live', 'ready', $2, NOW() - INTERVAL '7 minutes')`,
+      [seeds.id, session.id],
+    );
+    const { rows: [{ run_id: buildRunId }] } = await pool.query(
+      `SELECT id AS run_id FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 3 AND build_session_id = $2`,
+      [seeds.id, session.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, created_at)
+       VALUES ($1, 3, $2, 'spec', NOW() - INTERVAL '5 minutes')`,
+      [seeds.id, buildRunId],
+    );
+    await pool.query(
+      `UPDATE chat_sessions SET active_turn = jsonb_build_object('id', 't1', 'startedAt', NOW() - INTERVAL '4 minutes', 'phase', 'executing')
+        WHERE id = $1`,
+      [session.id],
+    );
+    const work = await tray.workFor(pool, { user: asAda });
+    const build = work.now.find((job) => key(job) === 'seed-swap#3');
+    assert.ok(build, 'the build shows under Now');
+    assert.equal(build.phase, 'building');
+    assert.equal(build.title, 'Sort by date');
+    assert.equal(build.href, '#app/seed-swap/dev/issues/3');
+    assert.ok(Math.abs(Date.parse(build.since) - (Date.now() - 5 * 60000)) < 60000, 'since the spec was posted, not the turn');
+
+    // Not work in progress: a run with no build session recorded (held or
+    // stalled), and a session that has stopped carrying its turn.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
+       VALUES ($1, 4, 'live', 'ready', NOW() - INTERVAL '3 minutes')`,
+      [seeds.id],
+    );
+    const held = await tray.workFor(pool, { user: asAda });
+    assert.ok(!held.now.some((job) => key(job) === 'seed-swap#4'), 'a held run (no build session) stays out');
+    await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [session.id]);
+    const finished = await tray.workFor(pool, { user: asAda });
+    assert.ok(!finished.now.some((job) => key(job) === 'seed-swap#3'),
+      'a session no longer turning is not a build in progress');
+  });
+
   await t.test('the route answers for the signed-in person only, whatever it is asked', async () => {
     const app = express();
     app.use(express.json());
