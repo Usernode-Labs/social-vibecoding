@@ -262,6 +262,23 @@ test('a paused checked handoff retains its ready submission action in the worksp
   assert.doesNotMatch(html, /disabled[^>]*>Submit for review</);
 });
 
+test('a branch with nothing committed keeps Submit for review disabled, with its why (#3776)', () => {
+  // #2379 said so; #3776 makes the button agree with it. No PR, no preview
+  // and no check ever started is a branch nothing has reached.
+  const h = makeDevChat();
+  const html = h.render(
+    [{ role: 'system', content: 'Changes ready.', changesReady: true, _slug: 'blank-branch' }],
+    activeSession({ check_state: null, staging_url: null, pr_number: null })
+  );
+  assert.match(html, /dc-pr-card/, 'the Changes ready card still renders');
+  assert.equal(h.changesRow().propose.kind, 'blocked');
+  assert.match(h.changesRow().propose.note, /no committed changes to submit yet/);
+  assert.match(html, /disabled[^>]*>Submit for review</, 'the button is disabled');
+  assert.match(html,
+    /title="There are no committed changes to submit yet\. Ask the agent to make a change first\."/,
+    'and its tooltip says why');
+});
+
 test('a managed CLI handoff can be submitted while its staging and checks run (#3043)', () => {
   // #3043 / #3173: submitting opens the vote; the merge gate waits for the
   // checks. The button used to stay disabled here until the server reported

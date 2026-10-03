@@ -570,7 +570,10 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'ready' ? r.propose.note : undefined}
+              // #3776: a blocked state carries its own note, so the
+              // disabled button explains itself too. `pending` and
+              // `completed` carry no note and render no tooltip.
+              title={r.propose.note || undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'

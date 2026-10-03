@@ -96,18 +96,20 @@ test('the Review row says what submitting now means, one sentence per condition 
   const reviewRow = (patch) => row(av._topicViewFor('session', { ...failing, ...patch }), 'review');
 
   const cases = {
-    failing: [{}, /checks are failing\. You can submit it now; it can merge only after a fix passes them/, 'warn'],
-    error: [{ check_state: 'error' }, /checks could not run\. You can submit it now; it can merge only once they run and pass/, 'warn'],
-    uploaded: [{ proposal_state: 'uploaded', check_state: null }, /uploaded but has not been submitted for checks yet/, 'mute'],
-    draft: [{ proposal_state: 'draft', check_state: null }, /no committed changes to submit yet/, 'mute'],
-    running: [{ proposal_state: 'checking', check_state: 'pending' }, /Its checks keep running, and it can merge only once they pass/, 'ok'],
-    idle: [{ proposal_state: 'deploying', check_state: 'passing', staging_url: null }, /preview was closed while idle; submitting rebuilds it and runs the checks again/, 'ok'],
-    ready: [{ proposal_state: 'ready', check_state: 'passing' }, /^Ready to submit for review\.$/, 'ok'],
+    failing: [{}, 'ready', /checks are failing\. You can submit it now; it can merge only after a fix passes them/, 'warn'],
+    error: [{ check_state: 'error' }, 'ready', /checks could not run\. You can submit it now; it can merge only once they run and pass/, 'warn'],
+    uploaded: [{ proposal_state: 'uploaded', check_state: null }, 'ready', /uploaded but has not been submitted for checks yet/, 'mute'],
+    // #3776: nothing committed is blocked, not ready — but the Review row
+    // still carries the same note, in the note's own tone.
+    draft: [{ proposal_state: 'draft', check_state: null }, 'blocked', /no committed changes to submit yet/, 'mute'],
+    running: [{ proposal_state: 'checking', check_state: 'pending' }, 'ready', /Its checks keep running, and it can merge only once they pass/, 'ok'],
+    idle: [{ proposal_state: 'deploying', check_state: 'passing', staging_url: null }, 'ready', /preview was closed while idle; submitting rebuilds it and runs the checks again/, 'ok'],
+    ready: [{ proposal_state: 'ready', check_state: 'passing' }, 'ready', /^Ready to submit for review\.$/, 'ok'],
   };
   const notes = [];
-  for (const [name, [patch, note, tone]] of Object.entries(cases)) {
+  for (const [name, [patch, kind, note, tone]] of Object.entries(cases)) {
     const st = state(patch);
-    assert.equal(st.kind, 'ready', name);
+    assert.equal(st.kind, kind, name);
     assert.match(st.note, note, name);
     assert.equal(st.tone, tone, name);
     assert.equal(reviewRow(patch).text.join(''), st.note, `${name}: the Review row carries it`);
@@ -137,12 +139,13 @@ test('a change with nothing committed says so, and the server refuses it (#2379,
   const noChanges = /no committed changes to submit yet/;
 
   // A brand-new session: no pull request, no preview, no check ever started.
-  // The button stays enabled (#3173); the note says what the server's 409
-  // will say, so the refusal is not a surprise.
-  assert.equal(state({}).kind, 'ready');
+  // #3776: with nothing on the branch there is nothing to submit, so the
+  // button is disabled; its title and the Review row still say what the
+  // server's 409 will say, so the refusal is not a surprise.
+  assert.equal(state({}).kind, 'blocked');
   assert.match(state({}).note, noChanges);
   assert.equal(av._topicViewFor('session', blank).card.actions
-    .find((a) => a.key === 'propose-change').disabled, false, 'the button is not disabled');
+    .find((a) => a.key === 'propose-change').disabled, true, 'the button is disabled');
   // The checks ran and found the branch level with main.
   assert.match(state({ check_state: 'skipped', check_error_detail: 'branch has no commits beyond main, so there is nothing to test' }).note, noChanges);
 

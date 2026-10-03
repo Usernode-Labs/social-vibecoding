@@ -4833,11 +4833,13 @@ const AppView = {
     // the idle sweep took their preview away (#3161, #3163): "needs staging
     // and checks to finish", with nothing left running that could finish.
     //
-    // So the state is always 'ready'. What it carries is a NOTE: one sentence
-    // that says what submitting now means for this change, in the order a
-    // reader would care. The server stays authoritative for the few things it
-    // still refuses (nothing committed yet, an agent turn still running), and
-    // says why in its own words when it does.
+    // So every submittable state is 'ready'. What it carries is a NOTE: one
+    // sentence that says what submitting now means for this change, in the
+    // order a reader would care. The one exception below (#3776): a branch
+    // with nothing on it is 'blocked', because there is nothing to submit.
+    // The server stays authoritative for the few things it still refuses
+    // (an agent turn still running), and says why in its own words when it
+    // does.
     // `short` is the same fact in a few words: the draft's "Submit for
     // review" step line (_draftStepsView).
     const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
@@ -4869,8 +4871,12 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute',
-          'Nothing committed yet');
+        // #3776 — blocked, not ready: the button stays off until something
+        // reaches the branch. The note and its short form still travel, so
+        // the Review row and the draft's step line say why.
+        return { kind: 'blocked', tone: 'mute',
+          note: 'There are no committed changes to submit yet. Ask the agent to make a change first.',
+          short: 'Nothing committed yet' };
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
@@ -4987,8 +4993,10 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? submission.tone : 'mute',
-        text: [ready ? submission.note : 'Submitting for review…'] });
+      // A note travels for ready and blocked alike (#3776); only the
+      // in-flight pending kind has none, and keeps the running sentence.
+      rows.push({ key: 'review', label: 'Review', tone: submission.note ? submission.tone : 'mute',
+        text: [submission.note || 'Submitting for review…'] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
