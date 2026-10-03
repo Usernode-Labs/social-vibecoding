@@ -5462,9 +5462,9 @@
       ]
     },
     {
-      "name": "The Homeroom bot's DM says under its name what the bot is working on for you, and that line opens its activity panel at any time (#3692); in the transcript, each piece of its work is one activity card where it started, with its step of the request's steps while it goes (#3736)",
+      "name": "The Homeroom bot's DM says under its name what the bot is working on for you, and a round Activity button beside the ⋯ opens its activity panel at any time (#3770); in the transcript, each piece of its work is one activity card where it started, with its step of the request's steps while it goes (#3736)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane:has([data-bot-activity=working] [aria-label=\"Step 3 of 6: Build it\"]) > .messages-thread-header [data-bot-work-toggle][aria-expanded=false]:has([data-bot-work-status=working])",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane:has([data-bot-activity=working] [aria-label=\"Step 3 of 6: Build it\"]) > .messages-thread-header:has([data-bot-work-status=working]) [data-bot-work-toggle][aria-expanded=false]",
       "expectText": "Working on 2",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,

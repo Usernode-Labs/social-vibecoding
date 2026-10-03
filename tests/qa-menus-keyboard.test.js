@@ -117,7 +117,7 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /className="messages-thread-menu" role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
   // The Homeroom bot DM's "Activity & history" (#3692) left the menu: the
-  // bot's name block in the header opens the panel now.
+  // header's Activity button (#3770) opens the panel now.
   assert.equal((head.match(/role="menuitem"/g) || []).length, 5, 'every row is a menuitem');
 });
 

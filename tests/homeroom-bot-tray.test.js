@@ -17,8 +17,9 @@
 //     the panel's groups and tiles, History folded away, its loading and
 //     failed states, and links that only ever go to the platform's own
 //     addresses;
-//   - where it is mounted: the bot's DM only, its header's name block the
-//     toggle, the panel dropped over the transcript from under the header.
+//   - where it is mounted: the bot's DM only, its header's Activity button
+//     beside the ⋯ the toggle, the panel dropped over the transcript from
+//     under the header.
 //
 // Run with: node --test tests/homeroom-bot-tray.test.js
 
@@ -362,18 +363,18 @@ test('the status line says what the bot is working on, else what waits on them, 
     { kind: 'last', long: 'Last: answered on Ear Trainer #9 · 16h ago', short: 'Last: answered on #9 · 16h ago' });
 });
 
-test('the status line under the bot\'s name: a dot while it works, both lengths, and the chevron', () => {
+test('the status line under the bot\'s name: a dot while it works and both lengths, no chevron — the line is a status, not a control', () => {
   const { BotWorkStatusView, trayStatus } = loadTsx(TRAY);
-  const draw = (w, open) => renderToHtml(createElement(BotWorkStatusView, { status: trayStatus(w, NOW), open }));
-  const busy = draw(work({ now: [working({ issueNumber: 14, phase: 'building' })] }), false);
+  const draw = (w) => renderToHtml(createElement(BotWorkStatusView, { status: trayStatus(w, NOW) }));
+  const busy = draw(work({ now: [working({ issueNumber: 14, phase: 'building' })] }));
   assert.match(busy, /^<div class="messages-thread-sub [^"]*text-\[color:var\(--brand-ink\)\]" data-bot-work-status="working">/);
   assert.match(busy, /animate-ping/);
   assert.match(busy, /<span class="hidden sm:inline">Working on Ear Trainer #14 · building<\/span><span class="sm:hidden">Working on #14<\/span>/);
-  assert.doesNotMatch(busy, /rotate-180/);
-  assert.match(draw(work({ now: [working({ issueNumber: 14 })] }), true), /rotate-180/, 'open');
-  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }), false);
+  assert.doesNotMatch(busy, /<svg/, 'no chevron on the line');
+  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
   assert.match(quiet, /data-bot-work-status="last"/);
   assert.doesNotMatch(quiet, /animate-ping|brand-ink/);
+  assert.doesNotMatch(quiet, /<svg/, 'no chevron on the line');
 });
 
 test('the panel: Now with the step it is at, Needs you, and History folded away', () => {
@@ -531,7 +532,7 @@ test('a conversation is the bot\'s DM only when the server says so, and only a d
 
 // ── Where it is mounted ───────────────────────────────────────────────
 
-test('only a conversation with the Homeroom bot carries the tray: its name block toggles the panel, which drops from under the header', () => {
+test('only a conversation with the Homeroom bot carries the tray: its own header button toggles the panel, which drops from under the header', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const botDm = !!snap\.active && snap\.active\.id === conversationId && snap\.active\.kind === 'direct'\s*&& snap\.active\.membershipStatus === 'member' && snap\.active\.homeroomBot === true;/);
   // The panel's anchor sits right under the header, so the panel covers the transcript and moves nothing.
@@ -540,8 +541,12 @@ test('only a conversation with the Homeroom bot carries the tray: its name block
 
   const header = screen.slice(screen.indexOf('function ThreadHeader()'), screen.indexOf('function isCardMessage('));
   assert.match(header, /const botDm = active\.kind === 'direct' && !!active\.homeroomBot && active\.membershipStatus === 'member';/);
-  assert.match(header, /onClick=\{\(\) => \{ if \(botDm\) toggleBotWork\(\); else if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
-  assert.match(header, /aria-expanded=\{botDm \? botWorkOpen : undefined\}\s*aria-controls=\{botDm \? BOT_WORK_PANEL_ID : undefined\}\s*data-bot-work-toggle=\{botDm \? '' : undefined\}/);
+  // #3770: the name block is a name and a status again, not the toggle; only
+  // a group's name block still opens its dialog.
+  assert.match(header, /onClick=\{\(\) => \{ if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
+  assert.doesNotMatch(header, /className="min-w-0 text-left flex-1"[\s\S]{0,400}data-bot-work-toggle/, 'the name block does not toggle the panel');
+  // The toggle is its own round disc beside the ⋯.
+  assert.match(header, /\{botDm \? \(\s*<button\s*type="button"\s*onClick=\{toggleBotWork\}\s*className="messages-thread-action"\s*aria-label="Activity"\s*title="Activity"\s*aria-expanded=\{botWorkOpen\}\s*aria-controls=\{BOT_WORK_PANEL_ID\}\s*data-bot-work-toggle=""\s*>\s*<ArrowsPointingOutIcon aria-hidden="true" \/>\s*<\/button>\s*\) : null\}/);
   assert.match(header, /\{botDm \? <BotWorkStatusLine \/> : <div className="messages-thread-sub">\{subtitle\}<\/div>\}/);
   // The useBotWork hook runs before the header's early return, so hook order is stable.
   assert.ok(header.indexOf('useBotWork()') < header.indexOf('if (!active) return null;'));

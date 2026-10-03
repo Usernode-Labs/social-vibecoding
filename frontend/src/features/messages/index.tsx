@@ -1139,8 +1139,9 @@ function ThreadHeader() {
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
   // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
-  // "Direct message", and the name block above it opens the activity panel
-  // (./bot-work.tsx), working or not.
+  // "Direct message". #3770: the activity panel (./bot-work.tsx) opens from
+  // its own round button beside the ⋯, not from the name block, working or
+  // not.
   const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
@@ -1164,16 +1165,27 @@ function ThreadHeader() {
       <button
         type="button"
         className="min-w-0 text-left flex-1"
-        onClick={() => { if (botDm) toggleBotWork(); else if (active.kind === 'group') openDialog('messagesMembers'); }}
-        aria-expanded={botDm ? botWorkOpen : undefined}
-        aria-controls={botDm ? BOT_WORK_PANEL_ID : undefined}
-        data-bot-work-toggle={botDm ? '' : undefined}
+        onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
+      {botDm ? (
+        <button
+          type="button"
+          onClick={toggleBotWork}
+          className="messages-thread-action"
+          aria-label="Activity"
+          title="Activity"
+          aria-expanded={botWorkOpen}
+          aria-controls={BOT_WORK_PANEL_ID}
+          data-bot-work-toggle=""
+        >
+          <ArrowsPointingOutIcon aria-hidden="true" />
+        </button>
+      ) : null}
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (

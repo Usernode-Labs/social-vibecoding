@@ -27,12 +27,12 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  *   - a STATUS LINE in the chat header, under the bot's name where a DM says
  *     "Direct message": what it is working on for them ("Working on Ear
  *     Trainer #5 · following up"), else what waits on them, else the last
- *     thing it did. The header's name block is the toggle, so the panel
- *     opens from there at any time, working or not. A phone gets a short
- *     form of the same line.
+ *     thing it did. It is a status, not a control (#3770): the panel opens
+ *     from its own round button beside the header's ⋯, at any time, working
+ *     or not. A phone gets a short form of the same line.
  *   - the PANEL it opens: a sheet that drops over the transcript at the
  *     pane's full width (the conversation under it does not move), closed
- *     again by the header, Escape, or a press anywhere else. Its tiles are
+ *     again by the button, Escape, or a press anywhere else. Its tiles are
  *     the activity cards' language (./bot-activity.tsx): the ring with the
  *     step while the bot works, then Done / Needs you / Ended / Didn't
  *     finish, the request, what came of it, and where to open it. Each
@@ -242,10 +242,11 @@ function PingDot() {
 }
 
 /**
- * The line under the bot's name, a pure render. It sits inside the header's
- * name button (index.tsx ThreadHeader), which is the toggle.
+ * The line under the bot's name, a pure render. It is a status, not a
+ * control (#3770): the header's Activity button (index.tsx ThreadHeader)
+ * beside the ⋯ opens the panel.
  */
-export function BotWorkStatusView({ status, open }: { status: TrayStatus; open: boolean }) {
+export function BotWorkStatusView({ status }: { status: TrayStatus }) {
   const loud = status.kind === 'working' || status.kind === 'you';
   return (
     <div
@@ -257,14 +258,13 @@ export function BotWorkStatusView({ status, open }: { status: TrayStatus; open: 
         <span className="hidden sm:inline">{status.long}</span>
         <span className="sm:hidden">{status.short}</span>
       </span>
-      <ChevronDownIcon className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
     </div>
   );
 }
 
 export function BotWorkStatusLine() {
-  const { work, open } = useBotWork();
-  return <BotWorkStatusView status={trayStatus(work)} open={open} />;
+  const { work } = useBotWork();
+  return <BotWorkStatusView status={trayStatus(work)} />;
 }
 
 // ── The panel ────────────────────────────────────────────────────────────

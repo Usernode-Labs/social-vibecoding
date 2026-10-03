@@ -69,7 +69,9 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
   assert.ok(at > header.indexOf('aria-label="Group members"'), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
+  // Between the toggle and the ⋯ sits only the bot DM's Activity button
+  // (#3770), the tray's toggle now that the name block is a name again.
+  assert.match(header, /<FullWidthToggle \/>(?:\s*\{botDm \? \((?:[^{}]|\{[^{}]*\})*?\) : null\})?\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
     'immediately before the ⋯ menu');
   // #3407: #general's way back to its hub leads the row; the toggle does not.
   assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
