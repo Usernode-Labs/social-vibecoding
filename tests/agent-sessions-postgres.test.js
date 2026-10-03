@@ -70,6 +70,8 @@ async function connect(t, { beforeMigration = null } = {}) {
       -- reduced copy creates them up front, the way it creates every other
       -- column the agent-sessions statements touch.
       icon_emoji VARCHAR(32), icon_image_id VARCHAR(32),
+      -- Where a request a conversation was opened on is read (#3752).
+      repo_url TEXT,
       moderation_suspended_at TIMESTAMPTZ,
       collab_visibility TEXT NOT NULL DEFAULT 'public', view_visibility TEXT NOT NULL DEFAULT 'public');
     CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
@@ -80,6 +82,8 @@ async function connect(t, { beforeMigration = null } = {}) {
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,
+      -- When the last verdict was stored (activeChange.failingChecks.at, #3755).
+      checks_checked_at TIMESTAMPTZ,
       shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB);
@@ -249,6 +253,56 @@ test('every row a change writes lands in its conversation, whoever inserts it', 
       "SELECT agent_session_id FROM chat_session_messages WHERE content = 'explicit'"
     );
     assert.equal(explicit[0].agent_session_id, other.id);
+  } finally {
+    await done(client);
+  }
+});
+
+// #3755: the conversation names the checks that failed and offers the fix.
+// The projection is real SQL over a jsonb array, so it is run, not read.
+test('a failing change carries its blocking failures by name, the run\'s time, and how many in all', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 }, hint: { slug: 'recipe-box' } });
+    const results = [
+      { name: 'Home loads', path: '/', status: 'pass' },
+      { name: 'A checked item moves to Done', path: '/?shot=pending', status: 'fail', failureReason: 'Expected .done-items li, found none' },
+      { name: 'Advisory render health', path: '/', status: 'fail', advisory: true, failureReason: 'slow' },
+      { name: '', path: '/settings', status: 'fail', consoleErrors: [{ kind: 'error', message: 'TypeError: x is undefined' }] },
+      'not a row',
+      ...Array.from({ length: 6 }, (_, i) => ({ name: `Extra ${i + 1}`, status: 'fail', failureReason: 'x'.repeat(400) })),
+    ];
+    const { rows: [change] } = await client.query(
+      `INSERT INTO chat_sessions (app_id, user_id, session_title, check_state, test_results, checks_checked_at)
+       VALUES (3, 7, 'Done section', 'failing', $1::jsonb, '2026-10-03T11:00:00Z') RETURNING *`,
+      [JSON.stringify(results)]
+    );
+    await agentSessions.linkChange(client, { agentSessionId: session.id, userId: 7, change: { ...change, app_name: 'Recipe box' } });
+
+    const detail = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    const failing = detail.activeChange.failingChecks;
+    assert.equal(failing.at, '2026-10-03T11:00:00.000Z', 'the verdict\'s time: one run, one offer');
+    assert.equal(failing.total, 8, 'every blocking failure counts; a pass, an advisory row and a non-row do not');
+    assert.deepEqual(failing.checks.slice(0, 3), [
+      { name: 'A checked item moves to Done', reason: 'Expected .done-items li, found none' },
+      { name: '/settings', reason: 'TypeError: x is undefined' },
+      { name: 'Extra 1', reason: 'x'.repeat(300) },
+    ], 'in the order the suite ran them; a nameless check by its path, a reasonless one by its first console error; clipped');
+    assert.equal(failing.checks.length, 5, 'the first five only');
+    assert.equal(detail.activeChange.checkFailing, 9, 'the staging card\'s own count is unchanged');
+    assert.equal((await agentSessions.listAgentSessions(client, { userId: 7 })).sessions[0].activeChange.failingChecks.total, 8,
+      'the list reads the same projection');
+    assert.equal(detail.changes[0].failingChecks, null, 'the changes drawer does not read them');
+
+    for (const state of ['pending', 'passing', 'error']) {
+      await client.query('UPDATE chat_sessions SET check_state = $2 WHERE id = $1', [change.id, state]);
+      const other = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+      assert.equal(other.activeChange.failingChecks, null, `${state}: nothing to offer`);
+    }
+    await client.query(`UPDATE chat_sessions SET check_state = 'failing', test_results = '{"odd": true}'::jsonb WHERE id = $1`, [change.id]);
+    const odd = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    assert.equal(odd.activeChange.failingChecks, null, 'an odd legacy row reads as none');
   } finally {
     await done(client);
   }
@@ -808,6 +862,52 @@ test('a message and its turn are written together, before any stream; a busy con
     const { rows: racedRows } = await client.query(
       `SELECT COUNT(*)::int AS n FROM chat_session_messages WHERE agent_session_id = $1 AND client_message_id = 'c-raced'`, [session.id]);
     assert.equal(racedRows[0].n, 1);
+  } finally {
+    await done(client, pool);
+  }
+});
+
+test('#3752: a conversation opened on a request is named after it over its first message, never over its owner\'s name', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const pool = schemaPool();
+  try {
+    await client.query("UPDATE apps SET repo_url = 'https://github.com/acme/recipe-box' WHERE id = 3");
+    const asked = [];
+    const lookupTitle = async (repoUrl, number) => { asked.push([repoUrl, number]); return 'Keep checked items in place'; };
+    const first = (session, turnId, text) => agentSessions.startTurnWithMessage(pool, {
+      agentSessionId: session.id, userId: 7, turnId, text, title: text,
+    });
+    const titleOf = async (session) => {
+      const { rows } = await client.query('SELECT title, title_source FROM agent_sessions WHERE id = $1', [session.id]);
+      return [rows[0].title, rows[0].title_source];
+    };
+
+    const opened = await agentSessions.createAgentSession(client, {
+      user: { id: 7 }, hint: { slug: 'recipe-box', issueNumber: 12, entry: 'issue' },
+    });
+    assert.equal(opened.title, null, 'nothing said yet: no name, so the lists still leave it out');
+    assert.equal((await first(opened, 'turn-1', 'can you implement this?')).ok, true);
+    assert.deepEqual(await titleOf(opened), ['can you implement this?', 'auto'], 'named by the message with the message, as before');
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 8, lookupTitle }), null,
+      'another user\'s conversation is not theirs to name');
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 7, lookupTitle }),
+      '#12 · Keep checked items in place');
+    assert.deepEqual(asked, [['https://github.com/acme/recipe-box', 12]], 'the request on the conversation\'s focus app');
+    const shown = await agentSessions.getAgentSession(client, { userId: 7, id: opened.id });
+    assert.deepEqual([shown.title, shown.titleSource], ['#12 · Keep checked items in place', 'auto']);
+
+    // A name its owner chose is kept, however late the request is read.
+    await agentSessions.renameAgentSession(client, { userId: 7, id: opened.id, title: 'Checklist order' });
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 7, lookupTitle }), null);
+    assert.deepEqual(await titleOf(opened), ['Checklist order', 'manual']);
+
+    // One not opened on a request keeps its first message's name.
+    const plain = await agentSessions.createAgentSession(client, { user: { id: 7 }, hint: { slug: 'recipe-box', entry: 'improve' } });
+    assert.equal((await first(plain, 'turn-2', 'Make it blue')).ok, true);
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: plain.id, userId: 7, lookupTitle }), null);
+    assert.deepEqual(await titleOf(plain), ['Make it blue', 'auto']);
+    assert.equal(asked.length, 1, 'and no request is read for it');
   } finally {
     await done(client, pool);
   }

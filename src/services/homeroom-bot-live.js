@@ -62,7 +62,8 @@ const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
 const proposalDescription = require('./proposal-description');
-const { SPEC_DESIGN_BRIEF } = require('./prompts');
+const { SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, getDesignGuidance } = require('./prompts');
+const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
 
 // A staging copy of the platform starts from production's settings, live
@@ -237,7 +238,10 @@ function screenshotNote(seed) {
   ];
 }
 
-function specPrompt({ seed, buildNote }) {
+// #3737: `firstVersion` swaps the design brief for a first version's own
+// (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF); nothing else in the
+// spec prompt changes.
+function specPrompt({ seed, buildNote, firstVersion = false }) {
   return [
     seed,
     '',
@@ -262,7 +266,7 @@ function specPrompt({ seed, buildNote }) {
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
     '- As small as the request: the plan above, no refactoring or extra features.',
-    `- ${SPEC_DESIGN_BRIEF}`,
+    `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "User-facing changes" half with a',
@@ -1129,8 +1133,8 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 // reads it.
 const BUILD_DESCRIPTION_LINES = Object.freeze([
   '',
-  'After that summary, end your final message with a description of the change for the people who will vote on',
-  'it, between these two marker lines:',
+  'After the summary the rules above ask for, end your final message with a description of the change for the',
+  'people who will vote on it, between these two marker lines:',
   '',
   '==== DESCRIPTION ====',
   'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
@@ -1158,7 +1162,56 @@ const PLATFORM_TEST_NOTE = Object.freeze([
   'failure in a suite that does not read anything you changed is not yours: name it in your summary and move on.',
 ]);
 
-function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
+// #3737: the bot's build writes every first version, and it was the one
+// build on the platform given neither the UI design guidance (#2817) nor the
+// in-loop browser's instructions: its worker had the browser, and it was
+// never told how to boot the app in it. It gets the block the dev chat gives
+// an OpenRouter turn, as written, with what differs for it said first, and
+// one rule of its own: a change a person will see is looked at before the
+// turn ends. How it looks follows the design self-check, by whether the
+// model reads images.
+function browserLines({ readsImages = false } = {}) {
+  const look = readsImages
+    ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
+    : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
+  return [
+    '',
+    'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
+    'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
+    'shows on:',
+    IN_LOOP_BROWSER_GUIDANCE,
+    '- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will',
+    '  see. Boot the app, then',
+    `  ${look}`,
+    '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
+    '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
+    '  the app cannot boot promptly, and then say why in your summary. Stay within the time budget above.',
+  ];
+}
+
+// #3737: an app's look, decided once and written down. A first version's
+// spec decides it; its build records it where every later build reads the
+// app's own instructions, the "App-specific conventions" section of its
+// CLAUDE.md (services/template.js), and the design guidance tells every
+// later build to follow that note. Before this, a look lived only in code
+// (RSS Reader's palette) and each later change re-derived it, or drifted.
+// Said before the build contract, so recording the note is part of "that
+// change" rather than an extra file the contract forbids.
+const FIRST_VERSION_DESIGN_LINES = Object.freeze([
+  '',
+  'This is the app\'s FIRST VERSION, so it has no design system of its own yet: the spec\'s "### Design" subsection',
+  '(or, without a spec, the plan) sets it, and the starter\'s screen and its zinc and violet are placeholder, not',
+  'a look to copy. Define the accent and the neutrals once, each with a light and a dark value unless the app',
+  'keeps one fixed look (CSS variables or the Tailwind theme), and use only those: the design guidance\'s "no new',
+  'colours" means none beyond them. Then record the look in the app\'s `CLAUDE.md`: replace the placeholder under',
+  '"## App-specific conventions" with a short `Design:` note of a few lines naming the accent and the neutrals,',
+  'notes on type and spacing, the signature element, and the one fixed look if the app keeps one. Every later',
+  'change follows that note.',
+]);
+
+function buildPrompt({
+  seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false,
+}) {
   const specBlock = spec
     ? [
       '',
@@ -1181,6 +1234,7 @@ function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
     ...specBlock,
+    ...(firstVersion ? FIRST_VERSION_DESIGN_LINES : []),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
     // this bot's own list, which the dev chat now shares.
@@ -1189,8 +1243,63 @@ function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
       commits: 'harness',
     }),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
+    ...browserLines({ readsImages }),
+    '',
+    // #3737: the same design guidance the dev chat builds with (#2817).
+    getDesignGuidance({ readsImages }),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
+}
+
+/**
+ * #3737: whether the build's model can look at pictures, by OpenRouter's
+ * catalog, decided as the Mayor decides it (homeroom-bot-mayor.js
+ * modelSeesImages) with the key the turn itself runs on: the bot's, or a
+ * benchmark trial's own user's. The design self-check then asks for
+ * screenshots, and otherwise for the page's text snapshot. Anything unknown
+ * is no. Never throws.
+ */
+async function buildSeesImages({ pool, config, userId, model }) {
+  try {
+    const credentialStore = require('./credential-store');
+    const key = { provider: 'openrouter', purpose: 'coding_agent' };
+    const meta = await credentialStore.readMetadata({ pool, userId, ...key });
+    if (!meta || meta.status !== 'valid') return false;
+    const apiKey = await credentialStore.readSecret({
+      pool, userId, ...key, dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+    });
+    if (!apiKey) return false;
+    return await require('./homeroom-bot-mayor').modelSeesImages(pool, config, apiKey, model);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Why a coding turn Claude Code ran failed, or null when it did not (or ran
+ * in Codex). An OpenRouter model the platform maps to Claude Code (#3296)
+ * runs in run-cc.sh, which commits and pushes whatever a turn leaves, even
+ * when the agent failed partway: what a person's dev chat wants, and never
+ * what the bot may propose. The Codex runner refuses to commit or push a
+ * failed turn at all (run-codex-agent.sh), which is why a Codex turn needs
+ * no check here and its outcome is exactly what it was. The bot's turns ask
+ * run-cc.sh to do the same (`discardFailedTurn`); this is the host's half,
+ * which also names the reason. Failed means the agent exited non-zero
+ * (cc_exit, or the wrapper's exit code), its final result said is_error, or
+ * its final message is the runtime's own "API Error" notice, which Claude
+ * Code can end on with exit 0 (an OpenRouter 429 once its retries are
+ * spent). run-cc.sh reads that notice with the same definition
+ * (worker/agent-api-failure.js), so the worker and the host agree on which
+ * turns failed.
+ */
+function failedClaudeTurn(result) {
+  if (!result || result.agentHarness !== 'claude') return null;
+  const exited = (code) => Number.isInteger(code) && code > 0;
+  if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
+  if (result.ccIsError === true) return 'the agent reported an error';
+  if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
+  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
+  return null;
 }
 
 /**
@@ -1244,7 +1353,7 @@ function readSpec(text) {
 
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
-  specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec',
+  specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1257,7 +1366,7 @@ async function draftSpec({
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = specPrompt({ seed, buildNote });
+  const prompt = specPrompt({ seed, buildNote, firstVersion });
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -1266,6 +1375,9 @@ async function draftSpec({
       telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the dev chat's scout
+        // makes it (#3296): GLM runs in Claude Code.
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -1321,6 +1433,9 @@ async function buildAndPropose({
   // #3654: the spec turn's own model, when it differs from the build's;
   // and, for a benchmark trial, its own session title and telemetry.
   specModel = null, sessionTitle = null, telemetry = null,
+  // #3737: a project's first version, whose spec and build decide and
+  // record its look.
+  firstVersion = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1422,7 +1537,7 @@ async function buildAndPropose({
     ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
-      model: specModel || model, deps, specBudgetMs,
+      model: specModel || model, deps, specBudgetMs, firstVersion,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
     });
   // The build turn runs the build's model again.
@@ -1465,6 +1580,11 @@ async function buildAndPropose({
   // starts, so a stop aimed at the build is never the one erased.
   worker.clearPendingStop?.(session.id);
 
+  // Read before the build's clock starts: a catalog read is not build time.
+  const readsImages = typeof deps.seesImages === 'boolean'
+    ? deps.seesImages
+    : await buildSeesImages({ pool, config, userId: bot.id, model });
+
   // The same wall clock a triage turn has, ended the same way.
   let stopped = false;
   let stopping = null;
@@ -1474,7 +1594,9 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
+  const prompt = buildPrompt({
+    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion,
+  });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1487,6 +1609,13 @@ async function buildAndPropose({
       telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The dev chat's build makes the same choice (#3296). The bot's
+        // build works as it is under either CLI: the worker, not the agent,
+        // commits and pushes what the turn leaves (buildPrompt's commits:
+        // 'harness'; both runners use worker/session-branch.sh), and an
+        // OpenRouter build needs no handbook as system context in either
+        // (run-cc.sh).
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'build',
@@ -1495,6 +1624,9 @@ async function buildAndPropose({
         commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120),
         resumeSessionId: null,
         branchName,
+        // A failed turn's work is neither committed nor pushed, under either
+        // CLI (failedClaudeTurn).
+        discardFailedTurn: true,
         ...(ctx || {}),
         telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
@@ -1528,6 +1660,9 @@ async function buildAndPropose({
     return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
+  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
+  const turnFailed = failedClaudeTurn(result);
+  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
@@ -1605,9 +1740,12 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  buildSeesImages,
+  FIRST_VERSION_DESIGN_LINES,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  failedClaudeTurn,
   stampSessionModel,
   draftSpec,
   specPrompt,

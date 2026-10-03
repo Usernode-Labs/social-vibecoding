@@ -386,7 +386,7 @@ function requireCliMiddleware(req, res, next) {
 // anything. Everything else is the same field with the same cap, because the
 // two calls carry the same work — they differ only in where it lands.
 function parseShareInProgressBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent', 'visibleChanges', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'externalAgent', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -412,6 +412,14 @@ function parseShareInProgressBody(body) {
   const description = body.description == null
     ? null
     : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // The plain-English summary a voter reads first, parsed exactly as
+  // update-from-fork parses it (the pr-import route's 600-character cap), so a
+  // card shared with one says the same thing a proposal submitted with it
+  // would. The connector sends it; it used to be dropped before this route.
+  if (body.summary != null && typeof body.summary !== 'string') {
+    throw new ValidationError('summary must be a string');
+  }
+  const summary = require('./votes').parseImportSummary(body);
   // Which coding agent wrote it — a badge, resolved by the connector service
   // and carried through so the shared card reads the same as a proposal from
   // the same agent. Bounded like any other caller-supplied label.
@@ -425,6 +433,7 @@ function parseShareInProgressBody(body) {
     externalAgent,
     title,
     description,
+    summary,
     linkedIssues: body.linkedIssues == null ? null : body.linkedIssues,
     visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)),
     testing: {
@@ -1073,6 +1082,7 @@ function proposalHandoffRoutes(config) {
           visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
+          summary: input.summary,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
         }

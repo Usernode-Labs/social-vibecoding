@@ -149,6 +149,9 @@ COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.
 COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
+# run-cc.sh asks it whether a Homeroom bot turn failed although claude
+# exited 0 (DISCARD_FAILED_TURN); the platform reads the same definition.
+COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
 COPY shots-mcp.js /usr/local/bin/shots-mcp.js
 COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js
 COPY shots-origin-proxy.js /usr/local/bin/shots-origin-proxy.js

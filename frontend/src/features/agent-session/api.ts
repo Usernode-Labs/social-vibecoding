@@ -2,6 +2,14 @@
 // conversation screen reads and writes. Every route is owner-scoped on the
 // server (src/routes/agent-sessions.js); nothing here decides access.
 
+/** A change's failing checks, as services/agent-sessions.js reads them (#3755). */
+export interface FailingChecks {
+  /** When the failing verdict was stored: one run, one offer. */
+  at: string | null;
+  total: number;
+  checks: Array<{ name: string; reason: string }>;
+}
+
 export interface AgentChange {
   id: number;
   appSlug: string | null;
@@ -15,6 +23,12 @@ export interface AgentChange {
   checkFailing?: number;
   /** Why the checks were skipped, when they were and a reason was recorded. */
   checkSkipReason?: string | null;
+  /**
+   * #3755: while the checks are failing, the first few that failed (name and
+   * what each reported), how many failed in all, and when that run's verdict
+   * was stored. Null otherwise, and on the changes list's rows.
+   */
+  failingChecks?: FailingChecks | null;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
   /** Its before/after shots, while they are being taken. */

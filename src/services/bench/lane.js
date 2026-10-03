@@ -200,11 +200,12 @@ async function costHistory(pool) {
 }
 
 /**
- * Launch a run: one trial per task, model and attempt, decided up front. A
- * trial a model cannot take is recorded `not_applicable` with its reason at
- * once; the rest wait as `pending` for the lane.
+ * The trials a launch makes, decided up front, and what each is estimated to
+ * cost, without writing anything. launchRun inserts this plan and
+ * estimateRun shows it before anything is spent, so the figure the launcher
+ * previews is the figure the launch records.
  */
-async function launchRun(pool, body = {}, { actorId = null } = {}) {
+async function planRun(pool, body = {}) {
   const v = validateLaunch(body);
   if (!v.ok) return v;
   const { rows: [suite] } = await pool.query('SELECT id, frozen_at FROM bench_suites WHERE id = $1', [v.suiteId]);
@@ -216,27 +217,163 @@ async function launchRun(pool, body = {}, { actorId = null } = {}) {
   if (!tasks.length) return httpError(409, 'The suite has no tasks at those stages');
   const models = await catalog.listModels(pool, v.models);
   const history = await costHistory(pool);
+  const calibration = catalog.costCalibration(v.models.map((id) => catalog.modelInfo(models, id)), history);
 
-  const plan = { task: [], model: [], attempt: [], status: [], error: [], est: [], token: [] };
+  // `est` is the pessimistic figure the cap is scheduled against; `likely`
+  // is what the trial will probably cost, for the preview (#3710).
+  const plan = { task: [], stage: [], model: [], attempt: [], status: [], error: [], est: [], likely: [], token: [] };
   let estimate = 0;
+  let likely = 0;
   for (const task of tasks) {
     const attempts = attemptsFor(task.stage, v);
     for (const id of v.models) {
       const info = catalog.modelInfo(models, id);
       const reason = dmSim.noAnswerReason(task) || catalog.notApplicableReason(info, task.stage, task.tags?.prompt_chars);
-      const est = catalog.estimateTrialCost(info, task.stage, history.get(`${id}|${task.stage}`) || []);
+      const past = history.get(`${id}|${task.stage}`) || [];
+      const est = catalog.estimateTrialCost(info, task.stage, past);
+      const probable = catalog.likelyTrialCost(info, task.stage, past, calibration);
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         plan.task.push(task.id);
+        plan.stage.push(task.stage);
         plan.model.push(id);
         plan.attempt.push(attempt);
         plan.status.push(reason ? 'not_applicable' : 'pending');
         plan.error.push(reason);
         plan.est.push(Math.round(est * 10000) / 10000);
+        plan.likely.push(probable);
         plan.token.push(token());
-        if (!reason) estimate += est;
+        if (!reason) { estimate += est; likely += probable; }
       }
     }
   }
+  return { ok: true, v, suite, plan, estimate, likely, calibration };
+}
+
+/**
+ * Room above the likely cost for the trials the lane holds at once: while
+ * they run, the cap check counts each at its pessimistic estimate, so a cap
+ * with no room above the likely cost stops the last trials early. The
+ * dearest heavy trials the run can hold at once (MAX_HEAVY_PER_RUN), plus
+ * its dearest light ones in the slots left. Pure.
+ */
+function capHeadroom(items, concurrency) {
+  const slots = Math.max(1, Math.min(Number(concurrency) || 1, MAX_IN_FLIGHT));
+  const heavySlots = Math.min(slots, MAX_HEAVY_PER_RUN);
+  const heavy = items.filter((it) => HEAVY_STAGES.includes(it.stage)).map((it) => it.est).sort((a, b) => b - a);
+  const light = items.filter((it) => !HEAVY_STAGES.includes(it.stage)).map((it) => it.est).sort((a, b) => b - a);
+  const top = heavy.slice(0, heavySlots);
+  // The slots left take light trials only: a run never holds more heavy ones.
+  const rest = light.slice(0, slots - top.length);
+  return [...top, ...rest].reduce((sum, n) => sum + n, 0);
+}
+
+/**
+ * The cap a launch should get when nobody sets one (#3710): the likely cost
+ * plus 15%, or plus the headroom the trials in flight need if that is more;
+ * never more than the pessimistic total plus that headroom (the run fits
+ * even if every trial costs what the dearest tenth have), whole dollars,
+ * inside the lane's range. Pure.
+ */
+function suggestCap({ likelyUsd, pessimisticUsd, headroomUsd }) {
+  const want = Math.max(likelyUsd * 1.15, likelyUsd + headroomUsd);
+  const ceiling = pessimisticUsd + headroomUsd;
+  return Math.min(MAX_CAP_USD, Math.max(1, Math.ceil(Math.min(want, ceiling))));
+}
+
+// How long a trial at each stage takes when a model has no history yet, in
+// milliseconds: roughly the medians of the first production runs (#3654),
+// rounded up.
+const TRIAL_MS_FALLBACK = Object.freeze({
+  triage: 60_000, dm: 60_000, spec: 300_000, build: 900_000, followup: 180_000, checks_fix: 240_000,
+});
+
+/** The median duration of finished trials per (model, stage), for the time estimate. */
+async function durationHistory(pool) {
+  const { rows } = await pool.query(
+    `SELECT tr.model, t.stage,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tr.duration_ms)::float8 AS ms
+       FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id
+      WHERE tr.duration_ms IS NOT NULL AND tr.status IN ('ok', 'model_fail', 'timeout')
+      GROUP BY tr.model, t.stage`,
+  );
+  return new Map(rows.map((r) => [`${r.model}|${r.stage}`, Number(r.ms)]));
+}
+
+/**
+ * About how long a run takes, from the time each of its trials should take.
+ * Pure. The lane holds `concurrency` trials of a run at once, at most
+ * MAX_HEAVY_PER_RUN of them heavy and at most MAX_IN_FLIGHT across runs, so
+ * the run lasts at least as long as its heavy trials take spread over the
+ * heavy slots, and as all its trials take spread over every slot. It is a
+ * floor: live builds a person is waiting for go first.
+ */
+function estimateWallMs(items, concurrency) {
+  const slots = Math.max(1, Math.min(Number(concurrency) || 1, MAX_IN_FLIGHT));
+  const heavySlots = Math.max(1, Math.min(slots, MAX_HEAVY_PER_RUN));
+  let heavyMs = 0;
+  let allMs = 0;
+  for (const it of items) {
+    allMs += it.ms;
+    if (HEAVY_STAGES.includes(it.stage)) heavyMs += it.ms;
+  }
+  return Math.round(Math.max(heavyMs / heavySlots, allMs / slots));
+}
+
+/**
+ * What a launch with this body would do, without launching it: trials,
+ * the ones not applicable, the estimate in dollars (per stage too), about
+ * how long it takes, and the suite's state. The launcher calls it as the
+ * settings change, so the price is on screen before anything is spent.
+ */
+async function estimateRun(pool, body = {}) {
+  const planned = await planRun(pool, body);
+  if (!planned.ok) return planned;
+  const { v, suite, plan, estimate, likely, calibration } = planned;
+  const durations = await durationHistory(pool);
+  const byStage = {};
+  const items = [];
+  for (let i = 0; i < plan.task.length; i += 1) {
+    const stage = plan.stage[i];
+    if (!byStage[stage]) byStage[stage] = { trials: 0, notApplicable: 0, estimateUsd: 0, likelyUsd: 0 };
+    if (plan.status[i] === 'not_applicable') {
+      byStage[stage].notApplicable += 1;
+      continue;
+    }
+    byStage[stage].trials += 1;
+    byStage[stage].estimateUsd += plan.est[i];
+    byStage[stage].likelyUsd += plan.likely[i];
+    items.push({ stage, est: plan.est[i], ms: durations.get(`${plan.model[i]}|${stage}`) ?? TRIAL_MS_FALLBACK[stage] ?? 120_000 });
+  }
+  const cents = (n) => Math.round(n * 100) / 100;
+  for (const s of Object.values(byStage)) { s.estimateUsd = cents(s.estimateUsd); s.likelyUsd = cents(s.likelyUsd); }
+  const headroomUsd = capHeadroom(items, v.concurrency);
+  return {
+    ok: true,
+    trials: items.length,
+    notApplicable: plan.task.length - items.length,
+    // What it will probably cost, and at most: the pessimistic figure the
+    // cap is scheduled against, the one a launch records.
+    likelyUsd: cents(likely),
+    estimateUsd: cents(estimate),
+    byStage,
+    calibratedFrom: calibration.any ? calibration.any.from : 0,
+    suggestedCapUsd: suggestCap({ likelyUsd: likely, pessimisticUsd: estimate, headroomUsd }),
+    estimatedMs: estimateWallMs(items, v.concurrency),
+    capUsd: v.capUsd,
+    maxCapUsd: MAX_CAP_USD,
+    suiteFrozen: !!suite.frozen_at,
+  };
+}
+
+/**
+ * Launch a run: one trial per task, model and attempt, decided up front. A
+ * trial a model cannot take is recorded `not_applicable` with its reason at
+ * once; the rest wait as `pending` for the lane.
+ */
+async function launchRun(pool, body = {}, { actorId = null } = {}) {
+  const planned = await planRun(pool, body);
+  if (!planned.ok) return planned;
+  const { v, suite, plan, estimate } = planned;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -952,6 +1089,13 @@ module.exports = {
   validateLaunch,
   attemptsFor,
   launcherDefaults,
+  planRun,
+  estimateRun,
+  estimateWallMs,
+  capHeadroom,
+  suggestCap,
+  TRIAL_MS_FALLBACK,
+  MAX_CAP_USD,
   launchRun,
   cancelRun,
   ORPHAN_GRACE_SECONDS,

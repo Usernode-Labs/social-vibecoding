@@ -62,9 +62,9 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: six lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: seven lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'offer_request', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal', 'offer_request', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -80,22 +80,67 @@ test('the tools: six lookups and actions and a reply, every one closed to extra 
   assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal's checks, the group's vote/);
 });
 
-test('#3685: a failed model request is asked once more, and only when that can help', () => {
+test('#3733: a failed model request is asked again while that can help, and never past the key', () => {
   const err = (code, status = null) => Object.assign(new Error(code), { code, status });
   assert.deepEqual(mayor.retryPlan(err('output_limit')), { maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS },
     'cut off at its limit: more room');
   assert.ok(mayor.RETRY_OUTPUT_TOKENS > 900);
-  for (const code of ['timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error']) {
-    assert.deepEqual(mayor.retryPlan(err(code)), {}, code);
+  for (const code of ['timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error',
+    'response_too_large', 'empty_answer']) {
+    assert.deepEqual(mayor.retryPlan(err(code)), { waitMs: 0 }, `${code}: at once, on a fresh route`);
+    assert.deepEqual(mayor.retryPlan(err(code), { attempt: 2 }), { waitMs: 1500 }, `${code}: a third time, a moment later`);
   }
+  // The report's failure: a busy provider (HTTP 429) was never asked again,
+  // and the same message asked again seconds later was answered.
+  assert.deepEqual(mayor.retryPlan(err('rate_limited', 429)), { waitMs: mayor.RATE_LIMIT_WAITS_MS[0] });
+  assert.deepEqual(mayor.retryPlan(err('rate_limited', 429), { attempt: 2 }), { waitMs: mayor.RATE_LIMIT_WAITS_MS[1] });
+  assert.ok(mayor.RATE_LIMIT_WAITS_MS.every((ms) => ms >= 1000), 'a rate limit is given a few seconds to lift');
+  assert.equal(mayor.retryPlan(err('rate_limited', 429), { attempt: mayor.MAX_ATTEMPTS }), null, 'and no more than that');
   assert.deepEqual(mayor.retryPlan(err('invalid_request', 404), { forced: true }), { toolChoice: 'auto' },
     'a provider that refuses a forced reply is let choose');
-  assert.equal(mayor.retryPlan(err('invalid_request', 400)), null, 'a request it refuses is refused again');
-  for (const code of ['authentication', 'billing', 'rate_limited', undefined]) assert.equal(mayor.retryPlan(err(code)), null, String(code));
+  assert.deepEqual(mayor.retryPlan(err('invalid_request', 400)), {}, 'a provider\'s refusal goes to another provider');
+  assert.equal(mayor.retryPlan(err('invalid_request')), null, 'a request built wrong here was never sent: asking again cannot help');
+  for (const code of ['authentication', 'billing', 'cancelled', undefined]) assert.equal(mayor.retryPlan(err(code)), null, String(code));
   assert.equal(mayor.retryPlan(err('timeout'), { elapsedMs: 91_000 }), null, 'not once the turn has run long');
+  assert.equal(mayor.retryPlan(err('rate_limited', 429), { elapsedMs: 88_000 }), null, 'nor when its wait would run past that');
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /sessionId: `hrbot-dm-\$\{user\.id\}-\$\{message\.id\}\$\{route > 1 \? `-r\$\{route\}` : ''\}`/,
+  assert.match(src, /sessionId: `hrbot-dm-\$\{t\.user\.id\}-\$\{t\.message\.id\}\$\{t\.route > 1 \? `-r\$\{t\.route\}` : ''\}`/,
     'a provider route is this turn\'s, and a retry takes a fresh one');
+});
+
+test('#3733: the calls a provider returned go back well formed: an id each, unique, and JSON arguments', () => {
+  const seen = new Set();
+  const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: args } });
+  const first = mayor.normalizeCalls([
+    call('', 'my_work', ''),
+    call('call_0', 'request_detail', '{"project":"seed-swap","number":3}'),
+    call('call_0', 'my_projects', '{"cut off'),
+    call(undefined, 'progress', '[1]'),
+    call('call_9', '', '{}'),
+  ], 1, seen);
+  assert.deepEqual(first.map((c) => [c.id, c.function.name, c.function.arguments]), [
+    ['hrbot1000', 'my_work', '{}'],
+    ['call_0', 'request_detail', '{"project":"seed-swap","number":3}'],
+    ['hrbot1200', 'my_projects', '{}'],
+    ['hrbot1300', 'progress', '{}'],
+  ], 'a missing or repeated id is replaced, arguments are an object, and a call with no name is dropped');
+  assert.ok(first.every((c) => c.type === 'function'));
+  // The next round's provider counts from zero again: its ids are the turn's.
+  const second = mayor.normalizeCalls([call('call_0', 'reply', '{"text":"ok"}')], 2, seen);
+  assert.equal(second[0].id, 'hrbot2000');
+  assert.ok(/^[A-Za-z0-9]{9}$/.test(second[0].id), 'nine letters and digits, which every provider takes');
+  const many = Array.from({ length: 20 }, (_, i) => call(`c${i}`, 'my_work', '{}'));
+  assert.equal(mayor.normalizeCalls(many, 3, new Set()).length, mayor.MAX_CALLS_PER_ROUND,
+    'a round answers a bounded number of calls, so a turn fits the transport\'s limit on messages');
+  assert.ok(1 + mayor.MAX_HISTORY + (mayor.MAX_ROUNDS - 1) * (mayor.MAX_CALLS_PER_ROUND + 2) <= 100);
+});
+
+test('#3733: the plain answer is told it has no lookups, and the key\'s failure never says to try again', () => {
+  assert.match(mayor.PLAIN_NOTE, /this time your only tool is reply/);
+  assert.match(mayor.PLAIN_NOTE, /Say nothing about the state of their work that this\nconversation does not show/);
+  assert.doesNotMatch(mayor.PLAIN_NOTE, /—/);
+  assert.doesNotMatch(mayor.KEY_TEXT, /try again|in a minute/i);
+  assert.match(mayor.KEY_TEXT, /An admin needs to fix that first/);
 });
 
 test('#3685: which messages ask how their work is going', () => {
@@ -138,4 +183,38 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
   assert.equal(sends.length, 3, 'a turn\'s answer, its offer and the answer to a tap');
   for (const send of sends) assert.match(send, /replyToId: message\.id/);
+});
+
+test('#3740: a change to one of its own proposals is a tool, used only on a clear ask', () => {
+  const revise = mayor.TOOLS.find((t) => t.function.name === 'revise_proposal').function;
+  assert.deepEqual(revise.parameters.required, ['change']);
+  assert.deepEqual(Object.keys(revise.parameters.properties).sort(), ['change', 'number', 'project', 'proposal']);
+  assert.match(revise.description, /YOUR OWN proposals that is up for a vote/);
+  assert.match(revise.description, /the way a reply in its discussion does/);
+  assert.match(revise.description, /Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead\./);
+  assert.match(revise.description, /The result says what was sent and queued, or why nothing was\./);
+  assert.match(revise.parameters.properties.change.description, /When their message only says yes to a change you offered, the change you offered\./);
+});
+
+test('#3734, #3740: the prompt never lets the bot promise what no tool started, and has it offer when unsure', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
+  assert.match(prompt, /- Change one of your own proposals that is up for a vote when they clearly ask you to \(revise_proposal\)/);
+  assert.match(prompt, /When it is not clear what they want changed, or which proposal, ask them, or\n  offer it \("Want me to change the proposal to \.\.\.\?"\), and call revise_proposal once they say yes\./);
+  assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, look at it again\) unless a tool you\n  called in this turn started it and its result says so, or progress or my_work shows it under way\./);
+  assert.match(prompt, /If a\n  tool refused, say plainly why, and that nothing was done\. When you have not started it, offer to do it\n  instead of promising it\./);
+  assert.match(prompt, /or change anybody else's\n  proposal\. Changes happen through requests and their proposals, and to your own proposals through\n  revise_proposal\./);
+  assert.doesNotMatch(prompt, /From this chat you cannot build, merge, vote, close requests or change settings\. Changes happen/,
+    'the old rule, which told it it could not change its own proposals either, is gone');
+  assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
+});
+
+test('#3740: what is posted on the proposal is their own words, with the change as the bot understood it', () => {
+  assert.equal(
+    mayor.revisionText('Oh, yeah update it?', 'Remove the small, medium and large size options entirely.'),
+    'Oh, yeah update it?\n\n(Sent in a chat with Homeroom bot. The change asked for, as Homeroom bot understood it: '
+      + 'Remove the small, medium and large size options entirely.)',
+  );
+  assert.equal(mayor.revisionText('Drop the size options!', 'drop the size options'),
+    'Drop the size options!\n\n(Sent in a chat with Homeroom bot.)', 'said once when the change is their words');
+  assert.doesNotMatch(mayor.revisionText('a', 'b c'), /—/);
 });

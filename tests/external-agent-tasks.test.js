@@ -1126,6 +1126,26 @@ test('a platform refusal to import is passed back with the platform’s own answ
   assert.ok(!queries.some((q) => q.sql.includes('UPDATE external_agent_tasks')));
 });
 
+test('an import refusal shaped { error: code, message } is reported by its sentence', async () => {
+  const gh = baseGh({
+    findOpenPrByBranch: async () => ({
+      number: 88, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } },
+    }),
+  });
+  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({
+        ok: false, status: 400, body: { error: 'invalid_request', message: 'testingPaths must contain at most 50 entries' },
+      }),
+    }
+  ));
+  assert.equal(result.code, 'import_failed');
+  assert.equal(result.message, 'testingPaths must contain at most 50 entries',
+    'the code alone names nothing the agent can fix');
+});
+
 // ── Structural guarantees ──────────────────────────────────────────────
 
 test('NO user credential is used, and every direct GitHub call is a public read', () => {

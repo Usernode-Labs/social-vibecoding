@@ -38,41 +38,93 @@ export interface HomeroomBotMeta {
 
 /**
  * #3692: the Homeroom bot's work for the viewer, as its DM's activity tray
- * reads it (services/homeroom-bot-tray.js). A job is one request of theirs,
- * or a project's first version; `href` is where it opens (its proposal once
- * people can open one, else the request), or null for one that opens
- * nowhere (the staging demo's).
+ * reads it (services/homeroom-bot-tray.js). An entry is one request of
+ * theirs, or a project's first version, and appears once: in `now` while
+ * the bot has it in hand, in `needsYou` while it waits on them, else in
+ * `history`. `href` is where it opens (its proposal once people can open
+ * one, else the request), and `links` each place a tile offers; null for
+ * one that opens nowhere (the staging demo's). `earlier` is the request's
+ * other runs, newest first.
  */
-export type HomeroomBotPhase = 'looking' | 'building' | 'following_up' | 'setting_up';
-export type HomeroomBotOutcome =
-  | 'question' | 'ready' | 'proposed' | 'live' | 'closed' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'answer' | 'revise';
+export type HomeroomBotPhase =
+  | 'setting_up' | 'queued' | 'looking' | 'building' | 'follow_up_queued' | 'following_up' | 'merging';
+
+export interface HomeroomBotLinks {
+  request: string | null;
+  proposal: string | null;
+  project: string | null;
+}
+
+/** One of an entry's earlier runs: what came of it, and when. */
+export interface HomeroomBotRun {
+  id: number;
+  outcome: HomeroomBotActivityOutcome;
+  at: string | null;
+}
 
 export interface HomeroomBotJob {
+  key: string;
   appSlug: string | null;
   appName: string;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
   href: string | null;
+  links: HomeroomBotLinks;
+  earlier: HomeroomBotRun[];
 }
 
-/** What the bot is doing for them now, and since when. */
+/** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
 export interface HomeroomBotCurrentJob extends HomeroomBotJob {
   phase: HomeroomBotPhase;
+  step: number | null;
+  of: number | null;
+  stepName: string | null;
+  doing: string | null;
   since: string | null;
 }
 
-/** One of the bot's past turns on their work: what came of it, and when. */
+/**
+ * A request the bot is not working on now: what came of it last, and when.
+ * `outcome` is null only for something waiting on them that no run says
+ * (a new project waiting for its secrets), which `doing` words instead.
+ */
 export interface HomeroomBotPastJob extends HomeroomBotJob {
   id: number;
-  outcome: HomeroomBotOutcome;
+  outcome: HomeroomBotActivityOutcome | null;
+  doing: string | null;
   at: string | null;
 }
 
 export interface HomeroomBotWork {
   now: HomeroomBotCurrentJob[];
+  needsYou: HomeroomBotPastJob[];
   history: HomeroomBotPastJob[];
+}
+
+/**
+ * #3736: one activity card in the bot's DM, drawn in the message the bot
+ * sent when it started a piece of work for the viewer (metadata kind
+ * `activity`), with that work's state as services/homeroom-bot-activity.js
+ * reads it. While `working`: the step it is at of the request's steps, and
+ * what it is doing. Once `done`: what it came to, and when, where the
+ * records say. Links are in-app addresses, or null.
+ */
+export type HomeroomBotActivityOutcome =
+  | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+
+export interface HomeroomBotActivity {
+  messageId: number;
+  state: 'working' | 'done';
+  startedAt: string | null;
+  links: { request: string | null; proposal: string | null };
+  step: number | null;
+  of: number | null;
+  stepName: string | null;
+  doing: string | null;
+  outcome: HomeroomBotActivityOutcome | null;
+  endedAt: string | null;
 }
 
 export interface ConversationMember extends ConversationUser {

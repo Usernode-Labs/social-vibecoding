@@ -284,13 +284,16 @@ test('#3522: on a phone the band pins where it rests', () => {
   // A pull no longer moves the band, so that gap never opens; the test below
   // pins what a pull does now, and that the old paint and hook are gone.
   const CSS = read('public/css/app.css');
-  const phone = CSS.slice(CSS.indexOf('@media (max-width: 699.98px) {\n  #dev-workshop { --ws-band-top'));
+  const phone = CSS.slice(CSS.indexOf('@media (max-width: 699.98px) {\n  /* #3726'));
   assert.ok(phone.length > 0, 'a phone block for the band');
   const block = phone.slice(0, phone.indexOf('\n}\n') + 3);
-  // Where it rests: 10px above #dev-forum-scroll's top where that scrolls
-  // (the -18px tuck less #dev-body's 8px), and the header's height less the
-  // 17px tuck where the document scrolls.
-  assert.match(block, /#dev-workshop \{ --ws-band-top: -10px; \}/);
+  // Where it rests: 18px above the HEADER'S MEASURED FOOT less #dev-body's
+  // 8px (17px net) where the scroller scrolls, and the header's height less
+  // the 17px tuck where the document scrolls. #3726: the foot is measured
+  // (`--dev-ws-head-foot`, workshop.tsx) rather than assumed to be 7px over
+  // the scroller's top, so in-flow chrome between the header and the frame
+  // cannot open a gap; the 7px literal is only the pre-measurement fallback.
+  assert.match(block, /#dev-workshop \{ --ws-band-top: calc\(var\(--dev-ws-head-foot, 7px\) - 17px\); \}/);
   assert.match(block, /html\[data-browser-scroller="dev-forum-scroll"\] #dev-workshop \{\s*--ws-band-top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\) - 17px\);/);
   assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
   assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 58px\); \}/, 'All items\' head pins under the band');

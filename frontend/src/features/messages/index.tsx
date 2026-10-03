@@ -13,6 +13,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -21,7 +22,8 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
-import { BotWorkTray, newestBotMessageId, setBotWorkOpen } from './bot-work';
+import { BotActivitySync } from './bot-activity';
+import { BOT_WORK_PANEL_ID, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId, toggleBotWork, useBotWork } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -31,6 +33,7 @@ import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
+import { useStickToBottom } from './stick-to-bottom';
 import {
   agentThreadAddress,
   closeThread,
@@ -1084,6 +1087,8 @@ function ThreadHeader() {
   // after this header first draws (channel-hub.ts), so it is subscribed to;
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
+  // #3692: in the bot's DM the name block opens its activity panel.
+  const botWorkOpen = useBotWork().open;
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1133,6 +1138,10 @@ function ThreadHeader() {
   }
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
+  // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
+  // "Direct message", and the name block above it opens the activity panel
+  // (./bot-work.tsx), working or not.
+  const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
   const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
@@ -1152,9 +1161,16 @@ function ThreadHeader() {
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
-      <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
+      <button
+        type="button"
+        className="min-w-0 text-left flex-1"
+        onClick={() => { if (botDm) toggleBotWork(); else if (active.kind === 'group') openDialog('messagesMembers'); }}
+        aria-expanded={botDm ? botWorkOpen : undefined}
+        aria-controls={botDm ? BOT_WORK_PANEL_ID : undefined}
+        data-bot-work-toggle={botDm ? '' : undefined}
+      >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
-        <div className="messages-thread-sub">{subtitle}</div>
+        {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
@@ -1170,10 +1186,6 @@ function ThreadHeader() {
               : active.kind === 'direct'
                 ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
                 : null}
-            {/* #3692: the bot's activity tray, opened from here when nothing is in flight (its strip is hidden then). */}
-            {active.kind === 'direct' && active.homeroomBot && active.membershipStatus === 'member'
-              ? <button type="button" role="menuitem" data-bot-work-open="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); setBotWorkOpen(true); }}>Activity &amp; history</button>
-              : null}
             {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: `@${peer.username}`, userId: peer.id }); }}>Report user</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
           </div>
@@ -1580,6 +1592,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Its settled pin puts back the pan iOS makes on the tap, which otherwise
   // left the composer (lifted by `platform-kb-column`) above the screen.
   useComposerKeyboard(scroller);
+  // #3757: whether the reader is at the newest line, from where they last
+  // scrolled, so a tall reply or a card that grows after it is drawn keeps
+  // them there (./stick-to-bottom.ts).
+  const pinned = useStickToBottom(scroller, !snap.nextAfter);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1591,12 +1607,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
-    previousLast.current = null; initialScroll.current = null;
+    previousLast.current = null; initialScroll.current = null; pinned.current = true;
   }, [conversationId]);
 
-  useEffect(() => {
+  // A layout effect, so the scroll lands before the new rows are painted and
+  // `pinned` is read before any scroll event can report the grown content.
+  useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
@@ -1608,6 +1626,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       if (row) {
         shownFocus.current = focusId;
         previousLast.current = last;
+        pinned.current = false;
         requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
@@ -1616,9 +1635,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     }
     if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
     // The viewer's own send always lands in view, wherever they had scrolled.
+    // Anything else follows only a reader who was at the bottom BEFORE it
+    // arrived (#3757): measured now, after the draw, a reply taller than the
+    // allowance read as the reader having scrolled up.
     const sentNow = !!lastMessage?.pending && last !== previousLast.current;
-    if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
-      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    if (previousLast.current === null || sentNow || pinned.current) {
+      // The foot of a linked window (#2387) is not the present: nothing
+      // follows it there. A send from one goes to the present (store.send).
+      pinned.current = sentNow || !snap.nextAfter;
+      el.scrollTop = el.scrollHeight;
     }
     previousLast.current = last;
   }, [snap.messages, focusId, snap.nextAfter]);
@@ -1733,8 +1758,12 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
       {embedded ? null : <ThreadHeader />}
+      {/* #3692: the bot's activity panel drops over the transcript from under its header. */}
+      {botDm && !embedded ? <BotWorkPanel /> : null}
       <InvitationBanner />
-      {botDm ? <BotWorkTray conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
+      {botDm ? <BotWorkSync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
+      {/* #3736: and keeps the activity cards in its transcript current. */}
+      {botDm ? <BotActivitySync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard
           inset (`platform-kb-column` above). The kit adds the class itself
           once useComposerKeyboard attaches (#3571), as it does to
@@ -1762,7 +1791,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         {snap.nextAfter ? (
           <div className="messages-newer">
             <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
-            <button type="button" className="messages-load-older" onClick={() => jumpToPresent()}>Jump to present</button>
+            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>Jump to present</button>
           </div>
         ) : null}
       </div>

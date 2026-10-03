@@ -5109,6 +5109,31 @@ const AppView = {
       : null;
   },
 
+  // #3712: the agent session the viewer continues change `id` in, or null.
+  // `_buildDoorView`'s answer, asked of EVERY copy of the change this page
+  // holds rather than of the first one a lookup reaches. The door's label
+  // was drawn from the change page's own read, which names the
+  // conversation; the click re-found the change by id, and for a change up
+  // for a vote the first copy `_findItem` reaches is the board's list row,
+  // which did not. So "Continue in agent session" opened the dev session,
+  // whose strip then offered the same thing again. Every copy is the same
+  // change with the same owner, so any one that names the conversation is
+  // the answer, and `_buildDoorView` still decides whether this viewer may
+  // follow it: the owner only, never on an imported pull request.
+  _agentSessionDoorId(id) {
+    const n = Number(id);
+    if (!Number.isInteger(n) || n <= 0) return null;
+    const rows = [AppView._changeItems && AppView._changeItems.get(n), AppView._topicProposal,
+      ...(AppView._proposals || []), ...(AppView._mySessions || []),
+      ...(AppView._sharedSessions || []), ...(AppView._merged || [])];
+    for (const row of rows) {
+      if (!row || Number(row.id) !== n) continue;
+      const door = AppView._buildDoorView(row);
+      if (door && door.agentSessionId) return door.agentSessionId;
+    }
+    return null;
+  },
+
   // The Build door. It used to do one of two things depending on where it
   // was pressed: on a change's own page it opened the Build sheet IN PLACE
   // (the `change-workspace-open` event), and anywhere else it navigated.
@@ -5116,15 +5141,10 @@ const AppView = {
   // discussion — so this always navigates, and the change page and the board
   // card now send a reader to the same address. A reader who does not own
   // the session lands on its read-only published chat (`renderDevChatTab`).
+  // The owner of a change started from an agent session goes back to that
+  // conversation instead (#2779); `openProposalSession` makes that call, so
+  // every way into a change's session agrees on it (#3712).
   openChangeWorkspace(id) {
-    // #2779: the owner of a change started from an agent session goes back
-    // to that conversation; its own dev chat takes no new messages.
-    const item = typeof AppView._findItem === 'function' ? AppView._findItem('proposal', id) : null;
-    const door = item ? AppView._buildDoorView(item) : null;
-    if (door && door.agentSessionId) {
-      window.location.hash = `#messages/agent/${door.agentSessionId}`;
-      return;
-    }
     AppView.openProposalSession(id);
   },
 
@@ -15497,8 +15517,20 @@ const AppView = {
   // proposal.
   // "Open session" on a proposal card — jump into the dev session
   // behind the proposal (proposer only; sessions are owner-scoped).
+  //
+  // #3712: a change its owner started from an agent session is continued in
+  // that conversation (#2779), so this goes straight there. It used to open
+  // the dev session by id and leave the session page to decide, and that
+  // page only points onward: its composer is a strip saying to continue in
+  // the agent session. The address is PUSHED, so Back from the conversation
+  // returns to the page the door was pressed on.
   openProposalSession(sessionId) {
     if (!sessionId) return;
+    const agentSessionId = AppView._agentSessionDoorId(sessionId);
+    if (agentSessionId) {
+      window.location.hash = `#messages/agent/${agentSessionId}`;
+      return;
+    }
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
     }

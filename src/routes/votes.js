@@ -3871,6 +3871,12 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            cs.shots_state, cs.shots_run_id,
            cs.shots_detail, cs.shots_updated_at,
+           -- #2779: the agent session the change was started from. Only its
+           -- id, as mergedRowSelect carries it for a merged row: the
+           -- conversation itself answers to its owner alone. This list was
+           -- the one copy of a change without it, so the owner's door on a
+           -- change up for a vote led to its dev session instead (#3712).
+           cs.agent_session_id,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.

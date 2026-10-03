@@ -418,6 +418,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     );
   }
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
+  // Where the count turns amber, and the only length a phone shows it at.
+  const nearLimit = value.length > 7600;
 
   return (
     <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
@@ -474,8 +476,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* The count's line is always laid out, empty or not: it appearing
-          with the first keystroke pushed the whole composer up by a line. */}
-      <div className="mt-1 px-1 flex justify-end h-[15px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+          with the first keystroke pushed the whole composer up by a line.
+          On a phone (#3735) it is not laid out at all until the text nears
+          the limit (`data-near-limit`, app.css), so the card stays one row. */}
+      <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>

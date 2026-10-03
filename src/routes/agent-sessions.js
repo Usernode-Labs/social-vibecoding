@@ -602,6 +602,12 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
         }
         recorded = { id: started.messageId, clientMessageId };
+        // #3752: a conversation opened on a request is named after the
+        // request, not after this message. Not awaited: the request is read
+        // from GitHub, and the turn never waits on that.
+        if (!session.title && session.focusContext && session.focusContext.issueNumber) {
+          void agentSessions.nameFromRequest(pool, { agentSessionId: id, userId: req.user.id });
+        }
       }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',

@@ -515,6 +515,34 @@ async function ensureBotDmFixture(pool, user) {
       },
     });
   }
+  // #3736: and two activity cards, each the bot's work on a request followed
+  // in place: one that ended in a proposal, and one being built now, the
+  // newest. Their state is homeroom-bot-activity.js demoCards', found by
+  // these keys; no project stands behind them, so they open nothing.
+  const cardKeys = require('./homeroom-bot-activity').DEMO_CARD_KEYS;
+  const sentCards = await pool.query(
+    `SELECT idempotency_key FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = ANY($3::text[])`,
+    [opened.conversationId, bot.id, [cardKeys.done, cardKeys.working]]
+  );
+  const sentKeys = new Set(sentCards.rows.map((row) => row.idempotency_key));
+  for (const card of [
+    { key: cardKeys.done, issueNumber: 9, issueTitle: 'Staging demo, show item counts' },
+    { key: cardKeys.working, issueNumber: 14, issueTitle: 'Staging demo, show a total under the list' },
+  ].filter((c) => !sentKeys.has(c.key))) {
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: `**Staging demo app** · request #${card.issueNumber}: ${card.issueTitle}\n\n`
+        + 'I\'m working on this now. This card updates as I go.',
+      idempotency_key: card.key,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'activity', appName: 'Staging demo app', issueNumber: card.issueNumber,
+          issueTitle: card.issueTitle, mirrors: true,
+        },
+      },
+    });
+  }
   await pool.query(
     `INSERT INTO staging_conversation_fixtures (user_id, legacy_id, conversation_id)
      VALUES ($1, $2, $3)

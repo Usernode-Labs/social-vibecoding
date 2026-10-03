@@ -149,11 +149,66 @@ function notApplicableReason(model, stage, promptChars) {
 function estimateTrialCost(model, stage, history = []) {
   const costs = history.filter((c) => Number.isFinite(c) && c >= 0).sort((a, b) => a - b);
   if (costs.length >= MIN_HISTORY) return costs[Math.min(costs.length - 1, Math.ceil(0.9 * costs.length) - 1)];
+  return budgetTrialCost(model, stage) ?? FALLBACK_USD[stage] ?? 1;
+}
+
+/** The stage's token budget at the model's price, or null without a price. Pure. */
+function budgetTrialCost(model, stage) {
   const budget = TOKEN_BUDGET[stage];
-  if (budget && Number.isFinite(model.inputPerMillion) && Number.isFinite(model.outputPerMillion)) {
+  if (budget && Number.isFinite(model?.inputPerMillion) && Number.isFinite(model?.outputPerMillion)) {
     return (budget.input * model.inputPerMillion + budget.output * model.outputPerMillion) / 1e6;
   }
-  return FALLBACK_USD[stage] ?? 1;
+  return null;
+}
+
+function median(sorted) {
+  if (!sorted.length) return null;
+  const mid = (sorted.length - 1) / 2;
+  return (sorted[Math.floor(mid)] + sorted[Math.ceil(mid)]) / 2;
+}
+
+/**
+ * How far the token budget overstates what trials really cost, learned from
+ * the models that have run (#3710). For every model in `models` with at least
+ * MIN_HISTORY trials at a stage and a price, the ratio of its median trial to
+ * its budget estimate; per stage the median of those ratios, and `any` the
+ * median across every stage, for a stage nothing has run at yet. The budget
+ * reads every token as uncached, and the bot's turns are mostly cache reads,
+ * so on the first production runs a Flash triage cost about a fifth of it.
+ * Pure. Returns { byStage: { stage: { ratio, from } }, any: { ratio, from } | null }.
+ */
+function costCalibration(models, history) {
+  const per = {};
+  const all = [];
+  for (const m of models || []) {
+    for (const stage of Object.keys(TOKEN_BUDGET)) {
+      const costs = (history.get(`${m.id}|${stage}`) || []).filter((c) => Number.isFinite(c) && c >= 0).sort((a, b) => a - b);
+      const budget = budgetTrialCost(m, stage);
+      if (costs.length < MIN_HISTORY || !budget) continue;
+      const ratio = median(costs) / budget;
+      (per[stage] = per[stage] || []).push(ratio);
+      all.push(ratio);
+    }
+  }
+  const byStage = {};
+  for (const [stage, list] of Object.entries(per)) byStage[stage] = { ratio: median(list.sort((a, b) => a - b)), from: list.length };
+  return { byStage, any: all.length ? { ratio: median(all.sort((a, b) => a - b)), from: all.length } : null };
+}
+
+/**
+ * What one trial is LIKELY to cost, for the launcher's preview (#3710): the
+ * median of this model's own trials at this stage when it has enough of
+ * them; else its token budget scaled by what the token budget has proved to
+ * overstate (costCalibration); else the pessimistic figure. The cap is still
+ * scheduled against estimateTrialCost. Pure.
+ */
+function likelyTrialCost(model, stage, history = [], calibration = null) {
+  const costs = history.filter((c) => Number.isFinite(c) && c >= 0).sort((a, b) => a - b);
+  if (costs.length >= MIN_HISTORY) return median(costs);
+  const budget = budgetTrialCost(model, stage);
+  const cal = calibration?.byStage?.[stage] || calibration?.any;
+  if (budget != null && cal) return Math.min(budget, budget * cal.ratio);
+  return estimateTrialCost(model, stage, history);
 }
 
 module.exports = {
@@ -167,4 +222,7 @@ module.exports = {
   estimateTokens,
   notApplicableReason,
   estimateTrialCost,
+  budgetTrialCost,
+  costCalibration,
+  likelyTrialCost,
 };

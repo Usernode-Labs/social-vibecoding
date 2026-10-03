@@ -3145,9 +3145,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
     },
     {
-      "name": "...and the sheet carries the conversation's own title row",
+      "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", the field and the send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session .messages-thread-header .messages-thread-name + .messages-thread-sub"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session:has(.messages-composer-add + textarea + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
     },
     {
       "name": "A group conversation is a named-row transcript",
@@ -4100,10 +4100,10 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684), beside its shadow build lane, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
+      "name": "Homeroom bot dashboard says what it does on Live and Shadow apps (#2684, #3710), beside its shadow build lane, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
       "path": "/#admin/homeroom-bot",
       "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-build-lane):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
-      "expectText": "It posts nothing and claims nothing, and builds nothing unless shadow builds are on below"
+      "expectText": "On Shadow apps it only records what it would do"
     },
     {
       "name": "Homeroom bot Benchmark area shows Core v1's state, its suites, a run's results per stage and model, and the cost-vs-quality chart (#3654)",
@@ -5425,6 +5425,18 @@
       ]
     },
     {
+      "name": "#3755: an agent chat whose change failed its checks says which ones failed, and offers Fix it and See checks",
+      "path": "/#messages/agent/990804",
+      "expectSelector": "[data-agent-session-thread=\"990804\"] [data-agent-session-fix-checks=\"990805\"]:has([data-agent-session-fix-check] + [data-agent-session-fix-check]) [data-agent-session-fix-checks-go] + [data-agent-session-fix-checks-see]",
+      "expectText": "2 checks failed on this change",
+      "visual": true,
+      "id": "agent-session.fix-checks",
+      "impact": [
+        "frontend/src/features/agent-session/**",
+        "src/services/agent-sessions.js"
+      ]
+    },
+    {
       "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",
@@ -5450,15 +5462,17 @@
       ]
     },
     {
-      "name": "The Homeroom bot's DM pins an activity tray above its transcript: a strip naming what the bot is working on for you and the step it is at, which opens what it is doing now and its history (#3692)",
+      "name": "The Homeroom bot's DM says under its name what the bot is working on for you, and that line opens its activity panel at any time (#3692); in the transcript, each piece of its work is one activity card where it started, with its step of the request's steps while it goes (#3736)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane > [data-bot-work-tray] > button[data-bot-work-strip][aria-expanded=\"false\"][aria-controls=\"messages-bot-work-panel\"]",
-      "expectText": "Working on: Staging demo app #14 · building",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane:has([data-bot-activity=working] [aria-label=\"Step 3 of 6: Build it\"]) > .messages-thread-header [data-bot-work-toggle][aria-expanded=false]:has([data-bot-work-status=working])",
+      "expectText": "Working on 2",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,
       "impact": [
         "frontend/src/features/messages/**",
         "src/services/homeroom-bot-tray.js",
+        "src/services/homeroom-bot-activity.js",
+        "src/services/staging-messages.js",
         "src/services/conversations.js",
         "src/routes/conversations.js"
       ]

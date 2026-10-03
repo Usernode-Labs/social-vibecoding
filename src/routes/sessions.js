@@ -43,6 +43,7 @@ const {
   getAppConventions,
   getSelfHostedRefuseList,
   getDesignGuidance,
+  runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
 } = require('../services/prompts');
 const {
@@ -11548,15 +11549,20 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   // ahead of them, rather than as the contract's closing line.
   const buildContractBlock = `${buildContract.buildContractBlock({ commits: 'agent', summary: false })}
 ${DEV_CHAT_SUMMARY_RULE}`;
-  // #2817: the same design guidance for every backend. Only its self-check
-  // differs: OpenRouter models read text, Claude reads screenshots.
-  const designGuidance = getDesignGuidance({ readsImages: !isCodexSession });
   // The CLI that runs the turn decides how the handbook travels: Claude Code
   // (on Anthropic's models or, since #3296, an OpenRouter model) takes it as
   // system context; Codex and a local run keep it inline. It used to follow
   // the backend, so GLM in Claude Code still carried the 165 KB handbook in
   // every user message.
-  const buildTransport = (harness) => {
+  //
+  // #2817: the same design guidance for every backend. Only its self-check
+  // differs, by what the model running the turn can see: screenshots for
+  // Claude and for an OpenRouter model whose catalog entry lists image input,
+  // the accessibility snapshot for a text-only one. That too used to follow
+  // the backend, which told GLM 5.3 Flash, a model that takes images and is
+  // handed its screenshots by either runner, that it read text only.
+  const buildTransport = (harness, readsImages) => {
+    const designGuidance = getDesignGuidance({ readsImages });
     const conventions = buildCodingAgentConventionsContext({
       runLocally, isCodexSession, harness, designGuidance,
     });
@@ -11567,7 +11573,10 @@ ${DEV_CHAT_SUMMARY_RULE}`;
       }),
     };
   };
-  const transport = buildTransport(agentIdentity.harness);
+  // Claude on Anthropic reads images. An OpenRouter attempt is sent
+  // openRouterBuildFor's rendering instead; until its runtime resolves, what
+  // its model can see is unknown, and unknown is no.
+  const transport = buildTransport(agentIdentity.harness, !isCodexSession);
   const conventionsContext = transport.conventions;
   const workflowGuidance = buildHostedCodingWorkflowGuidance({ runLocally });
   const renderClaudePrompt = (renderedSpecBlock, { conventions, guidance } = transport) => `${taskBlock}
@@ -11609,17 +11618,20 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
   // gets the exact complete task it received before this optimization.
   const claudeResumeFallbackPrompt = reuseHostedScoutSpec ? fullClaudePrompt : null;
   // An OpenRouter turn's CLI is settled only at dispatch, where
-  // resolveCodexRuntimeContext resolves harness 'auto' from the per-model map.
-  // Render both prompts so the attempt always gets the one for the CLI that
-  // actually runs, even if the map moves between here and there.
-  const openRouterBuildPrompts = isCodexSession && !runLocally
-    ? Object.fromEntries(['codex', 'claude'].map((harness) => {
-      const t = buildTransport(harness);
-      return [harness, {
+  // resolveCodexRuntimeContext resolves harness 'auto' from the per-model map,
+  // and so is whether its model takes images (the catalog flag the runner
+  // passes screenshots through on, prompts.runtimeReadsImages). Render the
+  // attempt's prompt from that runtime, so it always gets the one for the CLI
+  // that actually runs and a self-check its model can actually do, even if
+  // the map or the catalog moves between here and there.
+  const openRouterBuildFor = isCodexSession && !runLocally
+    ? (ctx) => {
+      const t = buildTransport(ctx.agentHarness === 'claude' ? 'claude' : 'codex', runtimeReadsImages(ctx));
+      return {
         prompt: renderClaudePrompt(specContext.fullBlock, t),
         systemPrompt: t.conventions.systemPrompt,
-      }];
-    }))
+      };
+    }
     : null;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
@@ -12191,9 +12203,9 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
         // An OpenRouter attempt: the prompt and system context rendered for the
-        // CLI its runtime resolved (see openRouterBuildPrompts above).
-        const openRouterBuild = !isClaudeDispatch && openRouterBuildPrompts
-          ? openRouterBuildPrompts[ctx.agentHarness === 'claude' ? 'claude' : 'codex']
+        // runtime it resolved (see openRouterBuildFor above).
+        const openRouterBuild = !isClaudeDispatch && openRouterBuildFor
+          ? openRouterBuildFor(ctx)
           : null;
         return worker.execInWorker(session.id, {
           mode: 'build',

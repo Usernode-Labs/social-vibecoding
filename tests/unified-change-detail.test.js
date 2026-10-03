@@ -5,13 +5,15 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
-function context(user = { id: 42, username: 'Builder' }) {
-  const c = { console, App: { user, currentApp: 'example', currentTab: 'dev', _appUrl: (slug, tab, ref) => `#app/${slug}/${tab}/issues/${ref?.id}` },
+// `extra.App` adds to the App stub (a recording switchTab, say) and
+// `extra.location` is the one a navigation writes, for a test to read back.
+function context(user = { id: 42, username: 'Builder' }, extra = {}) {
+  const c = { console, App: { user, currentApp: 'example', currentTab: 'dev', _appUrl: (slug, tab, ref) => `#app/${slug}/${tab}/issues/${ref?.id}`, ...extra.App },
     relTime: () => 'just now',
     document: { getElementById: () => null, querySelector: () => null, addEventListener() {} },
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval,
-    location: { search: '', hash: '' }, URLSearchParams };
+    location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
   vm.createContext(c);
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
@@ -472,6 +474,79 @@ test('Continue building navigates to the dev session page from every surface', (
   assert.deepEqual(routes, [4073]);
   assert.ok(!/dispatchEvent\(new CustomEvent\('change-workspace-open'/.test(source),
     'the event has no publisher left');
+});
+
+// #3712: a change up for a vote that its owner started from an agent session.
+// The page's own read (/api/apps/:slug/proposals/:id) names the conversation,
+// so the door says "Continue in agent session"; pressing it re-found the
+// change by id, reached the board's list row first, and that row did not name
+// it — so the door opened the dev session, whose strip said "Continue" again.
+test('Continue in agent session goes straight to the conversation (#3712)', () => {
+  const location = { search: '', hash: '' };
+  const sessions = [];
+  const av = context(undefined, { location, App: { switchTab: (...args) => sessions.push(args) } });
+  const promoted = { ...failing, status: 'promoted', pr_number: 12 };
+  // The board's copy as /promoted served it before: no agent_session_id.
+  av._proposals = [{ ...promoted }];
+  const page = av._topicViewFor('proposal', { ...promoted, agent_session_id: 7301 });
+  const door = page.card.actions.find((a) => a.key === 'build');
+  assert.equal(door.label, 'Continue in agent session');
+  av[door.act.fn](...door.act.args);
+  // Assigned, not replaced: Back from the conversation is the change page.
+  assert.equal(location.hash, '#messages/agent/7301');
+  assert.deepEqual(sessions, [], 'never by way of the dev session page');
+
+  // The board's copy names it now, so the card's ⋯ "Open session" goes there
+  // too, with no change page drawn first.
+  av._changeItems.clear();
+  av._proposals = [{ ...promoted, agent_session_id: 7301 }];
+  location.hash = '';
+  const open = av._proposalMenuItems(av._proposals[0], { mine: true, imported: false })
+    .find((a) => a.label === 'Open session');
+  open.act();
+  assert.equal(location.hash, '#messages/agent/7301');
+  assert.deepEqual(sessions, []);
+});
+
+test('only the owner is sent to the agent session; everyone else keeps their door (#3712)', () => {
+  const change = { ...failing, status: 'promoted', agent_session_id: 7301 };
+  const setup = (user) => {
+    const location = { search: '', hash: '' };
+    const sessions = [];
+    const av = context(user, { location, App: { switchTab: (...args) => sessions.push(args) } });
+    return { av, location, sessions };
+  };
+  // Somebody else's private change: no door, and nothing resolves to the
+  // conversation, which answers to its owner alone.
+  const reader = setup({ id: 99 });
+  reader.av._proposals = [change];
+  assert.equal(reader.av._topicViewFor('proposal', change).body.build, null);
+  assert.equal(reader.av._agentSessionDoorId(change.id), null);
+  // A published chat is read where it was published, the dev session page.
+  const published = { ...change, transcript_shared: true };
+  reader.av._proposals = [published];
+  const door = reader.av._topicViewFor('proposal', published).card.actions.find((a) => a.key === 'build');
+  assert.equal(door.label, 'Read the build');
+  reader.av[door.act.fn](...door.act.args);
+  assert.equal(reader.location.hash, '');
+  assert.deepEqual(reader.sessions, [['dev', change.id, 'sessions']]);
+  // The owner's change with no conversation behind it keeps its dev session,
+  // and an imported pull request has no door at all.
+  const owner = setup();
+  owner.av._proposals = [{ ...change, agent_session_id: null }];
+  owner.av.openChangeWorkspace(change.id);
+  assert.equal(owner.location.hash, '');
+  assert.deepEqual(owner.sessions, [['dev', change.id, 'sessions']]);
+  owner.av._proposals = [{ ...change, source: 'imported' }];
+  assert.equal(owner.av._agentSessionDoorId(change.id), null);
+});
+
+test("the board's copy of a change up for a vote names its agent session (#3712)", () => {
+  const source = fs.readFileSync('src/routes/votes.js', 'utf8');
+  const start = source.indexOf("router.get('/api/apps/:slug/promoted'");
+  assert.ok(start > 0);
+  const select = source.slice(start, source.indexOf('FROM chat_sessions cs', start));
+  assert.match(select, /\n\s+cs\.agent_session_id,\n/);
 });
 
 test('an old ?conversation=workspace link lands on the dev session page', () => {

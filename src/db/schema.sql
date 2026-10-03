@@ -9884,6 +9884,13 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_turns (
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_turns_user
   ON homeroom_bot_dm_turns(user_id, created_at DESC);
 COMMENT ON TABLE homeroom_bot_dm_turns IS 'staging:private';
+-- #3733: how a turn went, still without the words. `failures` holds every
+-- model request or step that failed on the way, recovered or not, as
+-- "where:code[:HTTP status]" (r2:rate_limited:429, plain:timeout,
+-- context:history:57P01); `fallback` what answered when the model could not
+-- (posted, records, key, plain, broken). `error` stays why it could not.
+ALTER TABLE homeroom_bot_dm_turns ADD COLUMN IF NOT EXISTS failures TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE homeroom_bot_dm_turns ADD COLUMN IF NOT EXISTS fallback TEXT;
 
 -- #3624 stage 2: something the bot offered to do in a DM, done only when
 -- the person taps to confirm (today: file a new request on a project). The
