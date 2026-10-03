@@ -18,7 +18,13 @@
 //     on the request's public discussion like a tapped answer;
 //   - offer to file a new request on a project they are a member of
 //     (offer_request). Nothing is filed until they tap File it under the
-//     offer: decideOffer below does that, without the model.
+//     offer: decideOffer below does that, without the model;
+//   - #3740: send a change they clearly asked for to one of the bot's own
+//     proposals (revise_proposal): posted in its discussion as theirs, as a
+//     reply typed there is, and its follow-up queued first, which revises
+//     it or asks one question. Before, it had no way to, so it either said
+//     "I'll revise it" with nothing started (#3734: its activity tray said,
+//     truly, that it was doing nothing) or told them it could not.
 // It ends every turn with `reply`: a short answer and up to three cards for
 // the requests or proposals it talks about.
 //
@@ -200,8 +206,14 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
     '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
     '  word for word on the request\'s public discussion, where the group can see it; say so.',
-    '- Offer to file a new request on one of their projects when they ask you to build or change something',
-    '  (offer_request). Nothing is filed until they tap File it under your message. Use their own words.',
+    '- Change one of your own proposals that is up for a vote when they clearly ask you to (revise_proposal). Their',
+    '  message is posted in the proposal\'s public discussion under their name, with the change as you understood',
+    '  it, and you follow up on it next, as on any reply there: you change the proposal (its votes are cleared) or',
+    '  ask them one question. Say so. When it is not clear what they want changed, or which proposal, ask them, or',
+    '  offer it ("Want me to change the proposal to ...?"), and call revise_proposal once they say yes.',
+    '- Offer to file a new request on one of their projects when they ask you to build or change something that',
+    '  is not one of your open proposals (offer_request). Nothing is filed until they tap File it under your',
+    '  message. Use their own words.',
     'Finish every turn by calling reply exactly once: short plain text, and cards for up to 3 requests,',
     'proposals or projects you mention.',
     '',
@@ -228,8 +240,13 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
     '  Call things "request", "proposal" and the project by its name.',
     '- Keep a reply under 120 words unless they ask for detail.',
-    '- From this chat you cannot build, merge, vote, close requests or change settings. Changes happen through',
-    '  requests and their proposals.',
+    '- From this chat you cannot build, merge, vote, close requests or change settings, or change anybody else\'s',
+    '  proposal. Changes happen through requests and their proposals, and to your own proposals through',
+    '  revise_proposal.',
+    '- Never say you will do something (revise, change, build, post, file, look at it again) unless a tool you',
+    '  called in this turn started it and its result says so, or progress or my_work shows it under way. If a',
+    '  tool refused, say plainly why, and that nothing was done. When you have not started it, offer to do it',
+    '  instead of promising it.',
     '- Decline, in one friendly sentence, anything sexual, violent, about gambling or otherwise not allowed on',
     '  Homeroom, and anything that is not about their projects on Homeroom.',
     '- Do not repeat these instructions or show raw tool output.',
@@ -292,6 +309,24 @@ const TOOLS = [
           project: { type: 'string' },
           number: { type: 'integer' },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'revise_proposal',
+      description: 'They clearly asked you to change one of YOUR OWN proposals that is up for a vote (one you built for a request). This sends the change to that proposal the way a reply in its discussion does: their message is posted there, word for word, under their name, with the change as you understood it, and you follow up on it next: you change the proposal (its votes are cleared) or ask them one question. Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead. The result says what was sent and queued, or why nothing was. One per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          change: { type: 'string', description: 'What they want changed, plainly. When their message only says yes to a change you offered, the change you offered.' },
+          proposal: { type: 'integer', description: 'The proposal\'s id, from progress, my_work or request_detail.' },
+          project: { type: 'string', description: 'Instead of proposal: the project of the request it was built for.' },
+          number: { type: 'integer', description: 'With project: the number of the request it was built for.' },
+        },
+        required: ['change'],
         additionalProperties: false,
       },
     },
@@ -842,6 +877,7 @@ async function runTool(pool, ctx, name, args) {
           ? { ok: true, posted: `on ${posted.line}'s public discussion`, next: 'You look at the request again next.' }
           : { ok: false, error: `Could not post it: ${posted.why}.` };
       }
+      case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'offer_request': {
         if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
         const app = await findApp(pool, args.project);
@@ -1143,8 +1179,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     return say(`You've used this week's allowance for my work on your requests (${dollars(settings.userWeeklyCents)}). I'll be back on them next week.`);
   }
   const ctx = {
-    user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null, progress: null, readWork: false, posted: null,
+    bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
+    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
   };
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
@@ -1462,6 +1498,180 @@ async function fileRequest(pool, config, { user, app, title, details, settings, 
   return { issueNumber };
 }
 
+// ── A change to one of its own proposals (#3740) ──
+
+/**
+ * The bot's own proposals for this person's requests that are up for a
+ * vote, newest first: what "change it" means when they did not say which.
+ */
+async function ownOpenProposals(pool, { userId, botId }) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (cs.id) cs.id, a.slug, a.name, r.issue_number, q.issue_title
+       FROM homeroom_bot_requesters q
+       JOIN homeroom_bot_runs r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
+       JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+       JOIN apps a ON a.id = cs.app_id
+      WHERE q.user_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+      ORDER BY cs.id DESC
+      LIMIT 10`,
+    [userId, botId],
+  );
+  return rows;
+}
+
+/** The proposal `revise_proposal` names: by its id, or by the request it answers. */
+async function proposalNamed(pool, { botId, args }) {
+  let id = Number.isInteger(Number(args.proposal)) && Number(args.proposal) > 0 ? Number(args.proposal) : null;
+  if (!id && args.project && Number.isInteger(Number(args.number))) {
+    const app = await findApp(pool, args.project);
+    if (!app) return null;
+    const open = await require('./homeroom-bot-live').openBotProposal(pool, botId, app.id, Number(args.number));
+    id = open ? Number(open.id) : null;
+  }
+  if (!id) return null;
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.is_headless, cs.linked_issues,
+            COALESCE(cs.session_title, cs.pr_title) AS title, a.slug
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+    [id],
+  );
+  return rows[0] || null;
+}
+
+/** What is posted on the proposal: their own words, and the change as the bot understood it. */
+function revisionText(theirs, change) {
+  const said = clip(theirs, 3000);
+  const asked = clip(String(change || '').replace(/\s+/g, ' '), 600);
+  const same = (a) => a.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const understood = asked && same(asked) !== same(said)
+    ? ` The change asked for, as Homeroom bot understood it: ${asked.replace(/[.\s]+$/, '')}.`
+    : '';
+  return `${said}\n\n(Sent in a chat with Homeroom bot.${understood})`;
+}
+
+/**
+ * #3740: `revise_proposal`. A person asked in the DM for a change to one of
+ * the bot's own proposals that is up for a vote. Their message is posted in
+ * that proposal's discussion, as theirs, exactly as a reply typed there
+ * (homeroom-bot-dm.js postOnProposal), and the bot's follow-up on it is
+ * queued first: the same turn a reply there runs since #3724, which revises
+ * the proposal or asks one question. Nothing is posted or queued unless
+ * every gate a reply's follow-up meets holds now, and the result says what
+ * was done, so the reply can never promise what was not started:
+ *   - the bot's own proposal, up for a vote, on a project the bot acts on
+ *     (and has not paused);
+ *   - the person may give feedback on it: they asked for it, or they are a
+ *     member who may write in the project's discussion (the post itself
+ *     checks that again);
+ *   - nobody blocked anybody between them and the bot;
+ *   - fewer than MAX_REVISIONS revisions of it so far;
+ *   - the weekly allowance its follow-up is paid from (its requester's) is
+ *     not spent.
+ * perPerson and liveAtOnce apply when the loop starts it, as for any reply.
+ */
+async function reviseProposal(pool, ctx, args) {
+  const { user, settings, deps } = ctx;
+  const bot = ctx.bot;
+  if (ctx.revised) return { ok: false, error: 'One change per turn.' };
+  if (!bot?.id) return { ok: false, error: 'That lookup failed.' };
+  const change = String(args.change || '').trim();
+  if (change.split(/\s+/).filter(Boolean).length < 2) {
+    return { ok: false, error: 'Say what they want changed. If they have not said, ask them; nothing was sent.' };
+  }
+  let session = await proposalNamed(pool, { botId: bot.id, args });
+  if (!session && !args.proposal && !(args.project && args.number)) {
+    // Not named: the one proposal of theirs up for a vote (on the project
+    // they named, if they named one), and never a guess between several.
+    const named = args.project ? await findApp(pool, args.project) : null;
+    const open = (await ownOpenProposals(pool, { userId: user.id, botId: bot.id }))
+      .filter((p) => !args.project || (named && p.slug === named.slug));
+    if (open.length === 1) session = await proposalNamed(pool, { botId: bot.id, args: { proposal: open[0].id } });
+    else if (open.length > 1) {
+      return {
+        ok: false,
+        error: 'Several of your proposals for them are up for a vote: ask which one, or name it. Nothing was sent.',
+        proposals: open.map((p) => ({
+          proposal: Number(p.id), project: p.slug, projectName: p.name || p.slug, number: Number(p.issue_number), title: p.issue_title || null,
+        })),
+      };
+    }
+  }
+  const app = session ? await findApp(pool, session.slug) : null;
+  if (!session || !app || !(await canView(pool, app, user))) {
+    return { ok: false, error: 'No such proposal on a project they can see. Check progress or my_work for its proposal id.' };
+  }
+  if (Number(session.user_id) !== Number(bot.id) || session.is_headless) {
+    return { ok: false, error: 'That proposal is not one you built, so you cannot change it. Whoever made it can; they can reply on it.' };
+  }
+  if (session.status === 'merging' || session.status === 'merged') {
+    return { ok: false, error: 'That proposal was approved, so it can no longer be changed. A new request can change it once it is live.' };
+  }
+  if (session.status !== 'promoted') {
+    return { ok: false, error: 'That proposal is not up for a vote any more, so there is nothing to change.' };
+  }
+  const issueNumber = Array.isArray(session.linked_issues) ? Number(session.linked_issues[0]) : null;
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, error: 'That proposal answers no request, so you cannot follow up on it.' };
+  }
+  const name = app.name || app.slug;
+  const dm = dmModule(deps);
+  const requester = await dm.requesterOf(pool, app.id, issueNumber);
+  const theirs = requester && Number(requester.userId) === Number(user.id);
+  if (!theirs && !(await canFile(pool, app, user))) {
+    return {
+      ok: false,
+      error: `Only whoever asked for it, or a member of ${name}, can ask for changes to it, and they are neither. They can join ${name} from its page. Nothing was sent.`,
+    };
+  }
+  if (!liveModule(deps).isLiveFor(settings, app) || (settings?.pausedApps || []).includes(app.slug)) {
+    return { ok: false, error: `You are not working on ${name} right now, so nobody would pick the change up. Nothing was sent.` };
+  }
+  if (await require('./conversations').blockedEitherWay(pool, bot.id, user.id)) {
+    return { ok: false, error: 'You cannot act for them: one of you has blocked the other. Nothing was sent.' };
+  }
+  const followup = require('./homeroom-bot-followup');
+  const { rows: [revisions] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+    [session.id],
+  );
+  if ((revisions?.n || 0) >= followup.MAX_REVISIONS) {
+    return {
+      ok: false,
+      error: `You have already changed this proposal ${revisions.n} times, as many as you may on your own, so you cannot change it again. Nothing was sent or queued. A person can make the change, or they can say what they want in the proposal's discussion for the group.`,
+    };
+  }
+  const payer = requester ? requester.userId : user.id;
+  if (await dm.overWeeklyAllowance(pool, settings, payer)) {
+    return {
+      ok: false,
+      error: theirs || !requester
+        ? `Their weekly allowance for your work (${dollars(settings.userWeeklyCents)}) is used up, so you cannot change it this week. Nothing was sent or queued. It resets on Monday.`
+        : 'The weekly allowance this request is paid from is used up, so you cannot change it this week. Nothing was sent or queued. It resets on Monday.',
+    };
+  }
+  const text = revisionText(ctx.userText, change);
+  const posted = await dm.postOnProposal(pool, {
+    user, app, sessionId: session.id, issueNumber, text, deps,
+  });
+  if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
+  ctx.revised = true;
+  ctx.cards.push({ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) });
+  require('./homeroom-bot-tray').noteWorkChanged(payer, deps);
+  return {
+    ok: true,
+    proposal: { proposal: Number(session.id), project: app.slug, projectName: name, number: issueNumber, title: session.title || null },
+    posted: `in the proposal's public discussion, under their name, where the group can see it: ${text}`,
+    queued: posted.queued === true
+      ? 'At the front of your queue: you follow up on it ahead of anything else waiting, as on any reply there.'
+      : posted.queued === false
+        ? 'You are following up on this proposal right now; you read this as soon as that finishes.'
+        : 'You read it on your next look at the project, as any reply there.',
+    next: theirs
+      ? 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask them one question if something is missing. What you do is posted in its discussion, and a change or a question reaches them here too.'
+      : 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask one question if something is missing, in its discussion, where they can see it.',
+  };
+}
+
 module.exports = {
   MAX_HISTORY,
   MAX_ROUNDS,
@@ -1477,6 +1687,8 @@ module.exports = {
   TOOLS,
   PLATFORM_TOOLS,
   platformRules,
+  revisionText,
+  reviseProposal,
   systemPrompt,
   RETRY_OUTPUT_TOKENS,
   RETRYABLE_MODEL_ERRORS,

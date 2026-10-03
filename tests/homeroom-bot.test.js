@@ -1213,16 +1213,19 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit
   // actually binds sits with it, so the pin allows what sits between.
-  assert.match(dispatch, /mode: 'scout',[\s\S]{0,1200}?\n\s*prompt,/, 'so does the container exec');
+  // The prompt is rendered at dispatch, for what the turn's model can see.
+  assert.match(dispatch, /mode: 'scout',[\s\S]{0,1200}?\n\s*prompt: turnPrompt,/, 'so does the container exec');
   assert.ok(!/mode: 'build'/.test(dispatch), 'never a build turn');
   assert.ok(!/telemetryComponent: 'coding_agent_build'/.test(dispatch));
   for (const forbidden of ['createIssueComment', 'claimIssueForUser', 'sendSystemMessage', 'createNotification', '/promote', 'clone-headless', 'linked_issues = ']) {
     assert.ok(!SRC.includes(forbidden), `shadow mode never reaches ${forbidden}`);
   }
   // The runner blanks the push token in scout mode — the structural half of
-  // "nothing is built". (The Codex runner refuses shots turns outright.)
+  // "nothing is built". (The Codex runner refuses shots turns outright.) The
+  // triage runs in the CLI its model is mapped to (#3296), so both runners.
   const runner = read('worker/run-codex-agent.sh');
   assert.match(runner, /if \[ "\$MODE" = "scout" \]; then\s*\n\s*WORKER_JWT=""/);
+  assert.match(read('worker/run-cc.sh'), /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "shots" \]; then\s*\n\s*WORKER_JWT=""/);
 });
 
 test('the bot session is not work on any issue: is_headless FALSE, empty linked_issues, paused at rest', () => {

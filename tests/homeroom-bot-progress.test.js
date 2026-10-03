@@ -81,6 +81,20 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(stage({ ...open, check_state: 'skipped' }).stage, 'vote');
   assert.equal(stage({ ...open, check_state: 'failing', started_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fixing');
   assert.equal(stage({ ...open, started_at: ago(1), queue_reason: 'changed' }).stage, 'revising');
+  // #3734: a follow-up waiting its turn is the bot's next step, not the vote:
+  // a change asked for in the DM (#3740), a reply, or its own red checks.
+  assert.deepEqual(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 }), {
+    stage: 'followup_queued', since: ago(1), doing: 'waiting in the queue (number 1) to follow up on the newest replies on its proposal',
+  });
+  assert.equal(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }).stage, 'followup_queued',
+    'a reply since the question is read next');
+  assert.deepEqual(stage({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), {
+    stage: 'fix_queued', since: ago(1), doing: 'waiting in the queue to fix its failing checks',
+  });
+  assert.equal(stage({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }).stage, 'merging',
+    'a proposal being merged is not followed up on');
+  assert.equal(progress.stepNumber('followup_queued', false), 5);
+  assert.equal(progress.stepNumber('fix_queued', false), 4);
   assert.equal(stage({ ...open, check_state: 'passing', question_at: ago(2) }).stage, 'question');
   assert.equal(stage({ proposal_status: 'merging', proposal_at: ago(2) }).stage, 'merging');
   assert.equal(stage({ proposal_status: 'merged' }), null, 'live is finished, not in progress');
@@ -88,6 +102,19 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'the build ran past its time limit' }),
     'the build did not succeed: the build ran past its time limit');
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
+});
+
+test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {
+  for (const name of ['setting_up', 'queued', 'reading', 'starting', 'planning', 'building', 'proposing',
+    'followup_queued', 'revising', 'fix_queued', 'fixing', 'merging']) {
+    assert.equal(progress.inFlight({ stage: name }), true, name);
+  }
+  for (const name of ['question', 'vote', 'checks', 'checks_failed', 'held', 'stalled']) {
+    assert.equal(progress.inFlight({ stage: name }), false, name);
+  }
+  assert.equal(progress.inFlight({ stage: 'setting_up', waitingOn: 'them' }), false, 'a project waiting for its secrets waits on them');
+  assert.equal(progress.inFlight(null), false);
+  for (const busy of progress.BUSY_STAGES) assert.ok(progress.IN_FLIGHT_STAGES.has(busy), `${busy}: busy is in flight`);
 });
 
 test('a first version\'s setup: which part runs, when this process knows', () => {

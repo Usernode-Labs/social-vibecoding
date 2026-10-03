@@ -129,6 +129,21 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #3736: how far along each activity card in the signed-in person's DM
+  // with the Homeroom bot is (services/homeroom-bot-activity.js): one piece
+  // of the bot's work per card, read from its records. Their own cards only:
+  // it takes no user, conversation or message parameter.
+  router.get('/api/conversations/homeroom-bot/activity', async (req, res) => {
+    try {
+      const activity = require('../services/homeroom-bot-activity');
+      if (isDemo(req)) return res.json(await activity.demoCards(pool, req.user));
+      return res.json(await activity.cardsFor(pool, { user: req.user, config }));
+    } catch (err) {
+      log.error('conversations', 'homeroom bot activity failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #3660: what the Homeroom links in a message are, for this viewer.
   //
   //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |

@@ -45,6 +45,9 @@
 #                              same slug); OPENROUTER_API_BASE,
 #                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
 #                              AGENT_REASONING_EFFORT are optional.
+#   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
+#                              pushes nothing (the Homeroom bot's turns);
+#                              needs TURN_JOURNAL to read the final result
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -500,6 +503,32 @@ if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   echo "__USERNODE_PHASE__ done"
   echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE"
   exit "$CC_EXIT"
+fi
+
+# A failed turn's work is neither committed nor pushed when the platform asks
+# (DISCARD_FAILED_TURN=1: the Homeroom bot's OpenRouter builds, whose push is
+# what the bot proposes, or a revision of a proposal already up for a vote),
+# exactly as run-codex-agent.sh treats every failed turn. Failed is claude
+# exiting non-zero, or, read from this turn's journal, its final result
+# reporting an error or ending on the runtime's own "API Error" notice, which
+# Claude Code can exit 0 after (agent-api-failure.js: the definition the
+# platform judges the turn by). Otherwise a failed turn's work is kept, which
+# a person's dev chat wants. The next turn starts from the session branch as
+# GitHub has it, so nothing discarded here survives it.
+if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
+  TURN_FAILED=""
+  if [ "$CC_EXIT" -ne 0 ]; then
+    TURN_FAILED="claude exited non-zero ($CC_EXIT)"
+  elif [ -n "${TURN_JOURNAL:-}" ] && [ -f "$TURN_JOURNAL" ]; then
+    TURN_FAILED=$(node "$(dirname "$0")/agent-api-failure.js" "$TURN_JOURNAL" 2>/dev/null || true)
+  fi
+  if [ -n "$TURN_FAILED" ]; then
+    echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"
+    echo "__USERNODE_PHASE__ done"
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build"
+    if [ "$CC_EXIT" -ne 0 ]; then exit "$CC_EXIT"; fi
+    exit 1
+  fi
 fi
 
 # The platform-side push proxy pushes the session's own branch, never the

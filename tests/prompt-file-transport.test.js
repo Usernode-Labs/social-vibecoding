@@ -89,12 +89,12 @@ test('the CLI that runs an OpenRouter turn decides the transport, not the backen
 
   const sessionsSource = read('src/routes/sessions.js');
   assert.match(sessionsSource, /if \(runLocally \|\| \(isCodexSession && harness !== 'claude'\)\) \{/);
-  assert.match(sessionsSource, /const transport = buildTransport\(agentIdentity\.harness\);/);
-  // Both OpenRouter prompts are rendered, and the attempt takes the one for
-  // the CLI its runtime resolved — the harness map can move between the
-  // prompt render and dispatch.
-  assert.match(sessionsSource, /const openRouterBuildPrompts = isCodexSession && !runLocally\n\s+\? Object\.fromEntries\(\['codex', 'claude'\]\.map\(\(harness\) => \{/);
-  assert.match(sessionsSource, /openRouterBuildPrompts\[ctx\.agentHarness === 'claude' \? 'claude' : 'codex'\]/);
+  assert.match(sessionsSource, /const transport = buildTransport\(agentIdentity\.harness, !isCodexSession\);/);
+  // An OpenRouter attempt's prompt is rendered from the runtime it resolved:
+  // the CLI that runs it (the harness map can move between the prompt render
+  // and dispatch) and what its model can see.
+  assert.match(sessionsSource, /const openRouterBuildFor = isCodexSession && !runLocally\n\s+\? \(ctx\) => \{\n\s+const t = buildTransport\(ctx\.agentHarness === 'claude' \? 'claude' : 'codex', runtimeReadsImages\(ctx\)\);/);
+  assert.match(sessionsSource, /const openRouterBuild = !isClaudeDispatch && openRouterBuildFor\n\s+\? openRouterBuildFor\(ctx\)/);
   assert.match(sessionsSource, /prompt: openRouterBuild \? openRouterBuild\.prompt : claudePrompt,/);
   assert.match(sessionsSource, /systemPrompt: isClaudeDispatch\n\s+\? conventionsContext\.systemPrompt\n\s+: \(openRouterBuild \? openRouterBuild\.systemPrompt : null\),/);
   // The worker takes a system prompt from any turn that runs Claude Code, and
