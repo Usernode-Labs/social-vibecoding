@@ -1837,7 +1837,6 @@ test('the placement recognizer owns the grid, and the flow reorder is gone', () 
     /^  buildYoursOrder\(/m,
     /^  _syncPanelSlotPosition\(/m,
     /^  _onCardPointerDown\(/m,
-    /fetch\('\/api\/favorites\/order'/,
     /HomePanels\?\.setPosition/,
     // …and the widget half of the placement, retired by THE UI OVERHAUL.
     /HomePanels\?\.gridSlotKeys/,
@@ -1845,6 +1844,16 @@ test('the placement recognizer owns the grid, and the flow reorder is gone', () 
   ]) {
     assert.doesNotMatch(HOME, dead, `${dead} should be gone from home.js`);
   }
+  // The drag path keeps its hands off the flow endpoint — its retirement
+  // stands. The Shortcuts Sort menu (#3750) writes the endpoint from
+  // sortShortcuts instead, a one-shot menu action and not a gesture path,
+  // so the endpoint's ONE legitimate call site is that method.
+  const place = HOME.match(/_onGridPlace\(el, cell, cols\) \{[\s\S]*?\n {2}\},/)[0];
+  assert.doesNotMatch(place, /favorites\/order/, 'a drop must not write the flow order');
+  assert.doesNotMatch(HOME, /attachGridPlacement[\s\S]{0,2000}favorites\/order/,
+    'the placement recognizer must not reach the flow order either');
+  assert.match(HOME, /sortShortcuts\(mode\) \{[\s\S]*?fetch\('\/api\/favorites\/order'/,
+    'the Sort menu is the one writer of the flow order');
 });
 
 test('a drop writes the whole width through PUT /api/home-layout', () => {

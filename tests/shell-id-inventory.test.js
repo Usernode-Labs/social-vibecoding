@@ -319,6 +319,8 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'report-modal': '#2721 shared reporting dialog',
+  // ── #3750: the Shortcuts grid gets a Sort menu ──────────────────
+  'home-shortcuts-sort': 'The Shortcuts heading\'s "Sort" control: a menu over the grid\'s arrangement (A–Z, Z–A, Manual). Renders into the prerendered shell beside the label, like Discover\'s #home-browse-btn; the menu itself is the kit\'s adaptive menu and exists only while open.',
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
   // in the viewer's own clock (it prerenders the server's UTC boundary).
   'settings-spend-reset': '#3230 spend card reset line, localized at reveal',

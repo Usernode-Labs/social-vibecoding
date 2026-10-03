@@ -96,6 +96,14 @@ import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
+// Home is read off `window` at call time rather than imported — the same
+// pattern ./panels/ui.tsx uses for HomePanels. Importing it would make the
+// module graph circular for no gain: home.js is already part of this island's
+// graph (three imports down), and every call happens long after it evaluated.
+function home(): any {
+  return typeof window !== 'undefined' ? (window as any).Home : null;
+}
+
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
 // and home-panels.js is read by home.js's grid renderer. Each still publishes
@@ -260,7 +268,7 @@ export function HomeScreen() {
               "Add to Shortcuts", the browse screen's badge), because two
               names for one collection is worse than either.
           */}
-          <SectionHeading>Shortcuts</SectionHeading>
+          <SectionHeading action={<ShortcutsSort />}>Shortcuts</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -337,5 +345,41 @@ export function HomeScreen() {
         */}
       </div>
     </main>
+  );
+}
+
+/**
+ * The Shortcuts heading's one action (issue #3750): a Sort menu over the
+ * grid's arrangement — A–Z, Z–A or Manual.
+ *
+ * Presentation is kit-owned (`PlatformUI.menu`, via Home.sortShortcutsMenu):
+ * a bottom sheet on touch, a small popover anchored to the button on
+ * desktop — the same adaptive menu the app tiles' ⋯ menus use, so nothing
+ * new to learn visually. The menu is the VIEW; the ordering itself and both
+ * persistence writes live in home.js (sortShortcuts), the same owner split
+ * the card menu conversion made: markup in React, logic in the controller.
+ *
+ * Styled like Discover's BrowseLink beside its heading — 14px semibold in
+ * the brand accent, no glyph — so a heading row stays label + action.
+ */
+function ShortcutsSort() {
+  return (
+    <button
+      type="button"
+      id="home-shortcuts-sort"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+      title="Sort your shortcuts"
+      aria-label="Sort shortcuts"
+      aria-haspopup="menu"
+      onClick={(e) => {
+        e.stopPropagation();
+        const n = home();
+        if (n && typeof n.sortShortcutsMenu === 'function') {
+          n.sortShortcutsMenu(e.currentTarget);
+        }
+      }}
+    >
+      <span className="whitespace-nowrap">Sort</span>
+    </button>
   );
 }

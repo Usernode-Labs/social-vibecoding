@@ -290,6 +290,25 @@ const HomeLayout = {
 
 
 
+  // ── Alphabetical ordering ─────────────────────────────────────────
+
+  // The comparator the Shortcuts grid's Sort menu (issue #3750) orders the
+  // viewer's tiles by: case-insensitive and locale-aware ("LIVE TRANSLATION"
+  // sits beside "Last One Wing", not after every lowercase name), with the
+  // slug breaking exact name ties so the order is STABLE across devices —
+  // two apps named the same thing always land the same way.
+  nameComparator(a, b) {
+    const byName = String(a.name || '').localeCompare(
+      String(b.name || ''), undefined, { sensitivity: 'accent' },
+    );
+    if (byName !== 0) return byName;
+    return String(a.slug || '').localeCompare(
+      String(b.slug || ''), undefined, { sensitivity: 'accent' },
+    );
+  },
+
+
+
   // ── Repair ─────────────────────────────────────────────────────────
 
   // Reconcile a stored layout against what actually exists right now:

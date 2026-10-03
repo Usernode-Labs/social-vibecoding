@@ -429,6 +429,60 @@ test('deriveDefault tolerates a missing app list', () => {
   assert.deepEqual(HomeLayout.deriveDefault({ cols: COLS }), []);
 });
 
+// ── nameComparator — the Sort menu's ordering (#3750) ────────────────
+
+test('nameComparator orders case-insensitively and breaks ties by slug', () => {
+  // "LIVE TRANSLATION" must sit beside "Last One Wing", not after every
+  // lowercase name — the reporter's own example. Pure names, no tie.
+  const apps = [
+    { slug: 'game-corner', name: 'Game Corner' },
+    { slug: 'live-translation', name: 'LIVE TRANSLATION' },
+    { slug: 'last-one-wing', name: 'Last One Wing' },
+    { slug: 'appraise', name: 'Appraise' },
+  ];
+  assert.deepEqual(
+    apps.slice().sort(HomeLayout.nameComparator).map((a) => a.slug),
+    ['appraise', 'game-corner', 'last-one-wing', 'live-translation'],
+  );
+  // Two apps named the same thing land the same way everywhere: the slug
+  // breaks the tie, so the order is stable across devices.
+  const tied = [
+    { slug: 'b-notes', name: 'Notes' },
+    { slug: 'a-notes', name: 'Notes' },
+  ];
+  assert.deepEqual(
+    tied.slice().sort(HomeLayout.nameComparator).map((a) => a.slug),
+    ['a-notes', 'b-notes'],
+  );
+});
+
+test('nameComparator reverses for Z–A without inverting the tie-break', () => {
+  // Z–A is sort-with-the-comparator-then-reverse-the-ARRAY (home.js's
+  // sortShortcuts rule): the whole order flips, tie-break included, which
+  // is what a person reading the grid would call "reverse alphabetical".
+  const apps = [
+    { slug: 'appraise', name: 'Appraise' },
+    { slug: 'live-translation', name: 'LIVE TRANSLATION' },
+    { slug: 'last-one-wing', name: 'Last One Wing' },
+  ];
+  const za = apps.slice().sort(HomeLayout.nameComparator).reverse();
+  assert.deepEqual(
+    za.map((a) => a.slug),
+    ['live-translation', 'last-one-wing', 'appraise'],
+  );
+  // Reversing the ARRAY reverses the slug tie-break WITH the names —
+  // b-notes lands before a-notes. That is the intended Z–A shape, not an
+  // accident to undo.
+  const tied = [
+    { slug: 'b-notes', name: 'Notes' },
+    { slug: 'a-notes', name: 'Notes' },
+  ];
+  assert.deepEqual(
+    tied.slice().sort(HomeLayout.nameComparator).reverse().map((a) => a.slug),
+    ['b-notes', 'a-notes'],
+  );
+});
+
 // ── repair, which is also the migration ───────────────────────────────
 
 test('repair drops what is gone and adds what is new', () => {

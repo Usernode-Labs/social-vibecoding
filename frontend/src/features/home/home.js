@@ -3880,6 +3880,87 @@ const Home = {
 
   // ── Menu actions ──────────────────────────────────────────────────
 
+  // ── Shortcuts Sort (issue #3750) ─────────────────────────────────
+
+  // The heading's Sort menu rows, handed to the kit's adaptive menu
+  // (bottom sheet on touch, popover on desktop — the same presenter the
+  // app tiles' ⋯ menu uses). One-shot, per the request: there is no
+  // remembered "mode", Manual is the resting state, and a later drag is
+  // free to leave the grid wherever the viewer drops it.
+  sortShortcutsMenu(anchor) {
+    const ui = (typeof PlatformUI !== 'undefined' && PlatformUI.menu)
+      ? PlatformUI : null;
+    if (!ui || typeof ui.menu !== 'function') return;
+    void ui.menu({
+      anchorEl: anchor || undefined,
+      items: [
+        {
+          label: 'Sort A–Z',
+          title: 'Arrange your shortcuts alphabetically by app name',
+          handler: () => { Home.sortShortcuts('az'); },
+        },
+        {
+          label: 'Sort Z–A',
+          title: 'Arrange your shortcuts in reverse alphabetical order',
+          handler: () => { Home.sortShortcuts('za'); },
+        },
+        {
+          label: 'Manual',
+          title: 'Keep your current arrangement, including any drag-and-drop order',
+          handler: () => { Home.sortShortcuts('manual'); },
+        },
+      ],
+    });
+  },
+
+  // One-shot sort of the Shortcuts grid. 'manual' is the resting state —
+  // the stored arrangement already wins in currentLayout, so it changes
+  // nothing and writes nothing. 'az' / 'za' order the viewer's apps by
+  // name (HomeLayout.nameComparator) and pack them into a clean
+  // reading-order grid: A–Z keeps the comparator as it is, Z–A sorts with
+  // it and then REVERSES the array, so the whole order — tie-break
+  // included — flips the way a person reading the shelf would expect.
+  // Then it repaints optimistically and persists BOTH the arrangement
+  // (PUT /api/home-layout) and the fallback flow order (PUT
+  // /api/favorites/order) — so the order survives on the next visit and on
+  // another signed-in device whichever derivation a fresh load takes.
+  //
+  // The favorites write is fire-and-forget and non-fatal on failure: the
+  // stored layout is the authoritative arrangement, so a failed reorder of
+  // the derivation says nothing worth a toast over. A layout-write failure
+  // keeps _persistLayout's own toast + forced refetch + repaint.
+  //
+  // The staging demo payload (?demo=1) is read-only by the contract
+  // _persistLayout already enforces for drags: repaint only, write nothing.
+  sortShortcuts(mode) {
+    if (mode !== 'az' && mode !== 'za') return;
+    const cols = Home.currentCols();
+    const { yours } = Home.partitionApps(Home._apps || []);
+    const sorted = yours.slice().sort(HomeLayout.nameComparator);
+    if (mode === 'za') sorted.reverse();
+    const sortedSlugs = sorted.map((a) => a.slug);
+    const layout = HomeLayout.deriveDefault({ apps: sortedSlugs, cols });
+    // Optimistic order, the same shape the drag commit uses: cache, repaint,
+    // then persist. The _dragActive deferral guard inside render() applies
+    // unchanged — a sort while a drag is in the air repaints after it lands.
+    Home._layouts[String(cols)] = layout;
+    Home._layoutCache = layout;
+    Home.render();
+    if (Home._layoutIsDemo) return;
+    Home._persistLayout(cols, layout);
+    // The route caps the list at 200 slugs (routes/apps.js); everything past
+    // the cap keeps its current relative order in the fallback derivation.
+    const body = { order: sortedSlugs.slice(0, 200) };
+    fetch('/api/favorites/order', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    }).catch((err) => {
+      console.warn('sortShortcuts: favorites order write failed', err);
+    });
+  },
+
   // Ask the Homeroom app to pin this app to the device homescreen. The
   // shortcut URL is the platform's own hash deep link (#app/<slug>), so
   // tapping it reopens the SV shell already navigated to the app — same
