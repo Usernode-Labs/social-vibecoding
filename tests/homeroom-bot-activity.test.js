@@ -575,8 +575,12 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
 test('the staging preview\'s declared check finds the card being built in the demo DM, beside the tray, and the card opening it gave work under way', () => {
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[data-bot-activity=working\] \[aria-label="Step 3 of 6: Build it"\]\)/);
-  assert.match(check.expectSelector, /:has\(\[data-bot-activity=working\] \[aria-label="Step 2 of 6: Write a plan"\]\)/);
+  // A step ring is drawn only while a card's work goes, and the panel (which
+  // leads its tiles with the same ring) is not drawn while it is closed, as
+  // the check requires: a ring here is a card in the transcript.
+  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[aria-label="Step 3 of 6: Build it"\]\)/);
+  assert.match(check.expectSelector, /:has\(\[aria-label="Step 2 of 6: Write a plan"\]\) > \.messages-thread-header /);
+  assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   assert.equal(check.expectText, 'Working on 3', 'the tray counts the work the new card follows');
   for (const file of ['src/services/homeroom-bot-activity.js', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
