@@ -86,6 +86,7 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingAgentSession(pool, config);
+  await seedStagingAgentFailingChecks(pool, config);
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
@@ -3402,6 +3403,106 @@ async function seedStagingAgentComposer(pool, ownerId) {
       WHERE agent_session_id = $1 AND role = 'assistant' AND COALESCE(cost_cents, 0) = 0`,
     [STAGING_AGENT_SESSION_ID]
   );
+}
+
+// #3755: an agent session whose change's checks FAILED, for the offer the
+// conversation makes then (frontend/src/features/agent-session/fix-checks.ts):
+// which checks failed, what each reported, and Fix it and See checks. The
+// 990801 fixture's change stays 'skipped', which the #3180 checks read, so
+// this is its sibling: the same owner (the check viewer), the platform app,
+// a build with its deployed preview, and the Mayor's reply; then a failing
+// verdict stored AFTER that reply, so nothing the owner has said answers it.
+// The verdict is put back on every boot, as 990801's card expiry is, with the
+// run's time moved to the boot: a Fix it pressed on one preview (where no
+// model is configured, so the turn is refused) answers that run only, and the
+// next boot offers it again. Idempotent on the ids; strict no-op outside
+// staging.
+const STAGING_AGENT_FAILING_SESSION_ID = 990804;
+const STAGING_AGENT_FAILING_CHANGE_ID = 990805;
+const STAGING_AGENT_FAILING_RESULTS = [
+  { name: 'Home loads for a signed-in member', path: '/', status: 'pass', consoleErrors: [] },
+  {
+    name: 'A checked item moves to the Done section', path: '/?shot=pending', status: 'fail', consoleErrors: [],
+    failureReason: 'Expected a checked row inside .done-items, found none (staging fixture)',
+  },
+  {
+    name: 'The Done toggle says how many are done', path: '/?shot=done', status: 'fail',
+    consoleErrors: [{ kind: 'error', message: "TypeError: Cannot read properties of undefined (reading 'length') (staging fixture)", source: 'app.js' }],
+  },
+];
+
+async function seedStagingAgentFailingChecks(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query('SELECT id, name FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging failing-checks agent fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging failing-checks agent fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, '[staging fixture] Done section, checks failing', 'manual', 'open', $3,
+             '{"entry":"improve"}'::jsonb, NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '9 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_FAILING_SESSION_ID, owner.id, app.id]
+  );
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, agent_session_id, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/agent-failing-checks', '[staging fixture] Done section', 'active', $4,
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_session_id = EXCLUDED.agent_session_id,
+                                    status = 'active'`,
+    [STAGING_AGENT_FAILING_CHANGE_ID, app.id, owner.id, STAGING_AGENT_FAILING_SESSION_ID]
+  );
+  await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
+    [STAGING_AGENT_FAILING_SESSION_ID, STAGING_AGENT_FAILING_CHANGE_ID]);
+
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_FAILING_SESSION_ID]
+  );
+  if (!existing.length) {
+    const codex = { agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash' };
+    const rows = [
+      [null, 'user', 'Show finished items in their own Done section under the list.', {}, 540],
+      [null, 'system', `Started a change on ${app.name || 'Homeroom'}: Done section`, { agentSessionEvent: 'change_started' }, 480],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'system', 'Starting OpenRouter (z-ai/glm-5.3-flash)...', codex, 470],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'system', 'OpenRouter is running...', codex, 465],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'system', 'Claude Code progress',
+        { progressLog: ['Reading the list screen', 'Adding the Done section', 'Running the tests'], ...codex }, 400],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'system', 'OpenRouter finished', {
+        ccOutput: 'Finished items now sit in their own Done section under the list, behind an "N done" toggle.',
+        ccOutcome: 'success', durationMs: 78000, ...codex,
+      }, 300],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'system', 'Staging deployed!', { stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }, 240],
+      [STAGING_AGENT_FAILING_CHANGE_ID, 'assistant',
+        'Done: finished items now sit in their own section under the list. The preview is up, so give it a try.', {}, 180],
+    ];
+    for (const [changeId, role, content, metadata, secondsAgo] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(secs => $6))`,
+        [changeId, STAGING_AGENT_FAILING_SESSION_ID, role, content, JSON.stringify(metadata), secondsAgo]
+      );
+    }
+  }
+  // The verdict, after everything above: two of three checks failed.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET check_state = 'failing', test_results = $2::jsonb, check_error_detail = NULL,
+            checks_commit_sha = $3, checks_checked_at = NOW() - INTERVAL '1 minute'
+      WHERE id = $1`,
+    [STAGING_AGENT_FAILING_CHANGE_ID, JSON.stringify(STAGING_AGENT_FAILING_RESULTS), 'f'.repeat(40)]
+  );
+  log.info('db', 'Staging failing-checks agent fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_FAILING_SESSION_ID, changeId: STAGING_AGENT_FAILING_CHANGE_ID,
+  });
 }
 
 // #1350: a session with NO BRANCH at all.

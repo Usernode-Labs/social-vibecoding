@@ -5425,6 +5425,18 @@
       ]
     },
     {
+      "name": "#3755: an agent chat whose change failed its checks says which ones failed, and offers Fix it and See checks",
+      "path": "/#messages/agent/990804",
+      "expectSelector": "[data-agent-session-thread=\"990804\"] [data-agent-session-fix-checks=\"990805\"]:has([data-agent-session-fix-check] + [data-agent-session-fix-check]) [data-agent-session-fix-checks-go] + [data-agent-session-fix-checks-see]",
+      "expectText": "2 checks failed on this change",
+      "visual": true,
+      "id": "agent-session.fix-checks",
+      "impact": [
+        "frontend/src/features/agent-session/**",
+        "src/services/agent-sessions.js"
+      ]
+    },
+    {
       "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",

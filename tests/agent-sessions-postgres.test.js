@@ -80,6 +80,8 @@ async function connect(t, { beforeMigration = null } = {}) {
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,
+      -- When the last verdict was stored (activeChange.failingChecks.at, #3755).
+      checks_checked_at TIMESTAMPTZ,
       shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB);
@@ -249,6 +251,56 @@ test('every row a change writes lands in its conversation, whoever inserts it', 
       "SELECT agent_session_id FROM chat_session_messages WHERE content = 'explicit'"
     );
     assert.equal(explicit[0].agent_session_id, other.id);
+  } finally {
+    await done(client);
+  }
+});
+
+// #3755: the conversation names the checks that failed and offers the fix.
+// The projection is real SQL over a jsonb array, so it is run, not read.
+test('a failing change carries its blocking failures by name, the run\'s time, and how many in all', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 }, hint: { slug: 'recipe-box' } });
+    const results = [
+      { name: 'Home loads', path: '/', status: 'pass' },
+      { name: 'A checked item moves to Done', path: '/?shot=pending', status: 'fail', failureReason: 'Expected .done-items li, found none' },
+      { name: 'Advisory render health', path: '/', status: 'fail', advisory: true, failureReason: 'slow' },
+      { name: '', path: '/settings', status: 'fail', consoleErrors: [{ kind: 'error', message: 'TypeError: x is undefined' }] },
+      'not a row',
+      ...Array.from({ length: 6 }, (_, i) => ({ name: `Extra ${i + 1}`, status: 'fail', failureReason: 'x'.repeat(400) })),
+    ];
+    const { rows: [change] } = await client.query(
+      `INSERT INTO chat_sessions (app_id, user_id, session_title, check_state, test_results, checks_checked_at)
+       VALUES (3, 7, 'Done section', 'failing', $1::jsonb, '2026-10-03T11:00:00Z') RETURNING *`,
+      [JSON.stringify(results)]
+    );
+    await agentSessions.linkChange(client, { agentSessionId: session.id, userId: 7, change: { ...change, app_name: 'Recipe box' } });
+
+    const detail = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    const failing = detail.activeChange.failingChecks;
+    assert.equal(failing.at, '2026-10-03T11:00:00.000Z', 'the verdict\'s time: one run, one offer');
+    assert.equal(failing.total, 8, 'every blocking failure counts; a pass, an advisory row and a non-row do not');
+    assert.deepEqual(failing.checks.slice(0, 3), [
+      { name: 'A checked item moves to Done', reason: 'Expected .done-items li, found none' },
+      { name: '/settings', reason: 'TypeError: x is undefined' },
+      { name: 'Extra 1', reason: 'x'.repeat(300) },
+    ], 'in the order the suite ran them; a nameless check by its path, a reasonless one by its first console error; clipped');
+    assert.equal(failing.checks.length, 5, 'the first five only');
+    assert.equal(detail.activeChange.checkFailing, 9, 'the staging card\'s own count is unchanged');
+    assert.equal((await agentSessions.listAgentSessions(client, { userId: 7 })).sessions[0].activeChange.failingChecks.total, 8,
+      'the list reads the same projection');
+    assert.equal(detail.changes[0].failingChecks, null, 'the changes drawer does not read them');
+
+    for (const state of ['pending', 'passing', 'error']) {
+      await client.query('UPDATE chat_sessions SET check_state = $2 WHERE id = $1', [change.id, state]);
+      const other = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+      assert.equal(other.activeChange.failingChecks, null, `${state}: nothing to offer`);
+    }
+    await client.query(`UPDATE chat_sessions SET check_state = 'failing', test_results = '{"odd": true}'::jsonb WHERE id = $1`, [change.id]);
+    const odd = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    assert.equal(odd.activeChange.failingChecks, null, 'an odd legacy row reads as none');
   } finally {
     await done(client);
   }

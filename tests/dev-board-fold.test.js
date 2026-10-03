@@ -1449,9 +1449,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 253 of the 256 characters the runner reads. 839 leaves 21 slots
   // against MAX_DECLARED_TESTS (860).
   //
+  // 839 → 840: +1 (#3755): an agent chat whose change failed its checks
+  // says which ones failed and offers Fix it, on a new staging conversation
+  // (#messages/agent/990804). The 990801 checks' change has to stay skipped
+  // for #3180, so this is a conversation and a route of its own, with no
+  // check on it to fold into. 840 leaves 20 slots against
+  // MAX_DECLARED_TESTS (860), exactly the floor.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 839);
+  checkCap.assertPinned(DAPP.tests.length, 840);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

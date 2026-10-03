@@ -128,6 +128,46 @@ async function previewDraft(pool, { user, hint = null }) {
 // (or never will: see the proposal's "not started" reason).
 const CAPTURING_STATES = new Set(['provisioning', 'exploring', 'replaying', 'reviewing']);
 
+// #3755: the active change's failing checks, by name, so the conversation can
+// say which ones failed and offer to have them fixed (the screen's fix-checks
+// offer, frontend/src/features/agent-session/fix-checks.ts). Read only while
+// the verdict is 'failing'. A failure is the merge gate's own kind: a row
+// that did not pass and is not advisory (visuals.classifyTests, and
+// homeroom-bot-followup.failingChecks for the bot's own fix turn). At most
+// FAILING_CHECKS_SHOWN rows, each clipped, with how many there are in all;
+// and when the verdict was stored, which makes the offer one per run.
+const FAILING_CHECKS_SHOWN = 5;
+const FAILING_CHECKS_SQL = `CASE WHEN c.check_state = 'failing' THEN (
+              SELECT jsonb_build_object('total', MAX(f.total), 'checks',
+                       jsonb_agg(jsonb_build_object('name', f.name, 'reason', f.reason) ORDER BY f.n))
+                FROM (SELECT e.n, COUNT(*) OVER () AS total, row_number() OVER (ORDER BY e.n) AS k,
+                             LEFT(COALESCE(NULLIF(e.t->>'name', ''), NULLIF(e.t->>'path', ''), 'Unnamed check'), 200) AS name,
+                             LEFT(COALESCE(NULLIF(e.t->>'failureReason', ''), e.t->'consoleErrors'->0->>'message', ''), 300) AS reason
+                        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END)
+                             WITH ORDINALITY AS e(t, n)
+                       WHERE jsonb_typeof(e.t) = 'object' AND COALESCE(e.t->>'status', '') <> 'pass'
+                         AND COALESCE(e.t->>'advisory', 'false') <> 'true') f
+               WHERE f.k <= ${FAILING_CHECKS_SHOWN}
+            ) END AS change_failing_checks,
+            c.checks_checked_at AS change_checks_at`;
+
+// The failing checks as the screen takes them, or null: none read (not
+// failing, or a row from the changes list, which does not read them).
+function shapeFailingChecks(row) {
+  const raw = row.change_failing_checks;
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.checks)) return null;
+  const checks = raw.checks
+    .filter((check) => check && typeof check === 'object' && typeof check.name === 'string' && check.name.trim())
+    .map((check) => ({ name: check.name.trim(), reason: typeof check.reason === 'string' ? check.reason.trim() : '' }));
+  if (!checks.length) return null;
+  const at = row.change_checks_at ? new Date(row.change_checks_at) : null;
+  return {
+    at: at && !Number.isNaN(at.valueOf()) ? at.toISOString() : null,
+    total: Math.max(Number(raw.total) || 0, checks.length),
+    checks,
+  };
+}
+
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -148,6 +188,8 @@ function shapeChangeRow(row) {
     // say in words. Read only for 'skipped': an error's detail is the
     // checks panel's to show.
     checkSkipReason: row.change_check_skip_reason || null,
+    // #3755: which checks failed on the last run, and when it ran.
+    failingChecks: shapeFailingChecks(row),
     appSelfHosted: !!row.change_app_self_hosted,
     // The before/after shots being taken now, which the conversation
     // shows with a Stop. Null once it settles, and on the changes-list rows,
@@ -246,7 +288,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             c.shots_state AS change_shots_state,
             (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
-            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing,
+            ${FAILING_CHECKS_SQL}
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -285,7 +328,8 @@ async function getAgentSession(pool, { userId, id }) {
             c.shots_state AS change_shots_state,
             (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
-            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing,
+            ${FAILING_CHECKS_SQL}
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
