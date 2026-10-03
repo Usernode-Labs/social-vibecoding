@@ -268,6 +268,21 @@ test('a "revise" that moved nothing is a failed run, said once', async (t) => {
   assert.equal(h.calls.posts.length, 1);
 });
 
+test('a GLM fix whose agent failed is no revision, whatever it pushed, and hands over with the reason', async (t) => {
+  const h = harness({
+    result: {
+      agentHarness: 'claude', ccExit: 1, exitCode: 1, pushOk: true, sha: NEW_HEAD,
+      lastResultText: '```json\n{"action":"revise","reply":"Renamed the control.","summary":"Text size."}\n```',
+    },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
+  assert.equal(h.calls.onProposal.length, 0, 'no "fixed the failing checks" note');
+  assert.match(insertOf(h).params[18], /^checks: its attempt to fix them failed \(the agent exited with code 1\)/);
+  assert.equal(h.calls.exec[0].opts.discardFailedTurn, true);
+});
+
 test('a platform fault spends nothing on the head: the row is kept for a retry', async (t) => {
   const h = harness({ routed: { error: 'session_busy' } });
   const out = await run(t, h);

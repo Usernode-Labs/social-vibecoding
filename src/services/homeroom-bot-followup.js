@@ -38,7 +38,7 @@
 // (checksLookLikeInfra).
 
 const log = require('./logger');
-const { parseStopMentioning } = require('./homeroom-bot-live');
+const { parseStopMentioning, failedClaudeTurn } = require('./homeroom-bot-live');
 
 // Revisions the bot makes to one proposal on its own. Each one clears the
 // votes the proposal had, so an unbounded loop of "one more tweak" costs the
@@ -423,6 +423,10 @@ async function runFollowUpTurn({
       telemetryComponent: 'homeroom_bot_followup',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the bot's build makes
+        // it (#3296). The saved thread is cleared above, so a proposal built
+        // in the other CLI is never resumed across the switch.
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
         mode,
@@ -431,6 +435,9 @@ async function runFollowUpTurn({
         commitMsg: commitMsg || `Homeroom bot: follow-up on #${issueNumber}`,
         resumeSessionId: null,
         branchName: session.branch_name,
+        // Its push lands on a proposal already up for a vote: a failed turn's
+        // work is neither committed nor pushed, under either CLI.
+        discardFailedTurn: true,
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_followup',
         onProgress: () => {},
@@ -460,10 +467,12 @@ async function runFollowUpTurn({
  * whatever the tree holds and pushes it to the proposal's branch, so a new
  * head after a successful push is a revision, whatever the model's JSON
  * says. With no recorded reviewed head to compare against, trust the push
- * only when the model also said it revised.
+ * only when the model also said it revised. A turn that failed is never a
+ * revision, whatever it pushed (homeroom-bot-live failedClaudeTurn).
  */
 function headMoved({ mode, result, reviewedHeadSha, action }) {
   if (mode !== 'build' || !result || !result.pushOk || !result.sha) return false;
+  if (failedClaudeTurn(result)) return false;
   if (reviewedHeadSha) return String(result.sha) !== String(reviewedHeadSha);
   return action === 'revise';
 }

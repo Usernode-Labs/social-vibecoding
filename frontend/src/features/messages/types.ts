@@ -75,6 +75,31 @@ export interface HomeroomBotWork {
   history: HomeroomBotPastJob[];
 }
 
+/**
+ * #3736: one activity card in the bot's DM, drawn in the message the bot
+ * sent when it started a piece of work for the viewer (metadata kind
+ * `activity`), with that work's state as services/homeroom-bot-activity.js
+ * reads it. While `working`: the step it is at of the request's steps, and
+ * what it is doing. Once `done`: what it came to, and when, where the
+ * records say. Links are in-app addresses, or null.
+ */
+export type HomeroomBotActivityOutcome =
+  | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+
+export interface HomeroomBotActivity {
+  messageId: number;
+  state: 'working' | 'done';
+  startedAt: string | null;
+  links: { request: string | null; proposal: string | null };
+  step: number | null;
+  of: number | null;
+  stepName: string | null;
+  doing: string | null;
+  outcome: HomeroomBotActivityOutcome | null;
+  endedAt: string | null;
+}
+
 export interface ConversationMember extends ConversationUser {
   role: MemberRole;
   status: MembershipStatus;

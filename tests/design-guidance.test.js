@@ -2,8 +2,9 @@
 
 // #2817: every coding agent builds with the same written design guidance,
 // and every scout settles the design in the spec. Claude and OpenRouter stay
-// in parity; the one difference is how the agent checks its work, because
-// OpenRouter models get text input only.
+// in parity; the one difference is how the agent checks its work, which
+// follows whether the model running the turn takes images (#3426: an
+// OpenRouter model does when OpenRouter's catalog says so).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -53,6 +54,25 @@ test('#3737: the self-check walks both looks, and every build follows the app\'s
   }
 });
 
+test('an OpenRouter turn reads images exactly when its runtime says the catalog lists them', () => {
+  // The same flag the worker turns into AGENT_MODEL_SUPPORTS_IMAGES, so the
+  // self-check and the runner never disagree about what the model can see.
+  assert.equal(prompts.runtimeReadsImages({ agentModelMetadata: { supportsImages: true } }), true);
+  for (const ctx of [
+    { agentModelMetadata: { supportsImages: false } },
+    { agentModelMetadata: { supportsImages: null } },
+    { agentModelMetadata: { supportsImages: 'true' } },
+    { agentModelMetadata: {} },
+    {},
+    null,
+    undefined,
+  ]) {
+    assert.equal(prompts.runtimeReadsImages(ctx), false, JSON.stringify(ctx));
+  }
+  const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(workerSrc, /safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/);
+});
+
 test('hosted Claude carries the guidance once as system context; local and Codex inline', () => {
   const designGuidance = 'SENTINEL design rule';
   const hosted = buildCodingAgentConventionsContext({ conventions: 'rules', designGuidance });
@@ -71,7 +91,7 @@ test('hosted Claude carries the guidance once as system context; local and Codex
 });
 
 test('every build and scout gets the design text, whatever the backend', () => {
-  assert.match(SESSIONS, /const designGuidance = getDesignGuidance\(\{ readsImages: !isCodexSession \}\);/);
+  assert.match(SESSIONS, /const designGuidance = getDesignGuidance\(\{ readsImages \}\);/);
   assert.match(SESSIONS, /runLocally, isCodexSession, harness, designGuidance,/,
     'every transport the build renders carries it');
   assert.match(SESSIONS, /const scoutDesignBrief = `\\n- \$\{SPEC_DESIGN_BRIEF\}`;/);

@@ -272,11 +272,15 @@ const agentTurn = require('../src/services/agent-turn');
 // The CLI the runtime resolves for an OpenRouter attempt (#3296); null is
 // Codex, as the platform's harness map leaves every model by default.
 let runtimeHarness = null;
+// Whether the catalog says the attempt's model takes images; null is a
+// runtime with no catalog metadata, as every golden scenario has.
+let runtimeImages = null;
 agentTurn.resolveCodexRuntimeContext = async () => ({
   agentModel: 'openai/gpt-5.3-codex',
   agentReasoningEffort: 'low',
   resumeThreadId: null,
   ...(runtimeHarness ? { agentHarness: runtimeHarness } : {}),
+  ...(runtimeImages == null ? {} : { agentModelMetadata: { supportsImages: runtimeImages } }),
 });
 agentTurn.startCodexAttempt = async (args) => {
   rec.calls.push({ fn: 'startCodexAttempt', attemptNumber: args.attemptNumber, mode: args.mode, model: args.model });
@@ -384,9 +388,10 @@ async function settle() {
   for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
 }
 
-async function runTurn({ session = {}, history = [], message = 'Add a dark mode toggle', llmSteps = [], pillSteps = [], openProposals = [], billing = { apiKey: null }, run = null, openRouterMayor: orMayor = { error: 'disabled' }, harness = null } = {}) {
+async function runTurn({ session = {}, history = [], message = 'Add a dark mode toggle', llmSteps = [], pillSteps = [], openProposals = [], billing = { apiKey: null }, run = null, openRouterMayor: orMayor = { error: 'disabled' }, harness = null, readsImages = null } = {}) {
   resetRecording();
   runtimeHarness = harness;
+  runtimeImages = readsImages;
   resetDb({ ...BASE_SESSION, ...session }, { history });
   db.openProposals = openProposals;
   llmScript = [...llmSteps];
@@ -836,4 +841,39 @@ test('OpenRouter model in Claude Code: the handbook is system context, and a PLA
   const rendered = JSON.stringify([result.messages, result.events, result.broadcasts, result.calls.filter((l) => !l.includes('issueDraft'))]);
   assert.doesNotMatch(rendered, /PLATFORM ISSUE/);
   assert.match(rendered, /Added the toggle\./);
+});
+
+test('an OpenRouter build checks its work the way its model can: screenshots when the catalog says it takes images', async () => {
+  // The self-check used to follow the backend, so every OpenRouter model was
+  // told "you read text, not images", GLM 5.3 Flash included, while both
+  // runners hand an image-capable model its screenshots (#3426). It follows
+  // the attempt's runtime now, in either CLI, and the runner's own flag.
+  const SCREENSHOTS = /take screenshots \(`browser_take_screenshot`\) of each changed screen/;
+  const TEXT_ONLY = /you read text, not images[\s\S]*`browser_snapshot`/;
+  for (const harness of ['claude', 'codex']) {
+    for (const readsImages of [true, false]) {
+      let sent = null;
+      const result = await runTurn({
+        session: OR_SESSION,
+        openRouterMayor: { error: 'disabled' },
+        harness,
+        readsImages,
+        run: async (_id, opts) => { sent = opts; return directBuild(); },
+      });
+      assert.equal(result.status, 200);
+      assert.ok(sent, `${harness}: the build was dispatched`);
+      // Claude Code carries the guidance in its system context, Codex inline.
+      const guidance = harness === 'claude' ? sent.systemPrompt : sent.prompt;
+      const where = `${harness}, readsImages=${readsImages}`;
+      assert.match(guidance, /==== UI DESIGN/, where);
+      if (readsImages) {
+        assert.match(guidance, SCREENSHOTS, where);
+        assert.doesNotMatch(guidance, TEXT_ONLY, where);
+      } else {
+        assert.match(guidance, TEXT_ONLY, where);
+        assert.doesNotMatch(guidance, SCREENSHOTS, where);
+      }
+      if (readsImages) assert.doesNotMatch(sent.prompt, /you read text, not images/, where);
+    }
+  }
 });

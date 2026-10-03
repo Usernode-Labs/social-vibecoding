@@ -12,6 +12,7 @@ import {
 } from './store';
 import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
+import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion } from './bot-question';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
@@ -238,6 +239,10 @@ export const MessageRow = memo(function MessageRow({
       {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{message.reply.sender.id ? '@' : ''}{message.reply.sender.username}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+      ) : isActivityMessage(message) ? (
+        // #3736: the bot's activity card stands in place of its words, which
+        // say the same for the inbox preview and the bell (./bot-activity.tsx).
+        <BotActivityCard message={message} />
       ) : message.content ? <MessageMarkdown content={message.content} channels={channels} /> : null}
     </>
   );

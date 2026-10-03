@@ -1276,6 +1276,33 @@ async function buildSeesImages({ pool, config, userId, model }) {
 }
 
 /**
+ * Why a coding turn Claude Code ran failed, or null when it did not (or ran
+ * in Codex). An OpenRouter model the platform maps to Claude Code (#3296)
+ * runs in run-cc.sh, which commits and pushes whatever a turn leaves, even
+ * when the agent failed partway: what a person's dev chat wants, and never
+ * what the bot may propose. The Codex runner refuses to commit or push a
+ * failed turn at all (run-codex-agent.sh), which is why a Codex turn needs
+ * no check here and its outcome is exactly what it was. The bot's turns ask
+ * run-cc.sh to do the same (`discardFailedTurn`); this is the host's half,
+ * which also names the reason. Failed means the agent exited non-zero
+ * (cc_exit, or the wrapper's exit code), its final result said is_error, or
+ * its final message is the runtime's own "API Error" notice, which Claude
+ * Code can end on with exit 0 (an OpenRouter 429 once its retries are
+ * spent). run-cc.sh reads that notice with the same definition
+ * (worker/agent-api-failure.js), so the worker and the host agree on which
+ * turns failed.
+ */
+function failedClaudeTurn(result) {
+  if (!result || result.agentHarness !== 'claude') return null;
+  const exited = (code) => Number.isInteger(code) && code > 0;
+  if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
+  if (result.ccIsError === true) return 'the agent reported an error';
+  if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
+  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
+  return null;
+}
+
+/**
  * #3654: make a session run `model`. A turn runs whatever model its session
  * carries (agent-turn resolveCodexRuntimeContext reads session.agent_model),
  * and the bot's sessions were stamped once, when they were created: the
@@ -1348,6 +1375,9 @@ async function draftSpec({
       telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the dev chat's scout
+        // makes it (#3296): GLM runs in Claude Code.
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -1579,6 +1609,13 @@ async function buildAndPropose({
       telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The dev chat's build makes the same choice (#3296). The bot's
+        // build works as it is under either CLI: the worker, not the agent,
+        // commits and pushes what the turn leaves (buildPrompt's commits:
+        // 'harness'; both runners use worker/session-branch.sh), and an
+        // OpenRouter build needs no handbook as system context in either
+        // (run-cc.sh).
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'build',
@@ -1587,6 +1624,9 @@ async function buildAndPropose({
         commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120),
         resumeSessionId: null,
         branchName,
+        // A failed turn's work is neither committed nor pushed, under either
+        // CLI (failedClaudeTurn).
+        discardFailedTurn: true,
         ...(ctx || {}),
         telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
@@ -1620,6 +1660,9 @@ async function buildAndPropose({
     return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
+  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
+  const turnFailed = failedClaudeTurn(result);
+  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
@@ -1702,6 +1745,7 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  failedClaudeTurn,
   stampSessionModel,
   draftSpec,
   specPrompt,
