@@ -231,6 +231,19 @@ test('#3705: a reconnect re-reads the conversation on screen, and only the inbox
   assert.deepEqual(h.server.reads.map(([what]) => what), ['list'], 'the badge, and nothing it is not drawing');
 });
 
+test('#8 (WP3): the resync of the conversation on screen also reads the bot\'s tray and cards again', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello')]);
+  await openDm(h);
+  const dispatched = [];
+  globalThis.window.dispatchEvent = (event) => { dispatched.push(event.type); return true; };
+  await h.store.messagesController.resync();
+  assert.deepEqual(dispatched, ['homeroom-bot-work-changed'], 'the window event the tray and the cards re-read on, fresh');
+  h.store.messagesController.close();
+  dispatched.length = 0;
+  await h.store.messagesController.resync();
+  assert.deepEqual(dispatched, [], 'nothing of the bot\'s is drawn: nothing to read');
+});
+
 // ── The wire: what a fresh read asks the browser for ────────────────────
 
 test('a fresh read is `cache: no-store`; an ordinary one is not', async (t) => {

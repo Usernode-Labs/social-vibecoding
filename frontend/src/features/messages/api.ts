@@ -712,9 +712,15 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
   return { now, needsYou: past('needsYou'), history: past('history') };
 }
 
-/** #3692: what the Homeroom bot is doing for the signed-in person, what waits on them, and what it did before. */
-export async function getHomeroomBotWork(): Promise<HomeroomBotWork> {
-  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work'));
+/**
+ * #3692: what the Homeroom bot is doing for the signed-in person, what waits
+ * on them, and what it did before. #8 (WP3): a re-read after news passes
+ * `fresh`, as the activity cards' does: it was the one read of the bot's
+ * that never did, so a slow answer was the worker's offline copy, and the
+ * header said "Working on…" for work long finished (see ReadOptions).
+ */
+export async function getHomeroomBotWork(options?: ReadOptions): Promise<HomeroomBotWork> {
+  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work', readInit(options)));
 }
 
 /**

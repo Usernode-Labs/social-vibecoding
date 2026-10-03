@@ -197,12 +197,75 @@ test('what the bot\'s progress says waits on them is Needs you, the question it 
   assert.deepEqual(work.history, [], 'the group\'s vote is not theirs, and it has no run here');
 });
 
-test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished is one that stopped', () => {
+test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished yet says so, never that it stopped', () => {
   const rows = [run(2, 7, 1, { verdict: 'ready' }), run(1, 7, 20, { verdict: 'question' })];
   const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Build it' })], rows);
   assert.deepEqual(building.now[0].earlier.map((r) => r.outcome), ['question']);
+  // #8 (WP3): out of Now (the bot switched off, or the build gone quiet),
+  // it is not "stopped", and the question it moved past is not its news.
   const stalled = tray.arrange([], rows);
-  assert.deepEqual(stalled.history.map((job) => job.outcome), ['stopped']);
+  assert.deepEqual(stalled.history.map((job) => [job.outcome, job.doing]), [[null, tray.NOT_FINISHED]]);
+  assert.deepEqual(stalled.needsYou, [], 'a question since answered does not need them');
+  assert.deepEqual(stalled.history[0].earlier.map((r) => r.outcome), ['question'], 'and the run still going is not an earlier run');
+});
+
+test('#8 (WP3): a second build of a request leads History with neither "stopped" nor its own news', () => {
+  // Plant Pal, 3 October: run A's proposal went up for a vote, and run B
+  // built the same request again. Out of Now (the vote is the group's), the
+  // request's news is A's proposal, not B "stopped".
+  const voting = [
+    run(2, 3, 1, { verdict: 'ready' }),
+    run(1, 3, 2, { verdict: 'ready', proposal_session_id: 40, proposal_status: 'promoted', proposal_at: at(1.5) }),
+  ];
+  const [up] = tray.arrange([], voting).history;
+  assert.deepEqual([up.outcome, up.id, up.proposalId], ['proposed', 1, 40]);
+  assert.deepEqual(up.earlier, [], 'the build still going is not one of its earlier runs');
+  // A merged, and B's duplicate withdrawn: it went live, which is the news.
+  const merged = [
+    run(2, 3, 1.5, { verdict: 'ready', proposal_session_id: 41, proposal_status: 'archived', proposal_at: at(1.2) }),
+    run(1, 3, 2, { verdict: 'ready', proposal_session_id: 40, proposal_status: 'merged', proposal_at: at(1.8), merged_at: at(1) }),
+  ];
+  const [live] = tray.arrange([], merged).history;
+  assert.deepEqual([live.outcome, live.id, live.at], ['live', 1, at(1).toISOString()]);
+  assert.deepEqual(live.earlier.map((r) => [r.id, r.outcome]), [[2, 'closed']], 'the withdrawn one, folded in as closed');
+  // A run begun after it went live is new work, and is the news.
+  const after = [run(3, 3, 0.5, { verdict: 'question' }), ...merged];
+  assert.deepEqual(tray.arrange([], after).needsYou.map((job) => [job.id, job.outcome]), [[3, 'question']]);
+  assert.equal(tray.leadOf(after).id, 3);
+});
+
+test('#8 (WP3): a proposal withdrawn or set aside reads as closed, and opens its request', () => {
+  const row = { verdict: 'ready', proposal_session_id: 40, slug: 'x', issue_number: 3 };
+  assert.equal(tray.outcomeOf({ ...row, proposal_status: 'archived' }), 'closed');
+  assert.equal(tray.outcomeOf({ ...row, proposal_status: 'closed' }), 'closed');
+  assert.equal(tray.hrefOf({ ...row, proposal_status: 'archived' }), '#app/x/dev/issues/3');
+});
+
+test('#8 (WP3): the tray reads again when one of the bot\'s proposals is promoted, merged or closed', async () => {
+  const dmSrc = read('src/services/homeroom-bot-dm.js');
+  const merged = dmSrc.slice(dmSrc.indexOf('async function noteProposalMerged('), dmSrc.indexOf('// ── A person writing to the bot'));
+  assert.match(merged, /if \(requester\) require\('\.\/homeroom-bot-tray'\)\.noteWorkChanged\(requester\.userId, deps\);\n {2}const settings = /,
+    'merged: before anything about the DM, whose list it may not be on');
+  const votes = read('src/routes/votes.js');
+  const promote = votes.slice(votes.indexOf("router.post('/api/sessions/:id/promote'"), votes.indexOf("log.info('votes', 'Session promoted'"));
+  assert.match(promote, /if \(req\.user\?\.is_synthetic\) void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, session\.id\);/, 'promoted');
+  const lifecycle = read('src/services/session-lifecycle.js');
+  const archive = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession('), lifecycle.indexOf('async function unarchiveSession('));
+  assert.match(archive, /await require\('\.\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, sessionId\);/, 'closed, by any path');
+
+  // Whoever asked for the request its run is on, found by its proposal or
+  // by its build (a proposal just promoted is not recorded on its run yet).
+  const dm = require('../src/services/homeroom-bot-dm');
+  const pushed = [];
+  const ws = { pushToUser(id, event) { pushed.push([id, event.type]); return 1; } };
+  const queries = [];
+  const pool = { async query(sql, params) { queries.push([sql, params]); return { rows: params[0] === 40 ? [{ user_id: 7 }] : [] }; } };
+  assert.equal(await dm.noteProposalChanged(pool, 40, { ws }), 7);
+  assert.deepEqual(pushed, [[7, 'homeroom_bot_work_changed']]);
+  assert.match(queries[0][0], /WHERE r\.proposal_session_id = \$1 OR r\.build_session_id = \$1/);
+  assert.equal(await dm.noteProposalChanged(pool, 41, { ws }), null, 'somebody else\'s session: nobody');
+  assert.equal(await dm.noteProposalChanged({ async query() { throw new Error('down'); } }, 40, { ws }), null, 'never throws');
+  assert.equal(pushed.length, 1);
 });
 
 test('History lists at most its limit of requests', () => {

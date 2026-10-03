@@ -2619,6 +2619,9 @@ function voteRoutes(config) {
 
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
+      // #8 (WP3): the Homeroom bot's own proposal is up for a vote: the
+      // activity tray of whoever asked for it reads again. Never throws.
+      if (req.user?.is_synthetic) void require('../services/homeroom-bot-dm').noteProposalChanged(pool, session.id);
       log.info('votes', 'Session promoted', { sessionId: session.id });
       events.record(pool, {
         type: events.EVENT_TYPES.PR_PROMOTED,
@@ -5193,6 +5196,9 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       }
     }
 
+    // #7 (WP3): what this merge deployed, for the Homeroom bot's "it is live"
+    // news below, which waits for the app to answer on it.
+    let deployedSha = null;
     if (app) {
       let sha = null;
       // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
@@ -5208,6 +5214,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         const reuseImage = await demoPreviewImage(pool, app, session);
         const result = await staging.rebuildProduction(config, app, reuseImage ? { reuseImage } : {});
         sha = result.sha;
+        deployedSha = sha || null;
         dstep({
           phase: 'prod_rebuild',
           message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}${result.imageReused ? ', on the image the checks ran against' : ''}.`,
@@ -5355,7 +5362,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // proposal's author, which for a bot build is the bot). Never a reason
     // the merge fails.
     try {
-      require('../services/homeroom-bot-dm').noteProposalMerged(pool, session)
+      require('../services/homeroom-bot-dm').noteProposalMerged(pool, session, { config, sha: deployedSha })
         ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
     } catch (err) {
       log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
