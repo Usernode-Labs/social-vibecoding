@@ -46,12 +46,26 @@
 // bot's news landing in the DM, and `homeroom_bot_work_changed` when the
 // loop starts or ends work for this person.
 //
+// WORK ALREADY UNDER WAY (catchUpCards). The loop sends a card only when a
+// look starts, beside its "looking" post, so some of the bot's work never
+// had one: work that started before cards existed, a restart's second look
+// at work that had none, a backlog pass that went on to build. The tray
+// showed it and the transcript did not. When the person opens the DM, the
+// client asks (POST, nothing in it) for every piece of their work that is
+// under way, as the tray reads it, and has no card to get one, at the end
+// of the transcript, saying it was started earlier. It is the same card:
+// the same key for a look being read as the loop's own (so the two are one
+// message), and the moment the work began in its metadata (`startedAt`), so
+// the card is read from then and finds the run the work already has.
+// Work that has a card, a restart of that look included, gets no second.
+//
 // ONE PERSON'S, ALWAYS. Every row is read by the signed-in person's own id:
 // the route takes no user, conversation or message parameter. An app they
 // can no longer view is left out, whatever the records say.
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
 
 const KIND = 'activity';
 // The most cards one read answers for, newest first. An older card keeps
@@ -70,6 +84,7 @@ const OUTCOMES = Object.freeze([
 function dmModule(deps) { return deps.dm || require('./homeroom-bot-dm'); }
 function settingsModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function progressModule(deps) { return deps.progress || require('./homeroom-bot-progress'); }
+function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
 
 function iso(value) {
   if (!value) return null;
@@ -89,14 +104,68 @@ function proposalHref(slug, sessionId) {
 
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
+ * `joined` to work already under way (catchUpCards) lands at the end of the
+ * DM, after the work began, so it says the work was started earlier. A card
  * started by filing the request (#3767) says it was filed, not that the
  * work began: it may wait in the queue first, and the card says so.
  */
-function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { filed = false } = {}) {
+function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { joined = false, filed = false } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
   if (filed) return `${line}\n\nFiled. This card follows it from here.`;
-  return `${line}\n\nI'm working on ${firstVersion ? 'the first version' : 'this'} now. `
-    + 'This card updates as I go.';
+  const it = firstVersion ? 'the first version' : 'this';
+  return joined
+    ? `${line}\n\nI started on ${it} earlier and I'm still working on it. This card updates as I go.`
+    : `${line}\n\nI'm working on ${it} now. This card updates as I go.`;
+}
+
+/** The key the card that follows one queue row's look is sent with. */
+function jobCardKey(jobKey) {
+  return `hrbot-activity-${jobKey}`;
+}
+
+/**
+ * Send one card to `requester` (somebody the bot talks to in a DM) about
+ * `issueNumber` on `app`, with `key`. `startedAt`, for a card that joins
+ * work already under way, is when that work began: the card is read from
+ * then (cardRows). Resolves what sendDm did, or null.
+ */
+async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt = null, filed = false, dm }) {
+  const context = {
+    appName: app.name || app.slug,
+    issueNumber,
+    issueTitle: requester.issueTitle || null,
+    firstVersion: !!requester.firstVersion,
+  };
+  return dm.sendDm(pool, {
+    bot,
+    userId: requester.userId,
+    content: cardText(context, dm, { joined: !!startedAt, filed }),
+    metadata: {
+      kind: KIND,
+      appSlug: app.slug,
+      appName: context.appName,
+      issueNumber,
+      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+      ...(context.firstVersion ? { firstVersion: true } : {}),
+      // A reply to it is about the request, as a reply to the bot's other
+      // news about one is: posted on its discussion (homeroom-bot-dm.js).
+      mirrors: true,
+      ...(startedAt ? { startedAt } : {}),
+    },
+    idempotencyKey: key,
+    // #3707: news about a request they started in the DM points back at it.
+    replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
+  });
+}
+
+/** Record a sent card as the bot's news about its request, once. */
+async function recordCard(pool, sent, { userId, appId, issueNumber }) {
+  await pool.query(
+    `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (message_id) DO NOTHING`,
+    [sent.messageId, userId, sent.conversationId, appId, issueNumber, KIND],
+  );
 }
 
 /**
@@ -115,38 +184,9 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.isDmUser(s, requester.username)) return null;
-    const context = {
-      appName: app.name || app.slug,
-      issueNumber: n,
-      issueTitle: requester.issueTitle || null,
-      firstVersion: !!requester.firstVersion,
-    };
-    const sent = await dm.sendDm(pool, {
-      bot,
-      userId: requester.userId,
-      content: cardText(context, dm, { filed }),
-      metadata: {
-        kind: KIND,
-        appSlug: app.slug,
-        appName: context.appName,
-        issueNumber: n,
-        ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
-        ...(context.firstVersion ? { firstVersion: true } : {}),
-        // A reply to it is about the request, as a reply to the bot's other
-        // news about one is: posted on its discussion (homeroom-bot-dm.js).
-        mirrors: true,
-      },
-      idempotencyKey: `hrbot-activity-${jobKey}`,
-      // #3707: news about a request they started in the DM points back at it.
-      replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber: n }),
-    });
+    const sent = await sendCard(pool, { app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, dm });
     if (!sent?.messageId || sent.duplicate) return sent || null;
-    await pool.query(
-      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (message_id) DO NOTHING`,
-      [sent.messageId, requester.userId, sent.conversationId, app.id, n, KIND],
-    );
+    await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
     log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed });
     return sent;
   } catch (err) {
@@ -211,7 +251,9 @@ function linksOf(row) {
 function cardOf(row, entry) {
   const base = {
     messageId: Number(row.message_id),
-    startedAt: iso(row.created_at),
+    // When its work began: the card's own moment, or for a card that joined
+    // work already under way, when that work started.
+    startedAt: iso(row.began || row.created_at),
     links: linksOf(row),
   };
   let outcome = outcomeOf(row);
@@ -233,35 +275,52 @@ function cardOf(row, entry) {
   };
 }
 
-/** The person's newest cards, each with the first live run after it began. */
+/**
+ * The person's newest cards, each with when its work began (`began`: its
+ * own moment, or the `startedAt` a card that joined work under way carries)
+ * and the first live run from then, before the next card on the same
+ * request began. A build a restart cut short and sent back to be looked at
+ * again (RESTARTED_BUILD_NOTE) is not what its work came to: that work goes
+ * on in the look that follows, so the card reads past it.
+ */
 async function cardRows(pool, userId, limit = MAX_CARDS) {
+  const { RESTARTED_BUILD_NOTE } = require('./homeroom-bot');
   const { rows } = await pool.query(
-    `SELECT d.message_id, d.app_id, d.issue_number, d.created_at, a.slug, a.name,
-            nxt.created_at AS next_at,
+    `WITH cards AS (
+       SELECT d.message_id, d.app_id, d.issue_number, d.created_at,
+              COALESCE(CASE WHEN m.metadata->'homeroomBot'->>'startedAt'
+                                 ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+                            THEN (m.metadata->'homeroomBot'->>'startedAt')::timestamptz END,
+                       d.created_at) AS began
+         FROM homeroom_bot_dm_messages d
+         JOIN conversation_messages m ON m.id = d.message_id
+        WHERE d.user_id = $1 AND d.kind = 'activity'
+     )
+     SELECT c.message_id, c.app_id, c.issue_number, c.created_at, c.began, a.slug, a.name,
+            nxt.began AS next_at,
             run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
             run.created_at AS run_at, run.proposal_session_id,
             cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
-       FROM homeroom_bot_dm_messages d
-       JOIN apps a ON a.id = d.app_id
+       FROM cards c
+       JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (
-         SELECT n.created_at FROM homeroom_bot_dm_messages n
-          WHERE n.user_id = d.user_id AND n.app_id = d.app_id AND n.issue_number = d.issue_number
-            AND n.kind = 'activity' AND n.message_id > d.message_id
+         SELECT n.began FROM cards n
+          WHERE n.app_id = c.app_id AND n.issue_number = c.issue_number AND n.message_id > c.message_id
           ORDER BY n.message_id LIMIT 1
        ) nxt ON TRUE
        LEFT JOIN LATERAL (
          SELECT r.id, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.created_at, r.proposal_session_id
            FROM homeroom_bot_runs r
-          WHERE r.app_id = d.app_id AND r.issue_number = d.issue_number AND r.mode = 'live'
-            AND r.created_at >= d.created_at
-            AND (nxt.created_at IS NULL OR r.created_at < nxt.created_at)
+          WHERE r.app_id = c.app_id AND r.issue_number = c.issue_number AND r.mode = 'live'
+            AND r.created_at >= c.began
+            AND (nxt.began IS NULL OR r.created_at < nxt.began)
+            AND NOT (r.build_ok IS FALSE AND right(COALESCE(r.build_error, ''), char_length($3::text)) = $3::text)
           ORDER BY r.id LIMIT 1
        ) run ON TRUE
        LEFT JOIN chat_sessions cs ON cs.id = run.proposal_session_id
-      WHERE d.user_id = $1 AND d.kind = 'activity'
-      ORDER BY d.message_id DESC
+      ORDER BY c.message_id DESC
       LIMIT $2`,
-    [userId, limit],
+    [userId, limit, RESTARTED_BUILD_NOTE],
   );
   return rows;
 }
@@ -314,22 +373,190 @@ async function cardsFor(pool, { user, settings = null, config = null, deps = {},
   };
 }
 
+// ── Work already under way without a card ──
+
+// The stages of a request's own look (homeroom-bot-progress.js stageOf) in
+// which the bot is working on it this minute: reading it, then the plan and
+// the build a ready verdict starts. Each is one the tray lists under Now
+// (homeroom-bot-tray.js, as 'looking' or 'building'). Not a request waiting
+// in the queue (its card comes when its look starts), not a follow-up on
+// its proposal or a merge (the card before them ended at "proposal up"),
+// and nothing waiting on the person, the group or a cap.
+const UNDER_WAY_STAGES = Object.freeze(['reading', 'starting', 'planning', 'building', 'proposing']);
+// The most of the person's cards looked through for the one that already
+// follows a request. Their work under way is recent, and so is its card.
+const COVER_LIMIT = 100;
+
+/**
+ * Pure: the piece of work one of the person's requests is (a `requestStates`
+ * row and its stage), when it is under way and a card follows it:
+ * `{ key, startedAt }`, or null.
+ *
+ *   - a look being read is its claimed queue row, keyed as the loop keys the
+ *     card it sends when that look starts (startCard), so the two can only
+ *     ever be one message. A backlog pass's look (`quietReasons`) is left
+ *     alone while it reads, as the loop leaves it: most of a backlog is held,
+ *     and says nothing until it has something to say;
+ *   - a plan or build is the run whose ready verdict started it (its queue
+ *     row is gone by then). That look began before the run was recorded, by
+ *     the time it took (duration_ms).
+ */
+function pieceOf(row, state, { quietReasons = [] } = {}) {
+  if (!row || !state || state.waitingOn || !UNDER_WAY_STAGES.includes(state.stage)) return null;
+  if (state.stage === 'reading') {
+    if (!row.queue_id || !row.started_at || quietReasons.includes(row.queue_reason)) return null;
+    return { key: jobCardKey(row.queue_id), startedAt: iso(row.started_at) };
+  }
+  if (!row.run_id || !row.run_at) return null;
+  const ran = Math.max(0, Number(row.run_duration_ms) || 0);
+  const at = new Date(new Date(row.run_at).getTime() - ran);
+  return { key: `hrbot-activity-run-${Number(row.run_id)}`, startedAt: iso(at) };
+}
+
+/**
+ * Pure: the requests (`${appId}#${issueNumber}`) whose newest card still
+ * follows their work, from cardRows' rows (newest first): it has come to
+ * nothing yet (no run since it began, or a build not finished). A request
+ * whose newest card has ended, or that has none, has no card for the work
+ * under way on it now.
+ */
+function followedRequests(rows) {
+  const seen = new Set();
+  const followed = new Set();
+  for (const row of rows) {
+    const key = `${Number(row.app_id)}#${Number(row.issue_number)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!outcomeOf(row)) followed.add(key);
+  }
+  return followed;
+}
+
+/** Run `work` holding the person's catch-up lock, or resolve null when another holds it. */
+async function whileHolding(pool, userId, work) {
+  const client = await pool.connect();
+  let held = false;
+  try {
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [HOMEROOM_BOT_CARDS_LOCK, userId]);
+    held = !!rows[0]?.acquired;
+    if (!held) return null;
+    return await work();
+  } finally {
+    if (held) await client.query('SELECT pg_advisory_unlock($1, $2)', [HOMEROOM_BOT_CARDS_LOCK, userId]).catch(() => {});
+    client.release();
+  }
+}
+
+/**
+ * `user` (the signed-in person) opened their DM with the bot: every piece of
+ * their work that is under way and has no card yet gets one, at the end of
+ * the DM, saying it was started earlier (see the note at the top). Their own
+ * work only, on a project the bot acts on for real that they can view, and
+ * only when they are somebody it talks to there. Idempotent: a second call,
+ * and the loop's own card for the same look, add nothing. Never throws.
+ * Resolves { added }.
+ */
+async function catchUpCards(pool, { user, settings = null, deps = {}, now = new Date() }) {
+  const none = { added: 0 };
+  const userId = Number(user?.id);
+  if (!Number.isInteger(userId) || userId <= 0 || user.isSynthetic) return none;
+  try {
+    const botSvc = settingsModule(deps);
+    const dm = dmModule(deps);
+    const liveSvc = liveModule(deps);
+    const s = settings || await botSvc.readSettings(pool);
+    // As the tray: nothing is under way while the bot is off, or on a
+    // staging copy, which never acts.
+    if (!dm.isDmUser(s, user.username) || s.mode === 'off' || liveSvc.isStaging()) return none;
+    const added = await whileHolding(pool, userId, async () => {
+      const states = await progressModule(deps).requestStates(pool, { userId, settings: s, now });
+      const quietReasons = [botSvc.APP_AGAIN_REASON].filter(Boolean);
+      let wanted = states
+        .map(({ row, state }) => ({ row, piece: pieceOf(row, state, { quietReasons }) }))
+        .filter(({ row, piece }) => piece && liveSvc.isLiveFor(s, { slug: row.slug }));
+      if (!wanted.length) return 0;
+      // Recorded as theirs, the way the loop decides whose card it is (an
+      // issue they filed that the loop has not recorded yet is not, yet).
+      const { rows: theirs } = await pool.query(
+        `SELECT app_id, issue_number, issue_title, first_version
+           FROM homeroom_bot_requesters WHERE user_id = $1`,
+        [userId],
+      );
+      const recorded = new Map(theirs.map((r) => [`${Number(r.app_id)}#${Number(r.issue_number)}`, r]));
+      const allowed = await viewableSlugs(pool, user, [...new Set(wanted.map(({ row }) => row.slug))]);
+      const followed = followedRequests(await cardRows(pool, userId, COVER_LIMIT));
+      wanted = wanted.filter(({ row }) => {
+        const key = `${Number(row.app_id)}#${Number(row.issue_number)}`;
+        return recorded.has(key) && allowed.has(row.slug) && !followed.has(key);
+      });
+      if (!wanted.length) return 0;
+      const bot = await dm.botAccount(pool);
+      if (!bot) return 0;
+      let count = 0;
+      for (const { row, piece } of wanted) {
+        const n = Number(row.issue_number);
+        const mine = recorded.get(`${Number(row.app_id)}#${n}`);
+        try {
+          const sent = await sendCard(pool, {
+            app: { id: row.app_id, slug: row.slug, name: row.name },
+            issueNumber: n,
+            requester: { userId, issueTitle: mine.issue_title || row.issue_title || null, firstVersion: !!mine.first_version },
+            bot, key: piece.key, startedAt: piece.startedAt, dm,
+          });
+          if (!sent?.messageId) continue;
+          // Recorded even when it was sent before: a card whose record was
+          // lost is found by the next read.
+          await recordCard(pool, sent, { userId, appId: row.app_id, issueNumber: n });
+          if (sent.duplicate) continue;
+          count += 1;
+          log.info('homeroom-bot-activity', 'Gave work already under way its activity card', {
+            app: row.slug, issueNumber: n, userId, startedAt: piece.startedAt,
+          });
+        } catch (err) {
+          log.warn('homeroom-bot-activity', 'Could not give work under way its card', {
+            app: row.slug, issueNumber: n, userId, err: err.message,
+          });
+        }
+      }
+      return count;
+    });
+    return { added: added || 0 };
+  } catch (err) {
+    log.warn('homeroom-bot-activity', 'Could not catch up on activity cards', { userId, err: err.message });
+    return none;
+  }
+}
+
 // ── The staging demo ──
 
-// The staging bot DM fixture's two cards (staging-messages.js), by the key
-// each was sent with: one being built now, one that ended in a proposal. A
+// The staging bot DM fixture's cards (staging-messages.js), by the key each
+// was sent with: one being built now, one that ended in a proposal, and one
+// that joins work already under way, sent when the viewer opens the DM
+// (staging-messages.js ensureDemoUnderWayCard, catchUpCards' stand-in). A
 // staging copy never runs the bot, so without them no card could be seen
 // there. No project stands behind them, so they link nowhere.
 const DEMO_CARD_KEYS = Object.freeze({
   working: 'staging-hrbot-activity-working',
   done: 'staging-hrbot-activity-done',
+  underWay: 'staging-hrbot-activity-under-way',
+});
+// The demo's work already under way: the plan for request #15, begun before
+// its card was there (the tray's demo lists it too, homeroom-bot-tray.js).
+const DEMO_UNDER_WAY = Object.freeze({
+  issueNumber: 15, issueTitle: 'Staging demo, add a search box', startedMinutesAgo: 38,
 });
 
 /** Pure: the demo cards' state, for the fixture's message ids. Times are relative to `now`. */
-function demoState({ working = null, done = null }, now = Date.now()) {
+function demoState({ working = null, done = null, underWay = null }, now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
   const links = { request: null, proposal: null };
   const cards = [];
+  if (underWay) {
+    cards.push({
+      messageId: underWay, startedAt: ago(DEMO_UNDER_WAY.startedMinutesAgo), links, state: 'working', stage: 'planning',
+      step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build', stepSince: ago(7), stepLimitMinutes: 20,
+    });
+  }
   if (working) {
     cards.push({
       messageId: working, startedAt: ago(9), links, state: 'working', stage: 'building',
@@ -353,21 +580,29 @@ async function demoCards(pool, user, now = Date.now()) {
     [user.id, Object.values(DEMO_CARD_KEYS)],
   );
   const id = (key) => Number(rows.find((row) => row.idempotency_key === key)?.id) || null;
-  return demoState({ working: id(DEMO_CARD_KEYS.working), done: id(DEMO_CARD_KEYS.done) }, now);
+  return demoState({
+    working: id(DEMO_CARD_KEYS.working), done: id(DEMO_CARD_KEYS.done), underWay: id(DEMO_CARD_KEYS.underWay),
+  }, now);
 }
 
 module.exports = {
   KIND,
   OUTCOMES,
   MAX_CARDS,
+  UNDER_WAY_STAGES,
   DEMO_CARD_KEYS,
+  DEMO_UNDER_WAY,
   cardText,
+  jobCardKey,
   startCard,
   outcomeOf,
   endedAt,
   linksOf,
   cardOf,
   cardsFor,
+  pieceOf,
+  followedRequests,
+  catchUpCards,
   demoState,
   demoCards,
 };

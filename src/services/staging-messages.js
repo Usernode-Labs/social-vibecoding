@@ -552,6 +552,42 @@ async function ensureBotDmFixture(pool, user) {
   return opened.conversationId;
 }
 
+// The demo of a card joining work already under way: what opening the bot's
+// DM does on a live copy (homeroom-bot-activity.js catchUpCards), which a
+// staging copy cannot, since the bot never works there. Opening the demo DM
+// gives the demo's request #15, whose plan was begun before it had a card,
+// its card at the end of the transcript, once. Like the fixture's other
+// cards it stands for no request: nothing is recorded or posted, and
+// demoCards says how far along it is. Only in the viewer's own fixture, and
+// only once the fixture is there. Resolves { added }.
+async function ensureDemoUnderWayCard(pool, user) {
+  if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return { added: 0 };
+  const { rows: [fixture] } = await pool.query(
+    `SELECT f.conversation_id, b.id AS bot_id
+       FROM staging_conversation_fixtures f
+       JOIN users b ON b.username = 'homeroom_bot' AND b.is_synthetic = TRUE
+       JOIN conversation_members cm ON cm.conversation_id = f.conversation_id AND cm.user_id = b.id
+      WHERE f.user_id = $1 AND f.legacy_id = $2`,
+    [user.id, BOT_DM_LEGACY_ID]
+  );
+  if (!fixture) return { added: 0 };
+  const activity = require('./homeroom-bot-activity');
+  const { issueNumber, issueTitle, startedMinutesAgo } = activity.DEMO_UNDER_WAY;
+  const startedAt = new Date(Date.now() - startedMinutesAgo * 60 * 1000).toISOString();
+  const sent = await conversations.sendMessage(pool, { id: fixture.bot_id }, fixture.conversation_id, {
+    content: activity.cardText({ appName: 'Staging demo app', issueNumber, issueTitle, firstVersion: false },
+      require('./homeroom-bot-dm'), { joined: true }),
+    idempotency_key: activity.DEMO_CARD_KEYS.underWay,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'activity', appName: 'Staging demo app', issueNumber, issueTitle, mirrors: true, startedAt,
+      },
+    },
+  });
+  return { added: sent?.messageId && !sent.duplicate ? 1 : 0 };
+}
+
 async function resolveLegacyLink(pool, user, id) {
   if (process.env.USERNODE_ENV !== 'staging' || id < 910001 || id > BOT_DM_LEGACY_ID) return id;
   // A real accessible ID always wins over a historical display-only address.
@@ -577,6 +613,6 @@ async function resolveLegacyMessageLink(pool, user, conversationId, id) {
 }
 
 module.exports = {
-  ensureFixtures, ensureBotDmFixture, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages,
-  BOT_DM_LEGACY_ID,
+  ensureFixtures, ensureBotDmFixture, ensureDemoUnderWayCard, resolveLegacyLink, resolveLegacyMessageLink,
+  demoConversations, demoMessages, BOT_DM_LEGACY_ID,
 };

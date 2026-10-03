@@ -15,9 +15,15 @@
 //     never a reason the work fails;
 //   - where it starts: beside the "looking into it" post, so never for a
 //     follow-up, a restart or a backlog pass;
+//   - work already under way without a card (catchUpCards): which stages
+//     are a piece of work a card follows, the key and the start each one is
+//     given, which requests a card already follows, and the words of a card
+//     that joins work begun earlier. The PostgreSQL side is
+//     tests/homeroom-bot-activity-catch-up-postgres.test.js;
 //   - the client: what it keeps of a read, the card drawn in every state,
-//     the row drawing it in place of the message's words, and the store
-//     reading again on `homeroom_bot_work_changed` and on the bot's news.
+//     the row drawing it in place of the message's words, the store reading
+//     again on `homeroom_bot_work_changed` and on the bot's news, and asking
+//     once per opening of the DM for the cards work under way is missing.
 //
 // Run with: node --test tests/homeroom-bot-activity.test.js
 
@@ -110,6 +116,24 @@ test('a card links its request, and its proposal only once people can open it', 
   assert.equal(activity.linksOf(row).request, '#app/x/dev/issues/3');
 });
 
+test('a card that joined work under way starts when that work began, not when the card was sent', () => {
+  const row = {
+    message_id: 40, created_at: '2026-10-02T12:00:00Z', began: '2026-10-02T11:22:00Z', slug: 'x', issue_number: 3,
+  };
+  assert.equal(activity.cardOf(row, { project: 'x', number: 3, stage: 'planning' }).startedAt, '2026-10-02T11:22:00.000Z');
+  assert.equal(activity.cardOf({ ...row, began: null }, null).startedAt, '2026-10-02T12:00:00.000Z',
+    'a card the loop sent began when it was sent');
+  // The read pairs each card with the first run from that moment, and reads
+  // past a build a restart sent back to be looked at again.
+  const service = read('src/services/homeroom-bot-activity.js');
+  assert.match(service, /COALESCE\(CASE WHEN m\.metadata->'homeroomBot'->>'startedAt'/);
+  assert.match(service, /AND r\.created_at >= c\.began\s+AND \(nxt\.began IS NULL OR r\.created_at < nxt\.began\)/);
+  assert.match(service, /AND NOT \(r\.build_ok IS FALSE AND right\(COALESCE\(r\.build_error, ''\), char_length\(\$3::text\)\) = \$3::text\)/);
+  const bot = read('src/services/homeroom-bot.js');
+  assert.match(bot, /error: `interrupted: \$\{plan\.lost \? \(plan\.why \|\| 'the turn was lost'\) : 'the spec turn was cut short'\}`\s*\+ ` \$\{RESTARTED_BUILD_NOTE\}`/,
+    'the restart\'s requeue writes the note the card reads past');
+});
+
 // ── Starting one ──
 
 function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
@@ -198,6 +222,100 @@ test('the live loop starts a card where it tells the request it is looking: neve
   assert.ok(live > -1 && body.indexOf('const open = await live.openBotProposal', live) < looking);
 });
 
+// ── Work already under way without a card ──
+
+const progressSvc = require('../src/services/homeroom-bot-progress');
+const traySvc = require('../src/services/homeroom-bot-tray');
+
+test('work under way is a look being read, or the plan and build its ready verdict started: what the tray lists as looking or building', () => {
+  for (const stage of activity.UNDER_WAY_STAGES) {
+    assert.ok(progressSvc.BUSY_STAGES.has(stage), `${stage}: the bot is working on it this minute`);
+    assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: the tray lists it under Now`);
+    assert.ok(['looking', 'building'].includes(traySvc.PHASE_OF_STAGE[stage]), stage);
+  }
+  // Everything else the tray lists under Now is not a look of the request's
+  // own: waiting in the queue, a follow-up on its proposal, a merge, a
+  // project being set up. None of them is given a card.
+  const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !activity.UNDER_WAY_STAGES.includes(stage)).sort();
+  assert.deepEqual(others, ['fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
+});
+
+test('a look being read is keyed as the loop keys its card; a plan or build by its run, begun when its look began', () => {
+  const reading = { stage: 'reading', since: '2026-10-02T11:50:00Z' };
+  const row = { queue_id: 345, started_at: '2026-10-02T11:50:00Z', queue_reason: 'new', run_id: 8, run_at: '2026-10-01T09:00:00Z' };
+  assert.deepEqual(activity.pieceOf(row, reading), { key: 'hrbot-activity-345', startedAt: '2026-10-02T11:50:00.000Z' });
+  assert.equal(activity.pieceOf(row, reading).key, activity.jobCardKey(345),
+    'the same message as the loop\'s own card for that look, whichever is sent first');
+  assert.equal(activity.pieceOf({ ...row, queue_reason: 'restart' }, reading).key, 'hrbot-activity-345',
+    'a restart\'s look is keyed the same way (whether it already has a card is the read\'s to say)');
+  assert.equal(activity.pieceOf({ ...row, queue_reason: 'app_again' }, reading, { quietReasons: ['app_again'] }), null,
+    'a backlog pass says nothing while it reads');
+  assert.equal(activity.pieceOf({ ...row, queue_id: null }, reading), null);
+
+  const ran = { run_id: 9, run_at: '2026-10-02T12:00:00Z', run_duration_ms: 300000, queue_id: null, queue_reason: null };
+  for (const stage of ['starting', 'planning', 'building', 'proposing']) {
+    assert.deepEqual(activity.pieceOf(ran, { stage }), { key: 'hrbot-activity-run-9', startedAt: '2026-10-02T11:55:00.000Z' }, stage);
+  }
+  assert.equal(activity.pieceOf({ ...ran, run_duration_ms: null }, { stage: 'building' }).startedAt, '2026-10-02T12:00:00.000Z');
+  assert.ok(activity.pieceOf(ran, { stage: 'planning' }, { quietReasons: ['app_again'] }),
+    'a backlog pass that went on to build is work under way like any other');
+  assert.equal(activity.pieceOf({ ...ran, run_id: null }, { stage: 'building' }), null);
+
+  for (const stage of ['queued', 'question', 'held', 'stalled', 'revising', 'fixing', 'followup_queued', 'fix_queued', 'merging', 'checks', 'vote', 'setting_up']) {
+    assert.equal(activity.pieceOf({ ...row, ...ran }, { stage }), null, stage);
+  }
+  assert.equal(activity.pieceOf(ran, { stage: 'building', waitingOn: 'them' }), null);
+  assert.equal(activity.pieceOf(ran, null), null);
+});
+
+test('a request whose newest card has come to nothing yet is followed by it; one whose newest card ended is not', () => {
+  const followed = activity.followedRequests([
+    { app_id: 1, issue_number: 3, run_id: null },
+    { app_id: 1, issue_number: 4, run_id: 5, verdict: 'question' },
+    { app_id: 1, issue_number: 5, run_id: 6, verdict: 'ready' },
+    { app_id: 1, issue_number: 6, run_id: 7, verdict: 'ready', build_ok: false, build_error: 'the build ran past its time limit' },
+    { app_id: 2, issue_number: 3, run_id: 8, verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted' },
+    // Older cards: the newest on each request decides.
+    { app_id: 1, issue_number: 4, run_id: null },
+    { app_id: 1, issue_number: 3, run_id: 2, verdict: 'empty' },
+  ]);
+  assert.deepEqual([...followed].sort(), ['1#3', '1#5'], 'no run yet, or a build not finished');
+});
+
+test('a card that joins work under way says, in plain words, that the work was started earlier', () => {
+  const context = { appName: 'Ear Trainer', issueNumber: 12, issueTitle: 'Sort by date', firstVersion: false };
+  assert.equal(activity.cardText(context, dmSvc, { joined: true }),
+    '**Ear Trainer** · request #12: Sort by date\n\nI started on this earlier and I\'m still working on it. This card updates as I go.');
+  assert.equal(activity.cardText({ ...context, firstVersion: true }, dmSvc, { joined: true }),
+    '**Ear Trainer**, its first version\n\nI started on the first version earlier and I\'m still working on it. This card updates as I go.');
+  assert.equal(activity.cardText(context, dmSvc),
+    '**Ear Trainer** · request #12: Sort by date\n\nI\'m working on this now. This card updates as I go.', 'unchanged for a card sent as the work starts');
+  for (const joined of [true, false]) assert.doesNotMatch(activity.cardText(context, dmSvc, { joined }), /—/);
+});
+
+test('catching up gives nobody else\'s work a card, and does nothing for somebody the bot does not DM, while it is off, or on staging', async () => {
+  const queries = [];
+  const pool = {
+    async query(sql) { queries.push(String(sql)); return { rows: [] }; },
+    async connect() { throw new Error('no lock is taken when there is nothing to do'); },
+  };
+  const deps = (over = {}) => ({
+    dm: { isDmUser: dmSvc.isDmUser },
+    liveSvc: { isStaging: () => false, isLiveFor: () => true, ...over.liveSvc },
+    botSvc: { APP_AGAIN_REASON: 'app_again', async readSettings() { throw new Error('settings were passed'); } },
+  });
+  const ada = { id: 7, username: 'ada' };
+  const on = { mode: 'shadow', dmUsers: ['ada'] };
+  assert.deepEqual(await activity.catchUpCards(pool, { user: { id: 8, username: 'sam' }, settings: on, deps: deps() }), { added: 0 });
+  assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: { ...on, mode: 'off' }, deps: deps() }), { added: 0 });
+  assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: on, deps: deps({ liveSvc: { isStaging: () => true } }) }), { added: 0 });
+  assert.deepEqual(await activity.catchUpCards(pool, { user: null, settings: on, deps: deps() }), { added: 0 });
+  assert.deepEqual(queries, [], 'nothing is read for any of them');
+  // A fault is never the page's problem.
+  const broken = { async query() { throw new Error('database gone'); }, async connect() { throw new Error('database gone'); } };
+  assert.deepEqual(await activity.catchUpCards(broken, { user: ada, settings: on, deps: deps() }), { added: 0 });
+});
+
 // ── The route and the demo ──
 
 test('the route reads the signed-in person\'s cards and nothing the request names', () => {
@@ -213,6 +331,20 @@ test('the route reads the signed-in person\'s cards and nothing the request name
   assert.match(service, /WHERE d\.user_id = \$1 AND d\.kind = 'activity'/);
 });
 
+test('catching up is a POST of its own, for the signed-in person, naming nothing, from the page only', () => {
+  const routes = read('src/routes/conversations.js');
+  const start = routes.indexOf("router.post('/api/conversations/homeroom-bot/activity', conversationMessageLimiter, sameOriginBrowserOnly, async (req, res) => {");
+  assert.ok(start > -1, 'the route exists, rate-limited and same-origin only');
+  assert.ok(start < routes.indexOf("router.post('/api/conversations/:id/"), 'and is declared before the id routes');
+  const body = routes.slice(start, routes.indexOf('\n  });', start));
+  assert.match(body, /return res\.json\(await activity\.catchUpCards\(pool, \{ user: req\.user \}\)\);/);
+  assert.match(body, /if \(isDemo\(req\)\) return res\.json\(await stagingMessages\.ensureDemoUnderWayCard\(pool, req\.user\)\);/);
+  assert.doesNotMatch(body, /req\.(?:params|body)|req\.query\.(?!demo)/, 'no user, conversation or message is read from the request');
+  // The read stays a read.
+  const getStart = routes.indexOf("router.get('/api/conversations/homeroom-bot/activity'");
+  assert.doesNotMatch(routes.slice(getStart, routes.indexOf('\n  });', getStart)), /catchUpCards|ensureDemoUnderWayCard/);
+});
+
 test('the staging demo has one card being built and one that ended in a proposal, opening nothing', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = activity.demoState({ working: 41, done: 40 }, now);
@@ -224,6 +356,16 @@ test('the staging demo has one card being built and one that ended in a proposal
   assert.equal(done.outcome, 'proposed');
   for (const card of demo.cards) assert.deepEqual(card.links, { request: null, proposal: null });
   assert.deepEqual(activity.demoState({}, now), { cards: [] }, 'a fixture without its cards has no state to show');
+  // And the card opening the demo DM gives work already under way: its plan,
+  // begun well before the card, as the tray's demo lists it.
+  const [joined] = activity.demoState({ underWay: 42 }, now).cards;
+  assert.equal(joined.messageId, 42);
+  assert.deepEqual([joined.state, joined.step, joined.of, joined.stepName], ['working', 2, 6, 'Write a plan']);
+  assert.equal(joined.startedAt, new Date(now - activity.DEMO_UNDER_WAY.startedMinutesAgo * 60000).toISOString());
+  const fixtureSource = read('src/services/staging-messages.js');
+  assert.match(fixtureSource, /async function ensureDemoUnderWayCard\(pool, user\) \{\n  if \(process\.env\.USERNODE_ENV !== 'staging' \|\| !user\?\.id\) return \{ added: 0 \};/);
+  assert.match(fixtureSource, /idempotency_key: activity\.DEMO_CARD_KEYS\.underWay,/);
+  assert.match(fixtureSource, /kind: 'activity', appName: 'Staging demo app', issueNumber, issueTitle, mirrors: true, startedAt,/);
   // The fixture sends its two cards with the keys demoCards finds them by.
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /require\('\.\/homeroom-bot-activity'\)\.DEMO_CARD_KEYS/);
@@ -430,11 +572,19 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
-test('the staging preview\'s declared check finds the card being built in the demo DM, beside the tray', () => {
+test('the staging preview\'s declared check finds the card being built in the demo DM, beside the tray, and the card opening it gave work under way', () => {
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[data-bot-activity=working\] \[aria-label="Step 3 of 6: Build it"\]\)/);
-  assert.ok(check.impact.includes('src/services/homeroom-bot-activity.js'));
+  // A step ring is drawn only while a card's work goes, and the panel (which
+  // leads its tiles with the same ring) is not drawn while it is closed, as
+  // the check requires: a ring here is a card in the transcript.
+  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[aria-label="Step 3 of 6: Build it"\]\)/);
+  assert.match(check.expectSelector, /:has\(\[aria-label="Step 2 of 6: Write a plan"\]\) > \.messages-thread-header /);
+  assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
+  assert.equal(check.expectText, 'Working on 3', 'the tray counts the work the new card follows');
+  for (const file of ['src/services/homeroom-bot-activity.js', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
+    assert.ok(check.impact.includes(file), file);
+  }
 });
 
 // ── Kept current: the loop's announcement and the bot's news ──
@@ -482,7 +632,7 @@ function createFakeReact() {
   };
 }
 
-function loadStore(t, { responses }) {
+function loadStore(t, { responses, catchUps = [] }) {
   const saved = ['window', 'document'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
   t.after(() => {
     for (const [name, descriptor] of saved) {
@@ -498,18 +648,30 @@ function loadStore(t, { responses }) {
   globalThis.window = win;
   globalThis.document = { visibilityState: 'visible' };
   const reads = [];
+  const asked = [];
+  const events = [];
   const api = {
     getHomeroomBotActivity(options) {
       reads.push(options);
       const next = responses.shift();
       return typeof next === 'function' ? next() : Promise.resolve(next || []);
     },
+    catchUpHomeroomBotActivity() {
+      asked.push(true);
+      const next = catchUps.shift();
+      return typeof next === 'function' ? next() : Promise.resolve(next || 0);
+    },
   };
   const fake = createFakeReact();
   const store = loadTsx(STORE, {
-    stubs: { react: fake.React, './api': api, './bot-work': { WORK_CHANGED_EVENT: 'homeroom-bot-work-changed' } },
+    stubs: {
+      react: fake.React,
+      './api': api,
+      './bot-work': { WORK_CHANGED_EVENT: 'homeroom-bot-work-changed' },
+      './store': { handleEvent(event) { events.push(event); } },
+    },
   });
-  return { store, fake, reads, timers, win };
+  return { store, fake, reads, timers, win, asked, events };
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -569,6 +731,45 @@ test('only the newest read lands, a failed one keeps what was read, and a card d
   assert.equal(store.getBotActivity().cards.get(31).outcome, 'question', 'what was read before stays');
   store.ensureBotActivity();
   assert.equal(reads.length, 3, 'already read: nothing more to ensure');
+});
+
+test('opening the DM asks once for the cards work under way is missing; one added re-reads the transcript and the cards', async (t) => {
+  const joined = { messageId: 60, state: 'working', step: 2, of: 6, doing: 'writing the plan for the build', links: {} };
+  const { store, fake, reads, asked, events } = loadStore(t, {
+    responses: [[], [joined], []],
+    catchUps: [1, 0, () => Promise.reject(new Error('offline'))],
+  });
+  let conversationId = 5;
+  let newsKey = 50;
+  fake.mount(() => store.useBotActivitySync(conversationId, newsKey));
+  await settle();
+  assert.equal(asked.length, 1, 'asked once, as the DM opens');
+  assert.deepEqual(events, [{ type: 'conversation_message_created', conversationId: 5 }],
+    'the new card is read into the transcript as the bot\'s news is, whether or not the socket said so');
+  assert.deepEqual(reads, [{ fresh: false }, { fresh: true }], 'and the cards read again, past the offline copy');
+  assert.equal(store.getBotActivity().cards.get(60).step, 2);
+
+  // The card landing in the transcript is news like any other; nothing asks again.
+  newsKey = 60;
+  fake.render();
+  await settle();
+  assert.equal(asked.length, 1);
+
+  // Another conversation asks again; nothing added means nothing more to read.
+  conversationId = 6;
+  fake.render();
+  await settle();
+  assert.equal(asked.length, 2);
+  assert.equal(events.length, 1);
+  assert.equal(reads.length, 4, 'the news re-read, then only the read every opening makes');
+
+  // A failed ask costs nothing.
+  conversationId = 7;
+  fake.render();
+  await settle();
+  assert.equal(asked.length, 3);
+  assert.equal(events.length, 1);
+  fake.unmount();
 });
 
 test('#3770: what was read says which read it was, so a card knows whether one was asked for after it was drawn', async (t) => {
