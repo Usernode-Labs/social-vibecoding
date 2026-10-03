@@ -96,8 +96,19 @@ test('it never lands on a capture route, and has one screenshot state of its own
 
 test('one filled button that says what it will do, and a quiet Skip for now', () => {
   assert.match(GATE, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
-  assert.match(GATE, /n === 0 \? 'Pick at least one'/);
+  assert.match(GATE, /ticked === 0 \? 'Pick at least one'/);
   assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
+  // D1 (first-session test, 2026-10-03): keeping Homeroom is not a join. The
+  // account is already in it, and it never ticks "Join a community" on the
+  // card, so the button counts only the other ticks ("Continue" for Homeroom
+  // alone), and the toast after it only what was really joined.
+  assert.match(GATE, /const platform = new Set\(list\.filter\(\(c\) => c\.self_hosted\)\.map\(\(c\) => c\.slug\)\);/);
+  assert.match(GATE, /const joins = \(slugs\) => slugs\.filter\(\(slug\) => !platform\.has\(slug\)\)\.length;/);
+  assert.match(GATE, /const ticked = picked\.size;\s*\n\s*const n = joins\(\[\.\.\.picked\]\);/);
+  assert.match(GATE, /save\.textContent = ticked === 0 \? 'Pick at least one'\s*\n\s*: n === 0 \? 'Continue'\s*\n\s*: `Join \$\{n\}/);
+  assert.match(GATE, /save\.setAttribute\('data-picked', String\(ticked\)\);/, 'what is ticked, Homeroom included');
+  assert.match(GATE, /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(`You joined \$\{n\}/);
+  assert.doesNotMatch(GATE, /\(body\.joined \|\| \[\]\)\.length/, 'never the raw count, which has Homeroom in it');
   // A welcome and what the place is, then the question.
   assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
   assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
@@ -235,6 +246,25 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.deepEqual({ ...card.SHOT_MODEL.app }, { slug: 'city-garden', name: 'City garden' });
   assert.equal(card.SHOT_MODEL.vote.kind, 'needs');
   assert.equal(card.SHOT_MODELS['getting-started-look'].vote.kind, 'workshop');
+  // A newcomer who kept only Homeroom (D1): nothing done, Join next and
+  // saying what does not count, and the three after it locked on needs_join.
+  const kept = card.SHOT_MODELS['getting-started-join'];
+  assert.deepEqual([kept.done, kept.total, kept.needs_join, kept.app, kept.vote], [0, 5, true, null, null]);
+  assert.equal(card.nextStepId(kept), 'tour');
+  assert.deepEqual(kept.steps.map((s) => card.stepView(s, kept).detail), [
+    'See how Homeroom works.',
+    'Find people to build with. Homeroom and projects only you can see don’t count.',
+    'Join a community first.', 'Join a community first.', 'Join a community first.',
+  ]);
+  // Never a lock once Join is ticked, in every fixture where it is.
+  for (const [name, m] of Object.entries(card.SHOT_MODELS)) {
+    const joinDone = m.steps.find((s) => s.action === 'join').done;
+    assert.equal(m.needs_join, !joinDone, `${name}: needs_join is the Join row's own tick`);
+    if (!joinDone) continue;
+    for (const s of m.steps) {
+      assert.notEqual(card.stepView(s, m).detail, 'Join a community first.', `${name}: ${s.id}`);
+    }
+  }
   assert.doesNotMatch(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, ''), /—/);
 });
 
@@ -245,7 +275,7 @@ test('every step not done has a button, a verb and an arrow, about the default a
   const card = loadTsx('frontend/src/features/home/getting-started.tsx');
   const garden = { slug: 'city-garden', name: 'City garden' };
   const owls = { slug: 'night-owls', name: 'Night owls' };
-  const model = (vote, app = garden) => ({ app, vote, try_seconds: 10 });
+  const model = (vote, app = garden, needsJoin = false) => ({ needs_join: needsJoin, app, vote, try_seconds: 10 });
   const step = (action, extra = {}) => ({
     id: `challenge-${action}`, kind: action === 'tour' ? 'tour' : 'challenge', action, title: 'T',
     detail: 'Its own task.', done: false, href: null, reward: '500 pts', earned_points: 0, ...extra,
@@ -259,8 +289,14 @@ test('every step not done has a button, a verb and an arrow, about the default a
   const here = model({ kind: 'needs', app: garden, count: 1 });
   assert.deepEqual(view(step('tour'), here),
     ['Its own task.', 'Start', 'Take the tour', 'Start the tour', false, { to: 'tour' }]);
+  // The Join row says what does not count while it is to do (D1): its own
+  // task, then the note.
   assert.deepEqual(view(step('join', { href: '#apps' }), here),
-    ['Its own task.', 'Join', 'Find a community', 'Find a community', true, { to: 'hash', href: '#apps' }]);
+    ['Its own task. Homeroom and projects only you can see don’t count.', 'Join', 'Find a community',
+      'Find a community', true, { to: 'hash', href: '#apps' }]);
+  assert.equal(card.joinDetail(''), 'Homeroom and projects only you can see don’t count.');
+  assert.deepEqual(view(step('join', { href: '#apps', done: true }), here), ['Its own task.', null],
+    'done, it is the task alone');
   assert.deepEqual(view(step('try'), here),
     ['Spend 10 seconds in City garden.', 'Try', 'Try City garden', 'Try City garden', true, { to: 'app', slug: 'city-garden' }]);
   assert.deepEqual(view(step('suggest'), here),
@@ -277,10 +313,31 @@ test('every step not done has a button, a verb and an arrow, about the default a
   assert.deepEqual(view(step('vote'), model({ kind: 'workshop', app: garden, count: 0 })),
     ['Nothing is up for a vote yet. See what people are building.', 'Look', 'See what City garden is building',
       'See what City garden is building', true, { to: 'workshop', slug: 'city-garden' }]);
-  // Until a community is joined: no app, so the three say so and carry no button.
+  // THE ONE GATE (first-session test, 2026-10-03): the three are locked
+  // while Join is to do, the server's `needs_join`, whether or not there is
+  // an app to be about (a default app does not unlock them, and its absence
+  // does not lock them).
   for (const action of ['try', 'vote', 'suggest']) {
-    assert.deepEqual(view(step(action), model(null, null)), ['Join a community first.', null], action);
+    assert.deepEqual(view(step(action), model(null, null, true)), ['Join a community first.', null], action);
+    assert.deepEqual(view(step(action), model({ kind: 'needs', app: garden, count: 1 }, garden, true)),
+      ['Join a community first.', null], `${action}: an app is not a join`);
   }
+  // Joined with no app to be about (no default app, and nothing Discover
+  // leads with that they did not make): never a lock, a Discover button.
+  const discover = { to: 'hash', href: '#apps' };
+  assert.deepEqual(view(step('try'), model(null, null)),
+    ['Find an app on Discover and spend 10 seconds in it.', 'Discover', 'Find an app on Discover',
+      'Find an app on Discover', true, discover]);
+  assert.deepEqual(view(step('vote'), model(null, null)),
+    ['Find an app on Discover and see what people are building.', 'Discover', 'Find an app on Discover',
+      'Find an app on Discover', true, discover]);
+  assert.deepEqual(view(step('suggest'), model(null, null)),
+    ['Find an app on Discover and tell its builders what would make it better.', 'Discover',
+      'Find an app on Discover', 'Find an app on Discover', true, discover]);
+  // And the lock reads `needs_join` alone: "no app" never drew it again.
+  assert.match(CARD_SRC, /if \(model\.needs_join === true\) return \{ detail: 'Join a community first\.', button: null \};/);
+  assert.equal((CARD_SRC.match(/'Join a community first\.'/g) || []).length, 1, 'one place draws the lock');
+  assert.doesNotMatch(CARD_SRC, /if \(!app\) return \{ detail: 'Join a community first\.'/);
   // A step whose measure is none of these: its own call-to-action.
   assert.deepEqual(view(step('other', { href: '#leaderboard/challenges/7/9', cta: 'Connect X' }), here),
     ['Its own task.', 'Connect X', 'Connect X', 'Connect X', true, { to: 'hash', href: '#leaderboard/challenges/7/9' }]);
@@ -360,7 +417,8 @@ test('a Home tile says where it lives: people for a private community, a lock fo
 test('both screens have a declared check on their own screenshot state', () => {
   const join = DAPP.tests.find((t) => t.id === 'auth.join-communities-first-run');
   assert.equal(join.path, '/?shot=join-communities');
-  assert.equal(join.expectText, 'Join 2 communities');
+  // Homeroom and the Book club invite are ticked: one of them is a join.
+  assert.equal(join.expectText, 'Join 1 community');
   assert.equal(join.visual, true);
   assert.match(join.expectSelector, /\[data-join-communities-save\]\[data-picked="2"\] \+ \[data-join-communities-skip\]$/,
     'the Skip sits right under the Join button');

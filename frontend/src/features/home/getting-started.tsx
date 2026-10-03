@@ -47,11 +47,20 @@
  * Homeroom and not one they made (onboarding.js defaultApp). The row's line
  * names it ("Spend 10 seconds in City garden."); the button is a verb and an
  * arrow, nothing else, and its accessible name is the whole sentence ("Try
- * City garden"). Until they have joined one, Try, Vote and Suggest say "Join
- * a community first." and carry no button. `stepView` keeps that long label
- * beside the short one, so a full-width button under the step text (the
- * prototype's other layout, which evan has not ruled out) is a change to the
- * row alone.
+ * City garden"). `stepView` keeps that long label beside the short one, so a
+ * full-width button under the step text (the prototype's other layout, which
+ * evan has not ruled out) is a change to the row alone.
+ *
+ * ONE GATE (first-session test, 2026-10-03). Until the Join step is ticked,
+ * Try, Vote and Suggest say "Join a community first." and carry no button:
+ * the server's `needs_join`, which is that step's own done state, and
+ * nothing else. It used to be "no default app", which disagreed with the
+ * tick both ways. Keeping Homeroom, or making a project only you can see,
+ * does not tick Join (onboarding.js COMMUNITY_JOINED, by design), so the Join
+ * row says so while it is to do. Once Join is ticked nothing is locked: with
+ * no default app the server sends the first app Discover leads with
+ * (onboarding.js fallbackApp), and with none at all the three go to
+ * Discover.
  *
  * ── What it says ───────────────────────────────────────────────────────
  *
@@ -99,9 +108,10 @@
  * declared check can see it: a newcomer who has just joined City garden
  * (1 of 5), the tour next. `?shot=getting-started-halfway` is three steps in,
  * Vote next with a change waiting; `?shot=getting-started-look` the same with
- * nothing up for a vote anywhere; `?shot=getting-started-done` the all-set
- * state. A fixture's buttons post nothing. Every other `?shot=`, `?demo=` and
- * `?token=` route draws nothing.
+ * nothing up for a vote anywhere; `?shot=getting-started-join` a newcomer who
+ * kept only Homeroom (0 of 5), Join to do and the three after it locked;
+ * `?shot=getting-started-done` the all-set state. A fixture's buttons post
+ * nothing. Every other `?shot=`, `?demo=` and `?token=` route draws nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -166,7 +176,16 @@ export interface GettingStartedModel {
   earned_points: number;
   /** The season's other open challenges, which finishing lets the person see. */
   unlocks: { count: number; names: string[] };
-  /** The default app: Try, Vote and Suggest are about it. Null until one is joined. */
+  /**
+   * The one gate on Try, Vote and Suggest: the Join step is not done yet.
+   * False when it is, or when the season has no Join step.
+   */
+  needs_join: boolean;
+  /**
+   * The app Try, Vote and Suggest are about: the default app, or once Join
+   * is ticked without one, the first app Discover leads with. Null when
+   * there is neither.
+   */
   app: GettingStartedApp | null;
   /** Where Vote goes. Null without an app. */
   vote: VoteTarget | null;
@@ -174,7 +193,9 @@ export interface GettingStartedModel {
   try_seconds: number;
 }
 
-const SHOTS = ['getting-started', 'getting-started-halfway', 'getting-started-look', 'getting-started-done'] as const;
+const SHOTS = [
+  'getting-started', 'getting-started-halfway', 'getting-started-look', 'getting-started-join', 'getting-started-done',
+] as const;
 type Shot = typeof SHOTS[number];
 
 const CITY_GARDEN: GettingStartedApp = { slug: 'city-garden', name: 'City garden' };
@@ -217,6 +238,9 @@ function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): Getting
     return { ...s, done, earned_points: done ? pts : 0 };
   });
   const done = steps.filter((s) => s.done).length;
+  // Join not ticked: the newcomer kept only Homeroom, which is no default
+  // app, so the server sends none and nothing for Vote either.
+  const joined = steps.some((s) => s.action === 'join' && s.done);
   return {
     show: true,
     complete: done === steps.length,
@@ -225,8 +249,9 @@ function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): Getting
     total: steps.length,
     earned_points: steps.reduce((sum, s) => sum + s.earned_points, 0),
     unlocks: FIXTURE_UNLOCKS,
-    app: CITY_GARDEN,
-    vote: { kind: vote, app: CITY_GARDEN, count: vote === 'needs' ? 1 : 0 },
+    needs_join: !joined,
+    app: joined ? CITY_GARDEN : null,
+    vote: joined ? { kind: vote, app: CITY_GARDEN, count: vote === 'needs' ? 1 : 0 } : null,
     try_seconds: 10,
   };
 }
@@ -235,11 +260,14 @@ function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): Getting
  * The fixture states. `getting-started` is a newcomer who has just come
  * through the join screen, into City garden: "Join a community" counted the
  * moment they joined, and the tour is next. The declared check reads it.
+ * `getting-started-join` is one who kept only Homeroom ticked: nothing done,
+ * the Join row saying what does not count, and Try, Vote and Suggest locked.
  */
 export const SHOT_MODELS: Record<Shot, GettingStartedModel> = {
   'getting-started': fixture(['challenge-41']),
   'getting-started-halfway': fixture(['tour', 'challenge-41', 'challenge-42']),
   'getting-started-look': fixture(['tour', 'challenge-41', 'challenge-42'], 'workshop'),
+  'getting-started-join': fixture([]),
   'getting-started-done': fixture(FIXTURE_STEPS.map((s) => s.id)),
 };
 export const SHOT_MODEL = SHOT_MODELS['getting-started'];
@@ -327,14 +355,41 @@ export interface StepButtonView {
 const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
 
 /**
+ * What does not tick Join, said on its row while it is to do: the
+ * platform's own project every account starts in, and a project only you
+ * can see ("Just me" when it was made). Neither is a community you found
+ * (onboarding.js COMMUNITY_JOINED). After the challenge's own task, which is
+ * the admin's words.
+ */
+export const JOIN_NOTE = 'Homeroom and projects only you can see don’t count.';
+
+/** The Join row's line while it is to do: its task, then what does not count. */
+export function joinDetail(detail: string): string {
+  const own = String(detail || '').trim();
+  return own ? `${own} ${JOIN_NOTE}` : JOIN_NOTE;
+}
+
+// Joined, and still no app to be about (no app on the platform they did not
+// make is open to everyone): the three go to Discover, never a lock.
+const DISCOVER_GO: StepGo = { to: 'hash', href: '#apps' };
+const DISCOVER_BUTTON: StepButtonView = {
+  short: 'Discover', long: 'Find an app on Discover', aria: 'Find an app on Discover', app: null, arrow: true,
+  go: DISCOVER_GO,
+};
+
+/**
  * What a row says under its title and what its button is, given the
  * person's default app and where Vote goes. A done row says its own task and
- * has no button.
+ * has no button. Try, Vote and Suggest are locked while `needs_join`, and
+ * only then.
  */
-export function stepView(step: GettingStartedStep, model: Pick<GettingStartedModel, 'app' | 'vote' | 'try_seconds'>):
-  { detail: string; button: StepButtonView | null } {
+export function stepView(
+  step: GettingStartedStep,
+  model: Pick<GettingStartedModel, 'needs_join' | 'app' | 'vote' | 'try_seconds'>,
+): { detail: string; button: StepButtonView | null } {
   if (step.done) return { detail: step.detail, button: null };
   const app = model.app;
+  const secs = Number(model.try_seconds) || 10;
   switch (step.action) {
     case 'tour':
       return {
@@ -343,7 +398,7 @@ export function stepView(step: GettingStartedStep, model: Pick<GettingStartedMod
       };
     case 'join':
       return {
-        detail: step.detail,
+        detail: joinDetail(step.detail),
         button: {
           short: 'Join', long: 'Find a community', aria: 'Find a community', app: null, arrow: true,
           go: { to: 'hash', href: step.href || '#apps' },
@@ -352,7 +407,15 @@ export function stepView(step: GettingStartedStep, model: Pick<GettingStartedMod
     case 'try':
     case 'vote':
     case 'suggest':
-      if (!app) return { detail: 'Join a community first.', button: null };
+      if (model.needs_join === true) return { detail: 'Join a community first.', button: null };
+      if (!app) {
+        const detail = step.action === 'try'
+          ? `Find an app on Discover and spend ${secs} seconds in it.`
+          : step.action === 'vote'
+            ? 'Find an app on Discover and see what people are building.'
+            : 'Find an app on Discover and tell its builders what would make it better.';
+        return { detail, button: DISCOVER_BUTTON };
+      }
       break;
     default: {
       const label = String(step.cta || '').trim() || 'Open';
@@ -365,7 +428,6 @@ export function stepView(step: GettingStartedStep, model: Pick<GettingStartedMod
     }
   }
   if (step.action === 'try') {
-    const secs = Number(model.try_seconds) || 10;
     const long = `Try ${app.name}`;
     return {
       detail: `Spend ${secs} seconds in ${app.name}.`,
