@@ -541,3 +541,168 @@ test('a message from somebody on the list is answered while the bot types; anybo
   });
   assert.deepEqual(typing(), [true, false], 'the bot does not type to somebody it does not answer');
 });
+
+// ── #3751: a failure in the handling still answers the person ────────────
+
+// Captures what the bot sends in the DM (what sendDm calls), restoring the
+// real sends afterwards. `result` is what the stand-in sendMessage resolves.
+function sendHarness(t, result = { messageId: 900, duplicate: false, memberIds: [], notifications: [] }) {
+  const conversations = require('../src/services/conversations');
+  const real = { open: conversations.ensureAdmittedDirect, send: conversations.sendMessage };
+  const sends = [];
+  conversations.ensureAdmittedDirect = async () => ({ conversationId: 45, created: false });
+  conversations.sendMessage = async (_pool, sender, conversationId, input) => {
+    sends.push({ senderId: sender.id, conversationId, input });
+    return typeof result === 'function' ? result() : result;
+  };
+  t.after(() => { conversations.ensureAdmittedDirect = real.open; conversations.sendMessage = real.send; });
+  return sends;
+}
+
+// Captures the logger's warnings, restoring it afterwards.
+function warnHarness(t) {
+  const logger = require('../src/services/logger');
+  const realWarn = logger.warn;
+  const warns = [];
+  logger.warn = (category, message, data) => { warns.push({ category, message, data }); };
+  t.after(() => { logger.warn = realWarn; });
+  return warns;
+}
+
+// The pool the noteUserMessage test stubs, with each test's own throws on top.
+function dmPool(throwOn = null) {
+  return {
+    async query(sql) {
+      if (throwOn && throwOn.test(sql)) throw new Error('database down');
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_dm_users', value: '["ada"]' }] };
+      if (/FROM conversation_direct_pairs/.test(sql)) return { rows: [{ '?column?': 1 }] };
+      if (/FROM conversation_messages/.test(sql)) return { rows: [{ id: 70 }] };
+      return { rows: [] };
+    },
+  };
+}
+
+const BROKEN = 'I couldn\'t answer just now. Try again in a minute.';
+
+test('a dependency failing under a quoted message still sends the apology, quoting the message', async (t) => {
+  const { ws } = typingHarness(t);
+  const sends = sendHarness(t);
+  const mayor = {
+    async decideOffer() { throw new Error('the decider broke'); },
+    async runDmTurn() { throw new Error('the model must not be reached'); },
+  };
+  const out = await dm.noteUserMessage(dmPool(), {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45,
+    message: { id: 70, content: 'try again on my request', reply: { id: 80 } },
+    deps: { bot: { id: 2, username: 'homeroom_bot' }, mayor, ws },
+  });
+  assert.equal(out, null, 'the failure is logged, not thrown to the route');
+  assert.equal(sends.length, 1, 'one apology, nothing else');
+  assert.equal(sends[0].senderId, 2, 'sent as the bot');
+  assert.equal(sends[0].conversationId, 45);
+  assert.equal(sends[0].input.content, BROKEN, 'the mayor\'s own broken wording');
+  assert.equal(sends[0].input.reply_to_id, 70, 'it quotes the person\'s message');
+  assert.equal(sends[0].input.idempotency_key, 'hrbot-failed-70', 'keyed to the message, apart from the other sends');
+});
+
+test('the request lookup failing instead still sends the same one apology', async (t) => {
+  const { ws } = typingHarness(t);
+  const sends = sendHarness(t);
+  const mayor = {
+    async decideOffer() { return null; },
+    async runDmTurn() { throw new Error('the model must not be reached'); },
+  };
+  // quotedTarget reads homeroom_bot_dm_messages; make that read fail.
+  const out = await dm.noteUserMessage(dmPool(/FROM homeroom_bot_dm_messages/), {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45,
+    message: { id: 70, content: 'try again on my request', reply: { id: 80 } },
+    deps: { bot: { id: 2, username: 'homeroom_bot' }, mayor, ws },
+  });
+  assert.equal(out, null);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].input.content, BROKEN);
+  assert.equal(sends[0].input.reply_to_id, 70);
+  assert.equal(sends[0].input.idempotency_key, 'hrbot-failed-70');
+});
+
+test('the model turn failing outright still sends the apology', async (t) => {
+  const { ws } = typingHarness(t);
+  const sends = sendHarness(t);
+  const mayor = {
+    async decideOffer() { return null; },
+    async runDmTurn() { throw new Error('the whole turn broke'); },
+  };
+  const out = await dm.noteUserMessage(dmPool(), {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45, message: { id: 70, content: 'what are you working on?' },
+    deps: { bot: { id: 2, username: 'homeroom_bot' }, mayor, ws },
+  });
+  assert.equal(out, null);
+  assert.equal(sends.length, 1, 'one apology, even when the turn\'s own recovery failed');
+  assert.equal(sends[0].input.content, BROKEN);
+  assert.equal(sends[0].input.reply_to_id, 70);
+  assert.equal(sends[0].input.idempotency_key, 'hrbot-failed-70');
+});
+
+test('the apology itself being refused is logged and the handling still resolves', async (t) => {
+  const { ws } = typingHarness(t);
+  const sends = sendHarness(t, () => ({ error: 'rate_limited' }));
+  const warns = warnHarness(t);
+  const mayor = {
+    async decideOffer() { throw new Error('the decider broke'); },
+    async runDmTurn() { throw new Error('the model must not be reached'); },
+  };
+  const out = await dm.noteUserMessage(dmPool(), {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45,
+    message: { id: 70, content: 'try again on my request', reply: { id: 80 } },
+    deps: { bot: { id: 2, username: 'homeroom_bot' }, mayor, ws },
+  });
+  assert.equal(out, null, 'it resolves, whatever the send did');
+  assert.equal(sends.length, 1, 'one attempt, never a retry loop');
+  assert.ok(warns.some((w) => w.category === 'homeroom-bot-dm' && w.message === 'Could not even say the answer failed'),
+    'the failed apology is logged');
+});
+
+test('without a bot account nothing is sent and the miss is logged', async (t) => {
+  const sends = sendHarness(t);
+  const warns = warnHarness(t);
+  const pool = {
+    async query(sql) {
+      if (/FROM users/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+  const out = await dm.noteUserMessage(pool, {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45, message: { id: 70, content: 'hello' },
+  });
+  assert.equal(out, null);
+  assert.equal(sends.length, 0, 'no send is attempted without an account');
+  assert.ok(warns.some((w) => w.category === 'homeroom-bot-dm' && w.message === 'No bot account to answer a DM with'),
+    'the missing account is logged');
+});
+
+test('the quiet paths stay quiet: a synthetic sender and a stranger\'s conversation send nothing', async (t) => {
+  const sends = sendHarness(t);
+  const warns = warnHarness(t);
+  const bot = { id: 2, username: 'homeroom_bot' };
+  const mayor = { async decideOffer() { return null; }, async runDmTurn() { return { turn: 1 }; } };
+  await dm.noteUserMessage(dmPool(), {}, {
+    user: { id: 9, username: 'ada', isSynthetic: true }, conversationId: 45,
+    message: { id: 70, content: 'hello' }, deps: { bot, mayor },
+  });
+  // The same conversation, but the pair table has no row: not the person's DM.
+  const notDirect = {
+    async query(sql) {
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_dm_users', value: '["ada"]' }] };
+      if (/FROM conversation_direct_pairs/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+  await dm.noteUserMessage(notDirect, {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 46, message: { id: 70, content: 'hello' },
+    deps: { bot, mayor },
+  });
+  assert.equal(sends.length, 0, 'neither path answers');
+  assert.deepEqual(warns.filter((w) => w.message === 'No bot account to answer a DM with'), [],
+    'the quiet paths are not logged as failures');
+});
+

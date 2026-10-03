@@ -927,18 +927,55 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
 async function noteUserMessage(pool, config, { user, conversationId, message, deps = {} }) {
   if (!user?.id || !message?.id || user.isSynthetic) return null;
   const bot = deps.bot || await botAccount(pool);
-  if (!bot || bot.id === user.id) return null;
-  if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
-  const settings = await settingsModule().readSettings(pool);
-  if (!isDmUser(settings, user.username)) {
-    const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
-    return sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
-    });
+  if (!bot) {
+    // #3751: without an account there is nothing to answer with; a log is
+    // the whole fallback, and the person's message stays unanswered.
+    log.warn('homeroom-bot-dm', 'No bot account to answer a DM with', { conversationId });
+    return null;
   }
-  // #3684: typing from here until the answer is sent (whileTyping above).
-  return whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws },
-    () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
+  if (bot.id === user.id) return null;
+  if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
+  // #3751: from here the person is owed an answer, so nothing in the
+  // handling may fail silently. Whatever throws, one apology still goes
+  // out, quoting their message like any other answer.
+  try {
+    const settings = await settingsModule().readSettings(pool);
+    if (!isDmUser(settings, user.username)) {
+      const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
+      // A bare `return sendDm(...)` would adopt the promise outside the try,
+      // so a rejection here would slip past the catch below.
+      return await sendDm(pool, {
+        bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      });
+    }
+    // #3684: typing from here until the answer is sent (whileTyping above).
+    return await whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws },
+      () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
+  } catch (err) {
+    const rawCode = typeof err?.code === 'string' ? err.code : '';
+    const code = /^[A-Za-z0-9_]{1,40}$/.test(rawCode) ? rawCode : 'error';
+    log.warn('homeroom-bot-dm', 'Could not answer a DM; saying so', {
+      userId: user.id, messageId: message.id, code, err: clip(err?.message, 300),
+    });
+    let broken = null;
+    try {
+      // Lazy: the mayor requires this module back (its dmModule), so this
+      // must not move to the top of the file.
+      broken = require('./homeroom-bot-mayor').BROKEN_TEXT;
+    } catch (requireErr) {
+      log.warn('homeroom-bot-dm', 'Could not read the bot\'s apology text', { err: requireErr.message });
+    }
+    if (typeof broken !== 'string') broken = 'I couldn\'t answer just now. Try again in a minute.';
+    try {
+      const sent = await sendDm(pool, {
+        bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-failed-${message.id}`, content: broken,
+      });
+      if (!sent) log.warn('homeroom-bot-dm', 'Could not even say the answer failed', { userId: user.id, messageId: message.id });
+    } catch (sendErr) {
+      log.warn('homeroom-bot-dm', 'Could not even say the answer failed', { userId: user.id, messageId: message.id, err: sendErr.message });
+    }
+    return null;
+  }
 }
 
 /** What noteUserMessage does with a message from somebody on the list, while the bot types. */
