@@ -351,6 +351,95 @@ async function requestRows(pool, userId) {
   return rows;
 }
 
+/** Pure (WP1): a live ready run whose build waits its turn or runs. */
+function buildUnderWay(run) {
+  return run.build_ok == null && !run.proposal_session_id && !run.cap_suppressed
+    && ((!!run.live_build_waiting_at && !run.build_session_id) || run.build_status === 'active' || run.build_status === 'paused');
+}
+
+/** Pure (WP1): what one earlier build of a request came to, in words. */
+function attemptOutcome(run) {
+  const why = (prefix) => String(run.build_error || '').replace(prefix, '').slice(0, 200);
+  if (run.proposal_session_id) {
+    if (run.proposal_status === 'merged') return 'built; approved and live';
+    if (run.proposal_status === 'promoted') return 'built; its proposal is up for a vote';
+    if (run.proposal_status === 'merging') return 'built; its proposal is being merged';
+    return 'built; its proposal was closed';
+  }
+  if (run.build_ok === true) return 'built';
+  if (run.build_ok === false) {
+    if (/^skipped:/.test(String(run.build_error || ''))) return `stopped before it was built: ${why(/^skipped:\s*/)}`;
+    if (/^blocked:/.test(String(run.build_error || ''))) return `found it cannot be built as written: ${why(/^blocked:\s*/)}`;
+    return `the build did not succeed${run.build_error ? `: ${why('')}` : ''}`;
+  }
+  if (run.cap_suppressed) return 'held back by a limit, never built';
+  if (run.build_error) return `never built: ${why(/^superseded:\s*/)}`;
+  return 'nothing recorded about how it ended';
+}
+
+/**
+ * WP1 (#10): the request's other live builds beside the one its stage
+ * describes (its open proposal's, else its newest look's), set on each row
+ * in place: `also_building`, another build of the same request that waits
+ * or runs, and `earlier_attempt`, the build before the described one and
+ * what it came to. The stage reads the newest look and the newest proposal
+ * only, so a second build of one request was invisible to the bot's answers
+ * ("Nothing broke", Plant Pal, 3 October). Never throws.
+ */
+async function attachAttempts(pool, rows) {
+  const keyed = rows.filter((r) => r.app_id && r.issue_number);
+  if (!keyed.length) return;
+  let runs;
+  try {
+    ({ rows: runs } = await pool.query(
+      `SELECT r.id, r.app_id, r.issue_number, r.created_at, r.build_ok, r.build_error, r.cap_suppressed,
+              r.live_build_waiting_at, r.build_session_id, r.proposal_session_id,
+              bs.status AS build_status, bs.created_at AS build_started_at, ps.status AS proposal_status
+         FROM homeroom_bot_runs r
+         LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+         LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
+        WHERE r.mode = 'live' AND r.verdict = 'ready'
+          AND (r.app_id, r.issue_number) IN (SELECT * FROM UNNEST($1::int[], $2::int[]))
+          AND r.created_at > NOW() - make_interval(days => $3)
+        ORDER BY r.id DESC`,
+      [keyed.map((r) => Number(r.app_id)), keyed.map((r) => Number(r.issue_number)), FINISHED_WITHIN_DAYS],
+    ));
+  } catch {
+    return;
+  }
+  const byRequest = new Map();
+  for (const run of runs || []) {
+    const key = `${Number(run.app_id)}#${Number(run.issue_number)}`;
+    if (!byRequest.has(key)) byRequest.set(key, []);
+    byRequest.get(key).push(run);
+  }
+  for (const row of keyed) {
+    const list = byRequest.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || [];
+    if (!list.length) continue;
+    const open = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
+    const proposalRun = open ? list.find((r) => Number(r.proposal_session_id) === Number(row.proposal_session_id)) : null;
+    const described = Number(proposalRun?.id ?? row.run_id) || null;
+    const other = list.find((r) => Number(r.id) !== described && buildUnderWay(r));
+    if (other) {
+      const waiting = !other.build_session_id;
+      row.also_building = {
+        doing: waiting
+          ? 'another build of this same request is waiting its turn'
+          : 'another build of this same request is under way',
+        since: iso(other.build_started_at || other.live_build_waiting_at || other.created_at),
+      };
+    }
+    const earlier = described ? list.find((r) => Number(r.id) < described && !buildUnderWay(r)) : null;
+    if (earlier) {
+      row.earlier_attempt = {
+        outcome: attemptOutcome(earlier),
+        when: iso(earlier.created_at),
+        ...(earlier.proposal_session_id ? { proposal: Number(earlier.proposal_session_id) } : {}),
+      };
+    }
+  }
+}
+
 /** Where each of `rows`' waiting requests is in the live queue, by queue id. */
 async function queuePositions(pool, rows, settings) {
   const position = new Map();
@@ -578,6 +667,9 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
     ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
     ...(proposal ? { proposal } : {}),
+    // WP1 (#10): the request's other builds, beside the one described.
+    ...(row.also_building ? { alsoBuilding: row.also_building } : {}),
+    ...(row.earlier_attempt ? { earlierAttempt: row.earlier_attempt } : {}),
     links: links(domain, { slug: row.slug, number, proposal: proposal?.proposal }),
   };
 }
@@ -601,6 +693,7 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   const rows = (await requestRows(pool, userId)).map((row) => (!acts || acts.has(row.slug) ? row : {
     ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
   }));
+  await attachAttempts(pool, rows);
   const position = await queuePositions(pool, rows, settings);
   const staged = rows.map((row) => {
     const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
@@ -725,6 +818,9 @@ module.exports = {
   START_GRACE_MS,
   inFlight,
   stageOf,
+  buildUnderWay,
+  attemptOutcome,
+  attachAttempts,
   queuedWait,
   buildWait,
   projectsBusy,

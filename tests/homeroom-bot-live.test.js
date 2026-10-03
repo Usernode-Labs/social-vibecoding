@@ -603,6 +603,65 @@ test('a build is held to the same wall clock as a triage turn', async (t) => {
   assert.deepEqual(h.calls.promoted, [], 'a stopped build is never proposed');
 });
 
+// WP1 (#2): a build is checked again once its plan is written and just
+// before it is proposed (skipCheck, homeroom-bot.js whyNotBuild). Both of
+// Plant Pal's duplicates were proposed after the first was up for a vote and
+// after the request's issue had closed.
+const SPEC = '# Spec\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny';
+
+test('WP1: a build its request no longer needs once its plan is written stops there: no plan posted, no build turn', async () => {
+  const h = buildHarness({ spec: SPEC });
+  const specs = [];
+  const asked = [];
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...BUILD_ARGS,
+    onSpec: async (s) => { specs.push(s); },
+    skipCheck: async () => { asked.push('asked'); return 'skipped: the request already has a proposal (6190)'; },
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.skipped, 'skipped: the request already has a proposal (6190)');
+  assert.equal(out.error, out.skipped, 'recorded as the skip it is');
+  assert.equal(out.specMd, SPEC, 'the plan it wrote is kept on the result');
+  assert.deepEqual(asked, ['asked']);
+  assert.deepEqual(specs, [], 'its plan is not posted');
+  assert.deepEqual(h.calls.modes, ['scout'], 'and no build turn runs');
+  assert.deepEqual(h.calls.promoted, []);
+  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)), 'its session is put away');
+});
+
+test('WP1: a build whose request was answered or closed while it ran is not proposed', async () => {
+  const h = buildHarness({ spec: SPEC });
+  const answers = [null, 'skipped: the request was closed before it was proposed'];
+  const specs = [];
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...BUILD_ARGS,
+    onSpec: async (s) => { specs.push(s.specMd); },
+    skipCheck: async () => answers.shift(),
+  });
+  assert.deepEqual(h.calls.modes, ['scout', 'build'], 'it was built');
+  assert.deepEqual(specs, [SPEC], 'its plan posted as ever');
+  assert.deepEqual(h.calls.promoted, [], 'and never proposed');
+  assert.equal(out.skipped, 'skipped: the request was closed before it was proposed');
+  assert.equal(out.costUsd, 0.05, 'what it cost is still recorded');
+  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)));
+  // The check is the step right before the proposal is prepared and put up.
+  const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function buildAndPropose('));
+  const check = fn.indexOf('const skipped = await skipNow();');
+  assert.ok(check > fn.indexOf('routed = await sessions.runCodexAttemptLoop({'), 'after the build turn');
+  assert.ok(check < fn.indexOf('await prepareProposal({') && check < fn.indexOf('const promoted = await promoteAsBot({'), 'before it is proposed');
+});
+
+test('WP1: a check that cannot answer never stops a build, and a build with no check is built as before', async () => {
+  const h = buildHarness();
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...BUILD_ARGS, skipCheck: async () => { throw new Error('connection lost'); },
+  });
+  assert.equal(out.ok, true);
+  assert.deepEqual(h.calls.promoted, [{ id: '5001', user: BOT.id }]);
+  const plain = buildHarness();
+  assert.equal((await live.buildAndPropose({ pool: plain.pool, deps: plain.deps, ...BUILD_ARGS })).ok, true);
+});
+
 // ── What each verdict does ───────────────────────────────────────────────
 
 function actHarness() {
@@ -684,6 +743,66 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
 });
 
+
+test('WP1: a build that was not needed is recorded as a skip, and nothing is said: never "couldn\'t finish"', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, dm: args.dm }); return { githubCreatedAt: '2026-10-03T16:48:00Z' }; };
+  let check = null;
+  live.buildAndPropose = async (args) => {
+    check = args.skipCheck;
+    return {
+      ok: false, sessionId: 5004, skipped: 'skipped: the request already has a proposal (6190)',
+      error: 'skipped: the request already has a proposal (6190)', costUsd: 0.12,
+    };
+  };
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'skipped');
+  assert.equal(typeof check, 'function', 'the build is handed its check');
+  assert.deepEqual(h.posts, [], 'nothing on the request, nothing in the DM');
+  const recorded = h.queries.filter((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)).at(-1).params;
+  assert.deepEqual(recorded.slice(0, 3), [900, false, 'skipped: the request already has a proposal (6190)'],
+    'which every reader shows as stopped');
+  assert.ok(!h.queries.some((q) => /SET proposal_session_id = \$2/.test(q.sql)));
+});
+
+test('WP1: what the run has seen moves past its own plan comment as soon as it is posted', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; live.advanceSeen = realSeen; });
+  const order = [];
+  live.post = async (args) => { order.push(`post:${args.kind}`); return { githubCreatedAt: args.kind === 'spec' ? '2026-10-03T16:46:40Z' : '2026-10-03T17:10:00Z' }; };
+  live.advanceSeen = async (args) => { order.push(`seen:${args.postedAt.join(',')}:${args.since}`); return { advanced: true }; };
+  live.buildAndPropose = async (args) => {
+    await args.onSpec({ sessionId: 5001, version: null, specMd: '# Spec' });
+    order.push('built');
+    return { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0 };
+  };
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.deepEqual(order, [
+    'post:spec',
+    'seen:2026-10-03T16:46:40Z:2026-09-25T17:00:00Z',
+    'built',
+    'post:proposal',
+    'seen:2026-10-03T16:46:40Z,2026-10-03T17:10:00Z:2026-09-25T17:00:00Z',
+  ], 'right after the plan comment, from when the build read the request, and again once it is announced');
+});
+
+test('WP1: a merge stops the rest of the bot\'s work on its request, in a block of its own after the merged DM', () => {
+  const votes = read('src/routes/votes.js');
+  const fn = votes.slice(votes.indexOf('async function finalizeMerge('));
+  const dmAt = fn.indexOf("require('../services/homeroom-bot-dm').noteProposalMerged(pool, session)");
+  const netAt = fn.indexOf("require('../services/homeroom-bot').noteRequestMerged(pool, session)");
+  assert.ok(dmAt > -1 && netAt > dmAt, 'beside the merged DM, after it');
+  assert.ok(netAt > fn.indexOf("UPDATE chat_sessions SET status = 'merged', merged_at = NOW()"), 'once the session reads merged');
+  const between = fn.slice(dmAt, netAt);
+  assert.match(between, /\n    \}\n\n    \/\/ WP1 \(#2\)/, 'its own try block, apart from the DM\'s');
+  assert.match(fn.slice(netAt - 20, netAt + 300), /\?\.catch\?\.\(\(err\) => log\.warn\('votes', 'Homeroom bot merge note failed'/,
+    'never a reason the merge fails');
+});
 
 test('a held issue is told once, not again on every retry that is held again (#3152)', async (t) => {
   const h = actHarness();
@@ -863,6 +982,9 @@ test('the dashboard says what a live build came to, and never calls it a shadow 
   const fn = tsx.slice(tsx.indexOf('function LiveBuild('), tsx.indexOf('/** A question\'s "user_facing: why" as words. */'));
   assert.match(fn, /data-live-build=\{why\.startsWith\('blocked: '\) \? 'blocked' : 'failed'\}/);
   assert.match(fn, /Live build did not become a proposal: \$\{why\}\./);
+  // WP1: a build that was not needed (skipped) stopped; it did not fail.
+  assert.match(fn, /if \(why\.startsWith\('skipped: '\)\) \{[\s\S]*?data-live-build="skipped"[\s\S]*?Live build stopped, not needed: \$\{why\.slice\('skipped: '\.length\)\}\./);
+  assert.ok(fn.indexOf('data-live-build="skipped"') < fn.indexOf("'blocked' : 'failed'"), 'told apart before a failure is');
   assert.match(fn, /data-live-build="built"/);
   assert.doesNotMatch(fn, /Shadow|href=/, 'the proposal link below the note is the one link');
 });
