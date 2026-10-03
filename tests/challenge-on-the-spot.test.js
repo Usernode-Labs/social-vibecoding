@@ -111,6 +111,50 @@ test('a vote on your own proposal or request is not a candidate, and the window 
   assert.match(sql, /ORDER BY v\.user_id ASC, v\.created_at ASC/, 'their earliest vote in the window');
 });
 
+// The first-session test (2026-10-03): the Homeroom bot is the author of the
+// proposal it writes for somebody's request, so "not their own proposal"
+// paid the requester for voting on their own solo app's first version, and
+// the in-app "Ask for a change" on that app paid both feedback measures.
+const BOT_BUILD = /NOT EXISTS \(SELECT 1 FROM homeroom_bot_requesters r WHERE r\.app_id = cs\.app_id AND r\.issue_number = cs\.created_from_issue_number AND r\.user_id = (pv\.user_id|\$1)\)/;
+const NOT_JUST_YOU = "a.view_visibility = 'public' OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1 OR EXISTS (SELECT 1 FROM app_collaborators ic WHERE ic.app_id = a.id AND ic.status = 'invited')";
+
+test('a vote on the bot\'s build of your own request, or in a "Just you" project, is not a candidate', () => {
+  const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
+  assert.match(sql, BOT_BUILD);
+  assert.equal(sql.match(BOT_BUILD)[1], 'pv.user_id', 'the voter\'s own request');
+  // The audience test COMMUNITY_JOINED reads (there over the membership's
+  // community, here over the vote's project); the look has no project and
+  // is not affected.
+  assert.ok(flat(scorer.MEASURE_SQL.COMMUNITY_JOINED)
+    .replace('o.community_id = m.community_id', 'o.community_id = a.community_id').includes(NOT_JUST_YOU));
+  assert.ok(sql.includes(`AND (v.app_id IS NULL OR ${NOT_JUST_YOU})`));
+  assert.ok(sql.indexOf('WHERE v.user_id IS NOT NULL') < sql.indexOf('ORDER BY v.user_id ASC'),
+    'filtered before DISTINCT ON picks the earliest, so the credit is the earliest vote that counts');
+  // The card's Vote step points only at votes that pay: the Needs you
+  // count per project carries the same two tests.
+  const owed = flat(require('../src/routes/workshop-overview').OWED_BY_COMMUNITY_SQL);
+  assert.match(owed, BOT_BUILD);
+  assert.equal(owed.match(BOT_BUILD)[1], '$1', 'the viewer\'s own request');
+  assert.ok(owed.includes(NOT_JUST_YOU.replace('community_members o WHERE o.', 'community_members om WHERE om.')));
+  assert.match(owed, /THEN COUNT\(\*\) FILTER \(WHERE o\.pays\) ELSE 0 END\)::int AS paying/);
+  // And the admin is told.
+  assert.match(rules.MEASURES.VOTE_CAST.summary, /nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see/);
+  const shown = anatomy('VOTE_CAST', { points: 250, target: null });
+  assert.match(shown.steps[0].text, /a vote on what the Homeroom bot built from a request they made and any vote in a "Just you" project/);
+  assert.ok(shown.steps[0].tables.includes('homeroom_bot_requesters'));
+});
+
+test('a report on a project you made, or a "Just you" one, is not feedback for either measure', () => {
+  const sql = flat(scorer.MEASURE_SQL.USEFUL_FEEDBACK);
+  assert.ok(sql.includes(`AND (fr.app_id IS NULL OR (a.created_by IS DISTINCT FROM fr.user_id AND (${NOT_JUST_YOU})))`),
+    'about the platform, or somebody else\'s project that somebody else is in');
+  assert.equal(scorer.MEASURE_SQL.FEEDBACK_SENT, scorer.MEASURE_SQL.USEFUL_FEEDBACK, 'both measures, one statement');
+  for (const measure of ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']) {
+    assert.match(rules.MEASURES[measure].summary, /a project they made,? or one only they can see/, measure);
+    assert.match(anatomy(measure, { points: 250, target: 4 }).steps[0].text, /a project they made/, measure);
+  }
+});
+
 test('a vote credit names what was voted on, and is dated when it was cast', async () => {
   const seen = [];
   const pool = {

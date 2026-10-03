@@ -22,10 +22,14 @@
 // most members. Each row ends in how many members the community has, a
 // people glyph and a figure just before the tick (`_members`), beside the
 // line under the name rather than instead of it. One button, which says
-// what it will do: "Join 3 communities". Unticking everything is allowed to
-// be a dead end on purpose ("Pick at least one"): a newcomer in no community
-// has nothing on Home and nothing in the Workshop, and the screen exists to
-// prevent that.
+// what it will do: "Join 3 communities". Homeroom is not counted in it: the
+// account is already in Homeroom, so keeping it ticked joins nothing, and it
+// never ticks "Join a community" on the Getting started card
+// (src/services/onboarding.js, COMMUNITY_JOINED), so the button and the
+// toast after it never call it a join. Homeroom ticked alone is "Continue".
+// Unticking everything is allowed to be a dead end on purpose ("Pick at
+// least one"): a newcomer in no community has nothing on Home and nothing in
+// the Workshop, and the screen exists to prevent that.
 //
 // ── Blocking, like the username step ───────────────────────────────────
 //
@@ -403,14 +407,22 @@
       skip.setAttribute('data-join-communities-skip', '');
       foot.appendChild(skip);
 
+      // What the button and the toast count: the ticked communities that are
+      // a join. Not Homeroom, which the account is already in and which never
+      // counts as joining one (the header above).
+      const platform = new Set(list.filter((c) => c.self_hosted).map((c) => c.slug));
+      const joins = (slugs) => slugs.filter((slug) => !platform.has(slug)).length;
+
       let busy = false;
       function paintButton() {
-        const n = picked.size;
+        const ticked = picked.size;
+        const n = joins([...picked]);
         skip.disabled = busy;
-        save.disabled = busy || n === 0;
-        save.textContent = n === 0 ? 'Pick at least one'
-          : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
-        save.setAttribute('data-picked', String(n));
+        save.disabled = busy || ticked === 0;
+        save.textContent = ticked === 0 ? 'Pick at least one'
+          : n === 0 ? 'Continue'
+            : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
+        save.setAttribute('data-picked', String(ticked));
       }
       rows.forEach((paint) => paint());
       paintButton();
@@ -460,7 +472,8 @@
             detail: { joined: body.joined || [] },
           }));
           try { window.Home?.load?.(); } catch (_) {}
-          const n = (body.joined || []).length;
+          // Keeping Homeroom is not a join: nothing to announce for it.
+          const n = joins(body.joined || []);
           if (n && window.PlatformUI) {
             PlatformUI.toast(`You joined ${n} ${n === 1 ? 'community' : 'communities'}.`);
           }

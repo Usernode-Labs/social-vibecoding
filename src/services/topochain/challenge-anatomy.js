@@ -57,11 +57,12 @@ const READS = {
       + 'left out: it is not a change the group accepted.',
   },
   USEFUL_FEEDBACK: {
-    tables: ['feedback_reports', 'apps'],
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],
     key: 'feedback:',
     keyLabel: 'feedback:<report id>',
     text: () => 'Reports sent inside the window that reached GitHub as an issue. One whose issue call '
-      + 'failed helped nobody, and is left out.',
+      + 'failed helped nobody, and is left out. So is a report on a project they made, or on a "Just you" '
+      + 'project (the audience rule the Workshop labels them by): there is nobody else to tell.',
   },
   CONNECT_ACCOUNTS: {
     tables: ['user_social_identities'],
@@ -101,23 +102,26 @@ const READS = {
       + 'they ever took.',
   },
   VOTE_CAST: {
-    tables: ['pr_votes', 'chat_sessions', 'issue_votes', 'issues', 'users', 'apps'],
+    tables: ['pr_votes', 'chat_sessions', 'homeroom_bot_requesters', 'issue_votes', 'issues', 'users', 'apps',
+      'community_members', 'app_collaborators'],
     key: 'vote:',
     keyLabel: 'vote:<pr, issue or workshop>:<id>',
     text: () => 'One row per person: their earliest vote inside the window, on a proposal or a request, '
       + 'or their look at the Workshop when nothing was up for a vote, whichever came first. A vote on '
-      + 'their own proposal or request is left out. The look is the Getting started card\'s Vote step: '
-      + 'when nothing is waiting for their vote in any community they are in, its button opens a '
-      + 'Workshop, and the server records the visit (users.getting_started_seen, keyed '
-      + 'vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
+      + 'their own proposal or request is left out, and so are a vote on what the Homeroom bot built '
+      + 'from a request they made and any vote in a "Just you" project. The look is the Getting started '
+      + 'card\'s Vote step: when nothing that would count is waiting for their vote in any community they '
+      + 'are in, its button opens a Workshop, and the server records the visit (users.getting_started_seen, '
+      + 'keyed vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
       + 'the last time, so a vote from before the window counts once it is cast again inside it.',
   },
   FEEDBACK_SENT: {
-    tables: ['feedback_reports', 'apps'],
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],
     key: 'feedback:',
     keyLabel: 'feedback:<report id>',
-    text: () => 'The same reports as "Sent useful feedback": sent inside the window, and reached GitHub '
-      + 'as an issue. Nothing is graded; the first one that gets past the junk filter is the credit.',
+    text: () => 'The same reports as "Sent useful feedback": sent inside the window, reached GitHub '
+      + 'as an issue, and not about a project they made or a "Just you" one. Nothing is graded; the first '
+      + 'one that gets past the junk filter is the credit.',
   },
 };
 
