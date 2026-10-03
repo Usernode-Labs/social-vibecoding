@@ -1218,4 +1218,136 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const once = { bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], revised: true };
     assert.match((await mayor.reviseProposal(pool, once, { proposal: proposal.id, change: 'Drop the pins.' })).error, /^One change per turn\.$/);
   });
+
+  // ── #3768: their message as a comment on a request's discussion ──
+  //
+  // The report: asked in the DM to add their words as a comment on a
+  // request already filed, the bot said it could not comment on an existing
+  // request from here and offered to file a new one instead, so the group
+  // never saw what they wanted to say. Request #7 on Seed swap is hers,
+  // with no open question on it.
+  await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by) VALUES
+       ($1, 7, 'Trade history', 'A list of past swaps.', 'general', '{}', $2),
+       ($3, 9, 'Sam''s secret', 'Cheaper prices.', 'general', '{}', $4)`,
+    [seeds.id, ada.id, samsApp.id, sam.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 7, $2, 'Trade history')`,
+    [seeds.id, ada.id],
+  );
+
+  await t.test('#3768: a clear ask comments on a request she filed: her words on its discussion, and the request first', async () => {
+    threadPosts.length = 0;
+    const chat = scripted([
+      [['comment_request', { project: 'Seed swap', number: 7 }]],
+      (req) => {
+        const result = lastToolResult(req, 'comment_request');
+        assert.equal(result.ok, true);
+        assert.equal(result.posted, 'on Seed swap request #7\'s public discussion');
+        assert.equal(result.next, 'You look at the request again next.');
+        return [['reply', { text: 'Posted it on Seed swap request #7\'s public discussion, and I\'ll look at the request again next.' }]];
+      },
+    ]);
+    const sent = await turn('can you add it as a comment on the trade history request?', chat);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].userId, ada.id);
+    assert.equal(threadPosts[0].appId, seeds.id);
+    assert.equal(threadPosts[0].msg.thread.ref, 7);
+    assert.equal(threadPosts[0].msg.content,
+      'can you add it as a comment on the trade history request?\n\n(Sent in a chat with Homeroom bot.)',
+      'her own words, as she wrote them, never the model\'s');
+    const { rows: [q] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7', [seeds.id]);
+    assert.deepEqual(q, { priority: 0, reason: 'dm_answer' }, 'the request goes to the front of the queue');
+    const { rows: objects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId]);
+    assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), ['github_issue:7'], 'and its card under the reply');
+    const { rows: none } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1 AND app_id = $2 AND issue_number = 7', [ada.id, seeds.id]);
+    assert.equal(none.length, 0, 'there was no question on it, and none was touched');
+  });
+
+  await t.test('#3768: on a request with her open question, the comment is its answer, as answer_question does it', async () => {
+    const told = await dm.relayIssuePost({
+      pool, app: seeds, issueNumber: 7, kind: 'question', postId: 37681, bot,
+      dm: { question: 'List by swap date or by offer date?', answers: ['Swap date', 'Offer date'] },
+    });
+    threadPosts.length = 0;
+    const chat = scripted([
+      [['comment_request', { project: 'seed-swap', number: 7 }]],
+      (req) => {
+        assert.equal(lastToolResult(req, 'comment_request').ok, true);
+        return [['reply', { text: 'Passed on. I look at the request again next.' }]];
+      },
+    ]);
+    await turn('by swap date', chat);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].msg.thread.ref, 7);
+    assert.equal(threadPosts[0].msg.content, 'by swap date\n\n(Answered in a chat with Homeroom bot.)',
+      'indistinguishable from an answer passed on');
+    const question = await conversations.getMessage(pool, ada, opened.conversationId, told.messageId);
+    assert.equal(question.metadata.homeroomBot.status, 'answered', 'the question\'s chips follow');
+    assert.equal(question.metadata.homeroomBot.answer, 'by swap date');
+    const { rows: [rec] } = await pool.query(
+      'SELECT question_status FROM homeroom_bot_dm_messages WHERE message_id = $1', [told.messageId]);
+    assert.equal(rec.question_status, 'answered');
+  });
+
+  await t.test('#3768: one comment per turn', async () => {
+    threadPosts.length = 0;
+    let first = null;
+    let second = null;
+    const chat = scripted([
+      [['comment_request', { project: 'seed-swap', number: 7 }]],
+      (req) => {
+        first = lastToolResult(req, 'comment_request');
+        return [['comment_request', { project: 'seed-swap', number: 7 }]];
+      },
+      (req) => {
+        second = lastToolResult(req, 'comment_request');
+        return [['reply', { text: 'One comment per message; the first went through.' }]];
+      },
+    ]);
+    await turn('post it, and also post this other thing', chat);
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, false);
+    assert.equal(second.error, 'One comment per turn.');
+    assert.equal(threadPosts.length, 1, 'posted once');
+  });
+
+  await t.test('#3768: when it cannot tell which request, it asks instead of posting to a guess', async () => {
+    threadPosts.length = 0;
+    const results = [];
+    const capture = (req) => {
+      results.push(lastToolResult(req, 'comment_request'));
+      return [['reply', { text: 'Which request is it? Tell me the project and the number, or I can list your work.' }]];
+    };
+    await turn('add it as a comment', scripted([[['comment_request', {}]], capture]));
+    await turn('add it as a comment on there', scripted([[['comment_request', { project: 'nowhere' }]], capture]));
+    await turn('add it as a comment on seed swap', scripted([[['comment_request', { project: 'seed-swap' }]], capture]));
+    await turn('comment on seed swap 999', scripted([[['comment_request', { project: 'seed-swap', number: 999 }]], capture]));
+    assert.match(results[0].error, /^No such project\. Check my_work or my_projects\.$/);
+    assert.match(results[1].error, /^No such project\. Check my_work or my_projects\.$/);
+    assert.match(results[2].error, /^Say which request\. Check my_work or request_detail, or ask them which one\. Nothing was posted\.$/);
+    assert.match(results[3].error, /^No such request there\. Check my_work or request_detail\.$/);
+    assert.equal(threadPosts.length, 0, 'nothing was posted for any of them');
+  });
+
+  await t.test('#3768: somebody who can not take part there is refused, and nothing is posted', async () => {
+    threadPosts.length = 0;
+    let result = null;
+    const chat = scripted([
+      [['comment_request', { project: 'sam-shop', number: 9 }]],
+      (req) => {
+        result = lastToolResult(req, 'comment_request');
+        return [['reply', { text: 'You would need to join Sam shop to comment on its requests.' }]];
+      },
+    ]);
+    // Sam's request, on Sam's project: she did not file it and is not a
+    // member, though the project itself is hers to see.
+    await turn('post that as a comment on sam shop request 9', chat);
+    assert.equal(result.ok, false);
+    assert.match(result.error,
+      /^Only whoever filed it, or a member of Sam shop, can comment on its requests, and they are neither\. They can join Sam shop from its page\. Nothing was posted\.$/);
+    assert.equal(threadPosts.length, 0);
+  });
 });

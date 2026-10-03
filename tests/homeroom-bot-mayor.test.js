@@ -62,9 +62,9 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: seven lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: eight lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal', 'offer_request', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'comment_request', 'revise_proposal', 'offer_request', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -194,6 +194,28 @@ test('#3740: a change to one of its own proposals is a tool, used only on a clea
   assert.match(revise.description, /Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead\./);
   assert.match(revise.description, /The result says what was sent and queued, or why nothing was\./);
   assert.match(revise.parameters.properties.change.description, /When their message only says yes to a change you offered, the change you offered\./);
+});
+
+test('#3768: a comment on a request is a tool, used only on a clear ask', () => {
+  const comment = mayor.TOOLS.find((t) => t.function.name === 'comment_request').function;
+  assert.deepEqual(Object.keys(comment.parameters.properties).sort(), ['number', 'project'],
+    'the request named by its project and number, as answer_question names one');
+  assert.equal(comment.parameters.required, undefined,
+    'nothing is required: when they are missing the bot asks which request instead of posting to a guess');
+  assert.match(comment.description, /clearly asked/);
+  assert.match(comment.description, /one per turn/);
+  assert.match(comment.description, /word for word/);
+  assert.doesNotMatch(comment.description, /—/);
+});
+
+test('#3768: the prompt offers commenting on a request where it used to have nothing to say', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
+  assert.match(prompt, /- Post their message as a comment on a request's public discussion when they clearly ask you to\n  \(comment_request\)\. Their message is posted there word for word under their name, where the group can\n  see it, and you look at the request again next; say so\. When it is not clear which request, ask\./);
+  // The rule it sits beside is untouched: commenting was never among the
+  // things this chat cannot do, and the promise rule already covers saying
+  // a comment was posted, as it covers answer_question's.
+  assert.match(prompt, /From this chat you cannot build, merge, vote, close requests or change settings/);
+  assert.match(prompt, /Never say you will do something \(revise, change, build, post, file, look at it again\)/);
 });
 
 test('#3734, #3740: the prompt never lets the bot promise what no tool started, and has it offer when unsure', () => {

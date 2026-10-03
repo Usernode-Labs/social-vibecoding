@@ -25,6 +25,13 @@
 //     it or asks one question. Before, it had no way to, so it either said
 //     "I'll revise it" with nothing started (#3734: its activity tray said,
 //     truly, that it was doing nothing) or told them it could not.
+//   - #3768: post their message as a comment on a request's public
+//     discussion (comment_request) when they clearly ask: word for word,
+//     under their name, on any request they filed or can take part in,
+//     which wakes the bot to look at the request again next. Before, it
+//     said it could not comment on an existing request from here and
+//     offered to file a new one instead, so the group never saw what they
+//     wanted to say.
 // It ends every turn with `reply`: a short answer and up to three cards for
 // the requests or proposals it talks about.
 //
@@ -206,6 +213,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
     '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
     '  word for word on the request\'s public discussion, where the group can see it; say so.',
+    '- Post their message as a comment on a request\'s public discussion when they clearly ask you to',
+    '  (comment_request). Their message is posted there word for word under their name, where the group can',
+    '  see it, and you look at the request again next; say so. When it is not clear which request, ask.',
     '- Change one of your own proposals that is up for a vote when they clearly ask you to (revise_proposal). Their',
     '  message is posted in the proposal\'s public discussion under their name, with the change as you understood',
     '  it, and you follow up on it next, as on any reply there: you change the proposal (its votes are cleared) or',
@@ -308,6 +318,21 @@ const TOOLS = [
         properties: {
           project: { type: 'string' },
           number: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'comment_request',
+      description: 'They clearly asked you to post their message on a filed request\'s public discussion, as theirs: their message is posted there word for word, under their name, where the group can see it, and you look at the request again next. Call it only when they clearly asked, one per turn. When it is not clear which request they mean, ask: their work list and the request\'s own page tell you which.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or its short name (slug), from my_work.' },
+          number: { type: 'integer', description: 'The request number.' },
         },
         additionalProperties: false,
       },
@@ -877,6 +902,61 @@ async function runTool(pool, ctx, name, args) {
           ? { ok: true, posted: `on ${posted.line}'s public discussion`, next: 'You look at the request again next.' }
           : { ok: false, error: `Could not post it: ${posted.why}.` };
       }
+      case 'comment_request': {
+        // #3768: their message as a comment on a request's public
+        // discussion, as theirs: the same posting path answer_question uses
+        // (postOnRequest), which also puts the request at the front of the
+        // queue, so it is looked at again next.
+        if (ctx.commented) return { ok: false, error: 'One comment per turn.' };
+        const app = await findApp(pool, args.project);
+        if (!app) return { ok: false, error: 'No such project. Check my_work or my_projects.' };
+        const n = Number(args.number);
+        if (!Number.isInteger(n) || n <= 0) {
+          return { ok: false, error: 'Say which request. Check my_work or request_detail, or ask them which one. Nothing was posted.' };
+        }
+        const dm = dmModule(deps);
+        const { rows: exists } = await pool.query(
+          'SELECT 1 FROM issues WHERE app_id = $1 AND github_issue_number = $2',
+          [app.id, n],
+        );
+        if (!exists.length) return { ok: false, error: 'No such request there. Check my_work or request_detail.' };
+        if (!(await canView(pool, app, user))) return { ok: false, error: 'No such request on a project they can see.' };
+        // The bot's open question on that request, when it has one: their
+        // message is then its answer, exactly as answer_question passes one
+        // on. Otherwise a plain target, and the comment is simply posted.
+        const open = await dm.newestOpenQuestion(pool, user.id, { appId: app.id, issueNumber: n });
+        const target = open || { app_id: app.id, issue_number: n, question_status: null };
+        // On a plain comment they can take part only where they filed the
+        // request or are a member of the project: the same check
+        // offer_request makes. postOnRequest re-checks membership at write
+        // time either way.
+        if (!open) {
+          const requester = await dm.requesterOf(pool, app.id, n);
+          const theirs = requester && Number(requester.userId) === Number(user.id);
+          if (!theirs && !(await canFile(pool, app, user))) {
+            const name = app.name || app.slug;
+            return {
+              ok: false,
+              error: `Only whoever filed it, or a member of ${name}, can comment on its requests, and they are neither. They can join ${name} from its page. Nothing was posted.`,
+            };
+          }
+        }
+        // What is posted is THEIR message, never words the model chose: it
+        // appears under their name on a public discussion.
+        const text = clip(ctx.userText, 3500);
+        if (!text) return { ok: false, error: 'Their message has no words to pass on.' };
+        const posted = await dm.postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: ctx.messageId } });
+        if (posted.ok) {
+          // #3733: said even if the model fails after this, so they are
+          // never told to send it again.
+          ctx.commented = true;
+          ctx.posted = posted.line;
+          ctx.cards.push({ type: 'issue', appId: app.id, issueNumber: n });
+        }
+        return posted.ok
+          ? { ok: true, posted: `on ${posted.line}'s public discussion`, next: 'You look at the request again next.' }
+          : { ok: false, error: `Could not post it: ${posted.why}.` };
+      }
       case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'offer_request': {
         if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
@@ -1180,7 +1260,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   }
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
+    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, commented: false, posted: null,
   };
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
