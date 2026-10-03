@@ -320,6 +320,13 @@ export const MessageRow = memo(function MessageRow({
     {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
   </div> : null;
 
+  // #3742: a reply in a DM reads as one iMessage-style bubble — the quoted
+  // message tucks inside the reply's own bubble instead of hanging above it.
+  // The name/time header stays outside; the quote button and everything
+  // under it (a failed send's note included) sit in the bubble. A deleted
+  // message draws no quote, so it gets no bubble either.
+  const inReplyBubble = kind === 'direct' && !!message.reply && !message.deleted;
+
   return (
     <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...longPress}>
       {grouped
@@ -327,10 +334,9 @@ export const MessageRow = memo(function MessageRow({
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className="min-w-0 flex-1">
         {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{message.sender.id ? '@' : ''}{message.sender.username}</span>{message.sender.bot ? <span className="messages-bot-badge">Bot</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
-        {body}
-        {extras}
+        {inReplyBubble ? <div className="messages-reply-bubble">{body}{extras}{failedNote}</div> : <>{body}{extras}</>}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
-        {failedNote}
+        {!inReplyBubble && failedNote}
       </div>
       {actions}
       <MessageActionSheet

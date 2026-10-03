@@ -1310,6 +1310,21 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-quote p,
 .messages-reply-draft p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* #3742: a reply in a DM reads as one iMessage-style bubble — the quoted
+   message tucks inside the reply's own bubble instead of hanging above it.
+   The quote keeps its shared shape; inside the bubble it is scaled down,
+   and the bubble carries the surface its side already uses. */
+.messages-reply-bubble {
+  max-width: 78%;
+  min-width: 0;
+  border-radius: 20px;
+  padding: 10px 16px;
+  background: var(--messages-surface);
+}
+.messages-message-self .messages-reply-bubble { background: var(--accent-tint); }
+.messages-reply-bubble .messages-quote span { font-size: 13px; }
+.messages-message-self .messages-reply-bubble .messages-quote span { color: var(--accent-tint-ink); }
+
 /* #3624: the Homeroom bot's messages. Its name carries a small "Bot"
    badge; a question it asks carries its suggested answers as pills in the
    suggestion language Global Chat uses (the default first, marked), a
