@@ -1425,6 +1425,33 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         );
         demoPartner = partnerRows[0]?.username || null;
       }
+      // #15 (D9): the Homeroom bot is building this project's first version
+      // from its description. The App tab shows that, and where it is, in
+      // place of the starter the repo was scaffolded with. `mine` is the
+      // person whose description it is: only they get the way into their
+      // DM with the bot, and its question when it has one. Best-effort.
+      let firstVersion = null;
+      if (!appRow.self_hosted && !stagingSample) {
+        try {
+          const state = await require('../services/homeroom-bot-dm').firstVersionState(pool, appRow.id);
+          if (state) {
+            const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
+            firstVersion = {
+              building: true,
+              mine,
+              step: state.step,
+              of: state.of,
+              stepName: state.stepName,
+              creator: state.creator,
+              ready: !!state.ready,
+              question: mine && !!state.question,
+              conversationId: mine ? state.conversationId : null,
+            };
+          }
+        } catch (err) {
+          log.warn('apps', 'Could not read the first version state', { slug: appRow.slug, message: err.message });
+        }
+      }
       const [adminAppIds, contributorCounts] = await Promise.all([
         appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
         contributors.loadContributorCounts(pool, [appRow.id]),
@@ -1456,6 +1483,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         url,
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
+        first_version: firstVersion,
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app

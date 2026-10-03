@@ -1217,6 +1217,81 @@ async function sweepFirstVersions(pool, config, deps = {}) {
   return filed;
 }
 
+/**
+ * #15 (D9): whether the Homeroom bot is still building a project's first
+ * version from its description, and where it is, for the App tab. While it
+ * builds, the app's own page is the starter its repo was scaffolded with
+ * (services/template.js), which says "Start a new change" to somebody whose
+ * change is already being made; the shell shows this state instead.
+ *
+ * Building while the bot builds it (`bot_builds`) and either the request is
+ * not filed yet (waiting or filing: the project is being set up), or it is
+ * filed and no proposal for it has merged. Null once one has, once filing
+ * failed, once the project failed to set up, and once the request came to
+ * something other than a merge (the bot left it to the group, its build did
+ * not succeed, its proposal was closed): then the app is what there is.
+ *
+ * `{ userId, creator, conversationId, step, of, stepName, question, ready }`:
+ * whose description it is, their DM with the bot, the step of
+ * homeroom-bot-progress.js's FIRST_VERSION_STEPS, whether the bot waits on
+ * an answer from them, and whether its proposal is up for the vote (ready
+ * to try). GET /api/apps/:slug reads it best-effort: a read that fails is
+ * no state, never a failed page.
+ */
+async function firstVersionState(pool, appId, deps = {}) {
+  if (!appId) return null;
+  const { rows } = await pool.query(
+    `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
+            a.slug, a.name, a.status AS app_status, a.created_at AS app_created_at,
+            u.username,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+                JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+               WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+            ) AS merged,
+            (SELECT p.conversation_id
+               FROM users b
+               JOIN conversation_direct_pairs p
+                 ON p.user_low_id = LEAST(b.id, f.user_id) AND p.user_high_id = GREATEST(b.id, f.user_id)
+               JOIN conversation_members m
+                 ON m.conversation_id = p.conversation_id AND m.user_id = f.user_id AND m.status = 'member'
+              WHERE b.username = $2 AND b.is_synthetic = TRUE
+              LIMIT 1) AS conversation_id
+       FROM homeroom_bot_first_versions f
+       JOIN apps a ON a.id = f.app_id
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.app_id = $1 AND f.bot_builds = TRUE`,
+    [appId, BOT_USERNAME],
+  );
+  const row = rows[0];
+  if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
+  const progress = deps.progress || require('./homeroom-bot-progress');
+  const at = (stage) => {
+    const step = progress.stepNumber(stage, true);
+    return { step, of: progress.FIRST_VERSION_STEPS.length, stepName: step ? progress.FIRST_VERSION_STEPS[step - 1] : null };
+  };
+  const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
+  if (row.status !== 'filed') {
+    if (progress.setupOf(row).outcome) return null;
+    return { ...base, ...at('setting_up'), question: false, ready: false };
+  }
+  const states = await progress.requestStates(pool, { userId: row.user_id });
+  const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
+    && Number(s.row.issue_number) === Number(row.issue_number));
+  if (found?.state) {
+    return {
+      ...base,
+      ...at(found.state.stage),
+      question: found.state.stage === 'question' && found.state.waitingOn === 'them',
+      ready: found.state.stage === 'vote',
+    };
+  }
+  // Filed, and nothing in progress: either it came to something, or the bot
+  // has not picked it up yet (filing wakes it, and it reads it next).
+  if (found && progress.outcomeOf(found.row)) return null;
+  return { ...base, ...at('queued'), question: false, ready: false };
+}
+
 /** The create dialog's suggested one-line description, from the longer one. */
 async function suggestShortDescription({ name, brief, max = 90, deps = {} }) {
   const text = normalizeBrief(brief);
@@ -1290,6 +1365,7 @@ module.exports = {
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,
+  firstVersionState,
   suggestShortDescription,
   firstSentence,
 };

@@ -842,6 +842,19 @@ const App = {
     } catch (err) { /* ignore */ }
   },
 
+  // Screenshot-state deep link `?shot=first-version` (#15): the App tab while
+  // the Homeroom bot builds a project's first version from its description.
+  // Self-contained, like the offline App tab above; see
+  // AppView.showFirstVersionShot.
+  _applyFirstVersionShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'first-version') return;
+    try {
+      if (typeof AppView !== 'undefined') AppView.showFirstVersionShot();
+    } catch (err) { /* ignore */ }
+  },
+
   enterAuthed(user) {
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -1034,6 +1047,7 @@ const App = {
     App._applyLaunchShot();
     App._applyKeptAppsShot();
     App._applyOfflineAppShot();
+    App._applyFirstVersionShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
   },

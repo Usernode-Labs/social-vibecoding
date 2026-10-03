@@ -731,6 +731,93 @@ test('#2154: a new creating phase invalidates a terminal event from an earlier a
     'retry progress clears the obsolete terminal event');
 });
 
+// ── #15: a first version being built mounts no frame ─────────────────────
+//
+// While the Homeroom bot builds a project's first version from its
+// description, the running app is the starter its repo was scaffolded with.
+// The App tab says what is happening instead, BEFORE any frame mounts, and
+// mounts the app once it is built or once the viewer asks for the starter.
+
+const BUILDING = { building: true, mine: true, step: 4, of: 7, stepName: 'Build it', creator: 'ada', ready: false, question: false, conversationId: 9 };
+
+test('#15: a first version being built shows its screen, not the starter, and drops a launched frame', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  // The Home tile's eager launch mounts the starter off the cached list
+  // record, which knows nothing of the first version…
+  AppView._tokenFresh = { slug: SLUG, token: 'tok-1', at: Date.now() };
+  assert.equal(AppView.beginLaunch(SLUG, 'app'), true);
+  assert.ok(bridge.frame(), 'launched');
+  // …and the detail record does: the render drops it rather than adopting it.
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null, 'no frame while it is being built');
+  assert.equal(AppView._launchAdopt, null, 'and the launch offer is retired with it');
+  assert.equal(h.surface(), 'platform', 'a platform screen keeps the clearance');
+  const shown = h.status();
+  assert.equal(shown.message, 'Homeroom is being built from your description');
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.equal(shown.action.key, 'botChat');
+  assert.notEqual(AppView._firstVersionTimer, null, 'one recheck is armed while it is up');
+
+  // Rendering again keeps the one timer.
+  const timer = AppView._firstVersionTimer;
+  AppView.renderAppTab();
+  assert.equal(AppView._firstVersionTimer, timer);
+
+  // "Show the starter for now": the app, framed as usual.
+  AppView.showStarter(SLUG);
+  assert.ok(bridge.frame(), 'the starter is framed');
+  assert.equal(h.status(), null, 'the screen is gone');
+  assert.equal(h.surface(), 'app');
+  assert.equal(AppView._firstVersionTimer, null, 'nothing is re-asked once the viewer chose the app');
+  AppView._starterShown.delete(SLUG);
+});
+
+test('#15: once it is built, the next render mounts the app', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null);
+  AppView.appData = { ...h.record, self_hosted: false, first_version: null };
+  AppView.renderAppTab();
+  assert.ok(bridge.frame(), 'mounted');
+  assert.equal(h.status(), null);
+  assert.equal(AppView._firstVersionTimer, null, 'and the recheck stops');
+  // So does a placeholder of another kind, and leaving the app.
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.notEqual(AppView._firstVersionTimer, null);
+  AppView.appData = { slug: SLUG, status: 'error', url: null, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(AppView._firstVersionTimer, null);
+  assert.equal(h.status().message, 'App failed to start');
+  const close = SRC.slice(SRC.indexOf('  close() {'), SRC.indexOf('AppView.appData = null;', SRC.indexOf('  close() {')));
+  assert.match(close, /AppView\._stopFirstVersionWatch\(\);/);
+});
+
+test('#15: the first-version screenshot state is self-contained, and mounts no frame', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  AppView.renderAppTab();
+  assert.ok(bridge.frame(), 'an app was up');
+  AppView.showFirstVersionShot();
+  assert.equal(bridge.frame(), null, 'the shot drops it, and loads nothing of its own');
+  assert.equal(h.surface(), 'platform');
+  const shown = h.status();
+  assert.equal(shown.message, 'Plant Pal is being built from your description');
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.equal(shown.action.key, 'botChat');
+  assert.equal(shown.secondary.key, 'starter');
+  assert.equal(AppView.appData.url, null, 'no address, so the starter never frames anything');
+  const appJs = read('public/js/app.js');
+  const routeShots = appJs.slice(appJs.indexOf('  _applyRouteShots() {'), appJs.indexOf('\n  },', appJs.indexOf('  _applyRouteShots() {')));
+  assert.match(routeShots, /App\._applyFirstVersionShot\(\);/, 'reached as ?shot=first-version');
+  assert.match(appJs, /if \(shot !== 'first-version'\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(\);/);
+});
+
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
 //
 // It answers "would an eager launch mount the same frame renderAppTab would
