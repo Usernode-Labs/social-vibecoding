@@ -70,6 +70,8 @@ async function connect(t, { beforeMigration = null } = {}) {
       -- reduced copy creates them up front, the way it creates every other
       -- column the agent-sessions statements touch.
       icon_emoji VARCHAR(32), icon_image_id VARCHAR(32),
+      -- Where a request a conversation was opened on is read (#3752).
+      repo_url TEXT,
       moderation_suspended_at TIMESTAMPTZ,
       collab_visibility TEXT NOT NULL DEFAULT 'public', view_visibility TEXT NOT NULL DEFAULT 'public');
     CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
@@ -808,6 +810,52 @@ test('a message and its turn are written together, before any stream; a busy con
     const { rows: racedRows } = await client.query(
       `SELECT COUNT(*)::int AS n FROM chat_session_messages WHERE agent_session_id = $1 AND client_message_id = 'c-raced'`, [session.id]);
     assert.equal(racedRows[0].n, 1);
+  } finally {
+    await done(client, pool);
+  }
+});
+
+test('#3752: a conversation opened on a request is named after it over its first message, never over its owner\'s name', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const pool = schemaPool();
+  try {
+    await client.query("UPDATE apps SET repo_url = 'https://github.com/acme/recipe-box' WHERE id = 3");
+    const asked = [];
+    const lookupTitle = async (repoUrl, number) => { asked.push([repoUrl, number]); return 'Keep checked items in place'; };
+    const first = (session, turnId, text) => agentSessions.startTurnWithMessage(pool, {
+      agentSessionId: session.id, userId: 7, turnId, text, title: text,
+    });
+    const titleOf = async (session) => {
+      const { rows } = await client.query('SELECT title, title_source FROM agent_sessions WHERE id = $1', [session.id]);
+      return [rows[0].title, rows[0].title_source];
+    };
+
+    const opened = await agentSessions.createAgentSession(client, {
+      user: { id: 7 }, hint: { slug: 'recipe-box', issueNumber: 12, entry: 'issue' },
+    });
+    assert.equal(opened.title, null, 'nothing said yet: no name, so the lists still leave it out');
+    assert.equal((await first(opened, 'turn-1', 'can you implement this?')).ok, true);
+    assert.deepEqual(await titleOf(opened), ['can you implement this?', 'auto'], 'named by the message with the message, as before');
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 8, lookupTitle }), null,
+      'another user\'s conversation is not theirs to name');
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 7, lookupTitle }),
+      '#12 · Keep checked items in place');
+    assert.deepEqual(asked, [['https://github.com/acme/recipe-box', 12]], 'the request on the conversation\'s focus app');
+    const shown = await agentSessions.getAgentSession(client, { userId: 7, id: opened.id });
+    assert.deepEqual([shown.title, shown.titleSource], ['#12 · Keep checked items in place', 'auto']);
+
+    // A name its owner chose is kept, however late the request is read.
+    await agentSessions.renameAgentSession(client, { userId: 7, id: opened.id, title: 'Checklist order' });
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: opened.id, userId: 7, lookupTitle }), null);
+    assert.deepEqual(await titleOf(opened), ['Checklist order', 'manual']);
+
+    // One not opened on a request keeps its first message's name.
+    const plain = await agentSessions.createAgentSession(client, { user: { id: 7 }, hint: { slug: 'recipe-box', entry: 'improve' } });
+    assert.equal((await first(plain, 'turn-2', 'Make it blue')).ok, true);
+    assert.equal(await agentSessions.nameFromRequest(pool, { agentSessionId: plain.id, userId: 7, lookupTitle }), null);
+    assert.deepEqual(await titleOf(plain), ['Make it blue', 'auto']);
+    assert.equal(asked.length, 1, 'and no request is read for it');
   } finally {
     await done(client, pool);
   }

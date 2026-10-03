@@ -3981,4 +3981,7 @@ module.exports = {
   composeInProgress,
   IN_PROGRESS_PAUSED_WINDOW_DAYS,
   ISSUE_CLAIM_TTL_DAYS,
+  // #3752: a conversation opened on a staging mock request is named from it
+  // (agent-sessions.js lookupRequestTitle), as this file's issue page reads it.
+  stagingMockIssues,
 };
