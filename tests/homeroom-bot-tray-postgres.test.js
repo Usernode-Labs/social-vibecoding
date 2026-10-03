@@ -12,10 +12,13 @@
 //     follow-up on its proposal waiting its turn (#3734), a request waiting
 //     in the queue; and a project of theirs still being set up for its
 //     first version. Shadow triage is not work for anybody.
-//   - HISTORY is the bot's live runs on their requests, newest first, each
-//     with what came of it and where it opens (the proposal once people can
-//     open it, else the request). Shadow runs are not shown.
-//   - an app they can no longer view is left out of both.
+//   - NEEDS YOU and HISTORY are the bot's live runs on their requests, one
+//     entry per request with its other runs folded in, newest news first,
+//     each with what came of it and where it opens (the proposal once people
+//     can open it, else the request): a question it asked waits on them,
+//     anything else is history. Shadow runs are not shown.
+//   - each request appears once, in the first of the three that fits.
+//   - an app they can no longer view is left out of all three.
 //
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
@@ -180,6 +183,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     const by = new Map(work.now.map((job) => [key(job), job]));
     const sort = by.get('seed-swap#3');
     assert.equal(sort.phase, 'looking');
+    assert.deepEqual([sort.step, sort.of, sort.stepName], [1, 6, 'Read the request'], 'the step its activity card draws');
     assert.equal(sort.title, 'Sort by date');
     assert.equal(sort.href, '#app/seed-swap/dev/issues/3');
     assert.ok(sort.since, 'and since when');
@@ -252,31 +256,50 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     );
   });
 
-  await t.test('history: their live runs, newest first, each with what came of it and where it opens', async () => {
+  await t.test('needs you and history: one entry per request, each with what came of it and where it opens', async () => {
     const work = await tray.workFor(pool, { user: asAda });
-    assert.deepEqual(work.history.map(key), ['note-board#5', 'seed-swap#4'], 'no shadow run, nobody else\'s');
-    const [pin, dark] = work.history;
+    assert.deepEqual(work.needsYou.map(key), ['seed-swap#4'], 'a question it asked waits on her');
+    const [dark] = work.needsYou;
+    assert.equal(dark.outcome, 'question');
+    assert.equal(dark.href, '#app/seed-swap/dev/issues/4', 'anything without a proposal opens its request');
+    assert.deepEqual(work.history.map(key), ['note-board#5'], 'no shadow run, nobody else\'s');
+    const [pin] = work.history;
     assert.equal(pin.outcome, 'proposed');
     assert.equal(pin.proposalId, proposal.id);
     assert.equal(pin.href, `#app/note-board/dev/proposals/${proposal.id}`, 'a proposal up for a vote opens itself');
-    assert.equal(dark.outcome, 'question');
-    assert.equal(dark.href, '#app/seed-swap/dev/issues/4', 'anything else opens its request');
+    assert.equal(pin.links.proposal, pin.href);
+    assert.equal(pin.links.request, '#app/note-board/dev/issues/5');
     assert.ok(Date.parse(pin.at) > Date.parse(dark.at));
 
+    // The bot came back to it: still one entry, its build folded in as an earlier run.
+    const { rows: [answer] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
+       VALUES ($1, 5, 'live', 'answer', NOW() + INTERVAL '1 minute') RETURNING id`,
+      [notes.id],
+    );
+    const again = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(again.history.map(key), ['note-board#5']);
+    assert.equal(again.history[0].outcome, 'answer');
+    assert.deepEqual(again.history[0].earlier.map((r) => r.outcome), ['proposed']);
+
+    // Merged since: that is the news, not the answer before it.
     await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [proposal.id]);
     const merged = await tray.workFor(pool, { user: asAda });
     assert.equal(merged.history[0].outcome, 'live');
+    assert.deepEqual(merged.history[0].earlier.map((r) => r.outcome), ['answer']);
     await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [proposal.id]);
     const closed = await tray.workFor(pool, { user: asAda });
     assert.equal(closed.history[0].outcome, 'closed');
     assert.equal(closed.history[0].href, '#app/note-board/dev/issues/5', 'a closed proposal opens its request instead');
     assert.equal(closed.history[0].proposalId, undefined);
+    assert.equal(closed.history[0].links.proposal, null);
     await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [proposal.id]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [answer.id]);
   });
 
   await t.test('never anybody else\'s, and never an app they cannot view', async () => {
     const ours = await tray.workFor(pool, { user: asAda });
-    const all = [...ours.now, ...ours.history].map((job) => job.appSlug);
+    const all = [...ours.now, ...ours.needsYou, ...ours.history].map((job) => job.appSlug);
     assert.ok(!all.includes('sam-shop'), 'sam\'s work is not ada\'s');
     assert.ok(!all.includes('hidden-lab'), 'a private app she cannot view is left out');
     assert.ok(!all.includes('shadow-app'), 'background triage is not work for her');
@@ -284,8 +307,9 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     const sams = await tray.workFor(pool, { user: asSam });
     assert.deepEqual(sams.now.map(key), ['sam-shop#9'],
       'sam\'s own claimed request: hidden-lab#2 is ada\'s, even on sam\'s app');
-    assert.deepEqual(sams.history.map(key), ['sam-shop#9']);
-    assert.ok(![...sams.now, ...sams.history].some((job) => ['seed-swap', 'note-board', 'ear-trainer'].includes(job.appSlug)));
+    assert.deepEqual([...sams.needsYou, ...sams.history], [], 'his one request is in hand, so it is nowhere else');
+    assert.deepEqual(sams.now[0].earlier, [], 'a build nothing has finished is not an earlier run');
+    assert.ok(![...sams.now, ...sams.needsYou, ...sams.history].some((job) => ['seed-swap', 'note-board', 'ear-trainer'].includes(job.appSlug)));
 
     // Once she can view it, her request there shows.
     await pool.query(
@@ -293,18 +317,20 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
       [hidden.id, ada.id],
     );
     const member = await tray.workFor(pool, { user: asAda });
-    assert.ok(member.history.some((job) => key(job) === 'hidden-lab#2' && job.outcome === 'empty'));
-    assert.ok(member.now.some((job) => key(job) === 'hidden-lab#2'));
+    const lab = member.now.find((job) => key(job) === 'hidden-lab#2');
+    assert.ok(lab, 'in hand again');
+    assert.deepEqual(lab.earlier.map((r) => r.outcome), ['empty'], 'with what its last look found');
+    assert.ok(![...member.needsYou, ...member.history].some((job) => key(job) === 'hidden-lab#2'), 'and only there');
     await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [hidden.id, ada.id]);
 
-    assert.deepEqual(await tray.workFor(pool, { user: null }), { now: [], history: [] });
+    assert.deepEqual(await tray.workFor(pool, { user: null }), { now: [], needsYou: [], history: [] });
   });
 
   await t.test('the bot switched off is working on nothing; its history stays', async () => {
     await setting('homeroom_bot_mode', 'off');
     const off = await tray.workFor(pool, { user: asAda });
     assert.deepEqual(off.now, []);
-    assert.equal(off.history.length, 2);
+    assert.deepEqual([...off.needsYou, ...off.history].map(key), ['seed-swap#4', 'note-board#5']);
     await setting('homeroom_bot_mode', 'shadow');
   });
 
@@ -331,7 +357,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
       assert.deepEqual(asked.body, own.body, query);
     }
     const his = await call(asSam, '/api/conversations/homeroom-bot/work');
-    assert.deepEqual(his.body.history.map(key), ['sam-shop#9']);
+    assert.deepEqual(his.body.now.map(key), ['sam-shop#9']);
     // Off staging, `?demo=1` is the real answer too.
     const demo = await call(asAda, '/api/conversations/homeroom-bot/work?demo=1');
     assert.deepEqual(demo.body, own.body);

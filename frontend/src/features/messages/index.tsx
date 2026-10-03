@@ -22,7 +22,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync } from './bot-activity';
-import { BotWorkTray, newestBotMessageId, setBotWorkOpen } from './bot-work';
+import { BOT_WORK_PANEL_ID, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId, toggleBotWork, useBotWork } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -1085,6 +1085,8 @@ function ThreadHeader() {
   // after this header first draws (channel-hub.ts), so it is subscribed to;
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
+  // #3692: in the bot's DM the name block opens its activity panel.
+  const botWorkOpen = useBotWork().open;
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1134,6 +1136,10 @@ function ThreadHeader() {
   }
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
+  // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
+  // "Direct message", and the name block above it opens the activity panel
+  // (./bot-work.tsx), working or not.
+  const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
   const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
@@ -1153,9 +1159,16 @@ function ThreadHeader() {
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
-      <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
+      <button
+        type="button"
+        className="min-w-0 text-left flex-1"
+        onClick={() => { if (botDm) toggleBotWork(); else if (active.kind === 'group') openDialog('messagesMembers'); }}
+        aria-expanded={botDm ? botWorkOpen : undefined}
+        aria-controls={botDm ? BOT_WORK_PANEL_ID : undefined}
+        data-bot-work-toggle={botDm ? '' : undefined}
+      >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
-        <div className="messages-thread-sub">{subtitle}</div>
+        {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
@@ -1171,10 +1184,6 @@ function ThreadHeader() {
               : active.kind === 'direct'
                 ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
                 : null}
-            {/* #3692: the bot's activity tray, opened from here when nothing is in flight (its strip is hidden then). */}
-            {active.kind === 'direct' && active.homeroomBot && active.membershipStatus === 'member'
-              ? <button type="button" role="menuitem" data-bot-work-open="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); setBotWorkOpen(true); }}>Activity &amp; history</button>
-              : null}
             {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: `@${peer.username}`, userId: peer.id }); }}>Report user</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
           </div>
@@ -1734,8 +1743,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
       {embedded ? null : <ThreadHeader />}
+      {/* #3692: the bot's activity panel drops over the transcript from under its header. */}
+      {botDm && !embedded ? <BotWorkPanel /> : null}
       <InvitationBanner />
-      {botDm ? <BotWorkTray conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
+      {botDm ? <BotWorkSync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* #3736: and keeps the activity cards in its transcript current. */}
       {botDm ? <BotActivitySync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard

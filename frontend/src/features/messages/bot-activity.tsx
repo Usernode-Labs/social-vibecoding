@@ -6,7 +6,7 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ensureBotActivity, loadBotActivity, useBotActivity, useBotActivitySync } from './bot-activity-store';
-import { jobTitle } from './bot-work';
+import { jobTitle } from './bot-shared';
 import { recordObjectOrigin } from './format';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotActivityOutcome, HomeroomBotMeta } from './types';
 
@@ -65,7 +65,8 @@ export const ACTIVITY_OUTCOME_LABELS: Record<HomeroomBotActivityOutcome, string>
   revise: 'Changed its proposal',
 };
 
-type Tone = 'done' | 'you' | 'ended' | 'trouble';
+export type ActivityTone = 'done' | 'you' | 'ended' | 'trouble';
+type Tone = ActivityTone;
 
 /** How each ending reads at a glance: finished well, waiting on the viewer, ended, or went wrong. */
 export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = {
@@ -75,7 +76,7 @@ export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = 
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
 };
 
-const TONE_WORDS: Record<Tone, string> = {
+export const TONE_WORDS: Record<Tone, string> = {
   done: 'Done',
   you: 'Needs you',
   ended: 'Ended',
@@ -121,12 +122,10 @@ export function spanText(fromIso: string | null, to: Date): string | null {
 /** The card's title, as the tray names the same work: "Ear Trainer #12: Sort by date". */
 export function activityTitle(meta: HomeroomBotMeta): string {
   return jobTitle({
-    appSlug: meta.appSlug || null,
     appName: meta.appName || meta.appSlug || 'A project',
     issueNumber: meta.issueNumber || null,
     title: meta.issueTitle || null,
     firstVersion: !!meta.firstVersion,
-    href: null,
   });
 }
 
@@ -139,17 +138,44 @@ export function isActivityMessage(message: ConversationMessage): boolean {
 
 const LINK_CLASS = buttonVariants({ layout: 'iconRow', variant: 'pillNeutral', size: 'sm', ink: 'neutral' });
 
-function CardLink({ href, children }: { href: string; children: string }) {
+/**
+ * A card's way out: a pill link to the platform's own page. Also the
+ * activity tray's (./bot-work.tsx), whose tiles are this card's language;
+ * `data` names which surface drew it.
+ */
+export function ActivityLink({ href, children, data = 'bot-activity' }: { href: string; children: string; data?: 'bot-activity' | 'bot-work' }) {
   return (
     <a
       href={href}
       className={LINK_CLASS}
-      data-bot-activity-link=""
+      data-bot-activity-link={data === 'bot-activity' ? '' : undefined}
+      data-bot-work-link={data === 'bot-work' ? '' : undefined}
       onClick={(event: MouseEvent<HTMLAnchorElement>) => recordObjectOrigin(event, href)}
     >
       {children}
     </a>
   );
+}
+
+const CardLink = ActivityLink;
+
+/**
+ * The round thing a card leads with: the ring with its step while the work
+ * goes, a clock while it goes without one, then the tile of how it ended.
+ * The activity tray's tiles lead with the same.
+ */
+export function ActivityLead({ step, of, stepName, tone }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null }) {
+  if (!tone && step && of) {
+    return (
+      <ProgressRing
+        pct={Math.round((step / of) * 100)}
+        label={`${step}/${of}`}
+        title={`Step ${step} of ${of}${stepName ? `: ${stepName}` : ''}`}
+      />
+    );
+  }
+  if (tone) return <IconTile size="xs" className={TONE_TILES[tone]}><ToneIcon tone={tone} /></IconTile>;
+  return <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
 }
 
 export interface BotActivityCardViewProps {
@@ -176,13 +202,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
   let status: ReactNode;
   if (card && working) {
     const stepped = card.step && card.of;
-    lead = stepped ? (
-      <ProgressRing
-        pct={Math.round(((card.step as number) / (card.of as number)) * 100)}
-        label={`${card.step}/${card.of}`}
-        title={`Step ${card.step} of ${card.of}${card.stepName ? `: ${card.stepName}` : ''}`}
-      />
-    ) : <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
+    lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
     eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
     const elapsed = spanText(card.startedAt, at);
     status = (
@@ -192,7 +212,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
       </>
     );
   } else if (card && tone && card.outcome) {
-    lead = <IconTile size="xs" className={TONE_TILES[tone]}><ToneIcon tone={tone} /></IconTile>;
+    lead = <ActivityLead tone={tone} />;
     eyebrow = TONE_WORDS[tone];
     const took = card.endedAt ? spanText(card.startedAt, new Date(card.endedAt)) : null;
     status = (
@@ -202,7 +222,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
       </>
     );
   } else {
-    lead = <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
+    lead = <ActivityLead />;
     eyebrow = 'Activity';
     status = failed ? (
       <span role="alert" className="inline-flex flex-wrap items-center gap-2">
