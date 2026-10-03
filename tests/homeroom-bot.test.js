@@ -111,6 +111,33 @@ test('classifyIssue: the bot never competes with a person, and never looks at a 
   assert.equal(bot.classifyIssue({ issue: null }).eligible, false);
 });
 
+test('classifyIssue: a request whose live build waits or runs is not read again, whatever moved since (Plant Pal #1, #3)', () => {
+  // The build's own spec comment moved updated_at past what its run had
+  // recorded as seen, which read as a change: the request was read again
+  // mid-build, found ready, and built twice.
+  const issue = { number: 1, state: 'open', updatedAt: '2026-10-03T16:46:40Z' };
+  const lastRun = { thread_seen_at: '2026-10-03T16:45:36Z', live_building: true };
+  const building = bot.classifyIssue({ issue, lastRun });
+  assert.equal(building.eligible, false);
+  assert.equal(building.reason, 'building');
+  assert.equal(bot.classifyIssue({ issue, lastRun: { ...lastRun, live_building: false } }).reason, 'changed',
+    'once its build has ended, the change is read as before');
+  assert.equal(bot.classifyIssue({ issue, lastRun, busy: true }).reason, 'in_progress', 'a person holding it still says so');
+  assert.equal(bot.classifyIssue({ issue: { ...issue, state: 'closed' }, lastRun }).reason, 'closed');
+});
+
+test('the last run says whether a live build is waiting or under way, as the read lane reads it', () => {
+  const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
+  assert.match(q, /\(mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL\s+AND \(live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL\)\s+AND created_at > NOW\(\) - make_interval\(days => \$2\)\) AS live_building/);
+  assert.match(q, /\[appId, ABANDONED_LIVE_WINDOW_DAYS\]/, 'past the abandoned-build sweep\'s window, a run holds nothing');
+  const lane = SRC.slice(SRC.indexOf('async function liveCandidates('), SRC.indexOf('async function liveBuildCandidates('));
+  assert.match(lane, /AND b\.mode = 'live' AND b\.verdict = 'ready' AND b\.build_ok IS NULL AND b\.proposal_session_id IS NULL\s+AND \(b\.live_build_waiting_at IS NOT NULL OR b\.build_session_id IS NOT NULL\)\s+AND b\.created_at > NOW\(\) - make_interval\(days => \$8\)/,
+    'the same condition, word for word');
+  const refresh = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('async function refreshQueue('));
+  assert.match(refresh, /verdict\.reason === 'unchanged' \|\| verdict\.reason === 'held' \|\| verdict\.reason === 'building'\) quiet\.push\(n\)/,
+    'a row the bot queued for itself on it is kept, as on an unchanged request');
+});
+
 // ── settings ─────────────────────────────────────────────────────────────
 
 test('settings default to off and clamp their numbers', () => {
@@ -1048,7 +1075,14 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
       if (/headless_issue_number AS n/.test(s)) return { rows: [] };
       if (/created_from_issue_number AS n/.test(s)) return { rows: [] };
       if (/FROM chat_messages/.test(s)) return { rows: [{ n: 2, last_at: '2026-09-10T00:00:00Z' }] };
-      if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ issue_number: 2, thread_seen_at: '2026-09-10T00:00:00Z' }, { issue_number: 5, thread_seen_at: '2026-09-01T00:00:00Z' }] };
+      if (/FROM homeroom_bot_runs/.test(s)) {
+        return { rows: [
+          { issue_number: 2, thread_seen_at: '2026-09-10T00:00:00Z' },
+          { issue_number: 5, thread_seen_at: '2026-09-01T00:00:00Z' },
+          // #6's live build is under way, and its spec comment moved updated_at.
+          { issue_number: 6, thread_seen_at: '2026-09-01T00:00:00Z', live_building: true },
+        ] };
+      }
       if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
       if (/DELETE FROM homeroom_bot_queue/.test(s)) { deleted = params; return { rowCount: 2, rows: [] }; }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
@@ -1063,6 +1097,7 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
           { number: 3, state: 'open', updatedAt: '2026-09-01T00:00:00Z' }, // claimed by a person
           { number: 4, state: 'open', updatedAt: '2026-09-01T00:00:00Z' }, // a person's session
           { number: 5, state: 'open', updatedAt: '2026-09-08T00:00:00Z' }, // changed since last run
+          { number: 6, state: 'open', updatedAt: '2026-09-08T00:00:00Z' }, // changed, but the bot is building it
         ],
       };
     },
@@ -1072,8 +1107,9 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
   assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
   // ...except a row the bot queued for itself (a restart's, a failing
-  // check's) on an issue that is open, unchanged and nobody else's: #2.
-  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2]]);
+  // check's) on an issue that is open, unchanged and nobody else's (#2), or
+  // that the bot is building (#6).
+  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2, 6]]);
   assert.equal(out.removed, 2);
 });
 

@@ -266,4 +266,95 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [first, sessionId]);
     assert.deepEqual(await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] }), []);
   });
+
+  // Plant Pal #1 and #3 (2026-10-03): while a request's build ran, its spec
+  // comment moved the issue's updated_at past what the run had recorded as
+  // seen. The refresh queued it, the read lane read it again and found it
+  // ready, and that second verdict was built and proposed too.
+  await t.test('a request is not read again while its build waits or runs, and is never built twice', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+    // The spec comment, after the run's seen marker (SEEN).
+    const spec = (numbers) => ({
+      async fetchPublicIssues() {
+        return { issues: numbers.map((n) => ({ number: n, state: 'open', createdAt: SEEN, updatedAt: '2026-10-03T16:46:40Z' })) };
+      },
+    });
+    const capRoom = { proposals_per_app: 5, proposals_total: 5, question_tripwire: 10 };
+    const readable = async () => (await bot.liveCandidates(pool, {
+      liveSlugs: ['recipebot'], excludeAppIds: [], pausedApps: [], botId: botUser.id,
+    })).map((c) => Number(c.issue_number));
+
+    // Waiting its turn.
+    const run = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, thread_seen_at, live_build_waiting_at)
+       VALUES ($1, 90, 'live', 'ready', 'build it', $2, NOW()) RETURNING id, created_at`,
+      [recipebot.id, SEEN],
+    )).rows[0];
+    let out = await bot.refreshApp(pool, recipebot, { github: spec([90]), bot: botUser, capRoom });
+    assert.equal(out.queued, 0, 'its own build is the bot\'s work in progress');
+    // Whatever else queues it (Run now, an answer in the DM) waits for the build.
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 90, 0, 'dm_answer')`, [recipebot.id],
+    );
+    assert.deepEqual(await readable(), []);
+
+    // Under way: its session linked, the wait cleared in the same update.
+    const building = await session(recipebot);
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [run.id, building]);
+    out = await bot.refreshApp(pool, recipebot, { github: spec([90]), bot: botUser, capRoom });
+    assert.equal(out.queued, 0);
+    assert.deepEqual(await readable(), []);
+    assert.deepEqual(await queueRows(), [{ issue_number: 90, reason: 'dm_answer' }], 'the answer waits for the build');
+
+    // A second verdict that waited anyway (one recorded before this fix) is
+    // not built once the first is up for a vote ...
+    const second = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at)
+       VALUES ($1, 90, 'live', 'ready', 'build it', NOW()) RETURNING id, issue_number, build_note, created_at`,
+      [recipebot.id],
+    )).rows[0];
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW(), linked_issues = '{90}' WHERE id = $1`, [building],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET build_ok = TRUE, proposal_session_id = $2 WHERE id = $1', [run.id, building]);
+    const github = { isEnabled: () => true, async fetchPublicIssue() { return { issue: { number: 90, state: 'open' } }; } };
+    const skipped = await bot.buildOne(pool, {}, { bot: botUser, app: recipebot, run: second, settings: {}, deps: { github } });
+    assert.deepEqual(skipped, { ran: false, reason: 'has_proposal' });
+    const recorded = await runRow(second.id);
+    assert.equal(recorded.build_ok, false);
+    assert.equal(recorded.build_error, `skipped: the request already has a proposal (${building})`);
+
+    // ... nor once that proposal merged after it.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [building]);
+    const third = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at, created_at)
+       VALUES ($1, 90, 'live', 'ready', 'build it', NOW(), NOW() - INTERVAL '5 minutes') RETURNING id`,
+      [recipebot.id],
+    )).rows[0];
+    // As the lane hands it over: with when its verdict was recorded.
+    const [pick] = await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] });
+    assert.equal(Number(pick.id), third.id);
+    assert.ok(pick.created_at instanceof Date);
+    assert.deepEqual(await bot.buildOne(pool, {}, { bot: botUser, app: recipebot, run: pick, settings: {}, deps: { github } }),
+      { ran: false, reason: 'has_proposal' });
+
+    // Once nothing of it is waiting or building, it is read again as usual.
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [[second.id, third.id]]);
+    out = await bot.refreshApp(pool, recipebot, { github: spec([90]), bot: botUser, capRoom });
+    assert.equal(out.queued, 1);
+    assert.deepEqual(await readable(), [90]);
+
+    // A build nothing finished, past the window the abandoned-build sweep
+    // reads, holds nothing.
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+    await liveRun(recipebot, 91, await session(recipebot), { ago: 8 * 24 * 3600 });
+    out = await bot.refreshApp(pool, recipebot, { github: spec([91]), bot: botUser, capRoom });
+    assert.equal(out.queued, 1);
+    assert.deepEqual(await readable(), [91]);
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+  });
 });
