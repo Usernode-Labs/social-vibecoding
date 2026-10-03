@@ -5938,6 +5938,21 @@
     {
       "source": "src/routes/homeroom-bench.js",
       "method": "POST",
+      "path": "/api/admin/homeroom-bot/bench/runs/estimate",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.bench.runs.estimate.8cbc69e8",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/homeroom-bench.js",
+      "method": "POST",
       "path": "/api/admin/homeroom-bot/bench/runs",
       "expression": null,
       "status": "mapped",
