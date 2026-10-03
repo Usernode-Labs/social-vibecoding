@@ -50,9 +50,10 @@
 // the request board's own rows, which the deck excludes and which the
 // paragraph above says this endpoint excludes too. Counting them is what
 // made this screen report forty-six votes waiting on an app whose board had
-// three open requests — a twin is only ever closed by a passed close-issue
-// vote, so it outlives its GitHub issue by however long that issue has been
-// closed. Both `issues` CTEs below carry governanceKindsSql for that reason,
+// three open requests — a twin was only ever closed by a passed close-issue
+// vote, so it outlived its GitHub issue by however long that issue had been
+// closed (merges close it now; a close by hand on GitHub still does not).
+// Both `issues` CTEs below carry governanceKindsSql for that reason,
 // and tests/workshop-screen.test.js pins it there.
 //
 // ── Scope ──────────────────────────────────────────────────────────────
