@@ -362,7 +362,8 @@ test('the dispatch records the harness so a restart replays the right parser', (
   assert.match(src, /state\.agentHarness = recoveredBackend\.harness;/);
   const sessions = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
   assert.match(sessions, /agentHarness: activeTurn\.harness \|\| null,/);
-  // Only the dev chat's scout and build opt in to the per-model harness.
+  // In the dev chat, its scout and build opt in to the per-model harness (the
+  // Homeroom bot's turns do too: tests/homeroom-bot-claude-harness.test.js).
   assert.equal((sessions.match(/harness: 'auto',/g) || []).length, 2);
   const ledger = fs.readFileSync(path.join(ROOT, 'src', 'services', 'agent-turn.js'), 'utf8');
   assert.match(ledger, /harness: registry\.resolveOpenRouterHarness\(ctx\.agentHarness\),\n\s+turnUuid: turnId,/);

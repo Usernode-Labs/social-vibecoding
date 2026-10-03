@@ -1262,8 +1262,14 @@ function triagePrompt() {
 //
 // It goes AFTER the request and the triage instructions, fenced and
 // labelled as reference, so it is never read as the task.
-function triageReference() {
-  const designGuidance = require('./prompts').getDesignGuidance({ readsImages: false });
+//
+// Its one variable line, the design self-check, follows what the turn's
+// model can see (prompts.runtimeReadsImages). It used to be the text-only
+// line for every model, which told GLM 5.3 Flash, a model that takes images,
+// "you read text, not images" in the same prompt that asks it to look at the
+// reporter's screenshot.
+function triageReference({ readsImages = false } = {}) {
+  const designGuidance = require('./prompts').getDesignGuidance({ readsImages });
   return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
 
 The Homeroom platform's own conventions (its rules for every app on it: its native UI kit, its \`--un-*\` theme tokens, its APIs and what an app may do) are one tool call away. Call \`get_platform_conventions\` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section. Use it when the request turns on the platform; nothing in this reference is a task.
@@ -1286,13 +1292,16 @@ function triageClosing(issueNumber) {
 /**
  * #3654: the whole triage prompt for one request, as runTriage sends it and
  * as the benchmark rebuilds it from a snapshot's seed. Pure apart from the
- * cached prompt file and the design guidance it reads.
+ * cached prompt file and the design guidance it reads. `readsImages` is
+ * whether the turn's model takes images, from the runtime the turn resolved
+ * (prompts.runtimeReadsImages); a prompt rebuilt without it is the text-only
+ * one every triage ran before it existed.
  */
-function triagePromptFor({ seed, issueNumber, firstVersion = false }) {
+function triagePromptFor({ seed, issueNumber, firstVersion = false, readsImages = false }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     firstVersion ? FIRST_VERSION_NOTE : null,
-    triageReference(), triageClosing(issueNumber),
+    triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -1860,7 +1869,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = triagePromptFor({ seed, issueNumber, firstVersion: !!requester?.firstVersion });
+  const promptInput = { seed, issueNumber, firstVersion: !!requester?.firstVersion };
+  // The prompt as it stands before the turn resolves its model. The one sent
+  // is rendered at dispatch, for what that model can see, and replaces this
+  // in the snapshot (below).
+  const prompt = triagePromptFor(promptInput);
   snapshot = {
     stage: 'triage', appId: app.id, issueNumber,
     // The scout turn resets its workspace to the session branch's tip
@@ -1959,24 +1972,36 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       telemetryComponent: 'homeroom_bot_triage',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the dev chat's scout
+        // makes it (#3296): GLM runs in Claude Code.
+        harness: 'auto',
       }),
-      dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
-        mode: 'scout',
-        // No `onUsage` here, deliberately (#3035). Neither agent the bot can
-        // run reports usage until its turn is over, so a token check wired
-        // to the stop can only ever fire on a finished turn — and did, on
-        // every one, discarding the verdict and killing the next issue. The
-        // token limit is read after the turn instead, below, and never
-        // throws a result away. The wall clock is what ends a runaway.
-        prompt,
-        model,
-        commitMsg: '',
-        resumeSessionId: null,
-        branchName: session.branch_name,
-        ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_triage',
-        onProgress: () => {},
-      }); },
+      dispatchOnce: (ctx) => {
+        pricing = ctx?.pricingSnapshot || pricing;
+        // Rendered for what this turn's model can see, as its runtime
+        // resolved it, and recorded as what the turn read.
+        const turnPrompt = triagePromptFor({
+          ...promptInput, readsImages: require('./prompts').runtimeReadsImages(ctx),
+        });
+        snapshot.texts.prompt = turnPrompt;
+        return worker.execInWorker(session.id, {
+          mode: 'scout',
+          // No `onUsage` here, deliberately (#3035). Neither agent the bot can
+          // run reports usage until its turn is over, so a token check wired
+          // to the stop can only ever fire on a finished turn — and did, on
+          // every one, discarding the verdict and killing the next issue. The
+          // token limit is read after the turn instead, below, and never
+          // throws a result away. The wall clock is what ends a runaway.
+          prompt: turnPrompt,
+          model,
+          commitMsg: '',
+          resumeSessionId: null,
+          branchName: session.branch_name,
+          ...(ctx || {}),
+          telemetryComponent: 'homeroom_bot_triage',
+          onProgress: () => {},
+        });
+      },
       retryPredicate: () => null,
       sendStatus: async () => {},
       waitForStopped: async () => {},
@@ -2789,10 +2814,12 @@ async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, tim
     return 'requeued';
   }
 
-  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut;
+  const turnFailed = timedOut ? null : live.failedClaudeTurn(result);
+  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut && !turnFailed;
   const error = built ? null
     : timedOut ? `the build ran past its time limit${note}`
-      : `the build produced no change to propose${note}`;
+      : turnFailed ? `the build turn failed (${turnFailed})${note}`
+        : `the build produced no change to propose${note}`;
   const costUsd = await sessionCostUsd(pool, session.id);
   await pool.query(
     `UPDATE homeroom_bot_runs r
@@ -2940,10 +2967,13 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null,
     });
     const note = ' (finished after a restart)';
+    // A failed turn is a failed build here as on the live path.
+    const turnFailed = plan.mode === 'scout' || plan.timedOut
+      ? null : live.failedClaudeTurn(plan.result);
     let built;
     if (plan.mode === 'scout') {
       built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };
-    } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut) {
+    } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut && !turnFailed) {
       const pushed = {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
@@ -2975,7 +3005,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       await archive();
       built = {
         ok: false, sessionId: Number(sessionId),
-        error: (plan.timedOut ? 'the build ran past its time limit' : 'the build produced no change to propose') + note,
+        error: (plan.timedOut ? 'the build ran past its time limit'
+          : turnFailed ? `the build turn failed (${turnFailed})`
+            : 'the build produced no change to propose') + note,
       };
     }
     if (built.blocked) await archive();
@@ -3443,7 +3475,10 @@ async function runFollowUp(pool, config, {
   const moved = followup.headMoved({
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
   });
+  // A failed turn is never a revision (followup.headMoved); this says why.
+  const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
+    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
   }
 
@@ -3469,8 +3504,9 @@ async function runFollowUp(pool, config, {
 
   // Said it would revise, but the push moved nothing.
   if (parsed && parsed.action === 'revise' && !moved) {
-    const why = mode === 'build' && result.pushOk === false
-      ? 'its change could not be pushed' : 'the turn produced no change';
+    const why = turnFailed ? `the turn failed (${turnFailed}), so its change was not kept`
+      : mode === 'build' && result.pushOk === false
+        ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
@@ -3794,11 +3830,13 @@ async function runChecksFix(pool, config, {
   }
 
   // The turn could not fix them: one note, and a person takes it from here.
+  const turnFailed = !turn.stopped && !code ? live.failedClaudeTurn(result) : null;
   const why = turn.stopped ? 'its attempt to fix them ran out of time'
     : code ? `its attempt to fix them failed (${clip(code, 200)})`
-      : parsed?.action === 'person' ? parsed.reply
-        : parsed ? 'its attempt to fix them changed nothing'
-          : 'its attempt to fix them ended without an answer';
+      : turnFailed ? `its attempt to fix them failed (${turnFailed})`
+        : parsed?.action === 'person' ? parsed.reply
+          : parsed ? 'its attempt to fix them changed nothing'
+            : 'its attempt to fix them ended without an answer';
   return handOff({
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
