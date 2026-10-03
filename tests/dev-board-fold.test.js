@@ -1354,7 +1354,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 824 → 826: +2 (the UI overhaul's other pages): the Your work screen's
   // Your changes and Your requests views, new routes with nothing declared
   // on them to fold into. The rest was REWRITTEN in place: the menu's
-  // "Give feedback" / "New change" checks pin Ask for a change and Start a
+  // "Give feedback" / "New change" checks pin Send feedback and Start a
   // new change; the dialog's pin its new words; Communities' tab checks pin
   // the Needs you page; Me's "More" check pins Your work beside it, the
   // Your contributions check pins the Your work rows, and the Friends check

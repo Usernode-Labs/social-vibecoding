@@ -8,7 +8,7 @@
  * search row, then closed the view-tab strip on every tab; the strip is gone
  * (the hub is one page with doors), so it ends the hero's members row,
  * beside Invite: the project's own menu, on the project's own card, leading
- * with Ask for a change. workshop/workshop.tsx hands `DevPlusMenu` to the
+ * with Send feedback. workshop/workshop.tsx hands `DevPlusMenu` to the
  * hero (`inHero`) and renders this row with `withPlus={false}` in All items'
  * pane head.
  *
@@ -263,7 +263,7 @@ export function DevPlusMenu({
   */
   const plusLabel = readOnly
     ? 'Fork this app'
-    : 'Ask for a change, import a PR or manage this app';
+    : 'Send feedback, import a PR or manage this app';
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -305,10 +305,10 @@ export function DevPlusMenu({
         {readOnly ? null : (
           <>
             {/*
-                New change lives in Improve (#1490) — the Homeroom menu's New
-                change button now (#2740 review). Asking for a change is
-                HERE as well (#1900): #1490 folded it into Improve's Give
-                feedback beside New change, and people on the board could not
+                New change lives in Improve (#1490) — the Homeroom menu's
+                Start a new change row now (#2740 review). Sending feedback
+                is HERE as well (#1900): #1490 folded it into Improve's
+                single button beside it, and people on the board could not
                 find "create an issue" any more. Same dialog, opened with the
                 open app preselected — the row needs nothing of the viewer
                 beyond a writeable board, so it is the one action in this group
@@ -335,7 +335,7 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Ask for a change"
+              title="Send feedback"
               sub="Report a problem or idea without building it yourself"
             />
             {canCollaborate ? (

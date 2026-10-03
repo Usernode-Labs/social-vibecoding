@@ -489,7 +489,7 @@ const REQUEST_STATE = {
 
 /**
  * "Your requests" (UI overhaul; it was "Your feedback", #3186): every
- * request the viewer asked for, from the Ask for a change dialog or a
+ * request the viewer asked for, from the Send feedback dialog or a
  * board, from GET /api/me/requests. Open (nobody on it yet, or someone is),
  * then Done (shipped, or closed by a vote). Each opens the request.
  */

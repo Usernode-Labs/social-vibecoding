@@ -75,14 +75,17 @@ export function FeedbackDialog() {
     >
       <DialogCard size="sm">
         <div id="feedback-form">
-        {/* ASK FOR A CHANGE, from every way in (UI overhaul). It was "Send
-            feedback", and "Ask for a change" only from the hub's ⋯ (QA
-            2026-09-24); people read feedback as a note to nobody in
-            particular, when what it posts is a request the members of the
-            place it goes can see, vote on and pick up. The line under the
-            heading says exactly that. */}
+        {/* SEND FEEDBACK, from every way in (UI overhaul). It was "Send
+            feedback", became "Ask for a change" (QA 2026-09-24, which read
+            feedback as a note to nobody in particular), and is "Send
+            feedback" again at the reporter's request: the two ways to act no
+            longer share the word "change", and this is the word the Getting
+            started card already uses for the action. What it posts is a
+            request the members of the place it goes can see, vote on and
+            pick up; the line under the heading says exactly that, so the
+            earlier concern's remedy stays on screen. */}
         <h2 className="text-lg font-bold">
-          Ask for a change
+          Send feedback
         </h2>
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.

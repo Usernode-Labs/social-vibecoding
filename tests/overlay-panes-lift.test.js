@@ -116,10 +116,11 @@ test('the declared feedback text checks open their pane before reading it', () =
   //
   // `?shot=improve` and `?shot=app-context` both open that one pane now (see
   // App._openImproveShot), so either name is a pane that is actually up.
-  // The button says "Ask for a change" since the UI overhaul (it was "Give
-  // feedback"); the hub's ⋯ has a row of the same words, which is not this
-  // pane, so the checks are the ones that read the button itself.
-  const checks = manifest.tests.filter((t) => t.expectText === 'Ask for a change'
+  // The button says "Send feedback" (the name the Getting started card uses;
+  // it was "Ask for a change" between QA 2026-09-24 and #3753); the hub's ⋯
+  // has a row of the same words, which is not this pane, so the checks are
+  // the ones that read the button itself.
+  const checks = manifest.tests.filter((t) => t.expectText === 'Send feedback'
     && /#improve-row-feedback/.test(t.expectSelector || ''));
   assert.equal(checks.length, 3, 'the menu button\'s text checks must exist');
   for (const check of checks) {

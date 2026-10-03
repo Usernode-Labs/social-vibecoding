@@ -584,14 +584,15 @@ test('closing the dialog does not leave the question behind for the next open', 
 
 // ── QA 2026-09-24: what the dialog calls itself, and what a failure says ──
 
-test('the dialog is headed Ask for a change from every way in', () => {
-  // QA 2026-09-24 renamed it per way in ("Ask for a change" from the hub's
-  // ⋯, "Send feedback" otherwise). Since the UI overhaul it is "Ask for a
-  // change" everywhere, so the heading is the markup's own and the
-  // controller no longer writes it.
+test('the dialog is headed Send feedback from every way in', () => {
+  // It was "Send feedback", became "Ask for a change" everywhere (QA
+  // 2026-09-24, per way in before that), and #3753 renames it back at the
+  // reporter's request, so the two ways to act stop sharing the word
+  // "change". The heading is the markup's own and the controller does not
+  // write it.
   const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
-  assert.doesNotMatch(CONTROLLER_TEXT, /heading\.textContent|'Send feedback'/);
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Send feedback\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
+  assert.doesNotMatch(CONTROLLER_TEXT, /heading\.textContent|'Ask for a change'/);
   const h = makeHarness({ appData: OPEN_APP });
   assert.doesNotThrow(() => h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' }),
     'the hub ⋯ still passes intent, which changes nothing');
@@ -639,6 +640,6 @@ test('the title hint fits a phone-width field, and the resting heading is senten
   assert.ok(hint, 'the title field carries a hint');
   assert.equal(hint[1], 'Suggested as you type');
   assert.ok(hint[1].length <= 24, 'short enough for the narrowest supported phone');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>/,
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Send feedback\s*<\/h2>/,
     'the heading is sentence case');
 });

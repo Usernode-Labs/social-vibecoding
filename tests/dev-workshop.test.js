@@ -3585,7 +3585,7 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
     'Invite, then the ⋯, ending the actions');
   assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'one ⋯');
   // The menu comes with it, leading with the ask, then Settings & rules.
-  assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Ask for a change<[\s\S]*?data-plus-group="settings"/);
+  assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Send feedback<[\s\S]*?data-plus-group="settings"/);
   // Joined sits across from them, at the row's far end (#852).
   assert.match(html, /<\/div><span class="dev-ws-hero-member"><button[^>]*data-ws-community-leave=""/);
   // The same props the toolbar row reads, from the same store, so the gates

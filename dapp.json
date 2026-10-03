@@ -699,7 +699,7 @@
       "expectText": "In progress"
     },
     {
-      "name": "Your requests lists what you asked for, open then done, with Ask for a change at the foot (UI overhaul)",
+      "name": "Your requests lists what you asked for, open then done, with Send feedback at the foot (UI overhaul)",
       "path": "/?demo=1#profile/your-requests",
       "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
       "expectText": "someone is on it"
@@ -1518,10 +1518,10 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Start a new change and Ask for a change, then names its settings group (#1900, #852 review)",
+      "name": "The hub's ⋯ menu leads with Start a new change and Send feedback, then names its settings group (#1900, #852 review)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu > button[data-plus=\"new-change\"]:first-child + button[data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Ask for a change"
+      "expectText": "Send feedback"
     },
     {
       "name": "Start a new change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
@@ -1530,22 +1530,22 @@
       "expectText": "Start a new change"
     },
     {
-      "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
+      "name": "Send feedback is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
-      "expectText": "Ask for a change"
+      "expectText": "Send feedback"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
-      "expectText": "Ask for a change"
+      "expectText": "Send feedback"
     },
     {
-      "name": "The hub's ⋯ menu asks for a change directly and keeps New change in Improve (#1900)",
+      "name": "The hub's ⋯ menu sends feedback directly and keeps Start a new change in Improve (#1900)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
-      "expectText": "Ask for a change"
+      "expectText": "Send feedback"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -2291,13 +2291,13 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "The app's own menu carries Ask for a change on an app view",
+      "name": "The app's own menu carries Send feedback on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view carries Ask for a change, one tap behind the mark",
+      "name": "The Dev view carries Send feedback, one tap behind the mark",
       "path": "/app/staging-demo-admins/dev",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback"
     },
@@ -2943,10 +2943,10 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The menu leads with Ask for a change, one button where there were two (#2718 review, UI overhaul)",
+      "name": "The menu leads with Send feedback, one button where there were two (#2718 review, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(:has(#improve-row-new-session)) > #improve-row-feedback:first-child",
-      "expectText": "Ask for a change"
+      "expectText": "Send feedback"
     },
     {
       "name": "Settings' About pane: all three version rows share one left edge",

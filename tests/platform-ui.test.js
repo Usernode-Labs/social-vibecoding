@@ -490,7 +490,7 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   // so a row inside it was never the place a cue could be read from.
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
-  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change is the band\'s button');
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Send feedback is the band\'s button');
   // New change is Start a new change under Agent sessions (UI overhaul).
   assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
   const sessions = INDEX.match(/<div id="app-menu-sessions"[\s\S]*?id="improve-row-new-session"/);
