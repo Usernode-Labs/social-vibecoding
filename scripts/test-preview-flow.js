@@ -29,6 +29,7 @@ const SUITES = [
   'tests/check-retirement.test.js',
   'tests/published-predecessor-retirement.test.js',
   'tests/unit-suite-check.test.js',
+  'tests/unit-suite-source-inspection.test.js',
   'tests/review-work.test.js',
   'tests/unpromote-proposal-postgres.test.js',
   'tests/preview-flow.test.js',

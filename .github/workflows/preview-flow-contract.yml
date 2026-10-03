@@ -68,6 +68,7 @@ on:
       - 'tests/review-work.test.js'
       - 'tests/unpromote-proposal-postgres.test.js'
       - 'tests/unit-suite-check.test.js'
+      - 'tests/unit-suite-source-inspection.test.js'
       - 'tests/*runtime*.test.js'
       - 'tests/kubernetes-preview-inventory.test.js'
       - 'tests/staging-reap.test.js'

@@ -62,6 +62,12 @@ function actualChecksWorker(f, {
     throw new Error(`Fixture forbids unconfigured GitHub content: ${filename}`);
   });
   const application = require('../../src/services/application-runtime');
+  // Source metadata remains an injected fixture fact; resource observations
+  // below remain actual. Strict-reader regressions exercise the real helper.
+  replace(github, 'inspectRootFileAtCommit', () => async (owner, repo, filename, revision) => ({
+    state: 'present', commitSha: revision,
+    content: await github.getFileContent(owner, repo, filename, revision),
+  }));
   replace(application, 'probeHealth', () => (_config, ref) => f.probe(f.config, {
     namespace: f.config.kubernetes.appNamespace, runtimeName: ref.runtimeName,
   }));

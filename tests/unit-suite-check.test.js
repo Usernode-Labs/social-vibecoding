@@ -411,10 +411,12 @@ const enrolledUnitOptions = { config: { workerRuntime: 'kubernetes' },
 test('C10 admission records a reason for no suite and propagates failed inspection', async t => {
   const github = require('../src/services/github');
   t.mock.method(github, 'isEnabled', () => true);
-  t.mock.method(github, 'getFileContent', async () => '{"scripts":{}}');
+  t.mock.method(github, 'inspectRootFileAtCommit', async () => ({
+    state: 'present', commitSha: enrolledUnitOptions.ref, content: '{"scripts":{}}',
+  }));
   const decision = await unitSuite.inspectRequirement(enrolledUnitOptions);
   assert.deepEqual(decision, { version: 1, state: 'not-required', reason: 'no_runnable_script' });
-  github.getFileContent = async () => { throw new Error('metadata reply lost'); };
+  github.inspectRootFileAtCommit = async () => { throw new Error('metadata reply lost'); };
   await assert.rejects(unitSuite.inspectRequirement(enrolledUnitOptions), /metadata reply lost/);
 });
 

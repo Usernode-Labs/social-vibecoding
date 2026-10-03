@@ -606,8 +606,10 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
 
 // Read a single file's decoded text contents from a repo at `ref`
 // (default the repo's default branch). Returns the string, or null when
-// the file doesn't exist (404) so callers can branch on "create vs
-// edit" without try/catch noise. Other errors propagate.
+// the file request returns 404 or has no inline content, so legacy callers can
+// branch on "create vs edit" without try/catch noise. GitHub also hides
+// inaccessible source behind 404: null is not verified file absence. Enrolled
+// unit inspection uses inspectRootFileAtCommit instead. Other errors propagate.
 async function getFileContent(owner, repo, filePath, ref) {
   const octokit = await getOctokit(owner);
   try {
@@ -622,6 +624,46 @@ async function getFileContent(owner, repo, filePath, ref) {
     if (err.status === 404) return null;
     throw err;
   }
+}
+
+// A bounded source read for enrolled package inspection. Verify the exact
+// commit/root tree before interpreting absence; a contents 404 alone cannot
+// distinguish a missing file from denied repository or revision access.
+async function inspectRootFileAtCommit(owner, repo, fileName, commitSha) {
+  const unverified = () => Object.assign(new Error('GitHub source could not be verified'), {
+    code: 'GITHUB_SOURCE_UNVERIFIED',
+  });
+  const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+  if (!owner || !repo || !sha(commitSha) || typeof fileName !== 'string'
+      || !fileName || fileName.includes('/') || ['.', '..'].includes(fileName)) {
+    throw unverified();
+  }
+
+  const octokit = await getOctokit(owner);
+  const { data: commit } = await octokit.rest.git.getCommit({ owner, repo, commit_sha: commitSha });
+  if (commit?.sha !== commitSha || !sha(commit.tree?.sha)) throw unverified();
+
+  const { data: tree } = await octokit.rest.git.getTree({ owner, repo, tree_sha: commit.tree.sha });
+  if (tree?.sha !== commit.tree.sha || tree.truncated !== false || !Array.isArray(tree.tree)
+      || tree.tree.some(entry => !entry || typeof entry.path !== 'string' || !entry.path
+        || entry.path.includes('/') || !sha(entry.sha) || !['blob', 'tree', 'commit'].includes(entry.type))) {
+    throw unverified();
+  }
+  const entries = tree.tree.filter(entry => entry.path === fileName);
+  if (!entries.length) return { state: 'absent', commitSha };
+  const entry = entries[0];
+  if (entries.length !== 1 || entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode)
+      || !sha(entry.sha)) throw unverified();
+
+  const { data: file } = await octokit.rest.repos.getContent({ owner, repo, path: fileName, ref: commitSha });
+  if (file?.type !== 'file' || file.sha !== entry.sha || file.encoding !== 'base64'
+      || typeof file.content !== 'string') throw unverified();
+  const bytes = Buffer.from(file.content, 'base64');
+  const blobSha = require('node:crypto').createHash('sha1')
+    .update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  if (blobSha !== entry.sha) throw unverified();
+
+  return { state: 'present', commitSha, content: bytes.toString('utf8') };
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
@@ -2451,6 +2493,7 @@ module.exports = {
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
   getFileContent,
+  inspectRootFileAtCommit,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

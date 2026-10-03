@@ -115,7 +115,27 @@ async function inspectRequirement({ repoOwner, repoName, ref, deferred = false }
       code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE',
     });
   }
-  const rawPackage = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
+  const inspected = await github.inspectRootFileAtCommit(repoOwner, repoName, UNIT_CHECK_PATH, ref);
+  if (!inspected || inspected.commitSha !== ref || !['absent', 'present'].includes(inspected.state)) {
+    throw Object.assign(new Error('Unit-suite package source is unverified'), { code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE' });
+  }
+  if (inspected.state === 'absent') return { version: 1, state: 'not-required', reason: 'package_absent' };
+  if (typeof inspected.content !== 'string') {
+    throw Object.assign(new Error('Unit-suite package source is unverified'), { code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE' });
+  }
+  const rawPackage = inspected.content;
+  let parsed;
+  try { parsed = JSON.parse(rawPackage); }
+  catch (cause) {
+    throw Object.assign(new Error('Unit-suite package metadata is unreadable', { cause }), {
+      code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE',
+    });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || (parsed.scripts !== undefined && (!parsed.scripts || typeof parsed.scripts !== 'object' || Array.isArray(parsed.scripts)))
+      || (parsed.scripts?.test !== undefined && typeof parsed.scripts.test !== 'string')) {
+    throw Object.assign(new Error('Unit-suite package metadata is invalid'), { code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE' });
+  }
   return hasRunnableTestScript(rawPackage)
     ? { version: 1, state: 'submitted', source: { repoOwner, repoName, ref } }
     : { version: 1, state: 'not-required', reason: 'no_runnable_script' };
@@ -415,7 +435,13 @@ async function maybeRunUnitSuite({
     // before dispatch and cannot turn missing prerequisites into an exemption.
     if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
-    try { admission = await inspectRequirement({ repoOwner, repoName, ref }); }
+    try {
+      // Preserve the legacy nullable reader and best-effort policy. Its null
+      // result cannot authorize an enrolled exemption.
+      const rawPackage = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
+      if (!hasRunnableTestScript(rawPackage)) return null;
+      admission = { version: 1, state: 'submitted', source: { repoOwner, repoName, ref } };
+    }
     catch (err) {
       log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
         sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,

@@ -109,6 +109,11 @@ github.getFileContent = async (_owner, _repo, filename) => {
   throw new Error(`Unconfigured fixture GitHub file: ${filename}`);
 };
 // Initialization itself is real and constructs a client with generated local keys.
+// Package metadata is injected alongside the existing GitHub content boundary.
+github.inspectRootFileAtCommit = async (owner, repo, filename, revision) => ({
+  state: 'present', commitSha: revision,
+  content: await github.getFileContent(owner, repo, filename, revision),
+});
 require('../../src/services/merge-queue').enqueue = async (_config, appId) => {
   if (!fs.existsSync('/evidence/allow-gate')) {
     record('gate_dependency_unavailable', { appId });

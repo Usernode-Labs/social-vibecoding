@@ -19,6 +19,23 @@ external creation. Its stable identity is the session/run/kind Job name. An
 acknowledged creation records `observed` with the exact Job name and UID. Never
 persist clone credentials in this decision record.
 
+Enrolled inspection does not use the legacy nullable `getFileContent` result.
+`github.inspectRootFileAtCommit` verifies the exact commit and a complete,
+non-recursive root tree. Only a tree without `package.json` establishes
+`package_absent`. A listed regular file requires matching blob SHA, readable
+base64 contents and matching Git blob bytes. A hidden/inaccessible repository or
+revision 404, a listed file's 404, truncated tree, directory/symlink, inconsistent
+identity or unreadable content remains uncertainty. Parsed package metadata must
+be a valid object with valid script fields before absence of a runnable test script
+can establish `no_runnable_script`. The existing placeholder/empty-script policy
+is preserved. Legacy file reading and legacy unit skipping are unchanged.
+
+`tests/unit-suite-source-inspection.test.js` exercises the actual GitHub and unit
+helpers through substituted Octokit transport, including inaccessible-source 404
+versus verified file absence. It does not call real GitHub. Disposable capture
+fixtures explicitly inject package metadata at the new reader boundary alongside
+their existing metadata substitutions; those fixtures do not prove GitHub access.
+
 A required or unknown companion that is absent keeps its manifest and cleanup
 obligation. Recovery does not omit its result, complete the continuation, redrive
 either check, or infer creator closure from heartbeat expiry/absence. Once it
