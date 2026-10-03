@@ -513,8 +513,8 @@ test('no container-env builder mentions a host-only platform key in code', () =>
   }
 });
 
-test('all five app-container env builders go through the shared helper', () => {
-  // Drift between the five builders is the historical failure mode this
+test('all remaining app-container env builders go through the shared helper', () => {
+  // Drift between builders is the historical failure mode this
   // helper exists to prevent; if one stops using it, the leak checks
   // above stop covering that builder's identity env.
   //
@@ -528,8 +528,9 @@ test('all five app-container env builders go through the shared helper', () => {
     'src/services/staging.js': 1,
     'src/services/staging-env.js': 1,
     'src/services/app-respawn.js': 1,
-    'src/routes/sessions.js': 1,
   };
+  // The unused chat-file builder/parser in sessions.js was removed during
+  // preview/check migration. Its former spread is not a surviving generator.
   for (const [rel, count] of Object.entries(expected)) {
     const code = stripComments(read(rel));
     const uses = (code.match(/\.\.\.appIdentityEnv\(/g) || []).length;

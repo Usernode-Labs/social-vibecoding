@@ -51,7 +51,8 @@ async function fixture(t) {
       const desired = await owner.apply({
         type: 'RequestPreviewActivation', actionId: randomUUID(), sessionId: 1,
         flowId, headSha: state.flow.headSha, generation: state.flow.generation,
-        expected: { target: null, uid: null, token: null }, stagingUrl: 'https://preview.fixture.invalid',
+        expected: state.binding?.observed?.route || { target: null, uid: null, token: null },
+        stagingUrl: 'https://preview.fixture.invalid',
       });
       if (!desired.decision.accepted) return { accepted: false, reason: desired.decision.reason };
       const observed = await owner.apply({
@@ -748,4 +749,211 @@ test('unknown checks: retained predecessors cannot hide the enrolled current run
   assert.equal(outcome.result.checksBlocked.runId, f.runId);
   assert.equal((await f.pool.query('SELECT COUNT(*) FROM check_runs')).rows[0].count, '56',
     'Earlier obligations remain discoverable');
+});
+
+// Real HTTP handlers and PostgreSQL. Authentication/collaboration identity and
+// external services are injected; these tests cannot contact GitHub or a cluster.
+async function manualServer(t, f, work) {
+  const express = require('express');
+  const poolModule = require('../src/db/pool');
+  const handoff = require('../src/services/cli-preview-handoff/work');
+  const visuals = require('../src/services/visuals');
+  const staging = require('../src/services/staging');
+  const routePath = require.resolve('../src/routes/sessions');
+  const cachedRoute = require.cache[routePath];
+
+  t.mock.method(poolModule, 'getPool', () => f.pool);
+  t.mock.method(require('../src/services/app-access'), 'sessionCollabGuard', () => (_req, _res, next) => next());
+  t.mock.method(handoff, 'createCliHandoffWork', () => work);
+  t.mock.method(require('../src/services/github'), 'isEnabled', () => assert.fail('Enrolled manual requests must use the accepted head'));
+  t.mock.method(staging, 'buildAndDeployStaging', async () => assert.fail('Competing web builder'));
+  t.mock.method(staging, 'hasInFlightBuild', () => false);
+  t.mock.method(visuals, 'captureForSession', async () => assert.fail('Competing web capture'));
+  t.mock.method(visuals, 'hasInFlightCapture', () => false);
+  t.mock.method(require('../src/services/staging-recovery'), 'recheckSessionChecks', async () => assert.fail('Detached web recheck'));
+  t.mock.method(require('../src/services/staging-recovery'), 'stagingNeedsRebuild', async () => true);
+  const setPending = visuals.setChecksPending;
+  t.mock.method(visuals, 'setChecksPending', async (client, ...args) => {
+    assert.notEqual(client, f.pool, 'Required pending state belongs to the decision transaction');
+    return setPending(client, ...args);
+  });
+
+  delete require.cache[routePath];
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.user = { id: Number(req.headers['x-test-user'] || 1), canAdminWrite: req.headers['x-test-admin'] === 'true' };
+    next();
+  });
+  app.use(require(routePath).sessionRoutes(f.config));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    require('../src/services/session-state').setPool(null);
+    if (cachedRoute) require.cache[routePath] = cachedRoute;
+    else delete require.cache[routePath];
+  });
+  return async (path, headers = {}) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/1/${path}`, {
+      method: 'POST', headers,
+    });
+    return { status: response.status, body: await response.json() };
+  };
+}
+
+test('manual enrolled deploy/ensure/recheck join one durable preparation with admission disabled', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
+  f.config.nativeCliPreviewHandoffEnabled = false;
+  const request = await manualServer(t, f, f.make());
+  const paths = ['deploy-staging', 'ensure-staging', 'recheck'];
+  const responses = await Promise.all(Array.from({ length: 9 }, (_, index) => request(paths[index % paths.length])));
+  assert.ok(responses.every(result => result.status === 200));
+  assert.deepEqual(new Set(responses.map(result => result.body.workId)), new Set([admitted.work.id]));
+  assert.equal((await f.session()).checks_commit_sha, HEAD);
+  assert.equal((await f.session()).staging_url, 'https://serving.test');
+  assert.equal((await work.owner.trace(1)).length, 1);
+});
+
+test('manual enrolled recheck rolls back pending reset and joins after web loss/lost response', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
+  await candidate(f, work, admitted);
+  await tick(work);
+  assert.equal((await f.session()).check_state, 'passing');
+  const tracesBefore = (await work.owner.trace(1)).length;
+  const enqueue = work.store.enqueue;
+  let failEnqueue = true;
+  work.store.enqueue = async (...args) => {
+    const queued = await enqueue(...args);
+    if (failEnqueue) throw new Error('Injected continuation write failure');
+    return queued;
+  };
+  const request = await manualServer(t, f, work);
+  assert.equal((await request('recheck')).status, 500);
+  assert.equal((await f.session()).check_state, 'passing', 'No route-local reset survives failed admission');
+  assert.equal((await work.owner.trace(1)).length, tracesBefore);
+  failEnqueue = false;
+
+  const recover = work.recover;
+  let loseReply = true;
+  t.mock.method(work, 'recover', async (...args) => {
+    const result = await recover(...args);
+    if (loseReply) {
+      loseReply = false;
+      throw new Error('Injected lost reply after commit');
+    }
+    return result;
+  });
+  assert.equal((await request('recheck')).status, 500);
+  const pending = await f.make().recover(1);
+  assert.equal(pending.workflow, CONTINUE);
+  const retry = await request('recheck');
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.workId, pending.id);
+  await tick(f.make());
+  assert.equal((await f.session()).check_state, 'passing');
+  assert.equal((await f.make().recover(1)).status, 'succeeded');
+  assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests WHERE workflow = $1', [PREPARE_RUNTIME])).rows[0].count), 1);
+});
+
+test('manual enrolled deployment requests one isolated repair and preserves serving until activation', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  const original = await work.admit({ session: await f.session(), headSha: HEAD });
+  await candidate(f, work, original);
+  await tick(work);
+  const serving = await f.session();
+  const request = await manualServer(t, f, work);
+  const responses = await Promise.all(Array.from({ length: 6 }, () => request('deploy-staging')));
+  assert.ok(responses.every(result => result.status === 200));
+  assert.equal(new Set(responses.map(result => result.body.workId)).size, 1);
+  const repair = await work.store.read(responses[0].body.workId);
+  assert.notEqual(repair.input.intent.runtimeName, serving.staging_runtime_name);
+  assert.equal((await f.session()).staging_runtime_name, serving.staging_runtime_name);
+  assert.equal((await f.session()).staging_url, serving.staging_url);
+  await candidate(f, f.make(), { work: repair });
+  await tick(f.make());
+  assert.equal((await f.session()).staging_runtime_name, repair.input.intent.runtimeName);
+});
+
+test('manual enrolled requests expose blocked work and cannot create fresh preparation with admission off', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
+  await f.pool.query("UPDATE execution_work_requests SET status = 'blocked' WHERE id = $1", [admitted.work.id]);
+  const request = await manualServer(t, f, work);
+  for (const path of ['deploy-staging', 'recheck']) {
+    const result = await request(path);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'durable_work_blocked');
+  }
+  await f.pool.query("UPDATE execution_work_requests SET status = 'succeeded', result = '{\"prepared\":false}' WHERE id = $1", [admitted.work.id]);
+  f.config.nativeCliPreviewHandoffEnabled = false;
+  assert.equal((await request('deploy-staging')).status, 409);
+  assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), 1);
+});
+
+test('manual enrolled route keeps author/admin/status/headless and browser-origin guards', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  await work.admit({ session: await f.session(), headSha: HEAD });
+  const request = await manualServer(t, f, work);
+  assert.equal((await request('deploy-staging', { 'x-test-user': '2' })).status, 404);
+  assert.equal((await request('recheck', { 'x-test-user': '2' })).status, 403);
+  assert.equal((await request('recheck', { 'x-test-user': '2', 'x-test-admin': 'true' })).status, 200);
+  assert.equal((await request('recheck', { 'sec-fetch-site': 'same-site' })).status, 403);
+  await f.pool.query('UPDATE chat_sessions SET is_headless = TRUE WHERE id = 1');
+  assert.equal((await request('deploy-staging')).status, 404);
+  await f.pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id = 1");
+  assert.equal((await request('recheck')).status, 409);
+});
+
+test('stale manual repair/recheck cannot initiate work on a completed successor', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  const first = await work.admit({ session: await f.session(), headSha: HEAD });
+  await candidate(f, work, first);
+  await tick(work);
+  const old = await f.session();
+  await f.pool.query('UPDATE chat_sessions SET handoff_uploaded_sha = $1 WHERE id = 1', [NEXT]);
+  const successor = await work.admit({ session: await f.session(), headSha: NEXT });
+  await candidate(f, work, successor);
+  await tick(work);
+  const current = await f.session();
+  const traceCount = (await work.owner.trace(1)).length;
+  const obligations = Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count);
+  for (const options of [
+    { force: true, expectedHeadSha: old.checks_commit_sha },
+    { repair: true, expectedHeadSha: old.checks_commit_sha, expectedRuntimeName: old.staging_runtime_name },
+  ]) assert.equal((await f.make().recover(1, options)).status, 'succeeded');
+  const rejected = (await work.owner.trace(1)).slice(traceCount);
+  assert.deepEqual(rejected.map(entry => entry.decision.reason), ['superseded_handoff', 'preview_changed']);
+  assert.ok(rejected.every(entry => !entry.decision.accepted));
+  assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), obligations);
+  assert.equal((await f.session()).check_state, 'passing');
+  assert.equal((await f.session()).staging_runtime_name, current.staging_runtime_name);
+});
+
+test('manual enrolled requests cannot substitute a fresh head for an unconfirmed request revision', { skip: !postgresEnabled }, async t => {
+  const f = await fixture(t);
+  const work = f.make();
+  await work.admit({ session: await f.session(), headSha: HEAD });
+  const request = await manualServer(t, f, work);
+  const traceCount = (await work.owner.trace(1)).length;
+  await f.pool.query('UPDATE chat_sessions SET checks_commit_sha = NULL WHERE id = 1');
+  for (const path of ['deploy-staging', 'ensure-staging', 'recheck']) {
+    const result = await request(path);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'durable_revision_unconfirmed');
+  }
+  assert.equal((await work.owner.trace(1)).length, traceCount);
+  assert.equal((await f.session()).checks_commit_sha, null);
+  assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), 1);
 });

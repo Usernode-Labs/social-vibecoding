@@ -20,11 +20,9 @@ const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
-const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
-const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const branchNames = require('../services/branch-names');
 const agentTurn = require('../services/agent-turn');
@@ -6039,6 +6037,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  function hasExactChecksRevision(session) {
+    return /^[a-f0-9]{40}$/.test(session.checks_commit_sha || '');
+  }
+
   // Deploy staging for a session
   router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
@@ -6054,6 +6056,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
       const app = { id: session.app_id_val, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+      // Persisted enrollment owns the exact head and all required follow-ups.
+      // A manual click must not reset its pin or start a competing web builder.
+      const durableHandoff = require('../services/cli-preview-handoff/work');
+      if (session.source === 'cli_handoff' && await durableHandoff.enrolled(pool, session.id)) {
+        if (!hasExactChecksRevision(session)) {
+          return res.status(409).json({ error: 'durable_revision_unconfirmed' });
+        }
+        const work = await durableHandoff.createCliHandoffWork(pool, config).recover(session.id, {
+          repair: true,
+          expectedRuntimeName: session.staging_runtime_name || null,
+          expectedHeadSha: session.checks_commit_sha || null,
+        });
+        if (work && ['queued', 'running'].includes(work.status)) {
+          return res.json({ ok: true, status: 'deploying', workId: work.id });
+        }
+        return res.status(409).json({
+          error: work?.status === 'blocked' ? 'durable_work_blocked' : 'durable_resource_recovery_required',
+          workId: work?.id,
+        });
+      }
 
       // Get latest commit hash from the branch
       let commitHash = 'latest';
@@ -6263,7 +6286,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const durableHandoff = require('../services/cli-preview-handoff/work');
       if (session.source === 'cli_handoff' && await durableHandoff.enrolled(pool, sessionId)) {
-        const work = await durableHandoff.createCliHandoffWork(pool, config).recover(sessionId, { repair: true, expectedRuntimeName: session.staging_runtime_name || null });
+        if (!hasExactChecksRevision(session)) {
+          return res.status(409).json({ error: 'durable_revision_unconfirmed' });
+        }
+        const work = await durableHandoff.createCliHandoffWork(pool, config).recover(sessionId, {
+          repair: true,
+          expectedRuntimeName: session.staging_runtime_name || null,
+          expectedHeadSha: session.checks_commit_sha || null,
+        });
         const pending = work && ['queued', 'running'].includes(work.status);
         return res.json({
           status: pending ? 'rebuilding' : 'unavailable',
@@ -6381,6 +6411,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
       }
+      const durableHandoff = require('../services/cli-preview-handoff/work');
+      if (session.source === 'cli_handoff' && await durableHandoff.enrolled(pool, sessionId)) {
+        if (!hasExactChecksRevision(session)) {
+          return res.status(409).json({ error: 'durable_revision_unconfirmed' });
+        }
+        const work = await durableHandoff.createCliHandoffWork(pool, config).recover(sessionId, {
+          force: true,
+          expectedHeadSha: session.checks_commit_sha || null,
+        });
+        if (work && ['queued', 'running'].includes(work.status)) {
+          return res.json({ status: 'running', workId: work.id });
+        }
+        return res.status(409).json({
+          error: work?.status === 'blocked' ? 'durable_work_blocked' : 'durable_checks_reconciliation_required',
+          workId: work?.id,
+        });
+      }
+
       recheckInFlight.add(sessionId);
 
       // #607: stamp 'pending' + broadcast BEFORE responding so the client's
@@ -13233,126 +13281,6 @@ async function getFilesFromContainer(appSlug) {
     log.warn('sessions', 'Failed to read files from container', { container: containerName, err: err.message });
   }
   return null;
-}
-
-function parseFileChanges(text) {
-  const files = [];
-  const regex = /```\w*:?([\w/._-]+)\n([\s\S]*?)```/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const path = match[1];
-    const content = match[2];
-    if (path && content && !path.match(/^\d+$/)) {
-      files.push({ path, content });
-    }
-  }
-  return files;
-}
-
-async function buildStagingFromFiles(config, session, app, fileChanges, hash) {
-  const fs = require('fs');
-  const path = require('path');
-  const dbManager = require('../services/db-manager');
-
-  const containerName = `usernode-staging-${app.slug}--${session.id}`;
-  const imageName = `usernode-staging-${app.slug}-${session.id}:${hash.substring(0, 6)}`;
-
-  log.info('sessions', 'Building staging from chat files', { sessionId: session.id });
-
-  // Get the current production app's files as a base
-  const prodContainer = `usernode-app-${app.slug}`;
-  const tempDir = `/tmp/usernode-staging-build-${session.id}`;
-
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  // Copy files from production container as a base
-  try {
-    await docker.execFileAsync('docker', ['cp', `${prodContainer}:/app/.`, tempDir], { timeout: 30000 });
-  } catch (err) {
-    log.warn('sessions', 'Could not copy from production container, using empty base', { err: err.message });
-  }
-
-  // Remove node_modules from copy (we'll npm install fresh)
-  await docker.execFileAsync('rm', ['-rf', path.join(tempDir, 'node_modules')]).catch(() => {});
-
-  // Apply the AI's file changes on top
-  for (const file of fileChanges) {
-    const filePath = path.join(tempDir, file.path);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, file.content);
-  }
-
-  // Ensure Dockerfile exists.
-  //
-  // This is the platform emitting a Dockerfile on an app's behalf, so it owes
-  // the same contract the app template does (services/template.js): a NUMERIC
-  // non-zero USER, and ownership of the copied tree. Kubernetes runs app and
-  // preview pods with runAsNonRoot and no runAsUser, so an image that names no
-  // user runs as root and the kubelet refuses to start it —
-  // `CreateContainerConfigError: container has runAsNonRoot and image will run
-  // as root`. This path builds for the Docker runtime, where that is not
-  // enforced, which is exactly why it drifted: it kept emitting the old shape
-  // long after the template stopped. `tests/generated-dockerfile-user.test.js`
-  // holds every generator here to the same rule so the two cannot diverge
-  // again (#2302).
-  if (!fs.existsSync(path.join(tempDir, 'Dockerfile'))) {
-    fs.writeFileSync(path.join(tempDir, 'Dockerfile'), `FROM node:22-alpine
-WORKDIR /app
-COPY --chown=1000:1000 package.json ./
-RUN npm install --production
-COPY --chown=1000:1000 . .
-EXPOSE 3000
-USER 1000:1000
-CMD ["node", "server.js"]
-`);
-  }
-
-  // Build
-  await docker.buildImage(tempDir, imageName);
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-
-  // Clone DB. cloneDatabase mints a fresh per-clone postgres role —
-  // see staging.js for the rationale (one-shot password, dropped on
-  // teardown, never persisted on the platform).
-  const prodDbName = dbManager.appDbName(app.slug);
-  const stagingDbName = dbManager.stagingDbName(app.slug, `s${session.id}`, hash);
-  const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
-  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword);
-
-  // Stop old staging
-  await docker.stopAndRemove(containerName).catch(() => {});
-
-  // Run
-  const containerId = await docker.runContainer(containerName, {
-    image: imageName,
-    env: {
-      DATABASE_URL: stagingDbUrl,
-      ...appIdentityEnv(app, config),
-      PORT: '3000',
-    },
-    port: 3000,
-  });
-
-  await docker.waitForHealthy(containerName, 3000, '/health');
-
-  // Get the host port for local dev access
-  const hostPort = await docker.getHostPort(containerName, 3000);
-  // No Caddy route to register — the wildcard site maps this hostname to
-  // `containerName` (usernode-staging-<slug>--<id>) and issues TLS
-  // on-demand. See Caddyfile + services/caddy.js.
-  const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
-
-  const stagingUrl = hostPort
-    ? `http://localhost:${hostPort}`
-    : `https://${hostname}`;
-
-  // Edge verification happens in the caller (staging.verifyStagingEdge)
-  // AFTER the session's staging_url is persisted — that persist is what
-  // makes the hostname a referenceable preview. See staging.js for the full
-  // ordering rationale.
-
-  return { containerId, stagingUrl, hostname };
 }
 
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,

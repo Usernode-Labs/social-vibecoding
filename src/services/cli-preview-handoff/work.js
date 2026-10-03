@@ -56,6 +56,8 @@ function createCliHandoffWork(pool, config, {
     session,
     headSha,
     retryPreparation = false,
+    expectedChecksSha = session.checks_commit_sha || null,
+    expectedPreviewName = session.staging_runtime_name || null,
     persistDetails = async () => {},
   }) {
     // Acquire the aggregate before inspecting deduplication or accepting a head.
@@ -79,9 +81,9 @@ function createCliHandoffWork(pool, config, {
       headSha,
       startedStatus: session.status === 'paused' ? 'paused' : 'active',
       expectedStatus: session.status,
-      previousPreviewName: session.staging_runtime_name || null,
+      previousPreviewName: expectedPreviewName,
       previousHead: session.handoff_head_sha || null,
-      previousChecks: session.checks_commit_sha || null,
+      previousChecks: expectedChecksSha,
       uploadCheckedSha: session.handoff_upload_checked_sha || null,
     };
     const accepted = await owner.applyInTransaction(transaction, action);
@@ -240,7 +242,12 @@ function createCliHandoffWork(pool, config, {
     return { ...proposed, result: { accepted: result.decision.accepted, reason: result.decision.reason } };
   }
 
-  async function recover(sessionId, { force = false, repair = false, expectedRuntimeName } = {}) {
+  async function recover(sessionId, {
+    force = false,
+    repair = false,
+    expectedRuntimeName,
+    expectedHeadSha,
+  } = {}) {
     // Persisted enrollment always wins over flags, old queues and repair timers.
     return runtime.transact(async transaction => {
       const state = await transaction.withSession(sessionId, async client => {
@@ -257,18 +264,31 @@ function createCliHandoffWork(pool, config, {
         if (!selected(config, { source: 'cli_handoff' })) return active;
         assertAdmissionConfig();
         const session = await transaction.withSession(sessionId, async (_client, row) => row);
-        if (repair && (expectedRuntimeName === undefined
-            || (session.staging_runtime_name || null) !== expectedRuntimeName)) return active;
+        if (repair && expectedRuntimeName === undefined) return active;
+
+        // Carry the manual observation into the existing head action. Its
+        // reducer owns both revision and serving-runtime comparisons; recovery
+        // must not substitute fresh observations as permission for an old click.
+        const expectedChecksSha = expectedHeadSha === undefined
+          ? session.checks_commit_sha || null
+          : expectedHeadSha;
+        const expectedPreviewName = repair ? expectedRuntimeName : session.staging_runtime_name || null;
         const admitted = await admitInTransaction(transaction, {
           session,
           headSha: state.head_sha,
           retryPreparation: true,
+          expectedChecksSha,
+          expectedPreviewName,
         });
         return admitted.accepted ? admitted.work : active;
       }
       if (!force) return active;
       const actionId = randomUUID();
-      const identity = { sessionId, flowId: state.flow_id, headSha: state.head_sha };
+      const identity = {
+        sessionId,
+        flowId: state.flow_id,
+        headSha: expectedHeadSha === undefined ? state.head_sha : expectedHeadSha,
+      };
       const admission = await owner.applyInTransaction(transaction, {
         type: 'RequestCliPreviewChecks',
         actionId,

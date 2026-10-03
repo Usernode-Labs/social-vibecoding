@@ -3,9 +3,9 @@
 2 October 2026. The cohort remains default-off. Progress is demonstrated
 ownership replacement and removed code, not added checkpoint numbers.
 See the [roadmap](roadmap.md), [support decision](experimental-retention-decision.md)
-and [packaged proof](packaged-cli-entrypoints-contract.md). The
-[frozen final review](final-pilot-review.md) distinguishes default-off merge,
-installation/enablement and further-caller migration. Private screenshots are a
+and [packaged proof](packaged-cli-entrypoints-contract.md). The [completion checklist](preview-check-completion-checklist.md) defines the
+original migration merge gate; the [pilot review](final-pilot-review.md) is an
+internal checkpoint. Private screenshots are a
 separate product follow-up. The final correction replaces unjustified unavailable
 or unverified source exemptions with exact-commit/root-tree and blob inspection;
 it adds no work kind, executor, flag or cleanup owner. Legacy nullable-source
@@ -14,6 +14,8 @@ is reconciled; its shots-worker hold/retirement and other caller protections rem
 
 | Mechanism | Current status / replacement | Removal gate |
 | --- | --- | --- |
+| Manual enrolled deploy/ensure/recheck web owners | **Removed for persisted enrollment:** no route-local pending reset, mutable branch resolution, web builder, pointer publication or detached capture/recheck. Existing action/continuation owns requests and repair. | Real HTTP/disposable PostgreSQL proof; ordinary native/Docker manual admission still requires cutover. Legacy SQL allowlist remains unchanged because unenrolled paths still use it. |
+| Dead chat-file Docker builder/parser and unused identity/Caddy imports | **Deleted 120 lines plus two imports.** No callers or exports; existing source-generation guards remain green. | Complete; no replacement executor or compatibility branch. |
 | Four preparation capability flags and CLI config shim | **Removed** at `2bf702dbd`. Sole new admission is complete Kubernetes/kpack preparation. | Complete; retain default-off admission/worker switches. |
 | Three partial preparation work kinds, selection flags, one-shot observation/start branches and unused completion flags | **Removed** after fresh-only decision and verified archive. Named clone/Build/runtime operations own preparation. | Complete locally; unsupported startup fails visibly, preserving records. |
 | Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/CLI v3/review v2 policies and replay remain. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
@@ -42,12 +44,10 @@ Sources: [current preparation](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),
 [legacy writers](../../src/services/preview-flow/legacy-writers.json).
 
-Canonical main `d9cf30cd73a0810be72b199f8b2a194f8c56b793` is integrated.
-Read-only fetch on 2 October returned `74276a2fb7002da251e1b3975ae22b81dbc765e3`;
-relevant identity/capture/preview/CLI owners are unchanged. No later main merge or
-production installation is implied. Five-revision predecessor release is complete
-at accepted `511e84e35`; ordinary private permission is a separate product gap,
-not a pending predecessor implementation.
+Canonical main `74276a2fb7002da251e1b3975ae22b81dbc765e3` is integrated.
+Five-revision predecessor release is complete at accepted `511e84e35` for the
+contained cohort. Original preview/check migration and removal of other owners
+remain mandatory before merging this branch; installation is a separate gate.
 
 ## Ordinary-use replacement gate
 

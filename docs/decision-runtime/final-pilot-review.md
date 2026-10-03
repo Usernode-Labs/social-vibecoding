@@ -1,14 +1,17 @@
 # Final review of the default-off CLI pilot
 
-2 October 2026. Feature scope is frozen. The accepted review is followed by
+Historical internal checkpoint, superseded as a merge recommendation by the
+[original-scope completion checklist](preview-check-completion-checklist.md).
+The branch remains unmerged; in-scope caller cutovers are now authorized.
+
+2 October 2026. The reviewed pilot feature scope was frozen. The accepted review is followed by
 strict unit-source correction `ed13ea6fa` and reconciliation with explicitly
 pinned canonical `74276a2fb7002da251e1b3975ae22b81dbc765e3`.
 No rollout, caller migration, framework expansion, production access, push or
 deployment is authorized by this review.
 
-**Recommendation: ready for review/merge as a default-off pilot, subject to the
-normal PR checks. Enabling it is a separate installation gate; full migration is
-not complete.** One introduced unit-requirement inspection gap is corrected below.
+**Historical recommendation: the pilot was ready for internal review. It is not
+the branch merge deliverable; full preview/check migration remains required.** One introduced unit-requirement inspection gap is corrected below.
 Private screenshot permission is a separate pre-existing product follow-up.
 
 ## What was reviewed

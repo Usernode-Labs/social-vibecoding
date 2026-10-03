@@ -52,6 +52,7 @@ function loadSessions(mockPool, overrides = {}) {
     llm: require.resolve('../src/services/llm'),
     worker: require.resolve('../src/services/worker'),
     staging: require.resolve('../src/services/staging'),
+    visuals: require.resolve('../src/services/visuals'),
     appAccess: require.resolve('../src/services/app-access'),
     limits: require.resolve('../src/services/limits'),
     events: require.resolve('../src/services/events'),
@@ -115,6 +116,12 @@ function loadSessions(mockPool, overrides = {}) {
     [paths.llm, stubModule(paths.llm, llmStub)],
     [paths.worker, stubModule(paths.worker, workerStub)],
     [paths.staging, stubModule(paths.staging, stagingStub)],
+    // The build tail now always requests checks. Keep this unit fixture from
+    // falling through to a real capture-image build on an ambient Docker host.
+    [paths.visuals, stubModule(paths.visuals, {
+      ...require('../src/services/visuals'),
+      captureForSession: async () => ({ state: 'skipped' }),
+    })],
     [paths.appAccess, stubModule(paths.appAccess, {
       ...require('../src/services/app-access'),
       getAppForUser: async () => ({
@@ -438,6 +445,7 @@ function loadVotes(mockPool, overrides = {}) {
     ws: require.resolve('../src/services/ws'),
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
+    visuals: require.resolve('../src/services/visuals'),
     docker: require.resolve('../src/services/docker'),
     conflictResolver: require.resolve('../src/services/conflict-resolver'),
     activeUsers: require.resolve('../src/services/active-users'),
@@ -480,6 +488,12 @@ function loadVotes(mockPool, overrides = {}) {
       ...(overrides.github || {}),
     })],
     [paths.staging, stubModule(paths.staging, stagingStub)],
+    // The build tail now always requests checks. Keep this unit fixture from
+    // falling through to a real capture-image build on an ambient Docker host.
+    [paths.visuals, stubModule(paths.visuals, {
+      ...require('../src/services/visuals'),
+      captureForSession: async () => ({ state: 'skipped' }),
+    })],
     [paths.docker, stubModule(paths.docker, {})],
     [paths.conflictResolver, stubModule(paths.conflictResolver, {
       checkAndResolveConflicts: async () => ({}),
