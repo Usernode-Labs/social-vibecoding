@@ -185,6 +185,29 @@ test('a post goes to both surfaces, scoped to the issue, and is recorded', async
   assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_posts SET github_comment_id/.test(q.sql) && q.params[1] === 1234 && q.params[2] === 777));
 });
 
+test('#3767: a post whose DM relay was skipped still posts, and leaves its requester untagged', async (t) => {
+  const h = postHarness();
+  // The bot's message in a thread, as sendBotMessage writes it: the sender
+  // carries it, so the thread post is the bot's own bubble.
+  h.ws.sendBotMessage = async (_pool, appId, { content, thread }) => {
+    h.calls.messages.push({ appId, content, msgType: 'bot', thread });
+    return { id: 777 };
+  };
+  const dmSvc = require('../src/services/homeroom-bot-dm');
+  const realRelay = dmSvc.relayIssuePost;
+  dmSvc.relayIssuePost = async () => ({ skipped: true, userId: 9, username: 'ada' });
+  t.after(() => { dmSvc.relayIssuePost = realRelay; });
+  const out = await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'person', text: 'A person needs to decide this one.',
+    sender: BOT, senderId: BOT.id, mentions: ['ada', 'sam'], dm: { reason: 'Taste.' },
+  });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true },
+    'the verdict still lands on GitHub and in the thread');
+  assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'A person needs to decide this one.' }]);
+  assert.equal(h.calls.messages[0].content, '@sam A person needs to decide this one.',
+    'the work card already told the requester; only the others are tagged');
+});
+
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {
   const h = postHarness({ claimed: false });
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'looking', text: live.lookingText() });

@@ -499,6 +499,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.ok(systemMessages.some((m) => m.thread?.ref === n), 'its thread opens with where it came from');
     const ackMsg = await read(ack);
     assert.match(ackMsg.content, /^Filed: \*\*Note board\*\* request #41: Add a search box\. I'll look at it now/);
+    const { rows: ackCards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [ack.messageId],
+    );
+    assert.deepEqual(ackCards.map((o) => `${o.object_type}:${o.object_ref}`), ['github_issue:41'],
+      'the ack still carries the request\'s card (#3767: the one card for it in this chat)');
     const offerAfter = await read(offered);
     assert.equal(offerAfter.metadata.homeroomBot.status, 'answered');
     assert.equal(offerAfter.metadata.homeroomBot.answer, 'File it');

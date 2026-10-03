@@ -227,6 +227,100 @@ test('a post with `dm` is relayed to the requester\'s DM; one without is not', a
   assert.equal(posted.postId, 11);
 });
 
+// ── One verdict message, one card (#3767) ────────────────────────────────
+
+// The dedup read without a database: a fake pool routes the reads (the
+// settings, the requester, the work-card row, the card already in the
+// conversation), the two conversations calls are stood in for, and sendDm
+// is real — conversations.sendMessage records what it was handed.
+function relayHarness({ activityCard = false, cardInChat = false } = {}) {
+  const queries = [];
+  const sent = [];
+  const pool = {
+    async query(sql) {
+      queries.push(String(sql));
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_dm_users', value: '["ada"]' }] };
+      if (/FROM homeroom_bot_requesters q/.test(sql)) {
+        return { rows: [{ user_id: 9, first_version: false, issue_title: 'Sort by date', username: 'ada' }] };
+      }
+      if (/kind = 'activity'/.test(sql)) return { rows: activityCard ? [{ '?column?': 1 }] : [] };
+      if (/FROM conversation_message_objects/.test(sql)) return { rows: cardInChat ? [{ '?column?': 1 }] : [] };
+      return { rows: [] };
+    },
+  };
+  const conversations = require('../src/services/conversations');
+  const realOpen = conversations.ensureAdmittedDirect;
+  const realSend = conversations.sendMessage;
+  conversations.ensureAdmittedDirect = async () => ({ conversationId: 77, created: false });
+  conversations.sendMessage = async (_pool, _from, conversationId, input, options) => {
+    sent.push({ conversationId, input, metadata: options?.metadata });
+    return { messageId: 501, memberIds: [2, 9], notifications: [], duplicate: true };
+  };
+  return {
+    pool, queries, sent,
+    restore() {
+      conversations.ensureAdmittedDirect = realOpen;
+      conversations.sendMessage = realSend;
+    },
+  };
+}
+
+const RELAY_APP = { id: 1, slug: 'seed-swap', name: 'Seed swap' };
+
+test('a verdict whose work card is already in the DM is not sent twice, and still closes an older question', async (t) => {
+  const h = relayHarness({ activityCard: true });
+  t.after(h.restore);
+  const out = await dm.relayIssuePost({
+    pool: h.pool, app: RELAY_APP, issueNumber: 7, kind: 'person', postId: 21, bot: { id: 2 },
+    dm: { reason: 'It is a policy choice.' },
+  });
+  assert.deepEqual(out, { skipped: true, userId: 9, username: 'ada' });
+  assert.equal(h.sent.length, 0, 'no message: the work card is the verdict\'s');
+  assert.ok(h.queries.some((q) => /UPDATE homeroom_bot_dm_messages/.test(q)), 'an older question still closes');
+});
+
+test('a question still sends when the work card is in the DM: its tappable answers live only there', async (t) => {
+  const h = relayHarness({ activityCard: true });
+  t.after(h.restore);
+  const out = await dm.relayIssuePost({
+    pool: h.pool, app: RELAY_APP, issueNumber: 7, kind: 'question', postId: 22, bot: { id: 2 },
+    dm: { question: 'Newest first?', answers: ['Newest first'] },
+  });
+  assert.equal(out.messageId, 501);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent[0].metadata.homeroomBot.status, 'open');
+  assert.deepEqual(h.sent[0].input.objects, [{ type: 'issue', appId: 1, issueNumber: 7 }]);
+});
+
+test('a sent relay carries the request\'s card once: not again when the chat already shows it', async (t) => {
+  const withCard = relayHarness({ cardInChat: true });
+  t.after(withCard.restore);
+  await dm.relayIssuePost({
+    pool: withCard.pool, app: RELAY_APP, issueNumber: 7, kind: 'blocked', postId: 23, bot: { id: 2 },
+    dm: { reason: 'There is no calendar to read.' },
+  });
+  assert.equal(withCard.sent.length, 1);
+  assert.equal(Object.hasOwn(withCard.sent[0].input, 'objects'), false,
+    'the words name the request by number; its card is already on screen');
+
+  const withoutCard = relayHarness({});
+  t.after(withoutCard.restore);
+  await dm.relayIssuePost({
+    pool: withoutCard.pool, app: RELAY_APP, issueNumber: 7, kind: 'blocked', postId: 24, bot: { id: 2 },
+    dm: { reason: 'There is no calendar to read.' },
+  });
+  assert.deepEqual(withoutCard.sent[0].input.objects, [{ type: 'issue', appId: 1, issueNumber: 7 }]);
+});
+
+test('a skipped relay reached the requester, so the post on the request leaves them untagged', async () => {
+  assert.equal(await dm.untaggedRequester(
+    {}, { appId: 1, issueNumber: 7, bot: { id: 2 }, told: { skipped: true, userId: 9, username: 'ada' } },
+  ), 'ada', 'the work card told them; a tag would ring twice');
+  assert.equal(await dm.untaggedRequester(
+    {}, { appId: 1, issueNumber: 7, bot: { id: 2 }, told: { messageId: 5, username: 'ada' } },
+  ), 'ada', 'a sent relay says so as before');
+});
+
 test('a live verdict hands its question, and its answers, to the DM', async () => {
   const says = [];
   const deps = {

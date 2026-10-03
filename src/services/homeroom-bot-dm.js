@@ -600,7 +600,9 @@ async function dmRecipient(pool, appId, issueNumber) {
  * has to reach them once.
  */
 async function untaggedRequester(pool, { appId, issueNumber, bot, told = null }) {
-  if (told?.messageId && told.username) return told.username;
+  // #3767: a skipped relay is one whose news the work card in their DM
+  // already says, so it reached them as surely as a sent one did.
+  if ((told?.messageId || told?.skipped) && told.username) return told.username;
   if (!bot?.id) return null;
   const recipient = await dmRecipient(pool, appId, issueNumber);
   if (!recipient) return null;
@@ -629,7 +631,9 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
  * the post carries `dm`: the same news, in the requester's DM, when they
  * are somebody the bot talks to there. Resolves what was sent, with who it
  * went to ({ conversationId, messageId, duplicate, userId, username }), or
- * null when nothing reached them.
+ * { skipped: true, userId, username } when the request's work card is
+ * already in their DM — #3767: the card is the verdict's message, so the
+ * same news is not sent twice — or null when nothing reached them.
  */
 async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm }) {
   if (!dm || !bot?.id) return null;
@@ -646,6 +650,59 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   const content = dmText(kind, dm, context);
   if (!content) return null;
   const asks = QUESTION_KINDS.has(kind);
+
+  // #3767: the conversation the message would land in, opened the way
+  // sendDm opens it, so the checks below read the chat the filer is
+  // reading. Null means they left the bot's DM or blocked it, exactly what
+  // sendDm would refuse on.
+  const opened = await conversations.ensureAdmittedDirect(pool, bot.id, requester.userId);
+  if (!opened) return null;
+
+  // One verdict message: the work card (startCard, kind 'activity') follows
+  // the run step by step and, when it ends, shows on itself how it came out
+  // and opens the request with its pill. When that card is in their DM, a
+  // second message repeating the verdict in words says nothing the card
+  // does not, so it is not sent. A question still sends — its message is
+  // the one place the tappable answers live, which a card cannot carry.
+  // The ending is newer news either way, so an older question's chips go
+  // away as they do when a relay lands.
+  if (!asks) {
+    const { rows: carded } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_dm_messages
+        WHERE user_id = $1 AND app_id = $2 AND issue_number = $3 AND kind = 'activity'
+        LIMIT 1`,
+      [requester.userId, app.id, issueNumber],
+    );
+    if (carded.length) {
+      // The card reached them, so a failure here is logged, not thrown: the
+      // post must not tag them for news they can already read.
+      try {
+        await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws });
+      } catch (err) {
+        log.warn('homeroom-bot-dm', 'Skipped the verdict, but could not close older questions', {
+          app: app.slug, issueNumber, kind, userId: requester.userId, err: err.message,
+        });
+      }
+      log.info('homeroom-bot-dm', 'The work card already says it; not repeating the verdict', {
+        app: app.slug, issueNumber, kind, userId: requester.userId,
+      });
+      return { skipped: true, userId: requester.userId, username: requester.username };
+    }
+  }
+
+  // One card for the request in this conversation is enough: the "Filed"
+  // ack's card is already on screen, and the words below name the request
+  // by number. A message whose card was deleted loses its row with it, so
+  // a verdict after that relays with its card again.
+  const { rows: cardInChat } = await pool.query(
+    `SELECT 1 FROM conversation_message_objects o
+       JOIN conversation_messages m ON m.id = o.message_id
+      WHERE o.object_type = 'github_issue' AND o.app_id = $1 AND o.object_ref = $2
+        AND m.conversation_id = $3 AND m.deleted_at IS NULL
+      LIMIT 1`,
+    [app.id, issueNumber, opened.conversationId],
+  );
+
   const answers = asks ? (Array.isArray(dm.answers) ? dm.answers : []).filter((a) => typeof a === 'string' && a.trim()) : [];
   const metadata = {
     kind,
@@ -665,7 +722,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     content,
     metadata,
     idempotencyKey: postId ? `hrbot-post-${postId}` : null,
-    objects: cardsFor(kind, dm, app, issueNumber),
+    objects: cardInChat.length ? [] : cardsFor(kind, dm, app, issueNumber),
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });

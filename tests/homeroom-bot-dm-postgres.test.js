@@ -690,4 +690,140 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
 
     await setting('homeroom_bot_dm_users', '[]');
   });
+
+  await t.test('#3767: the work card is the verdict\'s message, and the request\'s card is carried once', async (t) => {
+    await setting('homeroom_bot_dm_users', JSON.stringify([ada.username]));
+    const activity = require('../src/services/homeroom-bot-activity');
+    // The card write goes through a real send: the bot must be able to see
+    // the project, and the issue's GitHub read is stood in for (as other
+    // tests here do) so the card lands the way it does on a live project.
+    await pool.query('UPDATE apps SET view_visibility = \'public\' WHERE id = $1', [app.id]);
+    const githubSvc = require('../src/services/github');
+    const realFetch = githubSvc.fetchPublicIssue;
+    githubSvc.fetchPublicIssue = async (_owner, _repo, n) => ({ issue: { number: n, title: 'Ear trainer', body: 'b', state: 'open' } });
+    t.after(() => { githubSvc.fetchPublicIssue = realFetch; });
+    const { conversationId } = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const botMessages = async () => {
+      const { rows } = await pool.query(
+        'SELECT count(*)::int AS n FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND deleted_at IS NULL',
+        [conversationId, bot.id],
+      );
+      return rows[0].n;
+    };
+    const objectsOf = async (messageId) => {
+      const { rows } = await pool.query(
+        'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [messageId],
+      );
+      return rows.map((o) => `${o.object_type}:${o.object_ref}`);
+    };
+
+    // Request #4001: the bot asks, its ask relays, then it takes the work
+    // on and the card starts.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4001, $2, 'Ear trainer')`,
+      [app.id, ada.id],
+    );
+    const asked = await dm.relayIssuePost({
+      pool, app, issueNumber: 4001, kind: 'question', postId: 40011, bot,
+      dm: { question: 'Sine wave or MIDI?', answers: ['MIDI'] },
+    });
+    assert.ok(asked.messageId);
+    assert.deepEqual((await conversations.getMessage(pool, ada, conversationId, asked.messageId)).metadata.homeroomBot.answers,
+      ['MIDI'], 'a question sends, and its answers are on its message');
+    const card = await activity.startCard(pool, {
+      app, issueNumber: 4001,
+      requester: { userId: ada.id, username: ada.username, issueTitle: 'Ear trainer', firstVersion: false },
+      bot, jobKey: 40011,
+    });
+    assert.ok(card.messageId);
+    const { rows: [cardRow] } = await pool.query(
+      `SELECT message_id FROM homeroom_bot_dm_messages
+        WHERE user_id = $1 AND app_id = $2 AND issue_number = 4001 AND kind = 'activity'`,
+      [ada.id, app.id],
+    );
+    assert.equal(cardRow.message_id, card.messageId, 'the work card is recorded');
+
+    // A follow-up ask still relays with the card in the DM.
+    const followup = await dm.relayIssuePost({
+      pool, app, issueNumber: 4001, kind: 'followup_ask', postId: 40012, bot,
+      dm: { question: 'Piano as the default?', answers: ['Piano'] },
+    });
+    assert.ok(followup.messageId, 'an ask never skips: its message is where the answers live');
+    assert.equal((await conversations.getMessage(pool, ada, conversationId, followup.messageId)).metadata.homeroomBot.status, 'open');
+
+    // The verdict: the card already says how the work came out, so the
+    // verdict is not sent again, and the older questions' chips go away.
+    const before = await botMessages();
+    const verdict = await dm.relayIssuePost({
+      pool, app, issueNumber: 4001, kind: 'person', postId: 40013, bot,
+      dm: { reason: 'Real instrument sounds need bundled samples, which fails the ready criterion of no new dependencies.' },
+    });
+    assert.deepEqual(verdict, { skipped: true, userId: ada.id, username: ada.username });
+    assert.equal(await botMessages(), before, 'nothing sent: the card is the verdict\'s message');
+    assert.equal((await conversations.getMessage(pool, ada, conversationId, asked.messageId)).metadata.homeroomBot.status,
+      'closed', 'the ending still closes an older question');
+    assert.deepEqual(
+      await dm.relayIssuePost({ pool, app, issueNumber: 4001, kind: 'person', postId: 40013, bot, dm: { reason: 'x' } }),
+      { skipped: true, userId: ada.id, username: ada.username }, 'a retry of a skipped verdict skips again',
+    );
+
+    // The card's message gone: its row cascades away, so the next verdict
+    // relays. The ask's card for the request is still in the chat, so the
+    // relay carries no second card; its words name the request.
+    await pool.query('DELETE FROM conversation_messages WHERE id = $1', [card.messageId]);
+    const { rows: gone } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_dm_messages
+        WHERE user_id = $1 AND app_id = $2 AND issue_number = 4001 AND kind = 'activity'`,
+      [ada.id, app.id],
+    );
+    assert.equal(gone.length, 0, 'the card\'s row cascaded away with its message');
+    const relayed = await dm.relayIssuePost({
+      pool, app, issueNumber: 4001, kind: 'build_failed', postId: 40014, bot, dm: { reason: 'the build ran out of time' },
+    });
+    assert.ok(relayed.messageId, 'relayed once the card is gone');
+    assert.match((await conversations.getMessage(pool, ada, conversationId, relayed.messageId)).content, /request #4001/);
+    assert.deepEqual(await objectsOf(relayed.messageId), [], 'the ask\'s card is already in the chat: no second card');
+
+    // A request whose card is nowhere in the chat relays with its card.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4002, $2, 'Metronome')`,
+      [app.id, ada.id],
+    );
+    const carried = await dm.relayIssuePost({
+      pool, app, issueNumber: 4002, kind: 'blocked', postId: 40021, bot, dm: { reason: 'There is no audio setting to read.' },
+    });
+    assert.ok(carried.messageId);
+    assert.deepEqual(await objectsOf(carried.messageId), ['github_issue:4002']);
+
+    // The "Filed" ack's card (what decideOffer sends, here by the same
+    // send) is in the chat seconds old: the relay after it carries no card.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4003, $2, 'Tuner')`,
+      [app.id, ada.id],
+    );
+    const ack = await dm.sendDm(pool, {
+      bot, userId: ada.id, content: 'Filed: **Seed swap** request #4003: Tuner. I\'ll look at it now.',
+      objects: [{ type: 'issue', appId: app.id, issueNumber: 4003 }],
+    });
+    assert.ok(ack.messageId);
+    assert.deepEqual(await objectsOf(ack.messageId), ['github_issue:4003']);
+    const quiet = await dm.relayIssuePost({
+      pool, app, issueNumber: 4003, kind: 'blocked', postId: 40031, bot, dm: { reason: 'There is no tuner to read.' },
+    });
+    assert.ok(quiet.messageId);
+    assert.notEqual(quiet.messageId, ack.messageId);
+    assert.deepEqual(await objectsOf(quiet.messageId), [], 'the ack\'s card is on screen; the words name the request');
+
+    // A card whose message is soft-deleted is not on screen: the deleted_at
+    // guard leaves it out, so the next relay carries its card again.
+    await pool.query('UPDATE conversation_messages SET deleted_at = NOW() WHERE id = $1', [ack.messageId]);
+    assert.deepEqual(await objectsOf(ack.messageId), ['github_issue:4003'], 'the object row itself is still there');
+    const afterGone = await dm.relayIssuePost({
+      pool, app, issueNumber: 4003, kind: 'build_failed', postId: 40032, bot, dm: { reason: 'the build ran out of time' },
+    });
+    assert.ok(afterGone.messageId);
+    assert.deepEqual(await objectsOf(afterGone.messageId), ['github_issue:4003'], 'carried again with nothing on screen');
+
+    await setting('homeroom_bot_dm_users', '[]');
+  });
 });
