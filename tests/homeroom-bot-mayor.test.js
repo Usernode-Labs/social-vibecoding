@@ -26,6 +26,7 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /Nothing is filed until they tap File it/);
   assert.match(prompt, /Finish every turn by calling reply exactly once/);
   assert.match(prompt, /Decline, in one friendly sentence, anything sexual, violent, about gambling/);
+  assert.match(prompt, /- Messages of yours in this conversation carry an \[about \.\.\.\] tag: an internal reference Homeroom adds to\n  its own past messages\. It must never appear in a reply\./);
   assert.match(prompt, /on up to 2 of their projects at once/);
   assert.match(prompt, /Today is 2026-10-02\./);
   const own = prompt.slice(0, prompt.indexOf('PLATFORM RULES'));
@@ -42,6 +43,37 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
     'not the Mayor\'s own sections: this chat has no change lifecycle and no cards');
   assert.doesNotMatch(mayor.systemPrompt({ username: 'ada', platform: false }), /use get_request/,
     'without the platform tools it does not mention them');
+});
+
+test('#3769: a reply never opens with the history\'s [about ...] tag, and a ref keeps no space before its punctuation', () => {
+  const { sanitizeReply } = mayor;
+  // The exact echo from the screenshot.
+  assert.equal(
+    sanitizeReply('[about Ear Trainer request #14 ] Filed: Ear Trainer request #14 : Richer synth tones instead of plain sine wave.'),
+    'Filed: Ear Trainer request #14: Richer synth tones instead of plain sine wave.',
+  );
+  // The marker as historyMessages builds it, and its question variant.
+  assert.equal(
+    sanitizeReply('[about Ear Trainer request #14] Filed: Ear Trainer request #14: richer tones.'),
+    'Filed: Ear Trainer request #14: richer tones.',
+  );
+  assert.equal(
+    sanitizeReply('[about Ear Trainer request #14, question open] They answered: yes, that one.'),
+    'They answered: yes, that one.',
+  );
+  assert.equal(sanitizeReply('[about Ear Trainer request #14 ]'), '', 'a reply that is only the tag is no answer');
+  assert.equal(
+    sanitizeReply('[about Ear Trainer request #14] [about Ear Trainer request #15 ] Both are up for a vote.'),
+    'Both are up for a vote.',
+    'every leading tag is stripped');
+  assert.equal(sanitizeReply('Filed: request #14 ]'), 'Filed: request #14]', 'the stray space goes outside a tag too');
+  // Left exactly as written.
+  assert.equal(
+    sanitizeReply('Filed: **Ear Trainer** request #14, and #14 (fixed) is live. Thanks!'),
+    'Filed: **Ear Trainer** request #14, and #14 (fixed) is live. Thanks!',
+  );
+  assert.equal(sanitizeReply(''), '');
+  assert.equal(sanitizeReply(null), '');
 });
 
 test('it reads the platform with the agent-session Mayor\'s connector reads, never its writes', () => {
