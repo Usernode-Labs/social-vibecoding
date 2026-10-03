@@ -4294,6 +4294,21 @@
     {
       "source": "src/routes/conversations.js",
       "method": "POST",
+      "path": "/api/conversations/homeroom-bot/activity",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.conversations.homeroom.bot.activity.cb8b0a13",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages"
+    },
+    {
+      "source": "src/routes/conversations.js",
+      "method": "POST",
       "path": "/api/link-cards",
       "expression": null,
       "status": "mapped",

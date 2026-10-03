@@ -291,7 +291,8 @@ async function requestRows(pool, userId) {
      )
      SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
             q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason,
-            run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.cap_suppressed,
+            run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
+            run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
@@ -304,7 +305,7 @@ async function requestRows(pool, userId) {
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
        LEFT JOIN LATERAL (
-         SELECT id, mode, verdict, created_at, cap_suppressed, build_ok, build_error, build_session_id,
+         SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
                 proposal_session_id
            FROM homeroom_bot_runs
           WHERE app_id = m.app_id AND issue_number = m.issue_number
@@ -459,6 +460,32 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
 }
 
 /**
+ * Each of the person's requests (requestRows), newest first, beside the
+ * stage it is at (stageOf; null when nothing about it is in progress):
+ * `{ row, state }`. What progressFor below says of each, and what the
+ * activity cards read (homeroom-bot-activity.js catchUpCards) to find the
+ * work under way that has no card yet, so the two cannot disagree on what
+ * that work is.
+ */
+async function requestStates(pool, { userId, settings = null, now = new Date() }) {
+  // #3734: a queue row is the bot's work only on a project it acts on for
+  // real. On any other the queue is its background triage, which says
+  // nothing to anybody, so it is neither "waiting in the queue" nor "reading
+  // it" for them. Whether the bot is switched on is said apart (botIsOn).
+  const acts = settings
+    ? new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])
+    : null;
+  const rows = (await requestRows(pool, userId)).map((row) => (!acts || acts.has(row.slug) ? row : {
+    ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
+  }));
+  const position = await queuePositions(pool, rows, settings);
+  return rows.map((row) => {
+    const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
+    return { row, state: stageOf({ ...row, queue_position: queuePosition }, { now }) };
+  });
+}
+
+/**
  * How far along the bot is with everything it does for `userId`, newest
  * first: `rightNow` (in progress, each with its step of the steps above,
  * what it is doing, since when, the step's time limit and links) and
@@ -482,21 +509,8 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
     }
   }
 
-  // #3734: a queue row is the bot's work only on a project it acts on for
-  // real. On any other the queue is its background triage, which says
-  // nothing to anybody, so it is neither "waiting in the queue" nor "reading
-  // it" for them. Whether the bot is switched on is said apart (botIsOn).
-  const acts = settings
-    ? new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])
-    : null;
-  const rows = (await requestRows(pool, userId)).map((row) => (!acts || acts.has(row.slug) ? row : {
-    ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
-  }));
-  const position = await queuePositions(pool, rows, settings);
   const cutoff = now.getTime() - FINISHED_WITHIN_DAYS * 24 * 60 * MINUTE_MS;
-  for (const row of rows) {
-    const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
-    const state = stageOf({ ...row, queue_position: queuePosition }, { now });
+  for (const { row, state } of await requestStates(pool, { userId, settings, now })) {
     if (state) {
       const open = row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed';
       let proposal = null;
@@ -574,6 +588,7 @@ module.exports = {
   failedCount,
   links,
   proposalFacts,
+  requestStates,
   progressFor,
   progressText,
 };

@@ -757,3 +757,15 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
 export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivity[]> {
   return normalizeBotActivity(await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options)));
 }
+
+/**
+ * The bot's DM opened: any of the signed-in person's work the bot has under
+ * way without an activity card gets one, sent by the server at the end of
+ * the DM (services/homeroom-bot-activity.js catchUpCards). The request names
+ * nothing. How many cards it added.
+ */
+export async function catchUpHomeroomBotActivity(): Promise<number> {
+  const data = record(await request<unknown>('/api/conversations/homeroom-bot/activity', { method: 'POST', body: '{}' }));
+  const added = Number(pick(data, 'added'));
+  return Number.isSafeInteger(added) && added > 0 ? added : 0;
+}

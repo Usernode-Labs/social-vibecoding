@@ -2965,6 +2965,12 @@ async function settleReapedTurn({ pool, config = {}, session }) {
 // sessionId → what recovery found, until completeRecoveredLive acts on it.
 const pendingLive = new Map();
 
+// How the run of a live build a restart cut short, and that was sent back to
+// be triaged again, ends its error. The piece of work goes on in the look
+// that follows, so it is not what that work came to: the person's activity
+// card reads past it to that look's run (homeroom-bot-activity.js).
+const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triaged again';
+
 /** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
 async function liveRunOfSession(pool, sessionId) {
   const { rows } = await pool.query(
@@ -3041,7 +3047,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       await recordLiveBuild(pool, plan.runId, {
         ok: false, sessionId: Number(sessionId), costUsd,
         error: `interrupted: ${plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short'}`
-          + ' by a restart; the issue was sent back to be triaged again',
+          + ` ${RESTARTED_BUILD_NOTE}`,
       });
       await requeueForRestart(pool, plan.appId, plan.issueNumber);
       log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
@@ -5519,6 +5525,7 @@ module.exports = {
   liveSayer,
   announceBuilt,
   RESTART_REASON,
+  RESTARTED_BUILD_NOTE,
   APP_AGAIN_REASON,
   CHECKS_REASON,
   SELF_QUEUED_REASONS,

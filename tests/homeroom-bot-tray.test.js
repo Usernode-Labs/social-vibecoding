@@ -210,11 +210,17 @@ test('History lists at most its limit of requests', () => {
 test('the staging demo draws work in flight at the step its card shows, a question waiting, and a history, and links nowhere', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = tray.demoWork(now);
-  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'follow_up_queued']);
+  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'building', 'follow_up_queued']);
   assert.ok(demo.now.every((job) => tray.PHASES.includes(job.phase)));
   const card = activity.demoState({ working: 1 }, now).cards[0];
   assert.deepEqual([demo.now[0].step, demo.now[0].of, demo.now[0].stepName], [card.step, card.of, card.stepName],
     'the tray and the fixture\'s card say the same step');
+  // The work begun before it had a card, which opening the demo DM gives one.
+  const joined = activity.demoState({ underWay: 2 }, now).cards[0];
+  assert.equal(demo.now[1].issueNumber, activity.DEMO_UNDER_WAY.issueNumber);
+  assert.equal(demo.now[1].title, activity.DEMO_UNDER_WAY.issueTitle);
+  assert.deepEqual([demo.now[1].stage, demo.now[1].step, demo.now[1].of, demo.now[1].stepName, demo.now[1].doing],
+    [joined.stage, joined.step, joined.of, joined.stepName, joined.doing], 'the tray and the card it was given say the same step');
   assert.deepEqual(demo.needsYou.map((job) => job.outcome), ['question']);
   assert.ok(demo.history.length >= 2);
   assert.ok(demo.history.some((job) => job.earlier.length >= 2), 'a request the bot came back to');

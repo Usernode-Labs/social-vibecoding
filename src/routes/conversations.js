@@ -144,6 +144,23 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // The client opened its DM with the Homeroom bot: any of the signed-in
+  // person's work the bot has under way without an activity card gets one
+  // (services/homeroom-bot-activity.js catchUpCards). A write, so not the
+  // read above: idempotent, it sends each missing card once and nothing on a
+  // second call. Their own work only: it reads nothing from the request but
+  // who is signed in. → { added }
+  router.post('/api/conversations/homeroom-bot/activity', conversationMessageLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (isDemo(req)) return res.json(await stagingMessages.ensureDemoUnderWayCard(pool, req.user));
+      const activity = require('../services/homeroom-bot-activity');
+      return res.json(await activity.catchUpCards(pool, { user: req.user }));
+    } catch (err) {
+      log.error('conversations', 'homeroom bot activity catch-up failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #3660: what the Homeroom links in a message are, for this viewer.
   //
   //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |

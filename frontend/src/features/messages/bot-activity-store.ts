@@ -2,6 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
 import { WORK_CHANGED_EVENT } from './bot-shared';
+import { handleEvent } from './store';
 import type { HomeroomBotActivity } from './types';
 
 /*
@@ -19,6 +20,10 @@ import type { HomeroomBotActivity } from './types';
  * in view, once a minute: the one step the loop announces nothing for is the
  * plan starting after the read. Like every conversation event, none of them
  * carries data.
+ *
+ * Opening the DM also asks the server, once, to give a card to any of the
+ * viewer's work the bot has under way without one (work begun before cards
+ * existed, or looked at again after a restart): catchUpBotActivity below.
  */
 
 /** Asked again this often while a card is going, in case a step was not announced. */
@@ -79,6 +84,21 @@ export function ensureBotActivity(): void {
 }
 
 /**
+ * The bot's DM `conversationId` opened: work the bot has under way for the
+ * viewer without a card gets one (the server sends it, at the end of the
+ * DM). When one was added, the transcript and the cards read again, as the
+ * bot's news arriving over the socket would make them, socket or not. A
+ * failure costs nothing: the next opening asks again.
+ */
+export function catchUpBotActivity(conversationId: number): Promise<void> {
+  return api.catchUpHomeroomBotActivity().then((added) => {
+    if (!added) return;
+    handleEvent({ type: 'conversation_message_created', conversationId });
+    void loadBotActivity();
+  }).catch(() => {});
+}
+
+/**
  * Keeps the cards in the bot's DM current (see the note at the top), for
  * BotActivitySync. `newsKey` is the newest message the bot sent there.
  */
@@ -89,10 +109,12 @@ export function useBotActivitySync(conversationId: number, newsKey: number | nul
   // transcript draws is what was there when the read below was made.
   const seenNews = useRef<number | null>(null);
 
-  // Another conversation reads afresh.
+  // Another conversation reads afresh, and opening it gives work already
+  // under way the cards it is missing.
   useEffect(() => {
     seenNews.current = null;
     void loadBotActivity({ fresh: false });
+    void catchUpBotActivity(conversationId);
   }, [conversationId]);
 
   // The bot's news here moves its work on, and a new card is news.
