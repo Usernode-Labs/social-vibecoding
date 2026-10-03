@@ -181,7 +181,12 @@ function BlockProduction({ s }: { s: UsernodeSectionState }): ReactNode {
     >
       <div>
         {bp.kind === 'checking' ? <UnP note={{ text: 'Checking status…' }} /> : null}
-        {bp.kind === 'note' ? <UnP note={{ text: bp.text }} /> : null}
+        {bp.kind === 'note' ? (
+          <>
+            <UnP note={{ text: bp.text }} />
+            {bp.action ? <UnBtn btn={bp.action} /> : null}
+          </>
+        ) : null}
         {bp.kind === 'ask' ? (
           <UnBtn btn={{ label: 'Ask to produce blocks', action: '_askForBlockProduction' }} />
         ) : null}
