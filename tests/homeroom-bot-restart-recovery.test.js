@@ -170,6 +170,91 @@ test('only the bot\'s own active sessions are handed to it; a person\'s, and the
     'a follow-up on the bot\'s proposal: updating its PR and staging is the right end');
 });
 
+// ── A bot session found paused under a turn (#1006) ──────────────────────
+// Before #1006 the triage pass took a running build's session (the bot's
+// newest) and paused it under the build. The next deploy's recovery read the
+// pause as "nobody wants this", destroyed the worker in silence and left the
+// turn record for the watchdog: six platform builds lost on 10-02.
+
+test('a bot session paused with a turn record is the bot\'s; one paused with none is not', () => {
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'paused' })), true);
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'paused', active_turn: null })), false,
+    'nothing in flight: a paused session at rest is still dropped');
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'archived' })), false);
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'paused', username: 'alice', user_is_synthetic: false })), false,
+    'a person\'s paused session keeps its own rule');
+});
+
+test('a build whose session was paused under it is followed and recorded, not destroyed in silence', async () => {
+  journalTail = async () => ({ pushOk: true, ahead: 1, sha: 'c'.repeat(40), exitCode: 0 });
+  const session = botSession({ status: 'paused' });
+  const pool = makePool({ session });
+  await adopt(pool, session);
+  assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'resume', 'finishTurn'],
+    'followed like an active one; the worker is not destroyed first');
+  const rec = runUpdates(pool).find((c) => /SET build_ok = \$2/.test(c.sql));
+  assert.ok(rec, 'the run is recorded');
+  assert.equal(rec.params[1], true);
+  assert.deepEqual(devChatRows(pool), []);
+});
+
+test('a paused bot session whose worker is gone hands its run back unspent', async () => {
+  const session = botSession({ status: 'paused' });
+  const pool = makePool({ session });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(workerCalls.map((c) => c[0]), ['finishTurn', 'destroyWorker']);
+  assert.ok(runUpdates(pool).some((c) => /build_attempts = GREATEST\(build_attempts - 1, 0\)/.test(c.sql)),
+    'a deploy is not the build\'s failure');
+});
+
+test('a paused bot session with no turn record is still dropped, as before', async () => {
+  const session = botSession({ status: 'paused', active_turn: null });
+  const pool = makePool({ session });
+  await adopt(pool, session);
+  assert.deepEqual(workerCalls.map((c) => c[0]), ['destroyWorker']);
+  assert.deepEqual(runUpdates(pool), []);
+});
+
+// ── A turn the stale-turn watchdog reaped (#1006) ───────────────────────
+
+test('a reaped bot build goes back in the queue unspent, with nothing said to a person', async () => {
+  const session = botSession({ status: 'paused' });
+  const pool = makePool({ session });
+  const outcome = await bot.settleReapedTurn({ pool, config: {}, session });
+  assert.equal(outcome, 'requeued');
+  assert.ok(runUpdates(pool).some((c) => /build_attempts = GREATEST\(build_attempts - 1, 0\), build_session_id = NULL/.test(c.sql)));
+  assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)), 'the dead build session is put away');
+  assert.deepEqual(devChatRows(pool), []);
+});
+
+test('a reaped turn of a build this process is still running is left to that build', async () => {
+  const session = botSession();
+  const pool = makePool({ session });
+  let finish;
+  const holding = bot.holdSlotDuringRecovery(pool, session.id, new Promise((r) => { finish = r; }));
+  for (let i = 0; i < 20 && !bot._buildsInFlightForTests().length; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(bot._buildsInFlightForTests(), [900]);
+  const before = runUpdates(pool).length;
+  assert.equal(await bot.settleReapedTurn({ pool, config: {}, session }), 'in_flight');
+  assert.equal(runUpdates(pool).length, before, 'the run is untouched');
+  finish();
+  await holding;
+});
+
+test('the stale-turn watchdog hands a bot or bench turn to its owner before a person\'s breadcrumb', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
+  const start = src.indexOf('Stale active_turn watchdog');
+  const body = src.slice(start, src.indexOf('Stale active_turn watchdog sweep failed', start));
+  assert.match(body, /u\.username, u\.is_synthetic AS user_is_synthetic/, 'the sweep reads who owns the session');
+  const reaped = body.indexOf('worker.clearActiveTurn(row.id');
+  const bench = body.indexOf("isBenchSession(row)");
+  const botAt = body.indexOf('settleReapedTurn({ pool, config, session: row })');
+  const breadcrumb = body.indexOf('TURN_UNFINISHED_BREADCRUMB');
+  assert.ok(reaped > 0 && bench > reaped && botAt > bench && breadcrumb > botAt,
+    'cleared first (a CAS miss hands nothing back), then the owner, then the person path');
+  assert.match(body.slice(bench, breadcrumb), /releaseTrialOfSession\(pool, row\.id/);
+});
+
 // ── A build turn ─────────────────────────────────────────────────────────
 
 test('a build that finished while the server was down is recorded on its run, with no PR, staging or dev-chat rows', async () => {
@@ -391,4 +476,13 @@ test('an issue a restart sent back is not told "looking" a second time', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal(bot.RESTART_REASON, 'restart');
   assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
+});
+
+// #1006, after the live stubs above.
+test('a reaped live build is settled the way restart recovery settles one it could not follow', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await bot.settleReapedTurn({ pool, config: {}, session });
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'the issue goes back to be triaged');
 });

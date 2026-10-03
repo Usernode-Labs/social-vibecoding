@@ -1333,15 +1333,41 @@ async function headShaOf(github, repo, branch = 'main') {
 }
 
 /**
- * The bot's one dev session per app, created on first use. `paused` at
+ * Put the bot's triage session back at rest: `paused`, but only from
+ * `active` and only with no turn record on it. Restart recovery throws away
+ * a session it finds paused, so pausing one under a turn in flight is how a
+ * running turn gets lost (#1006).
+ */
+async function pauseIdleSession(pool, sessionId) {
+  await pool.query(
+    `UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW()
+      WHERE id = $1 AND status = 'active' AND active_turn IS NULL`,
+    [sessionId],
+  ).catch(() => {});
+}
+
+/**
+ * The bot's one triage session per app, created on first use. `paused` at
  * rest and `active` only while a turn runs; is_headless FALSE and an empty
  * linked_issues so no board derivation reads it as work on any issue.
+ *
+ * ONLY the triage session: the one on `main` that no run builds in. The
+ * bot's build sessions are its own too, on their `dev/homeroom_bot-*`
+ * branches and `active` while they build, and reading "the bot's newest
+ * session" took the running build's (#1006). The triage turn was refused
+ * `session_busy`, its `finally` paused the build's session under it, and
+ * the next deploy's restart recovery found a paused session and threw the
+ * build away: six platform builds lost on 10-02, and about 150 triage turns
+ * refused. With no build running, triage ran inside the newest of those
+ * paused sessions instead, on that build's stale branch.
  */
 async function ensureBotSession(pool, config, bot, app) {
   const { rows: found } = await pool.query(
-    `SELECT * FROM chat_sessions
-      WHERE user_id = $1 AND app_id = $2 AND status IN ('active', 'paused')
-      ORDER BY id DESC LIMIT 1`,
+    `SELECT * FROM chat_sessions cs
+      WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.status IN ('active', 'paused')
+        AND cs.branch_name = 'main'
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)
+      ORDER BY cs.id DESC LIMIT 1`,
     [bot.id, app.id],
   );
   let session = found[0] || null;
@@ -1913,6 +1939,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   } catch (err) {
     return recordFailure(`session: ${err.message}`, {}, { infra: true });
   }
+  // Another flow in this process holds the session: restart recovery
+  // following a triage turn that outlived a deploy. Nothing below may
+  // touch it (the stale-turn clear, the status, the registry entry), or
+  // the turn recovery is finishing is cut from under it (#1006).
+  if (activeWorkers.has(session.id)) return recordFailure('session_busy', { sessionId: session.id });
   // The session was stamped with a model once, when it was created; the
   // turn runs whatever it carries (agent-turn resolveCodexRuntimeContext).
   await live.stampSessionModel(pool, session, model);
@@ -2033,10 +2064,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     clearTimeout(budgetTimer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
-    await pool.query(
-      "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1",
-      [session.id],
-    ).catch(() => {});
+    // Back to rest, unless a turn still holds the session: a session paused
+    // under a turn in flight is one restart recovery throws away (#1006).
+    await pauseIdleSession(pool, session.id);
   }
 
   // What the turn spent, read ONCE and read null-safely, because both the
@@ -2135,8 +2165,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     const code = String(routed.error);
     // A turn that died mid-flight on a previous process leaves active_turn
     // set on the bot's own session, and nothing else will ever clear it.
-    if (code === 'session_busy' && !worker.isInFlight(session.id)) {
+    if (code === 'session_busy' && !worker.isInFlight(session.id) && !activeWorkers.has(session.id)) {
       await worker.clearActiveTurn(session.id).catch(() => {});
+      await pauseIdleSession(pool, session.id);
     }
     return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
   }
@@ -2696,12 +2727,21 @@ function wakeBuilds() {
 // `promoted`, and a person's recovery (the PR and staging updated) is the
 // right end for it.
 
-/** True when restart recovery should hand this session to the bot. */
+/**
+ * True when restart recovery should hand this session to the bot.
+ *
+ * A bot session found `paused` WITH a turn record is the bot's too. The
+ * bot never pauses a session under its own turn, but before #1006 its
+ * triage pass paused a running build's session (ensureBotSession took the
+ * newest one), and recovery read the pause as "nobody wants this" and
+ * destroyed the worker in silence. A turn record means something was
+ * running: the bot follows it or hands its run back, never neither.
+ */
 function isRecoveredBotSession(session) {
   return !!session
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
-    && session.status === 'active';
+    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
 }
 
 /** The build run a session is the build of, while it is still under way. */
@@ -2868,6 +2908,26 @@ async function abandonRecoveredTurn({ pool, session, why }) {
   if (run) await handBackRun(pool, run.id, why);
   await putAwayRecoveredSession(pool, session, { archive: !!run });
   return run ? 'requeued' : 'released';
+}
+
+/**
+ * A bot turn the stale-turn watchdog reaped (server.js): its worker stopped
+ * with nothing in this process following it, and the watchdog has cleared
+ * the turn record. A person is told to retry; the bot has nobody to tell,
+ * so its run goes back in the queue unspent, or a live one is settled the
+ * way restart recovery settles one it could not follow. Before #1006 the
+ * reap was the end of it: the run sat claimed until the stale-build release
+ * spent its attempt, and after two the build was recorded lost. A build
+ * this process is still running records its own outcome, untouched.
+ */
+async function settleReapedTurn({ pool, config = {}, session }) {
+  const run = await runOfSession(pool, session.id);
+  if (run && buildsInFlight.has(run.id)) return 'in_flight';
+  const outcome = await abandonRecoveredTurn({
+    pool, session, why: 'the stale-turn watchdog reaped its turn',
+  });
+  await completeRecoveredLive({ pool, config, sessionId: session.id });
+  return outcome;
 }
 
 // ── A live build after a restart (#3471) ─────────────────────────────────
@@ -5358,6 +5418,7 @@ module.exports = {
   nextBatch,
   ensureBotUser,
   ensureBotSession,
+  pauseIdleSession,
   readSettings,
   writeSettings,
   validateSettingsPatch,
@@ -5425,6 +5486,7 @@ module.exports = {
   buildBudgets,
   PLATFORM_BUILD_TIME_FACTOR,
   isRecoveredBotSession,
+  settleReapedTurn,
   completeRecoveredLive,
   liveSayer,
   announceBuilt,
