@@ -122,11 +122,13 @@ test('the chart: the frontier filled and joined, each point named in words, a ti
   for (const name of ['Cheap', 'Best', 'Meh']) assert.match(html, new RegExp(`>${name}</text>`), `${name} is labelled in words`);
   assert.match(html, /<title>Best: 90% at \$0\.300 an attempt, on the frontier<\/title>/);
   assert.match(renderToHtml(createElement(ParetoChart, { models, points: [] })), /No graded results at this stage yet/);
-  // Its first render, before any data: the cards' hosts, and nothing else.
+  // Its first render, before any data: the shared header and the Overview's
+  // hosts, and nothing else (the chart is on a run's own page).
   const area = renderToHtml(createElement(BenchmarkArea, { canWrite: true }));
-  for (const id of ['admin-homeroom-bench', 'admin-homeroom-bench-intro', 'admin-homeroom-bench-suites', 'admin-homeroom-bench-runs']) {
+  for (const id of ['admin-homeroom-bench', 'admin-homeroom-bench-header', 'admin-homeroom-bench-intro', 'admin-homeroom-bench-best']) {
     assert.match(area, new RegExp(`id="${id}"`));
   }
+  assert.doesNotMatch(area, /id="admin-homeroom-bench-pareto"/);
 });
 
 // #3654: the connector's view of a run (report.runAggregates) groups failure

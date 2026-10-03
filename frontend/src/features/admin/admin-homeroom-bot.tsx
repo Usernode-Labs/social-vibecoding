@@ -35,9 +35,13 @@ import type { Best, BenchModel } from './admin-homeroom-bench';
 //              (the route validates the whole patch before it writes any of
 //              it). It used to save three ways: on change, on blur and on a
 //              Save button per field, and nothing said which.
-//   Benchmark  admin-homeroom-bench.tsx. Its "Use for <stage>" fills in the
-//              model here and switches to Settings; Save is still pressed by
-//              a person.
+//   Benchmark  admin-homeroom-bench.tsx, with places of its own below this
+//              tab's address (/benchmark/runs, /benchmark/runs/<id>,
+//              /benchmark/suites[/<id>]), which it writes while it is the tab
+//              on screen. Its "Use for <stage>" fills in the model here and
+//              switches to Settings; Save is still pressed by a person. It
+//              reads the model each stage runs on now from this section's
+//              own data rather than asking for it again.
 //
 // The Overview and Settings panels are both rendered and the one not shown
 // is `hidden`, so an edit survives a look at the Overview; the Benchmark is
@@ -2013,7 +2017,10 @@ function HomeroomBotSection() {
 
       {/* ── Benchmark ────────────────────────────────────────────────── */}
       <div id="admin-homeroom-bot-panel-benchmark" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-benchmark" hidden={tab !== 'benchmark'}>
-        {benchSeen ? <BenchmarkArea canWrite={canWrite} onUseModel={applyBenchModel} /> : null}
+        {benchSeen ? (
+          <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={payload?.bot?.models || null}
+            defaultModel={payload?.defaultModel || null} onUseModel={applyBenchModel} />
+        ) : null}
       </div>
     </div>
   );

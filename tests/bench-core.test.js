@@ -296,12 +296,14 @@ test('the Core card says where the suite stands, and offers Freeze only when eve
   assert.ok(atOnce, 'the At once select keeps its id');
   assert.deepEqual([...atOnce[1].matchAll(/<option value="(\d+)"/g)].map((m) => m[1]), ['1', '2', '3', '4', '5', '6', '7', '8'],
     'At once offers one to eight');
-  assert.match(html, /<option value="5" selected="">Core v1 \(not frozen\)<\/option>/);
+  assert.match(html, /data-bench-launch-suite="5"[^>]*><input type="radio"[^>]*checked=""[^>]*\/><span[^>]*><span[^>]*>Core v1 \(not frozen\)</, 'Core picked');
   assert.equal((html.match(/data-bench-model="[^"]+"><input type="checkbox" class="mt-1" checked=""/g) || []).length, 2, 'the two default models ticked, the other not');
   assert.match(html, /id="admin-homeroom-bench-launch-cap"[^>]*value="50"/);
   assert.match(html, /id="admin-homeroom-bench-launch-repeat-all"/);
 
+  // Core's card is on the Suites place now (tests/bench-suites.test.js); the
+  // area opens on the Overview, loading.
   const area = renderToHtml(createElement(BenchmarkArea, { canWrite: true }));
-  assert.match(area, /id="admin-homeroom-bench-core"/);
+  assert.match(area, /id="admin-homeroom-bench-overview"/);
   assert.match(area, /Loading…/);
 });

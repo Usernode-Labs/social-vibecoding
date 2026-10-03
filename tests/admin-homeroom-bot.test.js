@@ -750,7 +750,8 @@ test('a model picked in the Benchmark fills the form in and waits for Save', () 
   assert.equal(benchHint(null, 'build', 'a/glm'), '');
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} onUseModel=\{applyBenchModel\} \/>/);
+  assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} active=\{tab === 'benchmark'\} inUse=\{payload\?\.bot\?\.models \|\| null\}\s+defaultModel=\{payload\?\.defaultModel \|\| null\} onUseModel=\{applyBenchModel\} \/>/,
+    'the Benchmark reads the model in use from this section\'s own data, and writes its address only while it is the tab on screen');
   const fn = tsx.slice(tsx.indexOf('const applyBenchModel = '), tsx.indexOf('const liveNow = '));
   assert.match(fn, /setModel\(stage, id\);/);
   assert.match(fn, /showTab\('settings'\);/);
@@ -766,4 +767,7 @@ test('the tabs have addresses of their own, and Settings and the Overview stay r
   assert.match(tsx, /id="admin-homeroom-bot-panel-settings" role="tabpanel"[^>]*hidden=\{tab !== 'settings'\}/);
   const audit = read('scripts/audit-react-ownership.mjs');
   assert.match(audit, /'#admin\/homeroom-bot\/settings'/, 'the ownership audit walks the new address');
+  for (const place of ['benchmark/runs', 'benchmark/runs/936551', 'benchmark/runs/936550', 'benchmark/suites', 'benchmark/suites/936542']) {
+    assert.ok(audit.includes(`'#admin/homeroom-bot/${place}'`), `the ownership audit walks the Benchmark's ${place}`);
+  }
 });

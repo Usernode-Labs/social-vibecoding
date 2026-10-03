@@ -131,6 +131,8 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.ok(est.estimatedMs > 0);
     assert.ok(est.likelyUsd > 0 && est.likelyUsd <= est.estimateUsd, 'likely is never more than the most it could cost');
     assert.ok(est.suggestedCapUsd >= Math.ceil(est.likelyUsd), 'the suggested cap covers the likely cost');
+    assert.ok(est.lowUsd <= est.highUsd && est.highUsd >= est.estimateUsd - 0.02, 'a range, up to at least the most it could cost');
+    assert.ok(['triage', 'build'].every((st) => typeof est.byStage[st].basis === 'string'), 'each stage says what its part rests on');
     assert.equal(est.capUsd, 50);
     assert.equal(est.suiteFrozen, false);
     assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM bench_runs')).rows[0].n, runsBefore, 'no run');
@@ -189,6 +191,21 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     const { rows: [r] } = await pool.query('SELECT status, spent_usd::float8 AS spent FROM bench_runs WHERE id = $1', [run.id]);
     assert.equal(r.status, 'capped');
     assert.ok(r.spent <= 3, `spent ${r.spent} is inside the $3 cap`);
+  });
+
+  // The launcher's range, after trials have run: each stage says what it
+  // rests on (catalog.costRange), and one with nothing behind it is a guess.
+  await t.test('the estimate is a range that says what each stage rests on', async () => {
+    const est = await lane.estimateRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage', 'build'], repeats: 1 });
+    assert.equal(est.ok, true);
+    assert.deepEqual({ basis: est.byStage.triage.basis, low: est.byStage.triage.lowUsd, high: est.byStage.triage.highUsd },
+      { basis: 'own', low: 3.75, high: 3.75 }, 'three triage tasks at the $1.25 its trials cost');
+    assert.equal(est.byStage.build.basis, 'fixed', 'no build has run and the model has no price here: a fixed guess, and said so');
+    assert.ok(Math.abs(est.lowUsd - (est.byStage.triage.lowUsd + est.byStage.build.lowUsd)) < 0.02);
+    assert.ok(est.lowUsd <= est.highUsd);
+    assert.ok(est.suggestedCapUsd >= Math.ceil(est.lowUsd), 'the suggested cap covers the low end at least');
+    const another = await lane.estimateRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash', 'x/fresh'], stages: ['triage'], repeats: 1 });
+    assert.equal(another.byStage.triage.basis, 'stage', 'a model with no triage of its own is priced from the other model\'s');
   });
 
   await t.test('a trial a dead process left running is retried once, then failed', async () => {
