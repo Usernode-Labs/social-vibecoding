@@ -140,18 +140,22 @@ test('the screenshot step boots today\'s Empty starter and takes and measures it
   assert.equal(c.consoleErrors.count, 0, JSON.stringify(c.consoleErrors.samples));
   assert.equal(c.consoleErrors.screens, 8);
   assert.deepEqual([c.overflow360.light, c.overflow360.dark], [0, 0], 'the starter fits 360 px');
+  // #3737 Rec2: the starter every first version is built from passes its
+  // own measures: its design kit's tokens and 44 px controls.
   assert.ok(c.smallTapTargets.checked >= 1);
-  assert.ok(Number.isInteger(c.smallTapTargets.small));
+  assert.equal(c.smallTapTargets.small, 0, JSON.stringify(c.smallTapTargets.samples));
   for (const look of ['light', 'dark']) {
     assert.ok(c.lowContrast[look].checked > 10, `${look}: the text was read`);
-    assert.ok(Number.isInteger(c.lowContrast[look].low));
-    assert.ok(c.lowContrast[look].worst > 1);
+    assert.equal(c.lowContrast[look].low, 0, `${look}: ${JSON.stringify(c.lowContrast[look].samples)}`);
+    assert.ok(c.lowContrast[look].worst >= 4.5);
   }
   assert.equal(c.nestedCards.worst, 0);
   // The tells, from the starter's own source.
   assert.ok(result.tells.files >= 1);
   assert.equal(result.tells.emojiIcons.count, 0);
   assert.equal(result.tells.arbitraryTextSizes.count, 0);
+  assert.equal(result.tells.uppercaseEyebrows.count, 0);
+  assert.equal(result.tells.hexColours.count, 0);
   assert.ok(Date.now() - started < 170000);
 });
 

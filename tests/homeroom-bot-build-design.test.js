@@ -9,8 +9,9 @@
 //     a change a person will see is looked at, in both looks, before the
 //     turn ends;
 //   - for a project's first version, a design brief of its own in the
-//     triage note and the spec, and a `Design:` note the build records in
-//     the app's CLAUDE.md for every later change to follow.
+//     triage note and the spec, and a build that builds with the starter's
+//     design kit and records the look in the "## Design" section of the
+//     app's CLAUDE.md for every later change to follow.
 //
 // Run with: node --test tests/homeroom-bot-build-design.test.js
 
@@ -79,7 +80,7 @@ test('a first version\'s triage plans a look of its own; every other triage is u
   const other = flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 }));
   assert.match(first, /Plan a look of its own, too: the starter's screen is placeholder, so there is no existing screen for it to look like\./);
   assert.match(first, /Say in `build_note` the screen's one job and its one primary action/);
-  assert.match(first, /an accent colour plus neutrals that work in both looks \(not the starter's default zinc and violet, unless chosen on purpose\)/);
+  assert.match(first, /an accent colour plus neutrals that work in both looks \(not the starter's default palette, unless chosen on purpose\)/);
   assert.match(first, /ONE signature element drawn from the app's subject \(for example a staff or a keyboard for an ear trainer, a proofing timeline for a bread app\)/);
   assert.match(first, /and a rough layout\. The spec settles the details; never ask about them\./);
   assert.ok(first.indexOf('Plan a look of its own') > first.indexOf('never ask about it.'), 'after the light and dark rule');
@@ -91,7 +92,7 @@ test('a first version\'s spec decides accent, signature element and layout; ever
   const brief = prompts.FIRST_VERSION_SPEC_DESIGN_BRIEF;
   assert.match(brief, /there is no existing screen for it to look like/);
   assert.match(brief, /the main screen's one job and its one primary action/);
-  assert.match(brief, /an accent colour plus the neutrals around it, chosen for this app and working in both the light and the dark look \(not the starter's default zinc and violet, unless you choose them on purpose and say why\)/);
+  assert.match(brief, /an accent colour plus the neutrals around it, chosen for this app and working in both the light and the dark look \(not the starter's default palette, unless you choose it on purpose and say why\)/);
   assert.match(brief, /ONE signature element drawn from the app's subject/);
   assert.match(brief, /a staff or a keyboard for an ear trainer, a proofing timeline for a bread app/);
   assert.match(brief, /a rough sketch of the main screen's layout at phone width/);
@@ -112,13 +113,19 @@ test('a first version\'s spec decides accent, signature element and layout; ever
   assert.equal(live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', firstVersion: false }), other);
 });
 
-test('a first version\'s build records its look in CLAUDE.md; later builds are told to follow it', () => {
+test('a first version\'s build uses the starter\'s design kit and records its look in CLAUDE.md; later builds follow it', () => {
   const lines = live.FIRST_VERSION_DESIGN_LINES.join('\n');
-  assert.match(lines, /record the look in the app's `CLAUDE\.md`: replace the placeholder under\n"## App-specific conventions" with a short `Design:` note/);
-  assert.match(lines, /naming the accent and the neutrals,\nnotes on type and spacing, the signature element, and the one fixed look if the app keeps one\. Every later\nchange follows that note\./);
-  assert.match(lines, /Define the accent and the neutrals once, each with a light and a dark value unless the app\nkeeps one fixed look/);
-  assert.match(lines, /the design guidance's "no new\ncolours" means none beyond them/,
+  const flat = lines.replace(/\s+/g, ' ');
+  // #3737 Rec2: the kit every new app's stylesheet carries
+  // (tests/template-design-kit.test.js), re-pointed rather than reinvented.
+  assert.match(flat, /Build it with the starter's design kit \(`styles\/tailwind-input\.css`\): set its colour tokens to this app's accent and neutrals \(a light and a dark value each, unless the app keeps one fixed look; every text pair at 4\.5:1 or more\)/);
+  assert.match(flat, /use only those tokens and the kit's components, its loading, empty and error states included/);
+  assert.match(flat, /the design guidance's "no new colours" means none beyond them/,
     'the colours it defines are the app\'s own palette, not the kind the guidance bans');
+  // The record: the starter's "## Design" section, which a starter other
+  // than Empty does not have yet.
+  assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
+  assert.doesNotMatch(flat, /zinc|violet|`Design:` note/, 'nothing left of the old starter\'s palette or note');
   for (const line of live.FIRST_VERSION_DESIGN_LINES) assert.ok(!/—/.test(line), line);
 
   for (const spec of [null, SPEC]) {
@@ -130,7 +137,7 @@ test('a first version\'s build records its look in CLAUDE.md; later builds are t
     assert.equal(first.replace(`${lines}\n`, ''), other, 'the record is the only difference');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
-      assert.match(p, /If the app's `CLAUDE\.md` has a `Design:` note \(under "App-specific conventions"\), that is this app's look/);
+      assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
     }
   }
 });

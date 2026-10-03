@@ -50,7 +50,9 @@ test('#3737: the self-check walks both looks, and every build follows the app\'s
     assert.match(guidance, /Both looks: every new app has a light and a dark look that follow the viewer's Homeroom theme\./);
     assert.match(guidance, /Only an app whose `CLAUDE\.md` declares one fixed look, or an older app built with one look, keeps a single look\./,
       'no drive-by conversion of an app built with one look');
-    assert.match(guidance, /If the app's `CLAUDE\.md` has a `Design:` note \(under "App-specific conventions"\), that is this app's look: its accent, neutrals, type, spacing and signature element\. Follow it/);
+    // #3737 Rec2: a new app's record is its CLAUDE.md's "## Design"
+    // section; an app whose first version came before it has a note.
+    assert.match(guidance, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look: its accent, neutrals, type, spacing and signature element\. Follow it/);
   }
 });
 

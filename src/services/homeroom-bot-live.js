@@ -1207,22 +1207,28 @@ function revisionDesignText({ readsImages = false } = {}) {
 
 // #3737: an app's look, decided once and written down. A first version's
 // spec decides it; its build records it where every later build reads the
-// app's own instructions, the "App-specific conventions" section of its
-// CLAUDE.md (services/template.js), and the design guidance tells every
-// later build to follow that note. Before this, a look lived only in code
-// (RSS Reader's palette) and each later change re-derived it, or drifted.
-// Said before the build contract, so recording the note is part of "that
-// change" rather than an extra file the contract forbids.
+// app's own instructions, the "## Design" section of its CLAUDE.md
+// (services/template.js), and the design guidance tells every later build to
+// follow that record. Before this, a look lived only in code (RSS Reader's
+// palette) and each later change re-derived it, or drifted. Said before the
+// build contract, so recording it is part of "that change" rather than an
+// extra file the contract forbids.
+//
+// #3737 Rec2: the build no longer invents the palette's plumbing. Every new
+// app's stylesheet carries the starter's design kit (semantic colour tokens
+// for both looks, a few components, the loading, empty and error states), so
+// the build re-points the tokens and builds with the kit. A starter other
+// than Empty has the kit but no "## Design" section yet, hence "add it".
 const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '',
-  'This is the app\'s FIRST VERSION, so it has no design system of its own yet: the spec\'s "### Design" subsection',
-  '(or, without a spec, the plan) sets it, and the starter\'s screen and its zinc and violet are placeholder, not',
-  'a look to copy. Define the accent and the neutrals once, each with a light and a dark value unless the app',
-  'keeps one fixed look (CSS variables or the Tailwind theme), and use only those: the design guidance\'s "no new',
-  'colours" means none beyond them. Then record the look in the app\'s `CLAUDE.md`: replace the placeholder under',
-  '"## App-specific conventions" with a short `Design:` note of a few lines naming the accent and the neutrals,',
-  'notes on type and spacing, the signature element, and the one fixed look if the app keeps one. Every later',
-  'change follows that note.',
+  'This is the app\'s FIRST VERSION, so its look is not set yet: the spec\'s "### Design" subsection (or, without a',
+  'spec, the plan) sets it, and the starter\'s screen and default colours are placeholder, not a look to copy. Build',
+  'it with the starter\'s design kit (`styles/tailwind-input.css`): set its colour tokens to this app\'s accent and',
+  'neutrals (a light and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more),',
+  'and use only those tokens and the kit\'s components, its loading, empty and error states included: the design',
+  'guidance\'s "no new colours" means none beyond them. Then fill in the "## Design" section of the app\'s',
+  '`CLAUDE.md` (add it if it is missing): the palette by name, the signature element, the type scale, and the one',
+  'fixed look if the app keeps one. Every later change follows it.',
 ]);
 
 function buildPrompt({
