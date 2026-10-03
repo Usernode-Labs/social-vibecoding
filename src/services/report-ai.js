@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const github = require('./github');
 const topicAttrs = require('./topic-attributes');
 const { currentVotePredicateSql } = require('./pr-vote-revision');
+const { GOVERNANCE_KINDS } = require('./governance-kinds');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -114,15 +115,21 @@ async function buildReportInput(pool, app, opts) {
   }));
 
   // Open governance proposals. payload is consulted ONLY for rename (the
-  // new name) — secret_change payloads never leave the server.
+  // new name) — secret_change payloads never leave the server. Only the
+  // governance kinds: the `general` twin a platform-filed request keeps in
+  // the table (services/governance-kinds.js) reaches the model through the
+  // GitHub board above while the request is open, and the twin stays open
+  // after it closes, so read without the filter every open twin counted as a
+  // proposal awaiting review.
   const { rows: govRows } = await pool.query(
     `SELECT i.kind, i.title, i.payload, u.username AS created_by_username, i.created_at
        FROM issues i
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.app_id = $1 AND i.status = 'open'
+        AND i.kind = ANY($2::text[])
       ORDER BY i.created_at DESC
       LIMIT ${MAX_GOV + 1}`,
-    [appId]
+    [appId, [...GOVERNANCE_KINDS]]
   );
   const gov = govRows.slice(0, MAX_GOV).map((r) => ({
     kind: r.kind,
