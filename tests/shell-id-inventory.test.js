@@ -680,6 +680,10 @@ const ADDED_IDS = {
   // live: Settings → Experimental, beside the other per-user preview flag.
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
+  // #3624 — joining the Homeroom bot's DM yourself, beside the other
+  // per-user opt-ins in Settings → Experimental.
+  'homeroom-bot-dm-enabled': 'Opt-in switch that puts this account on the Homeroom bot\'s DM list (#3624).',
+  'homeroom-bot-dm-status': 'Save/error line for the Homeroom bot switch, e.g. when the list is full (#3624).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.

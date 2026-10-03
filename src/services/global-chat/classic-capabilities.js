@@ -88,7 +88,7 @@ const SETTINGS_ACTION_MATCHERS = Object.freeze({
   'app-permissions': [/permission-grants|device-permission/],
   'agent-files': [/agent-files/],
   cli: [/cli-tokens|local-agents/],
-  experimental: [/ai-progress-estimate|session-bridge/],
+  experimental: [/ai-progress-estimate|session-bridge|homeroom-bot-dm/],
   usernode: [/\/api\/v4\/mobile|wallet|staking/],
 });
 
@@ -484,7 +484,7 @@ function authProjection(group, data) {
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
     'build-venue': ['devFlowPreference', 'externalFlowsAvailable'],
-    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled'],
+    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled', 'homeroomBotDm'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
 }

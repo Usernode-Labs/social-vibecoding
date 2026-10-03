@@ -64,6 +64,7 @@ const state = {
   walletLinkEnabled: false,
   aiProgressEstimate: false,
   sessionBridgeEnabled: false,
+  homeroomBotDm: false,
   locale: null,
   devFlowPreference: null,
   externalFlowsAvailable: false,
@@ -247,6 +248,7 @@ const Facade = {
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
+      state.homeroomBotDm = !!u.homeroomBotDm;
       state.locale = u.locale || null;
       state.devFlowPreference = u.devFlowPreference || null;
       state.externalFlowsAvailable = !!u.externalFlowsAvailable;

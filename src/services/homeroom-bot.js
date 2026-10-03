@@ -97,7 +97,9 @@ const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
 // #3624: the people the bot talks to in a DM (homeroom-bot-dm.js), one
 // at a time while it is tried out: their requests' questions and outcomes
 // reach them there, and a project they create can be built by the bot from
-// a description. Lower-cased usernames.
+// a description. Lower-cased usernames. An admin keeps it on the dashboard,
+// and a person can put themselves on it or take themselves off it from
+// Settings -> Experimental (setDmMember).
 const KEY_DM_USERS = 'homeroom_bot_dm_users';
 // #3624: what one person's requests may cost the bot in a week, in cents,
 // on top of (and apart from) their own weekly allowance for agents. The
@@ -668,6 +670,58 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     publishWake({ builds: true });
   }
   return { ok: true };
+}
+
+// How many times setDmMember re-reads the list when another write landed
+// between its read and its own. Every round, one of the writers racing for
+// the row lands, so this many joining at the same moment all get on.
+const DM_MEMBER_ATTEMPTS = 10;
+
+/**
+ * Settings -> Experimental: a person puts themselves on the DM list, or
+ * takes themselves off it. It is the list an admin keeps, not a second one:
+ * the dashboard shows who joined this way, an admin can still take anybody
+ * off, it holds MAX_DM_USERS at most, and each person's requests count
+ * against the same weekly allowance.
+ *
+ * Written compare-and-swap: the UPDATE lands only if the list is still the
+ * one it read, else it reads again, so a join or an admin's save that lands
+ * meanwhile is never written out by this one. (An admin who saves a list
+ * they loaded before somebody joined still replaces it, as any admin edit
+ * of the list does.)
+ *
+ * Resolves { ok: true, joined, changed } (asking for what is already so is
+ * not an error), or { ok: false, error } with error 'full' (and `max`) when
+ * there is no room, 'invalid_username', or 'busy' when the list kept
+ * changing underneath it.
+ */
+async function setDmMember(pool, username, joined, actorId = null) {
+  const name = String(username || '').replace(/^@/, '').toLowerCase();
+  if (!USERNAME_RE.test(name)) return { ok: false, error: 'invalid_username' };
+  const want = !!joined;
+  // Seeded by schema.sql; this is for a database that predates the seed.
+  await pool.query(
+    `INSERT INTO platform_settings (key, value) VALUES ($1, '[]') ON CONFLICT (key) DO NOTHING`,
+    [KEY_DM_USERS],
+  );
+  for (let attempt = 0; attempt < DM_MEMBER_ATTEMPTS; attempt += 1) {
+    const { rows } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [KEY_DM_USERS]);
+    const stored = rows[0] ? rows[0].value : '[]';
+    const list = parseSettings([{ key: KEY_DM_USERS, value: stored }]).dmUsers;
+    if (list.includes(name) === want) return { ok: true, joined: want, changed: false };
+    if (want && list.length >= MAX_DM_USERS) return { ok: false, error: 'full', max: MAX_DM_USERS };
+    const next = want ? [...list, name] : list.filter((n) => n !== name);
+    const { rowCount } = await pool.query(
+      `UPDATE platform_settings SET value = $2, updated_at = NOW(), updated_by = $3
+        WHERE key = $1 AND value = $4`,
+      [KEY_DM_USERS, JSON.stringify(next), actorId || null, stored],
+    );
+    if (rowCount) {
+      log.info('homeroom-bot', want ? 'Joined the DM from Settings' : 'Left the DM from Settings', { username: name });
+      return { ok: true, joined: want, changed: true };
+    }
+  }
+  return { ok: false, error: 'busy' };
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -5892,6 +5946,8 @@ module.exports = {
   pauseIdleSession,
   readSettings,
   writeSettings,
+  setDmMember,
+  MAX_DM_USERS,
   validateSettingsPatch,
   parseSettings,
   adminPayload,

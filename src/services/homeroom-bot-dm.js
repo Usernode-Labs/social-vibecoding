@@ -36,9 +36,12 @@
 // flight in one DM, each answer points at what it answers.
 //
 // Who it talks to is a list an admin keeps (`homeroom_bot_dm_users`), so it
-// can be tried one person at a time. What each person's requests may cost
-// the platform in a week is capped (`homeroom_bot_user_weekly_cents`, $50
-// to start), apart from their own allowance for agents.
+// can be tried one person at a time. A person can also put themselves on it,
+// or take themselves off, in Settings -> Experimental (setDmMember in
+// homeroom-bot.js); the list's cap holds either way. What each person's
+// requests may cost the platform in a week is capped
+// (`homeroom_bot_user_weekly_cents`, $50 to start), apart from their own
+// allowance for agents.
 //
 // Never a reason anything else fails: every entry point here is called
 // best-effort, after the request, the post or the merge it follows.
@@ -793,8 +796,10 @@ const HELP_TEXT = [
   'answers or write your own.',
 ].join(' ');
 
-const NOT_ENABLED_TEXT = 'I\'m not taking requests in messages yet. For now, post a request on a project\'s page '
-  + 'and I\'ll answer it there.';
+// #3624: somebody not on the list can join it themselves, so the answer
+// says where.
+const NOT_ENABLED_TEXT = 'I\'m not taking your requests in messages yet. To try it, turn on Homeroom bot in '
+  + 'Settings, under Experimental. Until then, post a request on a project\'s page and I\'ll answer it there.';
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
