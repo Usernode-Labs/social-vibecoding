@@ -1338,8 +1338,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
   router.get('/api/apps/:slug', async (req, res) => {
     try {
+      // `audience` (services/communities.js) rides along, the same column
+      // the /api/apps list carries, so the app's own screens can tell a
+      // project that is just its creator's from a group's: the preview
+      // banner and the vote picker word themselves by it.
       const { rows } = await pool.query(
-        `SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE slug = $1`,
+        `SELECT ${appAccess.nonSecretAppColumnList()},
+                ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
+                  AS audience
+           FROM apps WHERE slug = $1`,
         [req.params.slug]
       );
 

@@ -676,6 +676,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       boxRef={boxRef}
       tally={tally}
       withLine={isVote}
+      solo={!!yes.solo}
       onSide={setSide}
       onLine={setLine}
       onBoxKey={onBoxKey}
@@ -735,11 +736,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * line. One drawing for both of its homes,
  * `VoteButton`'s anchored popover on desktop and its kit bottom sheet on
  * touch, so the wording and the rules cannot drift between the two.
- * `withLine` is false on a governance vote, which carries no line. Exported
- * for the tests that render it directly; the state lives in `VoteButton`.
+ * `withLine` is false on a governance vote, which carries no line. `solo` is
+ * a project that is just the viewer's: there is no group to address, so the
+ * Yes side's optional line asks for a note instead. The No side is the same
+ * either way, its line included. Exported for the tests that render it
+ * directly; the state lives in `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, side, line, reasonId, boxRef, tally, withLine, onSide, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, side, line, reasonId, boxRef, tally, withLine, solo, onSide, onLine, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
@@ -750,6 +754,7 @@ export function VotePicker({
   boxRef?: RefObject<HTMLTextAreaElement | null>;
   tally: (a: ActionSpec) => string;
   withLine: boolean;
+  solo?: boolean;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
@@ -793,7 +798,7 @@ export function VotePicker({
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
-              ? 'Add a line for the group, if you like.'
+              ? (solo ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
               : 'What’s not working for you? One line is plenty.'}
           </label>
           <textarea

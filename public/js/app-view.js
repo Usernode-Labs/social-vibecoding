@@ -5248,17 +5248,22 @@ const AppView = {
       // claim, to pledge a bounty on, or to propose closing.
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
-      pills.push(ipClaims.some((c) => c.mine)
-        ? {
+      const myClaim = ipClaims.some((c) => c.mine);
+      // Nor is there anything to claim while the Homeroom bot is reading or
+      // building the request: a claim would only tell it to step back.
+      if (myClaim) {
+        pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
           title: 'Give up your claim on this issue so somebody else can take it',
           act: { fn: 'clearIssueClaim', args: [item.number] },
-        }
-        : {
+        });
+      } else if (!item.bot) {
+        pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
           title: "Tell everyone you're taking this issue. A claim, not a promise of progress",
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
+      }
       const meta = AppView._ghIssuesMeta || {};
       pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
@@ -6317,13 +6322,12 @@ const AppView = {
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();
-        // The shared feedback dialog in its dev-context mode: the open app is
-        // preselected as the target (Platform for the self-hosted app, or
-        // while the repo does not exist yet) — #226. The same call
-        // Improve.giveFeedback() makes when the panel's app is the open one,
+        // The shared feedback dialog with the open app preselected (#226):
+        // since #2707 only `target: 'app'` does that, and only where "This
+        // app" can be chosen. The same call Improve.giveFeedback() makes,
         // so the two entry points cannot drift. QA 2026-09-24: plus
         // `intent`, so the dialog is headed "File an issue".
-        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
+        App.openFeedbackModal({ fromDev: true, target: 'app', intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -12973,6 +12977,14 @@ const AppView = {
     return bits.join(' · ');
   },
 
+  // #22: on a project that is just the viewer's (`audience` 'solo', from the
+  // app's own record), the vote picker's optional Yes line is a note, not "a
+  // line for the group": there is no group. Spread onto a Yes spec; the No
+  // side is worded the same either way.
+  _voteSolo() {
+    return AppView.appData?.audience === 'solo' ? { solo: true } : {};
+  },
+
   // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
   // is — group-chat.js's inline activity rows, the work drawer and the home
   // strip all consume it, and its Preview/Retry/Admin-merge concatenation is
@@ -13007,6 +13019,7 @@ const AppView = {
         title: yesT.tip, label: `Yes (${yesT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
+        ...AppView._voteSolo(),
       },
       {
         key: 'no',
@@ -15225,6 +15238,7 @@ const AppView = {
         title: busy ? applyState.label : upT.tip,
         disabled: busy,
         act: { fn: 'castIssueVote', args: [issue.id, 'up'] },
+        ...AppView._voteSolo(),
       },
       {
         key: 'no',
@@ -16796,8 +16810,10 @@ const AppView = {
       // with it before writing any code, and the chip it toggles is right
       // above in the status band — so the toggle belongs beside it, not two
       // taps away. Board only: the detail view already spells this action
-      // out in full in its own action list.
-      if (!noNav) actions.push(AppView._issueProgressActionSpec(issue));
+      // out in full in its own action list. None while the Homeroom bot is
+      // on it (see _issueProgressActionSpec).
+      const claim = noNav ? null : AppView._issueProgressActionSpec(issue);
+      if (claim) actions.push(claim);
     }
     // A ready auto-solve run with a live preview gets the same icon
     // affordance every other previewable thing on the board gets.
@@ -16920,6 +16936,18 @@ const AppView = {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
+    // The Homeroom bot is on this request. Like a run in flight there is
+    // nothing to start, and a second session would build it twice.
+    if (issue.bot) {
+      const reading = AppView._botWorkReading(issue.bot);
+      return {
+        key: 'primary', cls: 'gc-vote-btn', disabled: true,
+        label: reading ? 'Homeroom bot is reading…' : 'Homeroom bot is building…',
+        title: reading
+          ? 'The Homeroom bot is reading this request now'
+          : 'The Homeroom bot is building this request now',
+      };
+    }
     if (h && h.status === 'generating') {
       return {
         key: 'primary', cls: 'gc-vote-btn', disabled: true, label: 'Generating proposal…',
@@ -17009,11 +17037,18 @@ const AppView = {
   // promised progress the button cannot deliver, and it was the same phrase
   // as the chip covering six OTHER states, so pressing it looked like it
   // ought to produce whichever of them the reader had last seen.
+  //
+  // Null while the Homeroom bot is reading or building the request
+  // (issue.bot): there is nothing to take, and a claim tells the bot to step
+  // back from it mid-build. A claim the viewer already holds can still be
+  // released.
   _issueProgressActionSpec(issue) {
     const n = issue.number;
     const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
       ? issue.in_progress.claims : [];
-    return claims.some((c) => c.mine)
+    const mine = claims.some((c) => c.mine);
+    if (!mine && issue.bot) return null;
+    return mine
       ? {
         key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
         title: 'Give up your claim on this issue so somebody else can take it',
@@ -17040,7 +17075,8 @@ const AppView = {
     if (!AppView.readOnly && issue.state !== 'closed') {
       // A finished run keeps its Review/Continue primary. New work remains
       // available through the same two-choice launcher, never a second AI CTA.
-      if (h?.status === 'ready' && !h.mySessionId) items.push({
+      // Not while the Homeroom bot is building it: that would build it twice.
+      if (h?.status === 'ready' && !h.mySessionId && !issue.bot) items.push({
         label: 'Start more work', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
@@ -17064,10 +17100,11 @@ const AppView = {
       // st.progressOnFace — the board card promotes this to a button
       // (_issueProgressActionSpec), so the row would duplicate it. It is
       // still a row wherever the face doesn't carry it (read-only boards).
+      // No Claim while the Homeroom bot is on the request, as on the face.
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      if (!st.progressOnFace) {
+      if (!st.progressOnFace && (myClaim || !issue.bot)) {
         items.push(myClaim
           ? {
             label: 'Release my claim',
@@ -19723,11 +19760,14 @@ const AppView = {
   // live headless auto-solve run (issue.headless generating/ready — kept
   // as a separate field so the 8s headless poller's field-scoped merge
   // stays correct; this predicate ORs the two). Shared by the chip
-  // renderer below and the kanban's In-progress-column routing.
+  // renderer below and the kanban's In-progress-column routing. The
+  // Homeroom bot reading or building the request (issue.bot, its own field
+  // for the same reason: the bot is never `in_progress`) is live work too,
+  // so its card is underway rather than offered to whoever passes.
   _issueInProgress(issue) {
     if (!issue) return false;
     const h = issue.headless;
-    return !!(issue.in_progress || (h && (h.status === 'generating' || h.status === 'ready')));
+    return !!(issue.in_progress || issue.bot || (h && (h.status === 'generating' || h.status === 'ready')));
   },
 
   // #1112: mirrors IN_PROGRESS_PAUSED_WINDOW_DAYS / ISSUE_CLAIM_TTL_DAYS in
@@ -19736,6 +19776,13 @@ const AppView = {
   // drifting apart makes a sentence stale, never the board wrong.
   WORK_PAUSED_WINDOW_DAYS: 7,
   WORK_CLAIM_TTL_DAYS: 7,
+
+  // An issue's `bot` is { what: 'reading' | 'building', since }: the Homeroom
+  // bot reading the request now, or building it. Anything but reading is
+  // worded as building, the one a person is most likely to see.
+  _botWorkReading(bot) {
+    return !!(bot && bot.what === 'reading');
+  },
 
   // ── #1112: the one work state an issue is actually in ────────────────
   //
@@ -19746,14 +19793,18 @@ const AppView = {
   // the chip told a reader nothing they could act on. This resolves exactly
   // ONE state, first match wins, in the order below:
   //
-  //   in_review > working > auto_solving > paused > answer_needed
+  //   in_review > working > bot > auto_solving > paused > answer_needed
   //             > draft_ready > claimed
+  //
+  // `bot` is the Homeroom bot reading or building the request (issue.bot,
+  // from /github-issues). Its sessions are never `in_progress`, so before
+  // this state a request it was building read as nobody's and offered Claim.
   //
   // Pure and DOM-free so it can be unit-tested directly, and shared by the
   // chip, the topic head's plain-language note and the report's row notes —
   // one derivation, so those three can never disagree. It is deliberately
   // NOT the bucket predicate: _issueInProgress above still decides which
-  // cards sit in the Underway column, and its truth table is unchanged.
+  // cards sit in the Underway column.
   // Returns null when no live signal exists.
   _issueWorkState(issue) {
     if (!issue) return null;
@@ -19761,7 +19812,8 @@ const AppView = {
     const h = issue.headless || null;
     const hStatus = h ? h.status : null;
     const headlessLive = hStatus === 'generating' || hStatus === 'ready';
-    if (!ip && !headlessLive) return null;
+    const bot = issue.bot || null;
+    if (!ip && !headlessLive && !bot) return null;
 
     const sessUsers = (ip && Array.isArray(ip.users)) ? ip.users.filter(Boolean) : [];
     const claims = (ip && Array.isArray(ip.claims)) ? ip.claims.filter(Boolean) : [];
@@ -19814,6 +19866,9 @@ const AppView = {
       const s = pick(busy.length ? busy : active);
       spinner = !!busy.length; tone = busy.length ? 'emerald' : 'sky';
       who = named(s); at = s.lastActivityAt;
+    } else if (bot) {
+      key = 'bot'; spinner = true;
+      at = bot.since || null;
     } else if (hStatus === 'generating') {
       key = 'auto_solving'; spinner = true;
     } else if (paused.length) {
@@ -19853,8 +19908,9 @@ const AppView = {
       answer_needed: 'Needs an answer',
       draft_ready: 'Draft ready to review',
       claimed: 'Claimed',
+      bot: AppView._botWorkReading(bot) ? 'Homeroom bot is reading this' : 'Homeroom bot is building this',
     };
-    // The three bot states name nobody — there is no person to name, and
+    // The bot states name nobody: there is no person to name, and
     // "Auto-solving… · maya" would imply maya is at a keyboard.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
@@ -19864,7 +19920,10 @@ const AppView = {
       if (people > 1) label += ` +${people - 1}`;
     }
 
-    const note = AppView._workStateNote({ key, who, at, clearAt, claimUsers, headlessLive, otherClaims: key !== 'claimed' && claims.length > 0 });
+    const note = AppView._workStateNote({
+      key, who, at, clearAt, claimUsers, headlessLive, bot: bot ? (bot.what || 'building') : null,
+      otherClaims: key !== 'claimed' && claims.length > 0,
+    });
     return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note };
   },
 
@@ -19909,6 +19968,8 @@ const AppView = {
       main = `${subj} ${has} put this up for review as a proposal, so it is waiting on reviewers rather than on more work.`;
     } else if (s.key === 'working') {
       main = `${subj} ${is} working on this in a dev session${age ? `, last active ${age}` : ''}.`;
+    } else if (s.key === 'bot') {
+      main = `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}, so nobody needs to claim it.`;
     } else if (s.key === 'auto_solving') {
       main = 'An auto-solve run is working on this right now.';
     } else if (s.key === 'paused') {
@@ -19928,6 +19989,9 @@ const AppView = {
     }
     if (s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready') {
       also.push('an auto-solve run is on it too');
+    }
+    if (s.bot && s.key !== 'bot') {
+      also.push(`the Homeroom bot is ${s.bot === 'reading' ? 'reading' : 'building'} it`);
     }
     return also.length ? `${main} Also: ${also.join('; ')}.` : main;
   },
@@ -21462,6 +21526,10 @@ const AppView = {
     AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
 
     staging.setUrlLabel(resolved);
+    // Who the app is for words the line under the bar: your own project's
+    // preview goes live when you vote it in, a group's is tried by members
+    // before they vote (#16).
+    staging.setAudience(AppView._stagingAudience(app));
     staging.open();
     AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
@@ -21708,6 +21776,16 @@ const AppView = {
   _stagingSameApp(opts, slug) {
     if (opts && opts.app && opts.app.slug) return true;
     return slug === AppView.appData?.slug;
+  },
+
+  // The previewed app's audience ('open' | 'invited' | 'solo'), or null. A
+  // caller's own app record may not carry it (an agent session's preview
+  // hands over only { slug, self_hosted }); the open app's record does, when
+  // it is the same app. Null words the banner for a group, the safe reading.
+  _stagingAudience(app) {
+    if (app && app.audience) return app.audience;
+    const open = AppView.appData;
+    return (app && open && open.slug === app.slug && open.audience) || null;
   },
 
   _stagingReadOnly(opts) {
@@ -22011,6 +22089,9 @@ const AppView = {
       el.style.height = `${Math.round(rect.height)}px`;
     },
     setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
+    // The banner's wording by audience is the island's alone; without it the
+    // shipped line stays as it is.
+    setAudience() {},
     setLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
       this._setHidden('staging-retry-btn', !visible || !retry);
       this._setText('staging-retry-btn', retryLabel || 'Retry sign-in');

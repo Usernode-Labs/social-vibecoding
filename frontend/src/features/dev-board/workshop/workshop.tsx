@@ -1339,8 +1339,10 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
  * now it is written here and sent with the vote. The state is NeedsFeed's,
  * so a key can turn the switch; exported for the render test.
  */
-export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
   row: QueueRow;
+  /** The open project's, for a row that does not name its own (rowSlug). */
+  slug?: string;
   side: 'yes' | 'no';
   line: string;
   boxRef?: RefObject<HTMLTextAreaElement | null>;
@@ -1350,6 +1352,10 @@ export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKe
   onCancel: () => void;
   onSend: () => void;
 }): ReactNode {
+  // #22: who the row's project is for. On a project that is just yours the
+  // Yes side's optional line is a note, not a line for the group; the hub's
+  // shared read, so the hero and this agree.
+  const solo = useCommunity(rowSlug(row, slug || ''))?.audience === 'solo';
   return (
     <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
       <VotePicker
@@ -1362,6 +1368,7 @@ export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKe
         boxRef={boxRef}
         tally={labelTally}
         withLine
+        solo={solo}
         onSide={onSide}
         onLine={onLine}
         onBoxKey={onBoxKey}
@@ -3049,6 +3056,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                      card. Cancel is what Decide later was. */
                   <NeedsVoteForm
                     row={row}
+                    slug={slug}
                     side={voteSide}
                     line={voteLine}
                     boxRef={voteBoxRef}

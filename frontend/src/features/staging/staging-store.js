@@ -32,7 +32,7 @@ import { createStore } from '../../lib/plain-store.js';
  *
  * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
- *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string,
+ *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string, solo: boolean,
  *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
@@ -55,6 +55,13 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   dockRect: null,
   urlLabel: '',
   background: '',
+  /**
+   * Whether the previewed app is a project that is just its creator's
+   * (`audience === 'solo'`), which words the banner under the bar. False
+   * until a preview says otherwise, so the first render is the group wording
+   * the prerendered page carries.
+   */
+  solo: false,
   loaderVisible: false,
   loaderTitle: 'Opening preview…',
   loaderSub: '',

@@ -972,19 +972,20 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
-   * `fromDev: true` is the mode the Dev "+" menu's "File an issue" row uses: it
-   * preselects the open app as the target (falling back to Platform for the
-   * self-hosted row, or while the repo does not exist yet). That is the right
-   * default here for the same reason — the panel is unambiguously about one
-   * app, so the dialog should not open asking which one.
+   * `target: 'app'` preselects the open app as the target, where "This app"
+   * is there to choose (not the self-hosted row, or while the repo does not
+   * exist yet, which keep the dialog's own choice). Since #2707 that is the
+   * only thing that preselects: `fromDev` alone opens the dialog asking which
+   * one. Asking for a change from inside an app already answered that
+   * question: the panel is unambiguously about one app.
    */
   giveFeedback() {
     const { slug } = improveStore.get();
     Improve.close();
     if (!window.App?.openFeedbackModal) return;
-    // Already looking at this app: the dialog can resolve its own target.
+    // Already looking at this app: "This app" means it.
     if (window.App.currentApp === slug) {
-      window.App.openFeedbackModal({ fromDev: true });
+      window.App.openFeedbackModal({ fromDev: true, target: 'app' });
       return;
     }
     // Otherwise there is no open app for "This app" to mean, so the dialog

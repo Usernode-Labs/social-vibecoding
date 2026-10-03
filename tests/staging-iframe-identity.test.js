@@ -107,7 +107,7 @@ async function makeHarness() {
   // Reset the module-scope stores between cases (they are singletons, like the
   // island they feed).
   storeMod.stagingStore.set({
-    open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
+    open: false, mode: 'fullscreen', dockRect: null, urlLabel: '', solo: false,
     loaderRetry: false, loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
     testBtnHidden: true, testBtnTitle: '', testPanelHidden: true, testHtml: '',
     fsBtnHidden: true, fsBtnText: 'Full screen', fsBtnTitle: '',
@@ -228,6 +228,10 @@ test('the preview iframe is the SAME element across every overlay state change',
     ['testing content', () => bridge.setTestHtml('<p>steps</p>')],
     ['testing panel close', () => bridge.setTestPanelHidden(true)],
     ['url label', () => bridge.setUrlLabel('https://preview.example')],
+    // #16: the banner's wording follows who the app is for. A store write
+    // like the rest, never a navigation.
+    ['audience solo', () => bridge.setAudience('solo')],
+    ['audience group', () => bridge.setAudience('invited')],
   ];
   for (const [what, run] of steps) {
     run();
@@ -248,6 +252,42 @@ test('the preview iframe is the SAME element across every overlay state change',
   await AppView.swapToStaging('https://preview.example', null, { verified: true });
   assert.equal(bridge.frame(), iframe, 'reopen reuses the very same iframe');
   assert.equal(iframe.loads, 2, 'the reopen is the second real navigation');
+});
+
+test('#16: opening a preview words its banner by who the app is for, without a reload', async () => {
+  const h = await makeHarness();
+  const { AppView, iframe, store } = h;
+  const navigationsBefore = h.bridge.stats().navigations;
+  const open = async (opts) => {
+    AppView.closeStagingOverlay();
+    await AppView.swapToStaging('https://preview.example', null, { verified: true, ...(opts || {}) });
+  };
+
+  // The open app's own record (GET /api/apps/:slug carries `audience`).
+  AppView.appData.audience = 'solo';
+  await open();
+  assert.equal(store.get().solo, true, 'a project that is just yours');
+  AppView.appData.audience = 'invited';
+  await open();
+  assert.equal(store.get().solo, false, 'a group');
+  AppView.appData.audience = 'open';
+  await open();
+  assert.equal(store.get().solo, false, 'a public community');
+
+  // A caller's own app record wins; one without an audience (an agent
+  // session's preview passes { slug, self_hosted }) reads the open app's
+  // only when it IS the open app, and is worded for a group otherwise.
+  await open({ app: { slug: 'notes-ab12', self_hosted: false, audience: 'solo' } });
+  assert.equal(store.get().solo, true, 'the caller said so');
+  await open({ app: { slug: 'notes-ab12', self_hosted: false } });
+  assert.equal(store.get().solo, false, 'another app with nothing said is a group, the safe reading');
+  AppView.appData.audience = 'solo';
+  await open({ app: { slug: 'usernode-2d5619', self_hosted: false } });
+  assert.equal(store.get().solo, true, 'the open app, by its own record');
+
+  assert.equal(h.bridge.frame(), iframe, 'the same element throughout');
+  assert.equal(iframe.loads, h.bridge.stats().navigations - navigationsBefore,
+    'every load was a genuine src write; the wording caused none');
 });
 
 test('a "Test this change" retarget navigates once, and only when the src differs', async () => {
@@ -393,6 +433,7 @@ test('`src` is not state, and the store starts from the shipped markup', () => {
   assert.match(STORE, /loaderSub: '',/, 'no sub-line');
   assert.match(STORE, /testPanelHidden: true,/, 'the testing panel ships hidden');
   assert.match(STORE, /fsBtnText: 'Full screen',/, "#771's shipped label");
+  assert.match(STORE, /solo: false,/, '#16: the banner ships in its group wording');
   // The bridge's writes are all store writes, except the two src ones.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];
   assert.equal(srcWrites.length, 2, 'exactly two src assignments: setSrc and clearSrc');

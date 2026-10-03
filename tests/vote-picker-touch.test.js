@@ -71,6 +71,27 @@ test('the box is there from the start and its words follow the switch; Vote no i
   assert.match(blank, /dev-vote-reason-send-no" disabled=""/, 'whitespace is not a line');
 });
 
+test('#22: on a project that is just yours the Yes line is a note; the No side is unchanged', () => {
+  // "Add a line for the group" spoke to a group that a solo project does not
+  // have. Only the Yes side's optional line changes: No keeps its words and
+  // still needs its line before it can be sent.
+  const onYes = picker({ solo: true });
+  assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(onYes, /for the group/);
+  assert.match(onYes, /placeholder="What do you like about it\?"/, 'the box itself is the same');
+  assert.match(onYes, /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes<\/button>/, 'and a Yes needs no note');
+  const onNo = picker({ solo: true, side: 'no' });
+  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/);
+  assert.match(onNo, /placeholder="What would you want to change\?"/);
+  assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no<\/button>/,
+    'No still waits for its line');
+  assert.match(picker({ solo: false }), /Add a line for the group, if you like\./, 'a group keeps its wording');
+  // The card's button reads it off the Yes spec, which app-view.js marks
+  // from the app's own record.
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /solo=\{!!yes\.solo\}/);
+});
+
 test('withLine false: the switch and the button only, and the send is never off', () => {
   // #2603 left no caller passing false — every vote the group casts carries
   // a line now — but the panel still draws without the box for anything

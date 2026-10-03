@@ -409,6 +409,57 @@ async function projectsBusy(pool, rows) {
 }
 
 /**
+ * What the bot is doing on one project's requests right now, for the
+ * request page (routes/issues.js): reading a request, or building one. By
+ * issue number: Map(n → { what: 'reading' | 'building', since }).
+ *
+ * The bot's own sessions are never a request's `in_progress` (the issue
+ * routes leave synthetic authors out on purpose), so without this a request
+ * it was building read "Unassigned" and offered Claim and Start work, and a
+ * claim then told the bot to leave the request alone.
+ *
+ * Read twice over. First the same two reads as projectsBusy, which takes
+ * the projects of the rows it is handed that wait: one waiting row names
+ * this project. Then the bot's own "live build waiting its turn or under
+ * way" (homeroom-bot.js, the run classifyIssue and liveCandidates hold a
+ * request for): a build waiting for the project's build slot can wait a
+ * whole other build's length, and projectsBusy does not count it, since it
+ * is not yet holding the project up. To the request it is the bot's work
+ * all the same, so it reads as building, since it began to wait. A request
+ * both read and built at once is called building, the longer of the two.
+ */
+async function botWorkByIssue(pool, appId) {
+  const id = Number(appId);
+  const out = new Map();
+  if (!Number.isInteger(id) || id <= 0) return out;
+  const busy = await projectsBusy(pool, [{ app_id: id, queue_id: -1, started_at: null }]);
+  for (const b of busy.get(id) || []) {
+    const had = out.get(b.issueNumber);
+    if (had && had.what === 'building') continue;
+    out.set(b.issueNumber, { what: b.what, since: b.since });
+  }
+  const { ABANDONED_LIVE_WINDOW_DAYS } = require('./homeroom-bot');
+  const { rows: builds } = await pool.query(
+    `SELECT DISTINCT ON (r.issue_number) r.issue_number,
+            COALESCE(r.live_build_waiting_at, bs.created_at, r.created_at) AS since
+       FROM homeroom_bot_runs r
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+      WHERE r.app_id = $1
+        AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+        AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
+        AND r.created_at > NOW() - make_interval(days => $2)
+      ORDER BY r.issue_number, r.created_at DESC`,
+    [id, ABANDONED_LIVE_WINDOW_DAYS],
+  );
+  for (const b of builds) {
+    const n = Number(b.issue_number);
+    if (out.get(n)?.what === 'building') continue;
+    out.set(n, { what: 'building', since: b.since });
+  }
+  return out;
+}
+
+/**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
  * stage's words and `waitingFor`. Its project busy with another request;
  * the most the bot does for one person at once already under way; or, with
@@ -728,6 +779,7 @@ module.exports = {
   queuedWait,
   buildWait,
   projectsBusy,
+  botWorkByIssue,
   outcomeOf,
   setupOf,
   stepNumber,

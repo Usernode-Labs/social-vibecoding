@@ -145,6 +145,12 @@ export interface ActionSpec {
    * without asking for it again.
    */
   prior?: 'yes' | 'no';
+  /**
+   * On the Yes spec: the project is just the viewer's (`audience === 'solo'`),
+   * so the vote picker's optional line is a note rather than "a line for the
+   * group".
+   */
+  solo?: boolean;
 }
 
 /** Everything that can appear in the status band, as a tagged union. */

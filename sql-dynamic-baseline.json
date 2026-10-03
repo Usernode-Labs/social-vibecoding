@@ -180,16 +180,16 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "409bfab8e5d57942b5e6",
+      "fingerprint": "606267a1970143fe0d00",
       "count": 1,
-      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE slug = $1`"
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "606267a1970143fe0d00",
+      "fingerprint": "c6b99ca4735605a08367",
       "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
+      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.communit"
     },
     {
       "source": "src/routes/chat.js",
