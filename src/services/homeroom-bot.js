@@ -300,6 +300,11 @@ const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-t
 // Homeroom theme. The template already has both; said here so the plan the
 // spec and the build work from says so too, rather than leaving a rewrite
 // of the template's screen to drop the dark half (or the light one).
+//
+// #3737: and a look of its own. "Look like the closest existing screen"
+// means the starter's placeholder here, whose zinc and violet are the
+// platform shell's palette; the plan names what the spec then decides
+// (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF).
 const FIRST_VERSION_NOTE = [
   'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
   'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
@@ -311,6 +316,11 @@ const FIRST_VERSION_NOTE = [
   'conventions\' "New apps: a light and a dark look, following the platform"). Only an app whose one fixed look is the',
   'point, such as a game drawn as its own scene, keeps a single look. Say which in `build_note`, list a single look',
   'under `assumptions` when you choose one, and never ask about it.',
+  'Plan a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
+  'like. Say in `build_note` the screen\'s one job and its one primary action, an accent colour plus neutrals that',
+  'work in both looks (not the starter\'s default zinc and violet, unless chosen on purpose), ONE signature element',
+  'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
+  'bread app) and a rough layout. The spec settles the details; never ask about them.',
 ].join('\n');
 
 let timer = null;
@@ -4026,6 +4036,8 @@ async function actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
         ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
         platformRepo: isPlatformRepo(app, config),
+        // #3737: a first version's spec and build decide and record its look.
+        firstVersion,
         // Linked before any turn runs, so a restart mid-build can find the run
         // (#3471): the build's worker outlives the restart; this process does not.
         onSession: (session) => pool.query(

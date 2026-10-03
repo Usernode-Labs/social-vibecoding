@@ -54,10 +54,15 @@ function getAppConventions() {
 // be tuned without touching the 150 KB conventions document.
 const DESIGN_GUIDANCE_PATH = path.join(__dirname, '..', 'prompts', 'design-guidance.md');
 const DESIGN_SELF_CHECK_TOKEN = '{{DESIGN_SELF_CHECK}}';
-const DESIGN_CHECKLIST = 'confirm: one primary action; headings make sense on their own; no new colours or fonts; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
+// #3737: both looks. Every new app has a light and a dark one (#3688), and
+// the frame URL's `?un-theme=` parameter opens a page in either, so the
+// self-check walks both: a colour picked in one look and never seen in the
+// other is how an app shipped pale violet labels on a white card.
+const DESIGN_BOTH_LOOKS = 'in the light and the dark look (add `?un-theme=light`, then `?un-theme=dark`, to the URL; just the one look when the app\'s `CLAUDE.md` declares a single fixed look)';
+const DESIGN_CHECKLIST = 'confirm: one primary action; headings make sense on their own; no new colours or fonts; text and controls readable in each look; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
 const DESIGN_SELF_CHECK = Object.freeze({
-  images: `Checking your work: when the in-loop browser is available, take screenshots (\`browser_take_screenshot\`) of each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, including its empty and error states, and ${DESIGN_CHECKLIST}`,
-  text: `Checking your work: you read text, not images. When the in-loop browser is available, check the running app with its accessibility snapshot (\`browser_snapshot\`) rather than screenshots. Walk each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, including its empty and error states, and ${DESIGN_CHECKLIST}`,
+  images: `Checking your work: when the in-loop browser is available, take screenshots (\`browser_take_screenshot\`) of each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, ${DESIGN_BOTH_LOOKS}, including its empty and error states, and ${DESIGN_CHECKLIST}`,
+  text: `Checking your work: you read text, not images. When the in-loop browser is available, check the running app with its accessibility snapshot (\`browser_snapshot\`) rather than screenshots. Walk each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, ${DESIGN_BOTH_LOOKS}, including its empty and error states, and ${DESIGN_CHECKLIST}`,
 });
 
 let cachedDesignGuidance = null;
@@ -93,6 +98,15 @@ function runtimeReadsImages(runtimeContext) {
 // instead of improvising: every scout writes them into the spec as a
 // plain-language "### Design" subsection a non-developer can review.
 const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters something a person sees, end the "User-facing changes" half (before any "### Questions") with a short "### Design" subsection in plain language: the screen's one job, its one primary action, which existing screen of this app it should look and behave like, and the exact word it uses for each thing on it, matching the words the app already uses. Prefer the app's existing components and styling to anything new, and say so when nothing existing fits. The build follows this subsection, so decide here rather than leaving it to the build. Omit it for changes nobody sees.`;
+
+// #3737: a project's FIRST version (#3624) has no screen of its own to look
+// like. The starter's is placeholder, and its zinc and violet are the
+// platform shell's own palette, so first versions all came out looking like
+// Homeroom and like each other. The bot's spec for one decides the app's own
+// look instead, and its build records it in the app's CLAUDE.md for every
+// later change to follow (homeroom-bot-live.js buildPrompt). Every other
+// spec keeps the brief above.
+const FIRST_VERSION_SPEC_DESIGN_BRIEF = `DESIGN BRIEF (FIRST VERSION): the app has no screen of its own yet (the starter template's is placeholder), so there is no existing screen for it to look like. In the "User-facing changes" half, before "### Assumptions", write a short "### Design" subsection in plain language that decides this app's own look: the main screen's one job and its one primary action; an accent colour plus the neutrals around it, chosen for this app and working in both the light and the dark look (not the starter's default zinc and violet, unless you choose them on purpose and say why); ONE signature element drawn from the app's subject, something a generic app would not have (for example a staff or a keyboard for an ear trainer, a proofing timeline for a bread app); a rough sketch of the main screen's layout at phone width, a few plain lines from top to bottom; and the exact word it uses for each thing on it. Use the platform's native UI kit for the parts it has. If the app keeps one fixed look (such as a game drawn as its own scene), say so here. The build follows this subsection and records it in the app's CLAUDE.md, so decide here rather than leaving it to the build.`;
 
 // The offline excerpt carried inside a connector work order.
 //
@@ -390,6 +404,7 @@ module.exports = {
   getDesignGuidance,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
+  FIRST_VERSION_SPEC_DESIGN_BRIEF,
   getLaunchpadInstructions,
   SPEC_HANDOFF_MAX_CHARS,
   getWorkOrderEssentials,
