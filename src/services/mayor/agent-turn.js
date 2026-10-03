@@ -626,14 +626,23 @@ async function runAgentTurn({
         });
         try {
           const result = await writer.call(use.name, input);
-          return { ok: !result.isError, text: result.text };
+          return {
+            ok: !result.isError,
+            text: result.text,
+            ...(!result.isError || !(result.structured && result.structured.code) ? {} : { code: result.structured.code }),
+          };
         } finally {
           await writer.close('action_done');
         }
       }
       if (shim && shim.toolNames.includes(use.name)) {
         const result = await shim.call(use.name, input);
-        return { ok: !result.isError, text: result.text, images: result.images || [] };
+        return {
+          ok: !result.isError,
+          text: result.text,
+          images: result.images || [],
+          ...(!result.isError || !(result.structured && result.structured.code) ? {} : { code: result.structured.code }),
+        };
       }
       return { ok: false, text: `unknown_tool: ${use.name} is not available in this conversation.` };
     } catch (err) {
@@ -915,7 +924,7 @@ async function runAgentTurn({
         send('tool', { name: use.name, state: 'running' });
         // eslint-disable-next-line no-await-in-loop
         const answer = await resolveTool(use, offer);
-        toolLog.push({ name: use.name, ok: answer.ok });
+        toolLog.push({ name: use.name, ok: answer.ok, ...(answer.ok || !answer.code ? {} : { code: answer.code }) });
         send('tool', { name: use.name, state: answer.ok ? 'done' : 'failed' });
         toolResults.push({
           type: 'tool_result',

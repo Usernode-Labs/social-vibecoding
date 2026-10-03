@@ -209,8 +209,16 @@ async function openMayorMcp({
           ratePerMinute: SESSION_RATE_PER_MINUTE,
           capacity: SESSION_RATE_PER_MINUTE,
         });
-      } catch {
-        bucket = { allowed: false };
+      } catch (err) {
+        // A hiccup inside the bucket (a transient DB error, contention on the
+        // advisory lock it takes) is not exhaustion: fail OPEN, loudly, so a
+        // gate error does not refuse every lookup for as long as it lasts.
+        // A genuinely exhausted bucket returns { allowed: false } without
+        // throwing and is refused below, exactly as before.
+        log.warn('agent-mayor', 'rate bucket unavailable; allowing the call', {
+          agentSessionId, err: err.message, errCode: err.code,
+        });
+        bucket = { allowed: true };
       }
       if (!bucket.allowed) {
         return {

@@ -18,6 +18,7 @@ const agentTurn = require('../src/services/mayor/agent-turn');
 const actions = require('../src/services/agent-session-actions');
 const confirmations = require('../src/services/confirmations');
 const audiences = require('../src/services/mcp-audiences');
+const logger = require('../src/services/logger');
 const mcpOauth = require('../src/services/mcp-oauth');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
@@ -268,6 +269,25 @@ test('the Mayor\'s own moves change the conversation, not the platform', async (
     },
   });
   assert.deepEqual(moves, [['switch', 44, 7], ['focus', 'whiteboard']]);
+});
+
+test('a failed shim call records its structured code in the turn\'s tool log', async () => {
+  const { pool } = await runTurn({
+    shim: fakeShim({
+      list_requests: () => ({
+        isError: true,
+        structured: { code: 'rate_limited' },
+        text: 'rate_limited: this conversation has made too many platform calls in the last minute. Wait, then try again.',
+      }),
+    }),
+    steps: [
+      { text: 'Let me look.', toolUses: [{ id: 't1', name: 'list_requests', input: { slug: 'recipe-box' } }] },
+      { text: 'I could not look that up just now.' },
+    ],
+  });
+  const metadata = JSON.parse(assistantRow(pool).params[5]);
+  assert.deepEqual(metadata.tools, [{ name: 'list_requests', ok: false, code: 'rate_limited' }],
+    'the refusal\'s code travels into the record, so a later report can be answered from it');
 });
 
 test('the loop is bounded, and its last round cannot call tools', async () => {
@@ -650,9 +670,11 @@ test('dismissing a card tells the conversation nothing changed', async () => {
 
 // ── The shim, for real ─────────────────────────────────────────────────
 
-test('the shim serves the Mayor\'s tools in-process, audits each call and revokes on close', async () => {
+// The database answers a real in-process shim needs: the minted grant and
+// token, the token lookup, the user, and the revoke on close.
+function shimPool() {
   const grant = 'g'.repeat(22);
-  const pool = recordingPool({
+  return recordingPool({
     'INSERT INTO mcp_delegations': () => ({ rows: [{ expires_at: new Date(Date.now() + 60_000) }] }),
     'INSERT INTO mcp_tokens': () => ({ rows: [{ id: 91 }] }),
     'FROM mcp_tokens t': (_sql, params) => ({
@@ -668,13 +690,28 @@ test('the shim serves the Mayor\'s tools in-process, audits each call and revoke
     'FROM users WHERE id': () => ({ rows: [{ id: 7, username: 'ada', is_admin: false, admin_readonly: false, app_quota: 3, locale: null }] }),
     'UPDATE mcp_delegations SET revoked_at': () => ({ rows: [{ user_id: 7, kind: 'agent_mayor' }] }),
   });
+}
+
+// Runs `fn` with a real in-process shim open and its rate bucket stubbed,
+// restoring the stub and closing the shim afterwards. `fn(shim, pool)`.
+async function withBucket(stub, fn) {
   const cliAuth = require('../src/services/cli-auth');
-  const bucket = cliAuth.consumeSharedTokenBucket;
-  const buckets = [];
-  cliAuth.consumeSharedTokenBucket = async (_pool, options) => { buckets.push(options); return { allowed: true }; };
+  const real = cliAuth.consumeSharedTokenBucket;
+  cliAuth.consumeSharedTokenBucket = stub;
+  const pool = shimPool();
   const { openMayorMcp } = require('../src/services/mayor/mcp-shim');
+  const shim = await openMayorMcp({ pool, config: CONFIG, userId: 7, agentSessionId: 5 });
   try {
-    const shim = await openMayorMcp({ pool, config: CONFIG, userId: 7, agentSessionId: 5 });
+    return await fn(shim, pool);
+  } finally {
+    cliAuth.consumeSharedTokenBucket = real;
+    await shim.close();
+  }
+}
+
+test('the shim serves the Mayor\'s tools in-process, audits each call and revokes on close', async () => {
+  const buckets = [];
+  await withBucket(async (_pool, options) => { buckets.push(options); return { allowed: true }; }, async (shim, pool) => {
     assert.deepEqual([...shim.toolNames].sort(), [...audiences.AGENT_MAYOR_TOOLS].sort(),
       'exactly the Mayor\'s audience');
     assert.ok(shim.modelTools.every((t) => t.input_schema && t.input_schema.type === 'object'));
@@ -692,12 +729,37 @@ test('the shim serves the Mayor\'s tools in-process, audits each call and revoke
     assert.ok(pool.calls.some((c) => /UPDATE mcp_delegations SET revoked_at/.test(c.sql)));
     const after = await shim.call('get_app', { slug: 'recipe-box' });
     assert.equal(after.isError, true, 'nothing runs after close');
-  } finally {
-    cliAuth.consumeSharedTokenBucket = bucket;
-  }
+  });
 });
 
-test('a refused bucket stops the call before it is audited', async () => {
+test('an errored rate bucket fails the call OPEN, loudly, and still audits it', async () => {
+  await withBucket(async () => { throw new Error('could not lock cli_auth_rate_limits'); }, async (shim, pool) => {
+    const result = await shim.call('get_platform_conventions', {});
+    assert.equal(result.isError, false, 'a bucket ERROR is not exhaustion: the call goes ahead');
+    assert.match(result.text, /Don't `git push` yourself/);
+
+    const warned = logger.tail(50).find((e) => e.level === 'WARN' && /rate bucket unavailable/.test(e.message));
+    assert.ok(warned, 'the gate error is logged');
+    assert.match(warned.data.err, /could not lock cli_auth_rate_limits/);
+
+    const audit = pool.calls.filter((c) => /INSERT INTO mcp_auth_audit_events/.test(c.sql)).map((c) => c.params[0]);
+    assert.deepEqual(audit, ['token_issued', 'token_used'], 'the fail-open call is audited like any other');
+  });
+});
+
+test('a genuinely exhausted bucket is still refused, before the audit row', async () => {
+  await withBucket(async () => ({ allowed: false, retryAfter: 5 }), async (shim, pool) => {
+    const refused = await shim.call('get_platform_conventions', {});
+    assert.equal(refused.isError, true);
+    assert.deepEqual(refused.structured, { code: 'rate_limited' });
+    assert.match(refused.text, /too many platform calls in the last minute/);
+
+    const audit = pool.calls.filter((c) => /INSERT INTO mcp_auth_audit_events/.test(c.sql)).map((c) => c.params[0]);
+    assert.deepEqual(audit, ['token_issued'], 'a refused call stays unaudited');
+  });
+});
+
+test('a refused bucket shape is normalizeResult, unchanged', () => {
   const { normalizeResult, toModelTools } = require('../src/services/mayor/mcp-shim');
   assert.deepEqual(normalizeResult({ isError: true, content: [{ type: 'text', text: 'x' }] }),
     { isError: true, structured: null, text: 'x', images: [] });
