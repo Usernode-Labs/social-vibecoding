@@ -60,6 +60,8 @@ const snapshots = require('./homeroom-bot-snapshots');
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
+// #3736: and the activity card that follows one piece of work there.
+function activity() { return require('./homeroom-bot-activity'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -1858,6 +1860,12 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       return null;
     });
     if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
+    // #3736: and the person it is for gets a card in their DM with the bot
+    // that follows this piece of work to its end, told when the request is:
+    // not twice for a restart, and not for a backlog pass. Never throws.
+    if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON) {
+      await activity().startCard(pool, { app, issueNumber, requester, bot, jobKey: item.id, settings, deps: { dm: deps.dm } });
+    }
   }
   const seedReadAt = new Date().toISOString();
   const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([

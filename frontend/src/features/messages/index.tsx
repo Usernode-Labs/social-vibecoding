@@ -21,6 +21,7 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
+import { BotActivitySync } from './bot-activity';
 import { BotWorkTray, newestBotMessageId, setBotWorkOpen } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -1735,6 +1736,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       {embedded ? null : <ThreadHeader />}
       <InvitationBanner />
       {botDm ? <BotWorkTray conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
+      {/* #3736: and keeps the activity cards in its transcript current. */}
+      {botDm ? <BotActivitySync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard
           inset (`platform-kb-column` above). The kit adds the class itself
           once useComposerKeyboard attaches (#3571), as it does to
