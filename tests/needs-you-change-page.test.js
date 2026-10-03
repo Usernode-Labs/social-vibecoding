@@ -97,11 +97,15 @@ test('the hero: the eyebrow with the pull request and its state, the age, the ti
   assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Proposal · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a><span> · In review<\/span><\/span><span class="dev-ws-item-of"[^>]*>/);
   assert.match(html, /<h2 class="dev-ws-item-title dev-topic-hero-title">Authenticate previews<\/h2>/);
   assert.match(html, /<p class="dev-ws-item-by dev-topic-hero-by"><span class="dev-ws-item-avatar" style="background:#[0-9a-f]{6}" aria-hidden="true">M<\/span><span><b>maya<\/b><span> · proposed /);
-  // The chips are the card's own tag specs (their tints ride along), and
-  // the linkage; the state tags stay off the hero, the steps say it.
+  // The chips are the card's own tag specs (their tints ride along); the
+  // state tags stay off the hero, the steps say it, and linked issues are
+  // the Addresses row's — the chip row used to repeat them.
   const chips = html.slice(html.indexOf('dev-topic-hero-chips'), html.indexOf('dev-topic-hero-actions'));
   assert.match(chips, /data-attr-chip="" data-attr-field="priority"/);
-  assert.match(chips, /data-issue-chip="1993"[^>]*>Closes #1993</);
+  assert.doesNotMatch(chips, /data-issue-chip/);
+  // The linked issue shows once, on the Addresses row under the summary.
+  assert.match(html, /class="dev-topic-hero-issues-k">Addresses</);
+  assert.match(html, /data-issue-ref="1993"[^>]*><b>#1993<\/b><span>Wait for authentication before opening previews<\/span></);
   assert.doesNotMatch(chips, /data-status-tag/);
   assert.doesNotMatch(html, /data-status-tag/, 'no state tag anywhere on the page');
   // The summary is a paragraph, not a fold.

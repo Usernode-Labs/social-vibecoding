@@ -994,14 +994,11 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
   const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
-  // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the shots — stay off: the steps say it.
+  // The tags: priority, assignee, category. The state chips — checks, behind
+  // main, the shots — stay off: the steps say it. Linked issues are the
+  // Addresses row's (IssueAssociations) — the chip row used to repeat them.
   const badges = (card.badges || []).filter(Boolean);
-  const chips = [
-    ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []),
-    ...badges.filter((b) => b.t === 'issueChip'),
-  ];
+  const chips = badges.filter((b) => b.t === 'attr');
   const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
   return (
     <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
