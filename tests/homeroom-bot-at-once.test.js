@@ -43,7 +43,7 @@ test('pickLive: one per app, at most perPerson for anybody, at most `slots` in a
 });
 
 /** A pool that answers the loop's queries, with live candidates to start. */
-function loopPool({ settings, candidates = [], apps = [] }) {
+function loopPool({ settings, candidates = [], apps = [], waiting = [] }) {
   const log = [];
   const client = {
     async query(sql) {
@@ -69,6 +69,8 @@ function loopPool({ settings, candidates = [], apps = [] }) {
             && (c.follow_up_session_id != null || !(params[4] || []).includes(c.app_id))),
         };
       }
+      // Live builds waiting their turn (liveBuildCandidates).
+      if (/WHERE r\.live_build_waiting_at IS NOT NULL AND r\.mode = 'live'/.test(s)) return { rows: waiting };
       if (/FROM apps WHERE id = ANY\(\$1::int\[\]\)/.test(s)) return { rows: apps.filter((a) => params[0].includes(a.id)) };
       if (/SET started_at = NOW\(\) WHERE id = \$1 AND started_at IS NULL RETURNING id/.test(s)) return { rows: [{ id: params[0] }] };
       return { rows: [] };
@@ -248,23 +250,44 @@ test('pickLive: a follow-up on the bot\'s own proposal neither waits for its app
     active: [{ person: 'u7' }, { person: 'u7' }], slots: 6, perPerson: 2,
   }), []);
   assert.deepEqual(bot.pickLive([followUp(1, 10, 7)], { slots: 0, perPerson: 2 }), []);
-  // An app backed off after a refusal starts nothing at all.
-  assert.deepEqual(bot.pickLive([followUp(1, 10, 7)], { blockedAppIds: [10], slots: 6, perPerson: 2 }), []);
+  // An app backed off after its session refused a turn starts nothing on
+  // that session; a follow-up runs on its proposal's, and has a backoff of
+  // its own (followUpsBackedOff), so the app's does not hold it.
+  assert.deepEqual(bot.pickLive([row(2, 10, 8)], { blockedAppIds: [10], slots: 6, perPerson: 2 }), []);
+  assert.deepEqual(bot.pickLive([followUp(1, 10, 7)], { blockedAppIds: [10], slots: 6, perPerson: 2 }).map((p) => p.id), [1]);
+});
+
+test('a follow-up refused a turn backs off that follow-up alone, not its app', () => {
+  bot._resetForTests();
+  const now = Date.parse('2026-10-03T12:00:00Z');
+  const first = bot.noteFollowUpRefusal(10, 5, 'session_busy', now);
+  assert.equal(first.attempts, 1);
+  assert.deepEqual(bot.followUpsBackedOff(now + 1000), ['10:5']);
+  assert.equal(bot.noteFollowUpRefusal(10, 5, 'session_busy', now).delayMs, first.delayMs * 2, 'doubling, as an app\'s does');
+  bot.clearFollowUpRefusals(10, 5);
+  assert.deepEqual(bot.followUpsBackedOff(now + 1000), []);
+  bot.noteFollowUpRefusal(10, 6, 'session_busy', now);
+  assert.deepEqual(bot.followUpsBackedOff(now + 61 * 60 * 1000), [], 'and past its window it is dropped');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /const \{ attempts, delayMs \} = followUpTurn\n\s+\? noteFollowUpRefusal\(app\.id, issueNumber, error\)\n\s+: noteRefusal\(app\.id, error\);/);
+  assert.match(src, /followUpTurn = true;\n\s+return runFollowUp\(/);
 });
 
 test('the live queue reads which rows are follow-ups, lets only them past a busy app, and takes them first', async () => {
   const asked = [];
   const pool = { async query(sql, params) { asked.push({ s: String(sql), params }); return { rows: [] }; } };
   await bot.liveCandidates(pool, {
-    liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [],
+    liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77]);
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5']]);
   // The bot's own proposal on the issue, still up for a vote: what runTriage
   // follows up on (live.openBotProposal, runFollowUp).
   assert.match(s, /cs\.user_id = \$6\s+AND q\.issue_number = ANY\(cs\.linked_issues\)\s+AND cs\.status = 'promoted' AND cs\.is_headless = FALSE/);
   assert.match(s, /fu\.id AS follow_up_session_id/);
-  assert.match(s, /AND NOT \(q\.app_id = ANY\(\$2::int\[\]\)\)/, 'a backed-off app: nothing');
+  assert.match(s, /AND \(fu\.id IS NOT NULL OR NOT \(q\.app_id = ANY\(\$2::int\[\]\)\)\)/, 'a backed-off app: follow-ups only');
+  assert.match(s, /AND \(fu\.id IS NULL OR NOT \(\(q\.app_id::text \|\| ':' \|\| q\.issue_number::text\) = ANY\(\$7::text\[\]\)\)\)/,
+    'and a follow-up backed off on its own: not that one');
   assert.match(s, /AND \(fu\.id IS NOT NULL OR NOT \(q\.app_id = ANY\(\$5::int\[\]\)\)\)/, 'a busy app: follow-ups only');
   assert.match(s, /ORDER BY \(q\.priority = 0\) DESC, \(fu\.id IS NOT NULL\) DESC, q\.priority, q\.enqueued_at/,
     'a Run now first, then a reply on the bot\'s proposal, then the rest in their order');
@@ -375,4 +398,126 @@ test('a row started as a follow-up whose proposal has gone is handed back untouc
     'and the app\'s own session, which another request may be using, untouched');
   assert.ok(pool.log.some((l) => /SELECT id, status, pr_number FROM chat_sessions/.test(l.s)), 'it did look for the proposal');
   bot._resetForTests();
+});
+
+
+// ── A project's next request is read while its build runs ───────────────
+//
+// A live ready verdict used to be built inside the turn that read it, so
+// the project's one slot was held for the whole build (up to 50 minutes,
+// 110 on the platform's repository) and every other request on it waited
+// unread. Now the build waits on its run and gets a slot of its own,
+// `build:<appId>`: one build per project at a time, reading beside it.
+
+const waitingBuild = (id, appId, issueNumber, personId) => ({
+  id, app_id: appId, issue_number: issueNumber, build_note: 'build it', person_id: personId,
+});
+
+test('pickLiveBuilds: one build per project, none beside a running one, perPerson and slots counted', () => {
+  const rows = [waitingBuild(900, 10, 1, 7), waitingBuild(901, 10, 2, 7), waitingBuild(902, 11, 3, 8), waitingBuild(903, 12, 4, 7)];
+  assert.deepEqual(bot.pickLiveBuilds(rows, { slots: 6, perPerson: 2 }).map((p) => p.id), [900, 902, 903],
+    'the second build on project 10 waits for the first');
+  assert.deepEqual(bot.pickLiveBuilds(rows, { buildingAppIds: [10], slots: 6, perPerson: 2 }).map((p) => p.id), [902, 903],
+    'a project already building starts no second build');
+  assert.deepEqual(bot.pickLiveBuilds(rows, { active: [{ person: 'u7' }, { person: 'u7' }], slots: 6, perPerson: 2 }).map((p) => p.id), [902],
+    'what runs for a person counts, reading or building');
+  assert.deepEqual(bot.pickLiveBuilds(rows, { slots: 1, perPerson: 2 }).map((p) => p.id), [900]);
+});
+
+test('a project\'s next request is read while its build runs, and its builds go one at a time', async () => {
+  bot._resetForTests();
+  const settings = [
+    { key: bot.KEY_MODE, value: 'shadow' },
+    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
+    { key: bot.KEY_PER_PERSON, value: '3' },
+    { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
+  ];
+  const pool = loopPool({
+    settings,
+    candidates: [row(2, 101, 7)],
+    apps: APPS,
+    waiting: [waitingBuild(900, 101, 1, 7), waitingBuild(901, 101, 3, 8), waitingBuild(902, 102, 4, 8)],
+  });
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const deps = {
+    drain: false,
+    github: {
+      isEnabled: () => true,
+      async fetchPublicIssues() { return { issues: [] }; },
+      // The builds wait here, then find their requests closed.
+      async fetchPublicIssue() { await gate; return { issue: { state: 'closed' } }; },
+    },
+    limits: { async checkBudget() { await gate; return { error: true }; } },
+    worker: { async listWorkerVolumes() { return []; } },
+    dm: { async overWeeklyAllowance() { return false; }, async requesterOf() { return null; } },
+  };
+  const out = await bot.runOnce(pool, {}, deps);
+  const running = bot._inFlightForTests();
+  const builds = running.filter((e) => e.build);
+  assert.deepEqual(builds.map((e) => [e.appId, e.runId]).sort(), [[101, 900], [102, 902]],
+    'one build per project: #3 on a1 waits for #1');
+  assert.ok(builds.every((e) => e.lane === 'live'));
+  const reads = running.filter((e) => !e.build);
+  assert.deepEqual(reads.map((e) => [e.appId, e.issueNumber]), [[101, 2]], 'a1\'s next request is read beside its build');
+  assert.equal(out.dispatched, 3);
+
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  const skipped = pool.log.filter((l) => /SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = \$2/.test(l.s));
+  assert.deepEqual(skipped.map((l) => l.params).sort((a, b) => a[0] - b[0]), [
+    [900, 'skipped: the request was closed before its build started'],
+    [902, 'skipped: the request was closed before its build started'],
+  ], 'a request closed while its build waited is not built');
+  bot._resetForTests();
+});
+
+test('a ready verdict waits on its run, and only for a build of the same project', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot.js'), 'utf8');
+  const act = src.slice(src.indexOf('async function actOnVerdict('), src.indexOf('async function queueLiveBuild('));
+  assert.match(act, /await queueLiveBuild\(pool, \{ runId, appId: app\.id \}\);\n\s+acted = 'build_queued';/);
+  assert.doesNotMatch(act, /buildAndPropose/, 'never built inside the turn that read it');
+  // A newer verdict on the issue replaces a build still waiting.
+  assert.match(src, /SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'/);
+  // A build's slot is not the app's: reading goes on beside it.
+  assert.match(src, /const sessionTaken = running\.filter\(\(e\) => !e\.followUp && !e\.build\)\.map\(\(e\) => Number\(e\.appId\)\);/);
+  // Once its session exists, restart recovery owns it.
+  assert.match(src, /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/);
+});
+
+test('a live build restart recovery finishes holds its project\'s build slot until it ends', async () => {
+  bot._resetForTests();
+  const pool = { async query(sql) {
+    if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1 AND build_at IS NOT NULL/.test(String(sql))) return { rows: [] };
+    if (/WHERE r\.build_session_id = \$1 AND r\.mode = 'live' AND r\.build_ok IS NULL/.test(String(sql))) {
+      return { rows: [{ id: 950, app_id: 101, issue_number: 6, person_id: 7 }] };
+    }
+    return { rows: [] };
+  } };
+  let finish;
+  const recovery = new Promise((r) => { finish = r; });
+  const held = bot.holdSlotDuringRecovery(pool, 6001, recovery);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(bot._inFlightForTests().map((e) => [e.appId, e.build, e.runId, e.recovered]), [[101, true, 950, true]]);
+  finish('proposed');
+  assert.equal(await held, 'proposed');
+  assert.deepEqual(bot._inFlightForTests(), [], 'freed when it ends');
+  bot._resetForTests();
+});
+
+test('Run now never starts a second turn on a request already being worked on', async () => {
+  const asked = [];
+  const pool = { async query(sql, params) {
+    asked.push(String(sql));
+    if (/SELECT id, slug FROM apps WHERE slug = \$1/.test(String(sql))) return { rows: [{ id: 101, slug: 'a1' }] };
+    if (/INSERT INTO homeroom_bot_queue/.test(String(sql))) return { rows: [] };
+    return { rows: [] };
+  } };
+  const out = await bot.enqueueNow(pool, { slug: 'a1', issueNumber: 5, actorId: 1 });
+  assert.deepEqual(out, { ok: true, running: true, item: null });
+  const insert = asked.find((s) => /INSERT INTO homeroom_bot_queue/.test(s));
+  assert.doesNotMatch(insert, /started_at = NULL/, 'its claim is never cleared');
+  assert.match(insert, /WHERE homeroom_bot_queue\.started_at IS NULL/);
+  const route = require('node:fs').readFileSync(require.resolve('../src/routes/admin.js'), 'utf8');
+  assert.match(route, /res\.status\(202\)\.json\(\{ item: result\.item, \.\.\.\(result\.running \? \{ running: true \} : \{\}\) \}\);/);
 });

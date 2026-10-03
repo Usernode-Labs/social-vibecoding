@@ -79,6 +79,7 @@ const EARLIER_LIMIT = 5;
 const PHASE_OF_STAGE = Object.freeze({
   setting_up: 'setting_up',
   queued: 'queued',
+  build_queued: 'queued',
   reading: 'looking',
   starting: 'building',
   planning: 'building',

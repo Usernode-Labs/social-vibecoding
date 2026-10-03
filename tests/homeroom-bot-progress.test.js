@@ -182,3 +182,31 @@ test('#3771: a request in the queue says what it waits for', () => {
   assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting in the queue to be read, with 3 requests ahead of it');
   assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
 });
+
+test('a ready request waiting for its build slot says so, and what it waits for', () => {
+  const now = new Date('2026-10-03T12:40:00Z');
+  const row = {
+    app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer', mode: 'live', verdict: 'ready',
+    build_ok: null, run_proposal: null, build_session_id: null, run_at: '2026-10-03T12:30:00Z',
+    build_waiting_at: '2026-10-03T12:31:00Z',
+  };
+  const state = progress.stageOf(row, { now });
+  assert.deepEqual(state, { stage: 'build_queued', since: '2026-10-03T12:31:00Z', doing: 'ready to build; waiting its turn to be built' });
+  assert.equal(progress.stepNumber('build_queued', false), 2, 'the plan is the next step');
+  assert.ok(progress.IN_FLIGHT_STAGES.has('build_queued') && !progress.BUSY_STAGES.has('build_queued'),
+    'in the bot\'s hands, not this minute');
+  // Its session exists: it is under way, not waiting.
+  assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
+
+  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  assert.deepEqual(progress.buildWait(row, { busy, now }), {
+    doing: 'ready to build; Ear Trainer is building request #12 first (one build per project at a time)',
+    waitingFor: { reason: 'project_building', number: 12, minutesSoFar: 14 },
+  });
+  const reading = new Map([[7, [{ issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
+    'a request being read on the project does not hold a build');
+  assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
+  const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
+  assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+});

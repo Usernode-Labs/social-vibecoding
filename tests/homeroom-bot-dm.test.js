@@ -563,3 +563,12 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
   assert.match(src, /objects: cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
 });
+
+test('"typing" goes out before the answer starts, bounded', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));
+  assert.ok(fn.indexOf('stop.ready') < fn.indexOf('await work()'), 'the answer waits for its typing event');
+  assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
+  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io\);/);
+  assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
+});

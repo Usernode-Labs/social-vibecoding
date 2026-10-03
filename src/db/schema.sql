@@ -9672,6 +9672,15 @@ BEGIN
 END $$;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 
+-- A live build waiting its turn: a live 'ready' verdict is built after the
+-- turn that read it ends, one build per project at a time, so reading the
+-- project's next request never waits for a build. Set when the verdict is
+-- recorded, cleared once the build's session exists (homeroom-bot.js
+-- buildLive). The shadow lane's build_queued_at/build_at stay its own.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS live_build_waiting_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
+  ON homeroom_bot_runs(live_build_waiting_at) WHERE live_build_waiting_at IS NOT NULL;
+
 -- #3654: the Homeroom bot's benchmark (services/bench/). A SUITE is a set of
 -- tasks drawn from real runs; it is a version (name + version), and freezing
 -- it makes its tasks immutable (services/bench/suites.js refuses every write
