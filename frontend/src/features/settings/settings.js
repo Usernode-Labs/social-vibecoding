@@ -6096,11 +6096,32 @@
       return { kind: 'ready', enabled: !!state.enabled, status };
     },
 
+    // #3756: the persistent "Evaluating production slots" phone notification
+    // is the app's own block-production service (an Android foreground service
+    // re-presents its notification after dismissal), so the platform cannot
+    // silence it. The released-producer state carries the explanation and the
+    // one control that quiets just that notification, so nobody answers it by
+    // switching off all Homeroom notifications. The button is gated on the
+    // same capability probe the Activity notifications block uses, so an app
+    // build without the bridge method never shows a dead button.
     _bpView() {
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
-      if (state.bp_released) return { kind: 'note', text: 'Released. Your node produces blocks when it wins slots.' };
+      if (state.bp_released) {
+        return {
+          kind: 'note',
+          text: 'Released. Your node produces blocks when it wins slots. The ongoing ' +
+            '"Evaluating production slots" notification on your phone is block ' +
+            'production checking VRF eligibility and scheduling slots; Android ' +
+            're-shows it while block production runs, so swiping it away does not ' +
+            'dismiss it for good. Quiet just that notification without turning ' +
+            'off Homeroom’s other notifications:',
+          action: this._unCanOpenNotifSettings === true
+            ? { label: 'Open notification settings', action: '_openNotifSettings' }
+            : null,
+        };
+      }
       if (state.bp_requested) return { kind: 'note', text: 'Request pending. You’ll start producing automatically once an admin releases your keys.' };
       if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
       return { kind: 'ask' };
