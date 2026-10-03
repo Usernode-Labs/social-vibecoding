@@ -302,9 +302,11 @@ const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-t
 // of the template's screen to drop the dark half (or the light one).
 //
 // #3737: and a look of its own. "Look like the closest existing screen"
-// means the starter's placeholder here, whose zinc and violet are the
-// platform shell's palette; the plan names what the spec then decides
-// (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF).
+// means the starter's placeholder here, and its default palette is nobody's
+// look (a starter's zinc and violet are the platform shell's; the Empty
+// starter's design kit ships quiet greys and a teal accent to re-point); the
+// plan names what the spec then decides (services/prompts.js
+// FIRST_VERSION_SPEC_DESIGN_BRIEF).
 const FIRST_VERSION_NOTE = [
   'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
   'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
@@ -318,7 +320,7 @@ const FIRST_VERSION_NOTE = [
   'under `assumptions` when you choose one, and never ask about it.',
   'Plan a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
   'like. Say in `build_note` the screen\'s one job and its one primary action, an accent colour plus neutrals that',
-  'work in both looks (not the starter\'s default zinc and violet, unless chosen on purpose), ONE signature element',
+  'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
   'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
   'bread app) and a rough layout. The spec settles the details; never ask about them.',
 ].join('\n');

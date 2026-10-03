@@ -4,7 +4,7 @@ Design system first
 - Before writing UI, open the closest existing screen in this app and the parts of the native UI kit it uses (the "Native-feel UI kit" platform convention). Build from the same components, `--un-*` tokens, type scale, radii and spacing, and start from that screen's structure.
 - Add no new fonts, hex colours, arbitrary Tailwind values (such as `w-[37px]`), shadows or gradients. If the kit has nothing for what you need, compose it from kit parts and say so in your final message.
 - The app's own palette is always right. The bans below apply only to what you invent.
-- If the app's `CLAUDE.md` has a `Design:` note (under "App-specific conventions"), that is this app's look: its accent, neutrals, type, spacing and signature element. Follow it, and update the note in the same change when a request changes the look on purpose.
+- If the app's `CLAUDE.md` has a "## Design" section (or a `Design:` note under "App-specific conventions"), that is this app's look: its accent, neutrals, type, spacing and signature element. Follow it, and update it in the same change when a request changes the look on purpose.
 
 Decide before you build, in a few lines of your plan: who uses this screen, its one job, its one primary action, which existing components you will reuse, and the word you will use for each thing on it. Then ask whether you would build exactly this for any app. If you would, make it fit this app's content instead.
 

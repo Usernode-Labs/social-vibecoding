@@ -82,16 +82,188 @@ const DEV_CONSOLE_FORWARDER = `
 // (the theme <script> after the bridge tag in public/index.html, the same one
 // every starter in app-templates/ ships); this is what its CLAUDE.md tells the
 // agent that replaces that screen, so the first real version keeps both.
-// Shared by the Empty scaffold's notes and every starter's.
-const THEME_CLAUDE_NOTE = `The screen has a light and a dark look and follows the viewer's Homeroom
+// Shared by the Empty scaffold's notes and every starter's. Empty's screen is
+// built from its design kit, whose colour tokens carry both looks, and its
+// notes record a fixed look under their own "## Design"; a starter's screen
+// uses `dark:` variants, and its notes have no such section.
+function themeClaudeNote({ how = 'Tailwind\'s `dark:` variants', where = '"App-specific conventions"' } = {}) {
+  return `The screen has a light and a dark look and follows the viewer's Homeroom
 theme, switching live when they change it: the theme \`<script>\` right after
 the bridge tag sets a \`dark\` class on \`<html>\`. Keep that script, and give
-everything you build both looks (Tailwind's \`dark:\` variants), unless one
+everything you build both looks (${how}), unless one
 fixed look is the point of this app, like a game's own scene; then say so
-under "App-specific conventions" below. Unless a request asks for one, add
+under ${where} below. Unless a request asks for one, add
 no theme picker: the viewer's Homeroom setting is the control. "The
 platform's light/dark theme inside the app frame" in the platform
 conventions has the details.`;
+}
+
+// #3737 (Rec2): the Empty starter is a small design system, not just a
+// placeholder screen. Its stylesheet carries semantic colour tokens for both
+// looks and a few components (DESIGN_KIT_CSS below), and its notes carry the
+// app's design record: blanks the first real version fills in (the bot's
+// build is told to, homeroom-bot-live.js FIRST_VERSION_DESIGN_LINES) and the
+// rules every later change keeps. Kept short on purpose: the long form
+// belongs in a design skill, not in every app's CLAUDE.md. The rules answer
+// what the taste benchmark found in first versions built from the old
+// starter: low-contrast text, blank or dishonest loading and error states,
+// no staging demo data, small tap targets, and the usual tells.
+const DESIGN_CLAUDE_SECTION = `## Design
+
+This app's look. The first real version fills in the blanks; every later
+change follows it, and updates it when a request changes the look on purpose.
+
+- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
+  "accent: tomato red; second: basil green; neutrals: warm greys")_
+- **Signature element:** _(the one thing on screen drawn from this app's
+  subject, which no other app would have)_
+- **Type scale:** \`text-title\`, \`text-heading\`, \`text-body\`, \`text-small\`
+  _(change their sizes in \`tailwind.config.js\` if you must, not their number)_
+- **One fixed look:** _(only for an app drawn as its own scene, such as a
+  game: which look, and why. Otherwise delete this line.)_
+
+The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
+a dark value (named in \`tailwind.config.js\`), and a few components
+(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+\`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
+Re-theme by changing the token values there, keeping every text pair at
+4.5:1 or more in both looks.
+
+- Colour comes only from the tokens (\`bg-ground\`, \`bg-surface\`,
+  \`text-fg\`, \`text-muted\`, \`border-line\`, \`bg-accent\` with
+  \`text-on-accent\`, ...): never a raw hex value or a stock palette class.
+- Tap targets are at least 44 px; the buttons and fields already are.
+- Every screen that loads data has honest loading, empty and error states.
+  Never show the empty state while loading or after a failure; an error says
+  what failed, what still works, and offers Retry.
+- Seed obviously fake staging demo data so the populated screen can be seen
+  ("Staging mock data" in the platform conventions).
+- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+
+// The design kit's half of styles/tailwind-input.css, after the three
+// @tailwind lines. Part of the Tailwind build every new app shares (a
+// starter's screen just does not use it yet), and invisible until used: the
+// base layer only defines variables and makes `hidden` win over a display
+// class, and Tailwind drops every component no markup names.
+//
+// Token values are "R G B" channels, not hex: Tailwind needs channels for
+// opacity modifiers, and the benchmark's tells lint counts hex literals in
+// an app's source as stray colours. tests/template-design-kit.test.js
+// computes every text pair's contrast in both looks from these values.
+const DESIGN_KIT_CSS = `
+/* ── Colour tokens ────────────────────────────────────────────────────────
+ * This app's palette, defined once. Each value is "R G B"; tailwind.config.js
+ * names them (bg-ground, bg-surface, text-fg, text-muted, border-line,
+ * bg-accent with text-on-accent, ...). :root is the light look, and .dark,
+ * which the theme script in public/index.html sets on <html>, the dark one.
+ *
+ * Re-theme the app HERE: change the values, keep the names. The defaults
+ * (warm greys, one teal accent) are a quiet starting point, not a look.
+ * Keep every text pair at 4.5:1 or more in both looks: fg and muted on
+ * ground, surface and raised; accent and danger on ground and surface;
+ * on-accent on accent; on-danger on danger.
+ *
+ * Adopting the native UI kit later? Point its --un-accent and
+ * --un-accent-contrast at the accent and on-accent tokens.
+ */
+@layer base {
+  :root {
+    --ground: 250 250 249;    /* the page */
+    --surface: 255 255 255;   /* lists, cards, fields */
+    --raised: 245 245 244;    /* hovers, badges */
+    --fg: 28 25 23;           /* text */
+    --muted: 87 83 78;        /* secondary text */
+    --line: 231 229 228;      /* borders, dividers, skeletons */
+    --accent: 15 118 110;     /* the one accent */
+    --on-accent: 255 255 255; /* text on the accent */
+    --danger: 185 28 28;
+    --on-danger: 255 255 255;
+    --focus: 13 148 136;      /* the keyboard focus ring */
+  }
+  .dark {
+    --ground: 12 10 9;
+    --surface: 28 25 23;
+    --raised: 41 37 36;
+    --fg: 245 245 244;
+    --muted: 168 162 158;
+    --line: 68 64 60;
+    --accent: 45 212 191;
+    --on-accent: 4 47 46;
+    --danger: 248 113 113;
+    --on-danger: 69 10 10;
+    --focus: 94 234 212;
+  }
+  /* el.hidden = true hides an element even when a class gives it a display
+     (flex, the components below). */
+  [hidden]:where(:not([hidden="until-found"])) {
+    display: none !important;
+  }
+}
+
+/* ── Components ───────────────────────────────────────────────────────────
+ * A small starting kit on the tokens. Use these rather than restyling the
+ * same thing by hand, add to them sparingly, and change a component here
+ * rather than one copy of it. Type: text-title, text-heading, text-body and
+ * text-small (tailwind.config.js), nothing in between.
+ */
+@layer components {
+  /* Buttons: one primary per screen, the rest secondary. At least 44 px
+     each way, so they are easy to tap. */
+  .btn-primary,
+  .btn-secondary {
+    @apply inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg px-4 text-body font-medium
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2
+      focus-visible:ring-offset-ground disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-accent text-on-accent hover:brightness-95;
+  }
+  .btn-secondary {
+    @apply border border-line bg-surface text-fg hover:bg-raised;
+  }
+
+  /* Text inputs, selects and textareas: <input class="field">, 44 px tall. */
+  .field {
+    @apply block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-body text-fg
+      placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-focus;
+  }
+
+  /* A grouped list: <ul class="list"> of <li class="list-row">. The usual
+     way to show several things; prefer it to a stack of cards. */
+  .list {
+    @apply divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface;
+  }
+  .list-row {
+    @apply flex min-h-11 items-center gap-3 px-4 py-3;
+  }
+
+  /* A card: one self-contained thing, usually something you tap. Most
+     screens need none. Never put a card inside a card or a .list. */
+  .card {
+    @apply rounded-xl border border-line bg-surface p-4;
+  }
+
+  /* The label above a section: sentence case, never uppercase or tracked. */
+  .section-label {
+    @apply mb-2 px-1 text-small font-medium text-muted;
+  }
+
+  /* The states of anything that loads data. Show exactly one at a time:
+     - loading: .skeleton shapes where the data will be, never a blank;
+     - empty, only when the load WORKED and found nothing: a title, one
+       sentence and the action that fills it;
+     - error, only when the load FAILED: what failed, what still works,
+       and a Retry button.
+     Never show the empty state while loading or for a failure. */
+  .skeleton {
+    @apply rounded-md bg-line motion-safe:animate-pulse;
+  }
+  .state-empty,
+  .state-error {
+    @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
+  }
+}
+`;
 
 // Resolved at module-load: which Homeroom platform domain do we
 // inject into scaffolded apps? Apps need to point users back to the
@@ -527,9 +699,10 @@ screen rather than building alongside it:
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
 HTML — that block is platform infrastructure, not template content. So is
-the bridge \`<script>\`.
+the bridge \`<script>\`. The design kit is not placeholder either: build the
+real app with it, and fill in "## Design" below.
 
-${THEME_CLAUDE_NOTE}
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
 
 `}If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
@@ -543,7 +716,7 @@ tables you've marked private), etc.
 
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
-
+${starter ? '' : `\n${DESIGN_CLAUDE_SECTION}\n`}
 ## App-specific conventions
 
 _(optional — e.g. "all currency values stored as integer cents, not
@@ -660,6 +833,12 @@ CMD ["node", "server.js"]
 // To build it locally (optional; the image build does this for you):
 //   npm ci --include=dev
 //   npm run build
+
+// A colour token: a CSS variable holding "R G B", set for the light and the
+// dark look in styles/tailwind-input.css. <alpha-value> keeps opacity
+// modifiers working (bg-accent/10).
+const token = (name) => \`rgb(var(--\${name}) / <alpha-value>)\`;
+
 module.exports = {
   // Every file that can contain a class name. Tailwind's extractor is a
   // regex over source text, so it finds class names written as whole
@@ -683,7 +862,35 @@ module.exports = {
   // the usernode-native UI kit and harmless without it.
   future: { hoverOnlyWhenSupported: true },
 
-  theme: { extend: {} },
+  // This app's design kit, added to Tailwind's defaults: the stock palettes
+  // and sizes still exist, but the screen uses these names. The colours are
+  // semantic, so each is right in both looks with no dark: variant. To
+  // re-theme the app, change the token VALUES in styles/tailwind-input.css
+  // and keep these names.
+  theme: {
+    extend: {
+      colors: {
+        ground: token('ground'), // the page
+        surface: token('surface'), // lists, cards, fields
+        raised: token('raised'), // hovers, badges
+        fg: token('fg'), // text
+        muted: token('muted'), // secondary text
+        line: token('line'), // borders, dividers, skeletons
+        accent: token('accent'), // the one accent: the primary action
+        'on-accent': token('on-accent'), // text on the accent
+        danger: token('danger'),
+        'on-danger': token('on-danger'),
+        focus: token('focus'), // the keyboard focus ring
+      },
+      // The type scale: four sizes, and nothing in between.
+      fontSize: {
+        small: ['0.875rem', { lineHeight: '1.25rem' }],
+        body: ['1rem', { lineHeight: '1.5rem' }],
+        heading: ['1.25rem', { lineHeight: '1.75rem', fontWeight: '600' }],
+        title: ['1.75rem', { lineHeight: '2.25rem', fontWeight: '700' }],
+      },
+    },
+  },
   plugins: [],
 };
 `,
@@ -703,7 +910,7 @@ module.exports = {
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-`,
+${DESIGN_KIT_CSS}`,
     },
     {
       path: '.dockerignore',
@@ -993,100 +1200,154 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
     })();
   </script>
 </head>
-<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen">
-  <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
+<body class="min-h-screen bg-ground text-fg">
+  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
+       (bg-ground, text-muted, bg-accent, ...) that are right in both looks,
+       and components (btn-primary, list, card, state-empty, ...). The real
+       app keeps the kit; CLAUDE.md's "## Design" says how. -->
+  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
 
     <!-- usernode-starter-notice@1 — starter-template messaging. When building
          the user's real app, replace this whole screen and delete this block,
          both sentinel comments included. -->
-    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/10 dark:from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
-      <span class="inline-block rounded-full bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
-      <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
-      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-700 dark:text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-700 dark:text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+    <section class="card flex flex-col items-start gap-3">
+      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
+      <h1 class="text-title">${escapeHtml(appName)}</h1>
+      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+      <p class="text-body text-muted">Tap the <strong class="font-semibold text-fg">Homeroom icon</strong> in the header and choose <strong class="font-semibold text-fg">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
 
     <section>
-      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
-      <div class="rounded-xl border border-zinc-200 bg-white divide-y divide-zinc-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:divide-zinc-800">
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+      <h2 class="section-label">What's already working</h2>
+      <ul class="list">
+        <li class="list-row items-start">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Sign-in</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
+            <p class="text-body font-medium">Sign-in</p>
+            <p class="text-small text-muted">You're signed in through Homeroom automatically, with no accounts to build.</p>
           </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+        </li>
+        <li class="list-row items-start">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Database</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">Your app has its own private database, ready to store things.</p>
+            <p class="text-body font-medium">Database</p>
+            <p class="text-small text-muted">Your app has its own private database, ready to store things.</p>
           </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+        </li>
+        <li class="list-row items-start">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Live API</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">The example below talks to a real server — try it.</p>
+            <p class="text-body font-medium">Live API</p>
+            <p class="text-small text-muted">The example below talks to a real server. Try it.</p>
           </div>
-        </div>
-      </div>
+        </li>
+      </ul>
     </section>
     <!-- /usernode-starter-notice@1 -->
 
-    <section class="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
-      <div class="w-full flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-500 dark:text-zinc-600">This example will be replaced</span>
+    <section class="flex flex-col items-center gap-5">
+      <div class="w-full px-1">
+        <h2 class="text-heading">Try the example</h2>
+        <p class="text-small text-muted">This example will be replaced</p>
       </div>
 
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
+      <button id="press-btn" class="btn-primary h-32 w-32 rounded-full text-title active:scale-95">Press!</button>
 
-      <div id="count" class="text-lg text-zinc-600 dark:text-zinc-400">0 total presses</div>
+      <p id="count" class="min-h-6 text-body text-muted"></p>
 
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
+      <div class="w-full">
+        <h3 class="section-label">Leaderboard</h3>
+        <!-- Anything that loads data shows exactly one of these at a time:
+             loading, the data, empty (it loaded, and there is nothing yet)
+             or error (it did not load). The script below switches them. -->
+        <div id="leaderboard-loading" role="status">
+          <span class="sr-only">Loading the leaderboard</span>
+          <div class="list">
+            <div class="list-row"><div class="skeleton h-4 w-1/2"></div></div>
+            <div class="list-row"><div class="skeleton h-4 w-1/3"></div></div>
+            <div class="list-row"><div class="skeleton h-4 w-2/5"></div></div>
+          </div>
+        </div>
+        <ol id="leaderboard" class="list" hidden></ol>
+        <div id="leaderboard-empty" class="state-empty" hidden>
+          <p class="text-heading">No presses yet</p>
+          <p class="text-body text-muted">Press the button to put your name on the board.</p>
+          <button id="leaderboard-press" class="btn-secondary">Press it</button>
+        </div>
+        <div id="leaderboard-error" class="state-error" hidden>
+          <svg class="h-6 w-6 text-danger" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>
+          <p class="text-heading">Couldn't load the leaderboard</p>
+          <p class="text-body text-muted">Pressing still works, and every press is saved.</p>
+          <button id="leaderboard-retry" class="btn-secondary">Retry</button>
+        </div>
       </div>
     </section>
 
-    <p class="text-center text-xs text-zinc-500 dark:text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
+    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
   </main>
 
   <script>
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token') || '';
     const headers = token ? { 'x-usernode-token': token } : {};
+    const count = document.getElementById('count');
 
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-500 dark:text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300' : 'text-zinc-600 dark:text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
+    // The leaderboard's states, one shown at a time. Empty only when the
+    // load worked and found nothing; a failure is the error state, never
+    // "No presses yet".
+    const views = {
+      loading: document.getElementById('leaderboard-loading'),
+      list: document.getElementById('leaderboard'),
+      empty: document.getElementById('leaderboard-empty'),
+      error: document.getElementById('leaderboard-error'),
+    };
+    function show(state) {
+      for (const [name, el] of Object.entries(views)) el.hidden = name !== state;
     }
 
-    document.getElementById('press-btn').addEventListener('click', async () => {
+    async function loadLeaderboard() {
+      let leaderboard;
+      try {
+        const res = await fetch('/api/leaderboard', { headers });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        ({ leaderboard } = await res.json());
+      } catch {
+        show('error');
+        return;
+      }
+      // People's names go in as text, never as HTML.
+      views.list.replaceChildren(...leaderboard.map((r, i) => {
+        const row = document.createElement('li');
+        row.className = 'list-row justify-between';
+        const name = document.createElement('span');
+        name.textContent = (i + 1) + '. ' + r.username;
+        const presses = document.createElement('span');
+        presses.className = 'tabular-nums text-muted';
+        presses.textContent = r.presses;
+        row.append(name, presses);
+        return row;
+      }));
+      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses, 10), 0);
+      count.textContent = total + (total === 1 ? ' press so far' : ' presses so far');
+      show(leaderboard.length ? 'list' : 'empty');
+    }
+
+    async function press() {
       try {
         const res = await fetch('/api/press', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headers },
         });
         if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
+        else if (res.status === 401) count.textContent = 'Sign in to press!';
       } catch {}
+    }
+
+    document.getElementById('press-btn').addEventListener('click', press);
+    document.getElementById('leaderboard-press').addEventListener('click', press);
+    document.getElementById('leaderboard-retry').addEventListener('click', () => {
+      show('loading');
+      loadLeaderboard();
     });
 
     loadLeaderboard();
@@ -1134,7 +1395,7 @@ describe the actual app once it has one.
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
 
-${THEME_CLAUDE_NOTE}
+${themeClaudeNote()}
 
 `;
 }
