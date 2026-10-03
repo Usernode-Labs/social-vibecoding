@@ -136,6 +136,7 @@ import { openFocusedApp } from './open-app';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
+import { fixChecksHeading, fixChecksMessage, fixChecksOffer, type FixChecksOffer } from './fix-checks';
 import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
@@ -836,6 +837,85 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
             {action === 'recheck' ? 'Re-running…' : 'Re-run checks'}
           </button>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * #3755: the change's checks failed, said in the conversation (./fix-checks.ts
+ * decides when): which ones, what each reported, and Fix it, which asks the
+ * Mayor for the fix in the person's name. See checks opens the same panel as
+ * the staging card's count.
+ */
+function FixChecksCard({ offer }: { offer: FixChecksOffer }) {
+  const [asked, setAsked] = useState(false);
+  return (
+    <FixChecksCardView
+      offer={offer}
+      asking={asked}
+      onFix={() => {
+        if (asked) return;
+        setAsked(true);
+        void sendAgentMessage(fixChecksMessage(offer));
+      }}
+      onSee={() => { window.AppView?.openSessionChecks?.(offer.changeId); }}
+    />
+  );
+}
+
+/** The card itself, from plain props (a test renders it without a store). */
+export function FixChecksCardView({ offer, asking = false, onFix, onSee }: {
+  offer: FixChecksOffer;
+  asking?: boolean;
+  onFix?: () => void;
+  onSee?: () => void;
+}) {
+  const more = offer.total - offer.checks.length;
+  return (
+    <section
+      className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+      aria-label="Failing checks"
+      data-agent-session-fix-checks={offer.changeId}
+    >
+      <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100" data-agent-session-fix-checks-heading>
+        {fixChecksHeading(offer)}
+      </h3>
+      <ul className="mt-2 flex flex-col gap-2">
+        {offer.checks.map((check, index) => (
+          <li key={`${index}:${check.name}`} className="min-w-0" data-agent-session-fix-check>
+            <p className="text-sm font-medium text-red-700 dark:text-red-300">{check.name}</p>
+            {check.reason ? <p className="mt-0.5 line-clamp-2 text-[13px] text-zinc-600 dark:text-zinc-400">{check.reason}</p> : null}
+          </li>
+        ))}
+      </ul>
+      {more > 0 ? <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400">And {more} more.</p> : null}
+      <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400">
+        Checks have to pass before the change can merge. The agent can read what failed and fix it.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          data-agent-session-fix-checks-go
+          layout="iconRow"
+          variant="pillAccent"
+          disabledStyle="dim"
+          disabled={asking}
+          onClick={onFix}
+        >
+          {asking ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+          Fix it
+        </Button>
+        <Button
+          type="button"
+          data-agent-session-fix-checks-see
+          variant="pillNeutral"
+          disabledStyle="dim"
+          ink="neutral"
+          onClick={onSee}
+        >
+          See checks
+        </Button>
       </div>
     </section>
   );
@@ -2157,6 +2237,14 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     [snapshot.messages, snapshot.actions, liveRun],
   );
   const runShown = items.some((item) => item.kind === 'run' && item.status === 'running');
+  // #3755: the active change's checks failed and nothing is working: the
+  // conversation says so at its end, and offers the fix (./fix-checks.ts).
+  const fixOffer = useMemo(() => (snapshot.phase === 'ready' ? fixChecksOffer({
+    change: snapshot.session?.activeChange,
+    busy: snapshot.running || !!snapshot.session?.busy,
+    messages: snapshot.messages,
+    unsent: snapshot.outbox,
+  }) : null), [snapshot.phase, snapshot.session, snapshot.running, snapshot.messages, snapshot.outbox]);
 
   // The run card's clock is the dev chat's (`nowStore`), whose heartbeat only
   // beats inside the dev chat's own transcript; beat it here while a run is
@@ -2225,7 +2313,8 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
           <OutboxRows />
           <LiveTurn runShown={runShown} />
-          <FollowOutput scroll={scroll} stick={stick} count={items.length} />
+          {fixOffer ? <FixChecksCard key={fixOffer.key} offer={fixOffer} /> : null}
+          <FollowOutput scroll={scroll} stick={stick} count={items.length + (fixOffer ? 1 : 0)} />
           {snapshot.session?.activeChange?.previewCapture ? <PreviewCapture change={snapshot.session.activeChange} /> : null}
           {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
           {snapshot.error ? (
