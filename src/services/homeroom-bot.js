@@ -914,20 +914,32 @@ async function listApps(pool) {
  * Everything that makes an issue "somebody's": a live human claim, a live
  * non-synthetic session that declared it, a human auto-solve run on it, or
  * an open proposal addressing it. One query per kind, per app.
+ *
+ * #3751: who, and since when, by issue number: each hold is { kind: 'claim'
+ * | 'session' | 'proposal', username, since }, so a mention of the bot on a
+ * held request can be told who holds it (homeroom-bot-holds.js).
  */
-async function busyIssueNumbers(pool, appId) {
-  const busy = new Set();
-  const add = (rows) => { for (const r of rows) if (r.n != null) busy.add(Number(r.n)); };
+async function issueHolders(pool, appId) {
+  const holders = new Map();
+  const add = (rows, kindOf) => {
+    for (const r of rows) {
+      if (r.n == null) continue;
+      const n = Number(r.n);
+      if (!holders.has(n)) holders.set(n, []);
+      holders.get(n).push({ kind: kindOf(r), username: r.username || null, since: r.since || null });
+    }
+  };
+  const sessionKind = (r) => (r.status === 'promoted' || r.status === 'merging' ? 'proposal' : 'session');
   const claims = await pool.query(
-    `SELECT ic.github_issue_number AS n
+    `SELECT ic.github_issue_number AS n, u.username, ic.claimed_at AS since
        FROM issue_claims ic JOIN users u ON u.id = ic.user_id
       WHERE ic.app_id = $1 AND u.is_synthetic IS NOT TRUE
         AND ic.claimed_at > NOW() - make_interval(days => $2)`,
     [appId, CLAIM_TTL_DAYS],
   );
-  add(claims.rows);
+  add(claims.rows, () => 'claim');
   const linked = await pool.query(
-    `SELECT UNNEST(cs.linked_issues) AS n
+    `SELECT u.username, cs.status, COALESCE(cs.last_activity_at, cs.created_at) AS since, UNNEST(cs.linked_issues) AS n
        FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND u.is_synthetic IS NOT TRUE
         AND cardinality(cs.linked_issues) > 0
@@ -936,25 +948,25 @@ async function busyIssueNumbers(pool, appId) {
                  AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
     [appId, PAUSED_SESSION_WINDOW_DAYS],
   );
-  add(linked.rows);
+  add(linked.rows, sessionKind);
   const headless = await pool.query(
-    `SELECT cs.headless_issue_number AS n
+    `SELECT cs.headless_issue_number AS n, u.username, COALESCE(cs.last_activity_at, cs.created_at) AS since
        FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND u.is_synthetic IS NOT TRUE
         AND cs.is_headless = TRUE AND cs.headless_status IN ('generating', 'ready')`,
     [appId],
   );
-  add(headless.rows);
+  add(headless.rows, () => 'session');
   const created = await pool.query(
-    `SELECT cs.created_from_issue_number AS n
+    `SELECT cs.created_from_issue_number AS n, u.username, cs.status, COALESCE(cs.last_activity_at, cs.created_at) AS since
        FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND u.is_synthetic IS NOT TRUE
         AND cs.created_from_issue_number IS NOT NULL
         AND cs.status IN ('active', 'promoted', 'merging')`,
     [appId],
   );
-  add(created.rows);
-  return busy;
+  add(created.rows, sessionKind);
+  return holders;
 }
 
 async function threadActivityByIssue(pool, appId) {
@@ -1039,7 +1051,7 @@ async function lastRunsByIssue(pool, appId) {
  * for, so a merged proposal brings back one held build rather than all of
  * them at once.
  */
-async function refreshApp(pool, app, { github = require('./github'), capRoom = null, bot = null } = {}) {
+async function refreshApp(pool, app, { github = require('./github'), capRoom = null, bot = null, ws = null, notifications = null } = {}) {
   const repo = parseRepo(app.repo_url);
   const out = { app: app.slug, queued: 0, removed: 0, skipped: null };
   if (!repo) { out.skipped = 'no_repo'; return out; }
@@ -1055,14 +1067,24 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   // as if the bot had seen it at the import, so it waits until something
   // happens on it, rather than the whole backlog being worked at once.
   // "Triage again" on the admin screen takes all of them.
-  const [busy, threads, lastRuns, proposalThreads, importedAt] = await Promise.all([
-    busyIssueNumbers(pool, app.id),
+  const [holders, threads, lastRuns, proposalThreads, importedAt] = await Promise.all([
+    issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
     capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
+  // #3751: on a live app, a mention of the bot on a request a person holds
+  // is answered (who holds it, and how to ask it to go ahead anyway), and a
+  // go-ahead lets the bot take the request up after all.
+  const busy = new Set(holders.keys());
+  if (capRoom && bot && busy.size) {
+    const cleared = await require('./homeroom-bot-holds').answerMentions(pool, {
+      app, repo, github, bot, holders, deps: { ws, notifications },
+    });
+    for (const n of cleared) busy.delete(n);
+  }
 
   const eligible = [];
   const held = [];
@@ -5298,7 +5320,7 @@ async function retriageQuestions(pool, { actorId = null } = {}) {
  * They go in at priority 0,
  * as Run now's do, because the refresh drops an unchanged issue's row
  * otherwise. What the regular refresh leaves out stays out: a closed issue,
- * and one somebody is working on (busyIssueNumbers). A row the bot is on
+ * and one somebody is working on (issueHolders). A row the bot is on
  * right now is left alone. Live apps only (the list, or a project somebody
  * on the DM list made), and not while paused.
  */
@@ -5325,10 +5347,15 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
   const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
   if (!issues.length && fetched?.note) return { ok: false, status: 503, error: 'GitHub is unavailable; try again shortly' };
 
-  const [busy, threads] = await Promise.all([
-    busyIssueNumbers(pool, app.id),
+  const [holders, threads] = await Promise.all([
+    issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
   ]);
+  // #3751: a request somebody asked the bot to build anyway is not held.
+  const busy = new Set(holders.keys());
+  if (busy.size) {
+    for (const n of await require('./homeroom-bot-holds').goneAhead(pool, app.id, holders)) busy.delete(n);
+  }
   const picked = [];
   const left = { busy: 0, closed: 0 };
   for (const issue of issues) {
@@ -5414,6 +5441,7 @@ module.exports = {
   runTriage,
   refreshQueue,
   refreshApp,
+  issueHolders,
   retriageApp,
   nextBatch,
   ensureBotUser,
