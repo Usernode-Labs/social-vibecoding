@@ -36,6 +36,15 @@
 // of it, and a turn whose model still cannot answer a question about their
 // work says what the records say instead of "I couldn't answer".
 //
+// #3733: "I couldn't answer just now" kept coming. A rate limit was never
+// asked again, a provider's refusal or a second failure ended the turn, and
+// a failure outside the model's requests sent nothing at all. Now every
+// request is asked again as retryPlan says, every failure is logged and
+// recorded with its code (homeroom_bot_dm_turns.failures), and a turn whose
+// model still gave no answer says, in order: that their answer was passed
+// on; what the records say; that the bot's key does not work; one plain
+// answer from the conversation alone (plainAnswer); and only then that.
+//
 // It can also read the platform the way the agent-session Mayor does: the
 // same connector read tools (get_request, get_discussion, list_requests,
 // get_proposal, get_platform_conventions, …) through the Mayor's in-process
@@ -66,12 +75,32 @@ const MAX_OUTPUT_TOKENS = 900;
 // reasoning model spends its thinking from the same allowance, and a long
 // answer about their work is where it ran out.
 const RETRY_OUTPUT_TOKENS = 1800;
-// A failed model request is tried once more on a fresh route (a new
-// provider session), for these failures, while the turn is this young.
+// #3733: a failed model request is asked again on a fresh route (a new
+// provider session), up to MAX_ATTEMPTS times in all, while the turn is
+// RETRY_WITHIN_MS young (retryPlan). These are the failures of a provider
+// that was busy or broke: #3725 left a rate limit (HTTP 429) out, so a busy
+// provider ended the turn at once, and asked each request again only once.
 const RETRYABLE_MODEL_ERRORS = new Set([
   'timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error', 'output_limit',
+  'rate_limited', 'response_too_large', 'empty_answer',
 ]);
+const MAX_ATTEMPTS = 3;
 const RETRY_WITHIN_MS = 90_000;
+// The wait before the second and the third attempt. A rate limit lifts in
+// seconds: asked again seconds later, the same message was answered.
+const RATE_LIMIT_WAITS_MS = [3_000, 8_000];
+const RETRY_WAITS_MS = [0, 1_500];
+// The bot's key: no retry and no other request gets past these. A 403 is
+// not one: OpenRouter also answers a flagged message with it.
+const KEY_ERRORS = new Set(['no_key', 'authentication', 'billing']);
+// When the rounds could not answer, one plain request (plainAnswer) while the
+// turn is this young, from this many of the conversation's newest messages.
+const PLAIN_WITHIN_MS = 150_000;
+const PLAIN_HISTORY = 8;
+// A round answers at most this many of the model's calls, so a turn always
+// fits the transport's limit on messages.
+const MAX_CALLS_PER_ROUND = 8;
+const MAX_FAILURES_RECORDED = 20;
 // A message that asks how their work is going. Read only when the model
 // could not answer, so the records are said instead.
 const PROGRESS_QUESTION = /\b(how far|progress|status|how('s| is| are) (it|things|that|my \w+) going|how long|(done|ready|finished|built|live) yet|eta|what are you (doing|working on|up to)|where are (you|we|things)|any (news|updates?)|still (working|building|setting))\b/i;
@@ -100,7 +129,20 @@ const NOT_NOW = 'Not now';
 
 const OFF_TEXT = 'I\'m switched off right now, so I\'m not working on anything. I\'ll pick up again when an admin turns me back on.';
 const BUSY_TEXT = 'You\'ve sent me a lot in the last hour. Give me a little while and ask again.';
+// The last resort, when nothing below could answer at all.
 const BROKEN_TEXT = 'I couldn\'t answer just now. Try again in a minute.';
+// #3733: the bot's key does not work. Asking again cannot help until an
+// admin fixes it, so this never says to try again.
+const KEY_TEXT = 'I can\'t reach my model right now because my access to it isn\'t working, so I couldn\'t read your '
+  + 'message. An admin needs to fix that first, so asking again won\'t help yet.';
+// #3733: what the one plain request (plainAnswer) is told.
+const PLAIN_NOTE = [
+  'THIS ANSWER',
+  'Your lookups could not be finished for this message, so this time your only tool is reply. Answer their newest',
+  'message from this conversation alone, in a sentence or two. Say nothing about the state of their work that this',
+  'conversation does not show. If answering needs a lookup or an action, say plainly that you could not do it just',
+  'now and that they can ask again in a minute.',
+].join('\n');
 
 function clip(value, max) {
   const text = String(value ?? '').trim();
@@ -338,6 +380,7 @@ const TOOLS = [
     },
   },
 ];
+const REPLY_TOOL = TOOLS.find((tool) => tool.function.name === 'reply');
 
 // ── What the bot is doing for one person ──────────────────────────────────
 
@@ -735,15 +778,23 @@ async function botKey(pool, config, botId) {
   })) || null;
 }
 
+/**
+ * A turn's row: what it cost and, without the words, how it went. `error` is
+ * why the model could not answer (null when it did); `failures` every
+ * request or step that failed on the way, recovered or not (#3733), as
+ * "where:code[:HTTP status]"; `fallback` what answered instead.
+ */
 async function recordTurn(pool, row) {
   try {
     await pool.query(
       `INSERT INTO homeroom_bot_dm_turns
-         (user_id, conversation_id, message_id, model, rounds, tools, input_tokens, output_tokens, cost_usd, error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (user_id, conversation_id, message_id, model, rounds, tools, input_tokens, output_tokens, cost_usd, error,
+          failures, fallback)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [row.userId, row.conversationId || null, row.messageId || null, row.model || null, row.rounds || 0,
         row.tools || [], row.inputTokens ?? null, row.outputTokens ?? null, row.costUsd ?? null,
-        row.error ? clip(row.error, 500) : null],
+        row.error ? clip(row.error, 500) : null,
+        (row.failures || []).slice(0, MAX_FAILURES_RECORDED).map((f) => clip(f, 80)), row.fallback || null],
     );
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not record a DM turn', { userId: row.userId, err: err.message });
@@ -819,6 +870,9 @@ async function runTool(pool, ctx, name, args) {
         if (!text) return { ok: false, error: 'Their message has no words to pass on.' };
         const posted = await dm.postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: ctx.messageId } });
         ctx.cards.push({ type: 'issue', appId: Number(target.app_id), issueNumber: Number(target.issue_number) });
+        // #3733: said even if the model fails after this, so they are never
+        // told to send it again.
+        if (posted.ok) ctx.posted = posted.line;
         return posted.ok
           ? { ok: true, posted: `on ${posted.line}'s public discussion`, next: 'You look at the request again next.' }
           : { ok: false, error: `Could not post it: ${posted.why}.` };
@@ -869,17 +923,188 @@ function parseArgs(raw) {
 }
 
 /**
- * Pure: how to ask a failed model round once more, or null when asking
- * again would not help. Every retry goes on a fresh route; one cut off at
- * its output limit gets more room, and a round that forced the reply tool
- * on a provider that refuses forced tool choices lets the model choose.
+ * Pure (#3733): a round's tool calls as they are answered and sent back on
+ * the next request: at most MAX_CALLS_PER_ROUND, each with an id no other
+ * call of the turn has and its arguments as a JSON object. A provider that
+ * left an id out, gave two calls one id or sent empty arguments for a tool
+ * that takes none got them back unchanged, and the next request, which
+ * carried them, could be refused. `seen` holds the turn's ids so far.
  */
-function retryPlan(err, { forced = false, elapsedMs = 0 } = {}) {
-  if (elapsedMs > RETRY_WITHIN_MS) return null;
+function normalizeCalls(calls, round, seen) {
+  const out = [];
+  for (const call of (Array.isArray(calls) ? calls : []).slice(0, MAX_CALLS_PER_ROUND)) {
+    const name = call?.function?.name;
+    if (typeof name !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue;
+    let id = typeof call.id === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(call.id) ? call.id : '';
+    // Nine letters and digits: the strictest form a provider asks for.
+    if (!id || seen.has(id)) id = `hrbot${round}${out.length}`.padEnd(9, '0');
+    seen.add(id);
+    const args = parseArgs(call.function.arguments);
+    out.push({
+      id, type: 'function',
+      function: { name, arguments: JSON.stringify(args && typeof args === 'object' && !Array.isArray(args) ? args : {}) },
+    });
+  }
+  return out;
+}
+
+/** A failure's code as it is recorded and logged: a short word, never its message. */
+function codeOf(err) {
+  const code = typeof err?.code === 'string' ? err.code : '';
+  return /^[A-Za-z0-9_]{1,40}$/.test(code) ? code : 'error';
+}
+
+/**
+ * Pure: how to ask a failed model request again, or null when asking again
+ * would not help. `attempt` is the attempt that failed. Every retry goes on
+ * a fresh route, after `waitMs`:
+ *   - a provider that was busy or broke is asked again, after a few seconds
+ *     for a rate limit;
+ *   - one cut off at its output limit gets more room;
+ *   - a provider's refusal (a 4xx other than the key's) goes to another
+ *     provider, and a round that forced the reply tool on a provider that
+ *     refuses forced tool choices lets the model choose;
+ *   - the key's own failures, and a request this module built wrong (no
+ *     HTTP status: it was never sent), are not asked again.
+ */
+function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1 } = {}) {
+  if (attempt >= MAX_ATTEMPTS) return null;
   const code = err?.code;
-  if (code === 'output_limit') return { maxOutputTokens: RETRY_OUTPUT_TOKENS };
-  if (forced && code === 'invalid_request' && err?.status) return { toolChoice: 'auto' };
-  return RETRYABLE_MODEL_ERRORS.has(code) ? {} : null;
+  let plan = null;
+  if (code === 'output_limit') plan = { maxOutputTokens: RETRY_OUTPUT_TOKENS };
+  else if (code === 'invalid_request' && err?.status) plan = forced ? { toolChoice: 'auto' } : {};
+  else if (code === 'rate_limited') plan = { waitMs: RATE_LIMIT_WAITS_MS[attempt - 1] };
+  else if (RETRYABLE_MODEL_ERRORS.has(code)) plan = { waitMs: RETRY_WAITS_MS[attempt - 1] };
+  if (!plan || elapsedMs + (plan.waitMs || 0) > RETRY_WITHIN_MS) return null;
+  return plan;
+}
+
+/**
+ * One model request of a turn, asked again as retryPlan says. Every failure
+ * is logged with its code, HTTP status, provider and generation, and kept in
+ * the turn's `failures`, recovered or not, so the next "couldn't answer" can
+ * be read rather than guessed (#3733). An answer with no words and no calls
+ * is a failure too ('empty_answer'). Resolves the response; throws the last
+ * failure.
+ */
+async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, ...rest }) {
+  let overrides = {};
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const res = await t.chat({
+        apiKey: t.apiKey,
+        baseUrl: t.config.openrouterApiBase,
+        origin: t.config.openrouterOrigin,
+        model: t.model,
+        reasoning: 'low',
+        messages,
+        tools,
+        toolChoice,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        // OpenRouter's session pins a provider. It is this turn's, not the
+        // person's, and a retry moves to a fresh one.
+        sessionId: `hrbot-dm-${t.user.id}-${t.message.id}${t.route > 1 ? `-r${t.route}` : ''}`,
+        ...rest,
+        ...overrides,
+      });
+      t.usage.inputTokens += res?.usage?.inputTokens || 0;
+      t.usage.outputTokens += res?.usage?.outputTokens || 0;
+      t.usage.costUsd += res?.usage?.costUsd || 0;
+      const calls = Array.isArray(res?.toolCalls) ? res.toolCalls : [];
+      if (!calls.length && !String(res?.content || '').trim()) {
+        throw Object.assign(new Error('The model answered with nothing'), { code: 'empty_answer' });
+      }
+      return res;
+    } catch (err) {
+      const code = codeOf(err);
+      t.failures.push(`${where}:${code}${err?.status ? `:${err.status}` : ''}`);
+      log.warn('homeroom-bot-mayor', 'A DM model request failed', {
+        userId: t.user.id, messageId: t.message.id, where, attempt, code, status: err?.status ?? null,
+        provider: err?.provider ?? null, generationId: err?.generationId ?? null, err: clip(err?.message, 200),
+      });
+      let plan = null;
+      if (attempt < attempts && err?.status === 400 && hasPictures(messages)) {
+        // A picture the provider cannot read fails the whole request: the
+        // next attempt names every picture instead.
+        withoutPictures(messages);
+        plan = {};
+      } else if (attempt < attempts) {
+        const forced = typeof (overrides.toolChoice ?? toolChoice) === 'object';
+        plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt });
+      }
+      if (!plan) throw err;
+      const { waitMs = 0, ...change } = plan;
+      overrides = { ...overrides, ...change };
+      t.route += 1;
+      if (waitMs) await t.sleep(waitMs);
+    }
+  }
+}
+
+// A history message as plainAnswer sends it: its words, never its pictures.
+function plainMessage(m) {
+  if (!Array.isArray(m.content)) return { role: m.role, content: m.content };
+  const text = m.content.filter((part) => part?.type === 'text').map((part) => part.text).join('\n');
+  const pictures = m.content.some((part) => part?.type === 'image_url');
+  return {
+    role: m.role,
+    content: [text, pictures ? '[Homeroom: the pictures are not shown this time.]' : ''].filter(Boolean).join('\n') || '(attachment)',
+  };
+}
+
+/**
+ * #3733: when a turn's rounds could not answer, one more request without
+ * what may have broken them: the conversation's newest messages as text, no
+ * lookups and their results, the reply tool alone, more room, a fresh
+ * route. A request the provider refused, a cut-off, a model that kept
+ * looking things up, or a failure past every retry still gets an answer to
+ * a message that needs no lookup. Resolves its words, or null.
+ */
+async function plainAnswer(t, history) {
+  if (!t.apiKey || Date.now() - t.startedMs > PLAIN_WITHIN_MS) return null;
+  t.route += 1;
+  try {
+    const res = await askModel(t, {
+      where: 'plain',
+      attempts: 1,
+      messages: [
+        { role: 'system', content: `${systemPrompt({ username: t.user.username, perPerson: t.settings.perPerson, platform: false })}\n\n${PLAIN_NOTE}` },
+        ...history.slice(-PLAIN_HISTORY).map(plainMessage),
+      ],
+      tools: [REPLY_TOOL],
+      toolChoice: 'auto',
+      maxOutputTokens: RETRY_OUTPUT_TOKENS,
+      parallelToolCalls: null,
+    });
+    const call = (res.toolCalls || []).find((c) => c?.function?.name === 'reply');
+    return clip(call ? parseArgs(call.function.arguments).text : res.content, MAX_REPLY_CHARS) || null;
+  } catch {
+    // Logged and recorded by askModel.
+    return null;
+  }
+}
+
+/**
+ * What the person is told when the model gave no answer, in order: that
+ * their answer was passed on, when it was; what the records say, for a
+ * question about their work; that the key does not work, when no request
+ * can get past it; one plain answer; and only then BROKEN_TEXT.
+ */
+async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
+  const { ctx } = t;
+  if (ctx.posted) {
+    return {
+      fallback: 'posted',
+      text: `I posted your answer on ${ctx.posted}'s public discussion, and I'll look at the request again next.`,
+      cards: ctx.cards.slice(0, MAX_CARDS),
+    };
+  }
+  const fromRecords = await recordsAnswer(pool, ctx);
+  if (fromRecords) return { fallback: 'records', ...fromRecords };
+  if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [] };
+  const plain = await plainAnswer(t, history);
+  if (plain) return { fallback: 'plain', text: plain, cards: [] };
+  return { fallback: 'broken', text: BROKEN_TEXT, cards: [] };
 }
 
 /**
@@ -920,147 +1145,194 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
   const say = (content, extra = {}) => dm.sendDm(pool, {
     bot, userId: user.id, content, idempotencyKey: `hrbot-mayor-${message.id}`, replyToId: message.id, ...extra,
   });
+  const state = { recorded: false };
+  try {
+    return await answer(pool, config, { bot, user, settings, conversationId, message, deps, say, state });
+  } catch (err) {
+    // #3733: a failure outside the model's requests (a database read, the
+    // cards, the offer) ended the turn with no answer at all, and nothing
+    // recorded it. It is recorded and said, with its code.
+    const code = codeOf(err);
+    log.warn('homeroom-bot-mayor', 'DM turn failed outside the model', {
+      userId: user.id, messageId: message.id, code, err: clip(err?.message, 300),
+    });
+    if (!state.recorded) {
+      const t = state.turn;
+      await recordTurn(pool, {
+        userId: user.id, conversationId, messageId: message.id, model: t?.model, rounds: state.rounds, tools: state.tools,
+        inputTokens: t?.usage.inputTokens, outputTokens: t?.usage.outputTokens, costUsd: t?.usage.costUsd,
+        error: `turn_failed:${code}`, failures: t?.failures, fallback: 'broken',
+      });
+    }
+    return say(BROKEN_TEXT).catch((sendErr) => {
+      log.warn('homeroom-bot-mayor', 'Could not answer a DM at all', { userId: user.id, err: sendErr.message });
+      return null;
+    });
+  }
+}
+
+async function answer(pool, config, { bot, user, settings, conversationId, message, deps, say, state }) {
+  const dm = dmModule(deps);
   if (settings.mode === 'off') return say(OFF_TEXT);
   if (await turnsLastHour(pool, user.id) >= MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
   if (await dm.overWeeklyAllowance(pool, settings, user.id)) {
     return say(`You've used this week's allowance for my work on your requests (${dollars(settings.userWeeklyCents)}). I'll be back on them next week.`);
   }
-  const model = config.openrouterDefaultCodexModel || DEFAULT_MODEL;
-  const apiKey = deps.apiKey !== undefined ? deps.apiKey : await botKey(pool, config, bot.id).catch(() => null);
-  if (!apiKey) {
-    log.warn('homeroom-bot-mayor', 'No key to answer a DM with', { userId: user.id });
-    await recordTurn(pool, { userId: user.id, conversationId, messageId: message.id, model, error: 'no_key' });
-    return say(BROKEN_TEXT);
-  }
-  const chat = deps.chat || require('./global-chat/openrouter').streamChat;
-  // Pictures (theirs, and a request's screenshots) only for a model that can
-  // look at them, and no more in one turn than the shim's allowance.
-  const imageInput = typeof deps.seesImages === 'boolean'
-    ? deps.seesImages
-    : await modelSeesImages(pool, config, apiKey, model);
-  const takeImages = require('./mayor/mcp-shim').turnImageBudget();
-  // The agent-session Mayor's read tools, on a read-only grant for this
-  // person and this turn. Without them the turn still runs on its own tools.
-  let platform = null;
-  try {
-    const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
-    platform = await open({
-      pool, config, userId: user.id, agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,
-      rateSubject: `hrbot-dm-${user.id}`,
-      imageInput,
-    });
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Platform tools unavailable for a DM turn', { userId: user.id, err: err.message });
-  }
-  const platformTools = platform
-    ? require('./openrouter-mayor').toChatTools(
-      (platform.modelTools || []).filter((tool) => PLATFORM_TOOLS.includes(tool.name)),
-    )
-    : [];
-  const tools = [...TOOLS, ...platformTools];
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false,
+    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
   };
-  const messages = [
-    { role: 'system', content: systemPrompt({ username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0 }) },
-    ...await historyMessages(pool, { conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages }),
-  ];
-  const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  // What one turn's model requests share (askModel). The route is OpenRouter's
+  // session, which pins a provider: it is this turn's, not the person's, so
+  // one that failed them is not the one every later turn of theirs is sent
+  // to. A retry moves to a fresh one, and the turn stays there.
+  const t = {
+    config, user, settings, message, ctx,
+    model: config.openrouterDefaultCodexModel || DEFAULT_MODEL,
+    chat: deps.chat || require('./global-chat/openrouter').streamChat,
+    sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    apiKey: deps.apiKey,
+    route: 1,
+    startedMs: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    failures: [],
+  };
   const toolsUsed = [];
+  // What a failure after this point still records (turn).
+  state.turn = t;
+  state.tools = toolsUsed;
   let rounds = 0;
   let finalText = '';
   let error = null;
-  // OpenRouter's session pins a provider. It is this turn's, not the
-  // person's: one that failed them is not the one every later turn of theirs
-  // is sent to. A retry moves to a fresh one, and the turn stays there.
-  let route = 1;
-  const startedMs = Date.now();
-  try {
-    while (rounds < MAX_ROUNDS && !ctx.reply) {
-      rounds += 1;
-      const last = rounds === MAX_ROUNDS;
-      const ask = (overrides = {}) => chat({
-        apiKey,
-        baseUrl: config.openrouterApiBase,
-        origin: config.openrouterOrigin,
-        model,
-        reasoning: 'low',
-        messages,
-        tools,
-        toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        sessionId: `hrbot-dm-${user.id}-${message.id}${route > 1 ? `-r${route}` : ''}`,
-        ...overrides,
-      });
-      let res;
-      try {
-        res = await ask();
-      } catch (err) {
-        if (err?.status === 400 && hasPictures(messages)) {
-          // A picture the provider cannot read fails the whole request. Once,
-          // send the round again with every picture named instead.
-          withoutPictures(messages);
-          res = await ask();
-        } else {
-          // #3685: one failed request used to end the turn with "I couldn't
-          // answer just now", whatever the round had already read.
-          const plan = retryPlan(err, { forced: last, elapsedMs: Date.now() - startedMs });
-          if (!plan) throw err;
-          route += 1;
-          log.info('homeroom-bot-mayor', 'Asking the DM model again', { userId: user.id, round: rounds, code: err?.code });
-          res = await ask(plan);
-        }
-      }
-      usage.inputTokens += res.usage?.inputTokens || 0;
-      usage.outputTokens += res.usage?.outputTokens || 0;
-      usage.costUsd += res.usage?.costUsd || 0;
-      const calls = Array.isArray(res.toolCalls) ? res.toolCalls : [];
-      if (!calls.length) { finalText = res.content || ''; break; }
-      messages.push(res.assistantMessage || { role: 'assistant', content: res.content || null, tool_calls: calls });
-      const pictures = [];
-      for (const call of calls) {
-        const name = call?.function?.name;
-        toolsUsed.push(String(name || 'unknown').slice(0, 40));
-        const args = parseArgs(call?.function?.arguments);
-        const result = platform && PLATFORM_TOOLS.includes(name)
-          ? await platformCall(platform, name, args, pictures)
-          : await runTool(pool, ctx, name, args);
-        messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
-      }
-      const shown = picturesMessage(takeImages({ images: pictures }));
-      if (shown) messages.push(shown);
+  let errorStatus = null;
+  let history = [{ role: 'user', content: ctx.userText || '(attachment)' }];
+  if (t.apiKey === undefined) {
+    try {
+      t.apiKey = await botKey(pool, config, bot.id);
+    } catch (err) {
+      // A read that failed is not a missing key, and is not said as one.
+      t.apiKey = null;
+      error = 'key_unreadable';
+      t.failures.push(`context:key:${codeOf(err)}`);
+      log.warn('homeroom-bot-mayor', 'Could not read the key to answer a DM with', { userId: user.id, code: codeOf(err) });
     }
-  } catch (err) {
-    error = err?.code || err?.message || 'model_failed';
-    log.warn('homeroom-bot-mayor', 'DM turn failed', { userId: user.id, err: err?.message, code: err?.code });
-  } finally {
-    await platform?.close?.().catch(() => {});
+  }
+  if (!t.apiKey) {
+    error ||= 'no_key';
+    if (error === 'no_key') log.warn('homeroom-bot-mayor', 'No key to answer a DM with', { userId: user.id });
+  } else {
+    // Pictures (theirs, and a request's screenshots) only for a model that can
+    // look at them, and no more in one turn than the shim's allowance.
+    const imageInput = typeof deps.seesImages === 'boolean'
+      ? deps.seesImages
+      : await modelSeesImages(pool, config, t.apiKey, t.model);
+    const takeImages = require('./mayor/mcp-shim').turnImageBudget();
+    // The agent-session Mayor's read tools, on a read-only grant for this
+    // person and this turn. Without them the turn still runs on its own tools.
+    let platform = null;
+    try {
+      const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
+      platform = await open({
+        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,
+        rateSubject: `hrbot-dm-${user.id}`,
+        imageInput,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Platform tools unavailable for a DM turn', { userId: user.id, err: err.message });
+    }
+    try {
+      const platformTools = platform
+        ? require('./openrouter-mayor').toChatTools(
+          (platform.modelTools || []).filter((tool) => PLATFORM_TOOLS.includes(tool.name)),
+        )
+        : [];
+      const tools = [...TOOLS, ...platformTools];
+      // #3733: the conversation could not be read: their message alone is
+      // still answered.
+      try {
+        history = await historyMessages(pool, { conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages });
+      } catch (err) {
+        t.failures.push(`context:history:${codeOf(err)}`);
+        log.warn('homeroom-bot-mayor', 'Could not read a DM\'s history; answering its newest message alone', {
+          userId: user.id, code: codeOf(err), err: clip(err?.message, 200),
+        });
+      }
+      const messages = [
+        { role: 'system', content: systemPrompt({ username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0 }) },
+        ...history,
+      ];
+      const ids = new Set();
+      while (rounds < MAX_ROUNDS && !ctx.reply) {
+        rounds += 1;
+        state.rounds = rounds;
+        const last = rounds === MAX_ROUNDS;
+        // #3685: one failed request used to end the turn with "I couldn't
+        // answer just now", whatever the round had already read.
+        const res = await askModel(t, {
+          messages, tools, where: `r${rounds}`,
+          toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
+        });
+        const calls = normalizeCalls(res.toolCalls, rounds, ids);
+        if (!calls.length) { finalText = res.content || ''; break; }
+        messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
+        const pictures = [];
+        for (const call of calls) {
+          const name = call.function.name;
+          toolsUsed.push(name.slice(0, 40));
+          const args = parseArgs(call.function.arguments);
+          const result = platform && PLATFORM_TOOLS.includes(name)
+            ? await platformCall(platform, name, args, pictures)
+            : await runTool(pool, ctx, name, args);
+          messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
+        }
+        const shown = picturesMessage(takeImages({ images: pictures }));
+        if (shown) messages.push(shown);
+      }
+    } catch (err) {
+      error = codeOf(err);
+      errorStatus = err?.status ?? null;
+      log.warn('homeroom-bot-mayor', 'DM turn failed', {
+        userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
+      });
+    } finally {
+      try { await platform?.close?.(); } catch {}
+    }
+  }
+  let text = clip(ctx.reply?.text || finalText, MAX_REPLY_CHARS);
+  let cards = [];
+  let fallback = null;
+  if (!text && !ctx.offer) {
+    // The model gave no answer. Why is recorded; what can still be said is.
+    if (!error) error = rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    ({ text, cards, fallback } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
   }
   await recordTurn(pool, {
-    userId: user.id, conversationId, messageId: message.id, model, rounds, tools: toolsUsed,
-    inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd: usage.costUsd, error,
+    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools: toolsUsed,
+    inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error,
+    failures: t.failures, fallback,
   });
+  state.recorded = true;
   // The bot's own weekly cap counts it too, as its other turns do.
-  if (usage.costUsd > 0) {
+  if (t.usage.costUsd > 0) {
     try {
       if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-        await require('./limits').recordSpend(pool, bot.id, Math.round(usage.costUsd * 1e6) / 1e4, { byok: false });
+        await require('./limits').recordSpend(pool, bot.id, Math.round(t.usage.costUsd * 1e6) / 1e4, { byok: false });
       }
     } catch (err) {
       log.warn('homeroom-bot-mayor', 'Could not record a DM turn\'s spend', { err: err.message });
     }
   }
-  const text = clip(ctx.reply?.text || finalText, MAX_REPLY_CHARS);
-  if (!text && !ctx.offer) {
-    // A question about their work is answered from the records even when
-    // the model could not put an answer together.
-    const fromRecords = await recordsAnswer(pool, ctx);
-    if (fromRecords) return say(fromRecords.text, { objects: fromRecords.cards, metadata: { kind: 'chat' } });
-    return say(error ? BROKEN_TEXT : 'I\'m not sure what to say to that. Ask me what I\'m working on for you, or what you\'d like built.');
-  }
+  if (fallback === 'key' || fallback === 'broken') return say(text);
+  if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
   if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
-  const cards = [...ctx.cards, ...await resolveCards(pool, user, ctx.reply?.cards)];
+  // A card that cannot be read never costs the answer.
+  let replyCards = [];
+  try {
+    replyCards = await resolveCards(pool, user, ctx.reply?.cards);
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read a DM answer\'s cards; sending it without them', { userId: user.id, err: err.message });
+  }
+  cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   return say(text, { objects: unique, metadata: { kind: 'chat' } });
 }
@@ -1410,6 +1682,8 @@ module.exports = {
   OFF_TEXT,
   BUSY_TEXT,
   BROKEN_TEXT,
+  KEY_TEXT,
+  PLAIN_NOTE,
   TOOLS,
   PLATFORM_TOOLS,
   platformRules,
@@ -1418,9 +1692,13 @@ module.exports = {
   systemPrompt,
   RETRY_OUTPUT_TOKENS,
   RETRYABLE_MODEL_ERRORS,
+  MAX_ATTEMPTS,
+  MAX_CALLS_PER_ROUND,
+  RATE_LIMIT_WAITS_MS,
   PROGRESS_QUESTION,
   statusOf,
   retryPlan,
+  normalizeCalls,
   myWork,
   requestDetail,
   myProjects,

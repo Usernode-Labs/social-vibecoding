@@ -189,7 +189,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const message = await say(text, extra.input || {});
     return mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: { chat, apiKey: 'sk-test', openMcp, ...(extra.deps || {}) },
+      deps: { chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, ...(extra.deps || {}) },
     });
   }
   async function read(sent) {
@@ -771,10 +771,208 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const down = async () => { throw Object.assign(new Error('no key'), { code: 'authentication' }); };
     const update = await read(await turn('any update?', down, { deps: { creationPhase: settingUp } }));
     assert.match(update.content, /^I couldn't put a full answer together just now\. Here is where things stand/);
-    // Anything else still says it could not answer: the records are not an
-    // answer to every question.
+    // Anything else is not answered from the records, which are not an
+    // answer to every question. #3733: and a key that does not work is said
+    // as that, never as "try again in a minute", which cannot help.
     const other = await read(await turn('can you make the buttons bigger?', down));
-    assert.equal(other.content, mayor.BROKEN_TEXT);
+    assert.equal(other.content, mayor.KEY_TEXT);
+    const { rows: [keyRow] } = await pool.query('SELECT error, failures, fallback FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
+    assert.deepEqual(keyRow, { error: 'authentication', failures: ['r1:authentication'], fallback: 'key' },
+      'asked once: no retry gets past the key');
+  });
+
+  // #3733, the report: in the bot's DM, a question about a project's lessons
+  // got "I couldn't answer just now. Try again in a minute."; sent again
+  // seconds later, it was answered. Each test below is a way a turn ended
+  // there, and must now end with an answer.
+  const EVAN = 'Shouldn\'t we just always do the number in the lesson? If you want fewer you can just do a different lesson?';
+  const lastTurn = async () => (await pool.query(
+    'SELECT rounds, error, failures, fallback FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1',
+  )).rows[0];
+  const replyWith = (text) => [['reply', { text }]];
+  const { rows: [{ id: turnsBefore }] } = await pool.query('SELECT COALESCE(MAX(id), 0) AS id FROM homeroom_bot_dm_turns');
+
+  await t.test('#3733: a busy provider (HTTP 429) is asked again after a wait, and the question is answered', async () => {
+    const waits = [];
+    const sessions = [];
+    const busy = async (req) => {
+      sessions.push(req.sessionId);
+      if (sessions.length < 3) {
+        throw Object.assign(new Error('Global Chat model request failed (HTTP 429)'), { code: 'rate_limited', status: 429 });
+      }
+      return scripted([replyWith('Yes: one number per lesson. Want me to file that as a request?')])(req);
+    };
+    const sent = await turn(EVAN, busy, { deps: { sleep: async (ms) => { waits.push(ms); } } });
+    const msg = await read(sent);
+    assert.equal(msg.content, 'Yes: one number per lesson. Want me to file that as a request?');
+    assert.equal(msg.reply.content, EVAN, 'quoting what it answers');
+    assert.deepEqual(waits, mayor.RATE_LIMIT_WAITS_MS, 'a few seconds, then a few more');
+    assert.deepEqual(sessions.map((id) => id.replace(/^hrbot-dm-\d+-\d+/, '')), ['', '-r2', '-r3'], 'each on a fresh route');
+    assert.deepEqual(await lastTurn(), {
+      rounds: 1, error: null, failures: ['r1:rate_limited:429', 'r1:rate_limited:429'], fallback: null,
+    }, 'answered, and what it got past is on record');
+  });
+
+  await t.test('#3733: calls a provider sent without an id or arguments go back well formed', async () => {
+    // A provider as strict as a chat template: a request whose calls have no
+    // id, share one, carry arguments that are not JSON, or answer a call that
+    // is not there is refused.
+    const strict = (steps) => {
+      let n = 0;
+      return async (req) => {
+        const calls = req.messages.flatMap((m) => m.tool_calls || []);
+        const ids = calls.map((c) => c.id);
+        const json = (text) => { try { JSON.parse(text); return true; } catch { return false; } };
+        if (ids.some((id) => !id) || new Set(ids).size !== ids.length || !calls.every((c) => json(c.function.arguments))
+            || req.messages.some((m) => m.role === 'tool' && !ids.includes(m.tool_call_id))) {
+          throw Object.assign(new Error('Global Chat model request failed (HTTP 400)'), { code: 'invalid_request', status: 400 });
+        }
+        const step = steps[Math.min(n, steps.length - 1)];
+        n += 1;
+        return { content: '', toolCalls: step, usage: {} };
+      };
+    };
+    const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: args } });
+    const sent = await turn('which of my projects can I file on?', strict([
+      [call('', 'my_projects', '')],
+      [call('', 'my_work', ''), call('', 'progress', '')],
+      [call('call_0', 'reply', JSON.stringify({ text: 'Seed swap and Note board.' }))],
+    ]));
+    assert.equal((await read(sent)).content, 'Seed swap and Note board.');
+    assert.deepEqual(await lastTurn(), { rounds: 3, error: null, failures: [], fallback: null }, 'no request was refused');
+  });
+
+  await t.test('#3733: a request the providers refuse still gets a plain answer from the conversation', async () => {
+    const seen = [];
+    const refusing = async (req) => {
+      seen.push(req);
+      if (req.tools.length > 1) {
+        throw Object.assign(new Error('Global Chat model request failed (HTTP 400)'), { code: 'invalid_request', status: 400 });
+      }
+      return scripted([replyWith('Good point: one number per lesson is simpler. I could not check the proposal just now.')])(req);
+    };
+    const sent = await turn(EVAN, refusing);
+    const msg = await read(sent);
+    assert.equal(msg.content, 'Good point: one number per lesson is simpler. I could not check the proposal just now.');
+    assert.notEqual(msg.content, mayor.BROKEN_TEXT);
+    const plain = seen.at(-1);
+    assert.deepEqual(plain.tools.map((tool) => tool.function.name), ['reply'], 'no lookups this time');
+    assert.equal(plain.toolChoice, 'auto');
+    assert.equal(plain.maxOutputTokens, mayor.RETRY_OUTPUT_TOKENS);
+    assert.match(plain.messages[0].content, /\n\nTHIS ANSWER\nYour lookups could not be finished for this message/);
+    assert.ok(plain.messages.length <= 9, 'the newest messages only');
+    assert.deepEqual(plain.messages.at(-1), { role: 'user', content: EVAN }, 'her message last, as words');
+    assert.equal(new Set(seen.map((r) => r.sessionId)).size, seen.length, 'every request on its own route');
+    assert.deepEqual(await lastTurn(), {
+      rounds: 1, error: 'invalid_request', fallback: 'plain',
+      failures: ['r1:invalid_request:400', 'r1:invalid_request:400', 'r1:invalid_request:400'],
+    });
+  });
+
+  await t.test('#3733: an admin can read why a DM failed, with its codes, and what answered instead', async () => {
+    const summary = await homeroomBot.dmChatSummary(pool);
+    assert.ok(summary.recovered >= 3, 'turns that answered only after a failed request was asked again');
+    assert.ok(summary.failed >= 3);
+    const plain = summary.recentFailures.find((f) => f.fallback === 'plain');
+    assert.deepEqual(
+      { username: plain.username, error: plain.error, failures: plain.failures, rounds: plain.rounds },
+      { username: ada.username, error: 'invalid_request', failures: ['r1:invalid_request:400', 'r1:invalid_request:400', 'r1:invalid_request:400'], rounds: 1 },
+    );
+    assert.ok(summary.recentFailures.some((f) => f.error === null && f.failures.includes('r1:rate_limited:429')),
+      'a recovered turn is listed with what it got past');
+    assert.ok(!JSON.stringify(summary).includes('lesson'), 'never what was said');
+    // These turns are not her hourly allowance for the tests below.
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id > $1', [turnsBefore]);
+  });
+
+  await t.test('#3733: an answer passed on before the model failed is said, never "try again"', async () => {
+    threadPosts.length = 0;
+    await dm.relayIssuePost({
+      pool, app: notes, issueNumber: 6, kind: 'question', postId: 37331, bot,
+      dm: { question: 'Share by link or by email?', answers: ['Link', 'Email'] },
+    });
+    let calls = 0;
+    const failsAfter = async (req) => {
+      calls += 1;
+      if (calls === 1) return scripted([[['answer_question', { project: 'note-board', number: 6 }]]])(req);
+      throw Object.assign(new Error('Global Chat model request failed (HTTP 503)'), { code: 'provider_unavailable', status: 503 });
+    };
+    const sent = await turn('by link please', failsAfter);
+    const msg = await read(sent);
+    assert.equal(threadPosts.length, 1, 'posted once; "try again" would have posted it twice');
+    assert.equal(msg.content, 'I posted your answer on Note board request #6\'s public discussion, and I\'ll look at the request again next.');
+    const { rows: objects } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId],
+    );
+    assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), ['github_issue:6']);
+    const row = await lastTurn();
+    assert.equal(row.error, 'provider_unavailable');
+    assert.equal(row.fallback, 'posted');
+  });
+
+  await t.test('#3733: an answer with nothing in it is asked again', async () => {
+    let n = 0;
+    const blank = async (req) => {
+      n += 1;
+      if (n === 1) return { content: '  ', toolCalls: [], usage: { inputTokens: 10, outputTokens: 0, costUsd: 0 } };
+      return scripted([replyWith('One number per lesson it is.')])(req);
+    };
+    const sent = await turn(EVAN, blank);
+    assert.equal((await read(sent)).content, 'One number per lesson it is.', 'not "I\'m not sure what to say to that"');
+    assert.deepEqual(await lastTurn(), { rounds: 1, error: null, failures: ['r1:empty_answer'], fallback: null });
+  });
+
+  await t.test('#3733: a database read that fails is answered around, and a turn that cannot go on still says so', async () => {
+    const failing = (pattern) => new Proxy(pool, {
+      get(target, key) {
+        if (key === 'query') {
+          return (sql, ...rest) => (typeof sql === 'string' && pattern.test(sql)
+            ? Promise.reject(Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }))
+            : target.query(sql, ...rest));
+        }
+        const value = target[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const run = (db, message, chat) => mayor.runDmTurn(db, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { chat, apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    // The conversation cannot be read: her message alone is answered.
+    const seen = [];
+    const noHistory = failing(/FROM conversation_messages\s+WHERE conversation_id = \$1 AND id <= \$2/);
+    const sent = await run(noHistory, await say(EVAN), scripted([replyWith('One number per lesson sounds right.')], seen));
+    assert.equal((await read(sent)).content, 'One number per lesson sounds right.');
+    const asked = seen[0].messages;
+    assert.deepEqual(asked.slice(1, 2), [{ role: 'user', content: EVAN }]);
+    assert.equal(asked[2].role, 'assistant', 'nothing before her message but the prompt');
+    assert.deepEqual(await lastTurn(), { rounds: 1, error: null, failures: ['context:history:57P01'], fallback: null });
+
+    // A read the turn cannot go on without: it used to end with no answer and
+    // no record at all.
+    const noCount = failing(/SELECT COUNT\(\*\)::int AS n FROM homeroom_bot_dm_turns/);
+    const crashed = await run(noCount, await say('hello?'), async () => { throw new Error('not called'); });
+    assert.equal((await read(crashed)).content, mayor.BROKEN_TEXT);
+    assert.deepEqual(await lastTurn(), { rounds: 0, error: 'turn_failed:57P01', failures: [], fallback: 'broken' });
+
+    // One that fails after the model has run: what it cost and what failed
+    // on the way are still on record.
+    let asks = 0;
+    const thenDown = async (req) => {
+      asks += 1;
+      if (asks === 1) return { ...await scripted([[['progress']]])(req), usage: { inputTokens: 500, outputTokens: 50, costUsd: 0.01 } };
+      throw Object.assign(new Error('Could not reach Global Chat model'), { code: 'network' });
+    };
+    const noCards = failing(/WHERE slug = LOWER\(\$1\) OR LOWER\(name\) = LOWER\(\$1\)/);
+    const late = await run(noCards, await say('how far along are you?'), thenDown);
+    assert.equal((await read(late)).content, mayor.BROKEN_TEXT);
+    const { rows: [lateRow] } = await pool.query(
+      'SELECT rounds, error, failures, fallback, cost_usd::float8 AS cost FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.deepEqual(lateRow, {
+      rounds: 2, error: 'turn_failed:57P01', failures: ['r2:network', 'r2:network', 'r2:network'], fallback: 'broken', cost: 0.01,
+    });
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id > $1', [turnsBefore]);
   });
 
   await t.test('no answer while the bot is off, past the hourly limit, without a key, or when the model fails', async () => {
@@ -783,12 +981,20 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const off = await turn('hi', counting, { settings: { ...settings, mode: 'off' } });
     assert.equal((await read(off)).content, mayor.OFF_TEXT);
     const nokey = await turn('hi', counting, { deps: { apiKey: null } });
-    assert.equal((await read(nokey)).content, mayor.BROKEN_TEXT);
+    assert.equal((await read(nokey)).content, mayor.KEY_TEXT);
     assert.equal(called, 0);
-    const failing = await turn('hi', async () => { const e = new Error('provider down'); e.code = 'network'; throw e; });
+    // #3733: "Try again in a minute" only once every attempt and the plain
+    // answer have failed too.
+    let tries = 0;
+    const failing = await turn('hi', async () => { tries += 1; const e = new Error('provider down'); e.code = 'network'; throw e; });
     assert.equal((await read(failing)).content, mayor.BROKEN_TEXT);
-    const { rows: [row] } = await pool.query('SELECT error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
-    assert.equal(row.error, 'network');
+    assert.equal(tries, mayor.MAX_ATTEMPTS + 1, 'every attempt of the round, then one plain request');
+    const { rows: [row] } = await pool.query('SELECT error, failures, fallback FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
+    assert.deepEqual(row, { error: 'network', failures: ['r1:network', 'r1:network', 'r1:network', 'plain:network'], fallback: 'broken' });
+    // A 403 is how OpenRouter also refuses a flagged message: not a key an
+    // admin must fix.
+    const flagged = await turn('hi', async () => { throw Object.assign(new Error('HTTP 403'), { code: 'authentication', status: 403 }); });
+    assert.equal((await read(flagged)).content, mayor.BROKEN_TEXT);
     await pool.query(
       `INSERT INTO homeroom_bot_dm_turns (user_id) SELECT $1 FROM generate_series(1, $2)`,
       [ada.id, mayor.MAX_TURNS_PER_HOUR],
