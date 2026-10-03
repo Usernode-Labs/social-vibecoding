@@ -230,7 +230,7 @@ test('native enrollment fences alternate web builders and capture; recovery entr
     { code: 'NATIVE_PREVIEW_DURABLE_OWNER' });
   const recovery = require('../src/services/staging-recovery');
   assert.equal(await recovery.rebuildSessionStaging({ config: f.config, pool: f.pool, session, reason: 'preview-click' }), 'durable');
-  assert.equal(await recovery.recheckSessionChecks({ config: f.config, pool: f.pool, session, reason: 'manual-recheck' }), 'durable');
+  assert.equal((await recovery.recheckSessionChecks({ config: f.config, pool: f.pool, session, reason: 'manual-recheck', requestId: randomUUID() })).status, 'waiting');
   assert.equal((await require('../src/services/handoff-pipeline').runStaging(f.config, f.pool, session, app, HEAD)).workId, admitted.work.id);
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests WHERE workflow = $1', [PREPARE_RUNTIME])).rows[0].count), 1);
 });
@@ -340,4 +340,28 @@ test('native unresolved activation returns waiting and rolls back new head/work 
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests WHERE workflow = $1', [PREPARE_RUNTIME])).rows[0].count), 1);
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM native_preview_manual_requests')).rows[0].count), 1);
   assert.equal(errors.length, 0);
+});
+
+test('native same-head manual recheck waits with admission off and retries the same intent after enabling', { skip: !enabled }, async t => {
+  const f = await fixture(t, { native: true });
+  const work = f.make();
+  const first = await admit(f, work);
+  await candidate(f, work, first);
+  await tick(work);
+  const request = await manualServer(t, f, work);
+  const id = randomUUID();
+  const traces = (await work.owner.trace(1)).length;
+  f.config.nativeManualPreviewEnabled = false;
+  const waiting = await request('recheck', headers(id));
+  assert.equal(waiting.status, 409);
+  assert.equal(waiting.body.error, 'native_admission_disabled');
+  assert.equal((await f.session()).check_state, 'passing');
+  assert.equal((await work.owner.trace(1)).length, traces, 'Waiting admission must not consume its stable action ID');
+  f.config.nativeManualPreviewEnabled = true;
+  const accepted = await request('recheck', headers(id));
+  assert.equal(accepted.status, 200);
+  assert.equal((await f.session()).check_state, 'pending');
+  await tick(f.make());
+  assert.equal((await request('recheck', headers(id))).body.workId, accepted.body.workId);
+  assert.equal((await f.session()).check_state, 'passing');
 });

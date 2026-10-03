@@ -76,3 +76,10 @@ this slice does not automatically accept their revisions. Finish those head-writ
 cutovers before enabling the cohort. Original Job creation/cleanup uncertainty,
 external creator fencing, retained artifacts and private screenshot limitations
 remain as documented for the shared foundation.
+
+
+Same-head recheck follow-up: new checks now require validated command admission,
+not forced observational native recovery. Completed request retries preserve their
+receipt; fresh rechecks while admission is off or prior consumers remain unresolved
+return an explicit rejection/waiting outcome. Testing resubmission composes metadata
+and continuation atomically; see [native rechecks](native-recheck-contract.md).

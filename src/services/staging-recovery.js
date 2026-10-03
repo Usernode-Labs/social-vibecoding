@@ -850,10 +850,20 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // paths are fire-and-forget at the capture layer and never throw for the
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
-async function recheckSessionChecks({ config, pool, session, reason }) {
+async function recheckSessionChecks({ config, pool, session, reason, requestId, metadataKey, persistDetails }) {
   const handoff = require('./cli-preview-handoff/work');
   if (await handoff.enrolled(pool, session.id)) {
-    await handoff.createCliHandoffWork(pool, config).recover(session.id, {
+    const owner = handoff.createCliHandoffWork(pool, config);
+    if (require('./cli-preview-handoff/source-policy').ordinaryNative(session)) {
+      const requested = FORCED_RECHECK_REASONS.has(reason) || reason === 'shots-update';
+      if (requested) return owner.requestRecheck({
+        session, headSha: session.checks_commit_sha, reason, requestId, metadataKey, persistDetails,
+      });
+      const observed = await owner.recover(session.id);
+      return { status: observed?.status === 'blocked' ? 'blocked' : 'observed', work: observed,
+        ...(observed?.code ? { code: observed.code } : {}) };
+    }
+    await owner.recover(session.id, {
       force: FORCED_RECHECK_REASONS.has(reason) || session.check_state === 'error',
     });
     return 'durable';

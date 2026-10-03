@@ -2855,6 +2855,7 @@ async function submitUpdate(deps, params, proposalId) {
     // on the proposal, which until now could only be had by CHANGING a capture
     // route so the testing-metadata write triggered one as a side effect.
     ...(params.recheck ? { recheck: true } : {}),
+    ...(params.recheckRequestId ? { recheckRequestId: params.recheckRequestId } : {}),
     ...(linkedIssues.length ? { linkedIssues } : {}),
   });
   if (!updated || !updated.ok) {
@@ -2935,6 +2936,7 @@ async function submitUpdate(deps, params, proposalId) {
     votesClearing: result.votesClearing || (Number(result.votesCleared) > 0 ? 'now' : 'none'),
     votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
     checksRerun: result.checksRerun === true,
+    ...(result.checksRequest ? { checksRequest: result.checksRequest } : {}),
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT
     // start a staging build for it — the caller has to be told, or the

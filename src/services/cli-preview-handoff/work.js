@@ -115,57 +115,127 @@ function createNativePreviewWork(pool, config, {
   }
 
   async function admitManual({ session, headSha, requestId, userId, canAdminWrite = false, kind, repair = false }) {
-    return runtime.transact(async transaction => {
-      // The receipt and authority share the same aggregate boundary as head/work.
-      const previous = await transaction.withSession(session.id, async client => {
-        return (await client.query(`SELECT * FROM native_preview_manual_requests
-          WHERE session_id = $1 AND request_id = $2`, [session.id, requestId])).rows[0];
-      });
-      if (previous) {
-        if (previous.user_id !== userId || previous.kind !== kind) {
-          return { accepted: false, reason: 'manual_request_identity_conflict' };
-        }
-        return { accepted: true, replayed: true, headSha: previous.head_sha,
-          work: await readWork(transaction, session.id, previous.work_id) };
-      }
-
-      const request = {
-        type: 'AuthorizeNativeManualRequest', actionId: randomUUID(), sessionId: session.id,
-        headSha, userId, canAdminWrite, kind, expectedStatus: session.status,
-        branchName: session.branch_name, previousChecks: session.checks_commit_sha || null,
-        previousPreviewName: session.staging_runtime_name || null,
-        startedStatus: session.status === 'paused' ? 'paused' : 'active',
-      };
-      const permission = await owner.applyInTransaction(transaction, request);
-      if (!permission.decision.accepted) return { accepted: false, reason: permission.decision.reason };
-      const state = permission.current;
-      const sameHead = state.handoff?.head_sha === headSha;
-      let work = sameHead ? await readWork(transaction, session.id,
-        state.handoff.continuation_work_id || state.handoff.preparation_work_id) : null;
-      const outstanding = work && ['queued', 'running', 'blocked'].includes(work.status);
-      const needsPreparation = !sameHead || (!outstanding && (repair || state.preview.flow?.state !== 'ready'));
-
-      if (needsPreparation) {
-        if (!selectedManual(config, session)) return { accepted: false, reason: 'native_admission_disabled' };
-        if (!require('../preview-lifecycle').enabled(config)) throw new Error('Native manual admission requires the checks lifecycle');
-        const action = { ...request, type: 'AcceptNativeManualHead', actionId: randomUUID() };
-        const accepted = await owner.applyInTransaction(transaction, action);
-        if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
-        work = (await prepareAccepted(transaction, action)).work;
-      } else if (kind === 'recheck' && !outstanding) {
-        const identity = { sessionId: session.id, flowId: state.handoff.flow_id, headSha };
-        const checks = await owner.applyInTransaction(transaction, {
-          type: 'RequestNativePreviewChecks', actionId: requestId, ...identity, force: true,
+    try {
+      return await runtime.transact(async transaction => {
+        // The receipt and authority share the same aggregate boundary as head/work.
+        const previous = await transaction.withSession(session.id, async client => {
+          return (await client.query(`SELECT * FROM native_preview_manual_requests
+            WHERE session_id = $1 AND request_id = $2`, [session.id, requestId])).rows[0];
         });
-        if (!checks.decision.accepted) return { accepted: false, reason: checks.decision.reason };
-        work = await enqueueContinuation(transaction, identity, requestId, checks.decision.effects[0].effectKey, true);
-      }
-      if (!work) throw new Error('Authorized native request has no durable work');
-      await transaction.withSession(session.id, client => client.query(`INSERT INTO native_preview_manual_requests
-        (session_id, request_id, user_id, kind, head_sha, work_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [session.id, requestId, userId, kind, headSha, work.id]));
-      return { accepted: true, headSha, work };
-    });
+        if (previous) {
+          if (previous.user_id !== userId || previous.kind !== kind) {
+            return { accepted: false, reason: 'manual_request_identity_conflict' };
+          }
+          return { accepted: true, replayed: true, headSha: previous.head_sha,
+            work: await readWork(transaction, session.id, previous.work_id) };
+        }
+
+        const request = {
+          type: 'AuthorizeNativeManualRequest', actionId: randomUUID(), sessionId: session.id,
+          headSha, userId, canAdminWrite, kind, expectedStatus: session.status,
+          branchName: session.branch_name, previousChecks: session.checks_commit_sha || null,
+          previousPreviewName: session.staging_runtime_name || null,
+          startedStatus: session.status === 'paused' ? 'paused' : 'active',
+        };
+        const permission = await owner.applyInTransaction(transaction, request);
+        if (!permission.decision.accepted) return { accepted: false, reason: permission.decision.reason };
+        const state = permission.current;
+        const sameHead = state.handoff?.head_sha === headSha;
+        let work = sameHead ? await readWork(transaction, session.id,
+          state.handoff.continuation_work_id || state.handoff.preparation_work_id) : null;
+        const outstanding = work && ['queued', 'running', 'blocked'].includes(work.status);
+        const needsPreparation = !sameHead || (!outstanding && (repair || state.preview.flow?.state !== 'ready'));
+
+        if (needsPreparation) {
+          if (!selectedManual(config, session)) return { accepted: false, reason: 'native_admission_disabled' };
+          if (!require('../preview-lifecycle').enabled(config)) throw new Error('Native manual admission requires the checks lifecycle');
+          const action = { ...request, type: 'AcceptNativeManualHead', actionId: randomUUID() };
+          const accepted = await owner.applyInTransaction(transaction, action);
+          if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
+          work = (await prepareAccepted(transaction, action)).work;
+        } else if (kind === 'recheck' && !outstanding) {
+          const identity = { sessionId: session.id, flowId: state.handoff.flow_id, headSha };
+          const checks = await owner.applyInTransaction(transaction, {
+            type: 'RequestNativeRecheck', actionId: requestId, ...identity,
+            userId: session.user_id, reason: 'manual-recheck', metadataKey: null,
+            admissionEnabled: selectedManual(config, session),
+          });
+          if (!checks.decision.accepted) {
+            throw Object.assign(new Error(checks.decision.reason), { code: 'NATIVE_RECHECK_WAITING' });
+          }
+          work = await enqueueContinuation(transaction, identity, requestId, checks.decision.effects[0].effectKey, true);
+        }
+        if (!work) throw new Error('Authorized native request has no durable work');
+        await transaction.withSession(session.id, client => client.query(`INSERT INTO native_preview_manual_requests
+          (session_id, request_id, user_id, kind, head_sha, work_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [session.id, requestId, userId, kind, headSha, work.id]));
+        return { accepted: true, headSha, work };
+      });
+    } catch (error) {
+      if (error.code !== 'NATIVE_RECHECK_WAITING') throw error;
+      return { accepted: false, reason: error.message };
+    }
+  }
+
+  // Admit a new same-head intent, replay its receipt, or report waiting.
+  // External capture remains the existing continuation/lifecycle owner's work.
+  async function requestRecheck({ session, requestId, headSha, reason, metadataKey = null,
+    persistDetails = async () => {} }) {
+    if (!requestId && !metadataKey) return { status: 'blocked', code: 'recheck_request_id_required' };
+    try {
+      return await runtime.transact(async transaction => {
+        const state = await transaction.withSession(session.id, async client => {
+          return (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [session.id])).rows[0];
+        });
+        if (!state?.flow_id) return { status: 'blocked', code: 'native_enrollment_required' };
+        if (!requestId) {
+          // Serial decision IDs preserve admission order even when competing
+          // transactions began before they acquired the aggregate lock.
+          const latest = await transaction.withSession(session.id, async client => {
+            return (await client.query(`SELECT w.* FROM cli_preview_decisions d
+              JOIN execution_work_requests w ON w.session_id = d.session_id AND w.caused_by = d.action_id
+              WHERE d.session_id = $1 AND d.action->>'type' = 'RequestNativeRecheck'
+                AND d.action->>'metadataKey' IS NOT NULL ORDER BY d.id DESC LIMIT 1`, [session.id])).rows[0];
+          });
+          const sameSubmission = latest?.input.flowId === state.flow_id && latest.input.headSha === headSha
+            && latest.input.requestedRecheck?.metadataKey === metadataKey;
+          if (sameSubmission) requestId = latest.caused_by;
+          else requestId = require('../native-preview-requests').metadataRecheckId(
+            session.id, headSha, metadataKey, latest?.id || state.admission_id,
+          );
+        }
+        const effectKey = `${session.id}:${requestId}:checks`;
+        const previous = await store.find(transaction, session.id, effectKey);
+        if (previous) {
+          const request = previous.input.requestedRecheck;
+          if (!request || previous.input.headSha !== headSha || request.reason !== reason
+              || request.metadataKey !== metadataKey || request.userId !== session.user_id) {
+            return { status: 'blocked', code: 'recheck_request_identity_conflict' };
+          }
+          return { status: 'durable', replayed: true, requestId, work: previous };
+        }
+        const request = { reason, metadataKey, userId: session.user_id };
+        const decision = await owner.applyInTransaction(transaction, {
+          type: 'RequestNativeRecheck', actionId: requestId, sessionId: session.id,
+          flowId: state.flow_id, headSha, ...request,
+          admissionEnabled: selectedManual(config, session),
+        });
+        if (!decision.decision.accepted) {
+          // A waiting decision cannot permanently consume the intent UUID.
+          // Roll back its journal too so the same intent can be reconsidered.
+          throw Object.assign(new Error(decision.decision.reason), { code: 'NATIVE_RECHECK_WAITING' });
+        }
+        await transaction.withSession(session.id, persistDetails);
+        const work = await enqueueContinuation(transaction, {
+          sessionId: session.id, flowId: state.flow_id, headSha,
+        }, requestId, decision.decision.effects[0].effectKey, true, request);
+        return { status: 'durable', requestId, work };
+      });
+    } catch (error) {
+      if (error.code !== 'NATIVE_RECHECK_WAITING') throw error;
+      return { status: 'waiting', code: error.message,
+        reconciliation: { owner: 'native-preview-requests', requestId, headSha } };
+    }
   }
 
   async function prepareAccepted(transaction, { actionId, sessionId, headSha, startedStatus = 'active' }) {
@@ -271,7 +341,7 @@ function createNativePreviewWork(pool, config, {
     }
   }
 
-  async function enqueueContinuation(transaction, identity, causedBy, effectKey, force = false) {
+  async function enqueueContinuation(transaction, identity, causedBy, effectKey, force = false, requestedRecheck) {
     const existing = await store.find(transaction, identity.sessionId, effectKey);
     if (existing) return existing;
     const work = await store.enqueue(transaction, {
@@ -286,6 +356,7 @@ function createNativePreviewWork(pool, config, {
         checksActionId: randomUUID(),
         observedActionId: randomUUID(),
         force,
+        ...(requestedRecheck ? { requestedRecheck } : {}),
       },
     });
     await transaction.withSession(identity.sessionId, client => client.query(
@@ -430,6 +501,10 @@ function createNativePreviewWork(pool, config, {
         return { status: 'blocked', code: 'native_head_admission_required',
           reconciliation: { owner: 'native-preview-requests', headSha: session.checks_commit_sha } };
       }
+      if (ordinaryNative(session) && force) {
+        return { status: 'blocked', code: 'native_recheck_command_required',
+          reconciliation: { owner: 'native-preview-requests', headSha: state.head_sha } };
+      }
       if (['queued', 'running', 'blocked'].includes(active.status) || ordinaryNative(session)) return active;
       const failedPreparation = !state.continuation_work_id && active.result?.prepared === false;
       if (repair || (force && failedPreparation)) {
@@ -479,6 +554,7 @@ function createNativePreviewWork(pool, config, {
     admitSync,
     admitManual,
     manualReceipt,
+    requestRecheck,
     recover,
     reconcileSyncs,
     owner,

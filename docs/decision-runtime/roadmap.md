@@ -116,3 +116,11 @@ admission; a recovery tail cannot claim the old work is the new head's work. Fin
 those caller rows before enablement: this containment is not their automatic head
 admission. Global legacy timers/locks and 16 projection statements remain required
 for other callers. No rollout or production installation proof is implied.
+
+
+Enrolled native same-head metadata delivery is now a validated command, separate
+from observational recovery. Metadata and required continuation commit together;
+duplicate receipts survive completion. Unresolved consumers/admission yield an
+explicit waiting outcome, without a detached required kick. See the
+[native recheck contract](native-recheck-contract.md). This correction does not
+close any remaining head-writer/caller or installation gate above.

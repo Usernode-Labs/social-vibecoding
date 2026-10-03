@@ -28,11 +28,8 @@ function candidateCondition(state, action) {
   return nativeHeadCondition(state.session, flow.startedStatus, action.headSha);
 }
 
-function predecessorConsumersReleased(state) {
-  const resource = state.resource;
-  const evidence = state.retirementEvidence;
-  if (resource?.preparationOwner !== 'bounded' || !resource.intent?.runtimeOperation?.desired
-      || !evidence || evidence.pendingRunIds.length) return false;
+function consumersReleased(resource) {
+  if (!resource) return false;
 
   for (const consumer of Object.values(resource.consumerReleases || {})) {
     const { retirement, requirements } = consumer;
@@ -43,6 +40,17 @@ function predecessorConsumersReleased(state) {
     if ((requirements.captureRequired && !released('capture'))
         || (requirements.unitRequired && !released('unit-suite'))) return false;
   }
+
+  return true;
+}
+
+function predecessorConsumersReleased(state) {
+  const resource = state.resource;
+  const evidence = state.retirementEvidence;
+  if (resource?.preparationOwner !== 'bounded' || !resource.intent?.runtimeOperation?.desired
+      || !evidence || evidence.pendingRunIds.length) return false;
+
+  if (!consumersReleased(resource)) return false;
 
   const preparation = evidence.work.filter(work => work.workflow === 'native-preview-kubernetes-prepare');
   if (preparation.length !== 1) return false;
@@ -379,4 +387,4 @@ function reduceCandidate(state, action, facts) {
   return reduceLegacy(state, action, facts);
 }
 
-module.exports = { reduceCandidate, activationPending };
+module.exports = { reduceCandidate, activationPending, consumersReleased };

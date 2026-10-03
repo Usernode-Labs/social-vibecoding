@@ -20,7 +20,7 @@ is reconciled; its shots-worker hold/retirement and other caller protections rem
 | Dead chat-file Docker builder/parser and unused identity/Caddy imports | **Deleted 120 lines plus two imports.** No callers or exports; existing source-generation guards remain green. | Complete; no replacement executor or compatibility branch. |
 | Four preparation capability flags and CLI config shim | **Removed** at `2bf702dbd`. Sole new admission is complete Kubernetes/kpack preparation. | Complete; retain default-off admission/worker switches. |
 | Three partial preparation work kinds, selection flags, one-shot observation/start branches and unused completion flags | **Removed** after fresh-only decision and verified archive. Named clone/Build/runtime operations own preparation. | Complete locally; unsupported startup fails visibly, preserving records. |
-| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/native-admission v4/review v2 policies and replay remain. Admission v3 replay is retained for work/traces admitted under accepted `8ed150abf`; the same CLI decisions are replayed without a copied reducer. Removal needs that supported-store/trace inventory or export, not a permanent checkpoint obligation. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
+| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/native-admission v5/review v2 policies and replay remain. Admission v3/v4 replay is retained for work/traces admitted under accepted `8ed150abf`/`831954a04`; the same CLI decisions are replayed without a copied reducer. Removal needs that supported-store/trace inventory or export, not a permanent checkpoint obligation. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
 | Historical-format test admission/worker helpers; exclusive staging `preparedClone`/`onRuntimeStarting` | **Removed.** Relevant failures are ported to current complete admission and named operations. Original sources remain archive provenance. | Complete. Synchronous `onClonePrepared` is still required and retained. |
 | Enrolled synchronous preparation, alternate rebuild/restart owners, detached checks continuation | **Replaced** by atomic admission and durable candidate-to-continuation work. | Complete for this cohort; preserve unenrolled callers and ownership exclusions. |
 | Enrolled best-effort verdict/history and detached required merge/bot kicks | **Replaced** by atomic settlement and deduplicated gate delivery. Standalone initializes dependencies explicitly. | Complete locally; GitHub/bot calls remain substituted evidence. Optional artifacts have separate owners. |
@@ -113,3 +113,13 @@ explicit retained identifiers. A head mismatch from an unmigrated writer exposes
 reconciliation under native admission; hosted/promotion head acceptance is still open.
 Client request identity persists through unknown replies (session storage when
 available, in-memory otherwise); a complete definitive response permits a new intent.
+
+
+Enrolled native same-head testing resubmission now awaits durable continuation
+admission. Its metadata/pending/receipt/work composition is atomic; the detached
+required recheck tail remains only for unenrolled and CLI compatibility callers.
+Observational native recovery no longer represents a new check request. New
+requests have UUID/specification identities and explicit waiting outcomes for
+admission, continuation or unresolved consumer constraints. Existing preparation,
+activation, capture lifecycle, settlement and retirement remain their sole owners.
+No executor, work kind, global lock or timer was added/removed by this correction.

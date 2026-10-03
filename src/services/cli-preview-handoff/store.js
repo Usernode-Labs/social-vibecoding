@@ -39,6 +39,13 @@ function createCliPreviewHandoff(pool) {
         checkRun = (await client.query(`SELECT run_id, session_id, commit_sha, owner, manifest
           FROM check_runs WHERE session_id = $1 AND run_id = $2`, values)).rows[0] || null;
       }
+      let continuationOutstanding = false;
+      if (handoff?.continuation_work_id) {
+        const continuation = (await client.query('SELECT status FROM execution_work_requests WHERE id = $1',
+          [handoff.continuation_work_id])).rows[0];
+        continuationOutstanding = ['queued', 'running', 'blocked'].includes(continuation?.status);
+      }
+
       const lifecycleSession = session ? Object.fromEntries([
         'id', 'app_id', 'user_id', 'source', 'status', 'active_turn', 'handoff_uploaded_sha',
         'handoff_head_sha', 'handoff_upload_checked_sha', 'checks_commit_sha',
@@ -50,6 +57,7 @@ function createCliPreviewHandoff(pool) {
         handoff,
         preview: previewState,
         checksOutstanding: obligations[0].outstanding,
+        continuationOutstanding,
         checkOperation,
         checkRun,
       };

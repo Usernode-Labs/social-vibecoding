@@ -64,6 +64,13 @@ const schema = z.discriminatedUnion('type', [
     previousChecks: envelope.headSha.nullable(),
     uploadCheckedSha: envelope.headSha.nullable(),
   }).strict(),
+  z.object({
+    type: z.literal('RequestNativeRecheck'), ...identity,
+    userId: z.number().int().positive(),
+    admissionEnabled: z.boolean(),
+    reason: z.string().min(1).max(100),
+    metadataKey: z.string().max(64).nullable(),
+  }).strict(),
   z.object({ type: z.enum(['CliCandidateAvailable', 'NativeCandidateAvailable']), ...identity }).strict(),
   z.object({ type: z.enum(['RequestCliPreviewChecks', 'RequestNativePreviewChecks']), ...identity, force: z.boolean() }).strict(),
   z.object({ type: z.enum(['CliPreviewChecksObserved', 'NativePreviewChecksObserved']), ...identity }).strict(),

@@ -1,10 +1,11 @@
 'use strict';
 
-const REDUCER_VERSION = 4;
+const REDUCER_VERSION = 5;
 
 const { supportedSource, ordinaryNative, durableManifest } = require('./source-policy');
 
 const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
+const { consumersReleased } = require('../preview-flow/candidate-reducer');
 
 function reject(reason) {
   return { accepted: false, reason, effects: [] };
@@ -172,6 +173,23 @@ function reduce(state, action) {
     };
   }
 
+  if (action.type === 'RequestNativeRecheck') {
+    if (!ordinaryNative(session) || session.is_headless) return reject('ordinary_native_required');
+    if (session.user_id !== action.userId) return reject('session_owner_changed');
+    if (!['active', 'paused', 'promoted'].includes(session.status)) return reject('session_closed');
+    if (session.active_turn) return reject('session_busy');
+    if (!action.admissionEnabled) return reject('native_admission_disabled');
+    if (handoff.checks_recovery) return reject('checks_reconciliation_required');
+    if (state.checksOutstanding || !consumersReleased(preview.resource)) return reject('checks_consumers_unresolved');
+    if (state.continuationOutstanding) return reject('checks_continuation_pending');
+    return {
+      accepted: true,
+      reason: 'native_recheck_requested',
+      change: { phase: 'checking', resetChecks: true },
+      effects: [{ type: 'CaptureCliPreviewChecks', effectKey: `${action.sessionId}:${action.actionId}:checks` }],
+    };
+  }
+
   const request = type === 'RequestCliPreviewChecks';
   if (request && action.force && handoff.checks_recovery) return reject('checks_reconciliation_required');
   if (!request && (!checksSettled(session) || state.checksOutstanding)) return reject('checks_pending');
@@ -189,7 +207,7 @@ function reduce(state, action) {
 }
 
 function replayDecision(entry) {
-  if (![3, REDUCER_VERSION].includes(entry.reducer_version)) {
+  if (![3, 4, REDUCER_VERSION].includes(entry.reducer_version)) {
     throw new Error(`Unsupported cli-preview-handoff reducer version: ${entry.reducer_version}; use the offline historical archive`);
   }
   if (entry.reducer_version === 3 && entry.pre_state.session?.source !== 'cli_handoff') return reject('native_cli_required');

@@ -444,7 +444,7 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'recheckRequestId', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -500,6 +500,10 @@ function parseUpdateFromForkBody(body) {
     throw new ValidationError('recheck must be true or false');
   }
   const recheck = body.recheck === true;
+  const recheckRequestId = body.recheckRequestId == null ? undefined : String(body.recheckRequestId);
+  if (recheckRequestId && !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(recheckRequestId)) {
+    throw new ValidationError('recheckRequestId must be a UUID');
+  }
   const { parseImportLinkedIssues } = require('./votes');
   const linkedIssues = body.linkedIssues == null
     ? []
@@ -507,7 +511,7 @@ function parseUpdateFromForkBody(body) {
   const testing = require('../services/testing-notes').parseSubmitted(body);
   return { branch, forkRepo, expectedHeadSha, testing, title,
     description, summary,
-    recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
+    recheck, recheckRequestId, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
 
 function repoCoordinates(app) {
@@ -932,6 +936,7 @@ function proposalHandoffRoutes(config) {
           description: input.description,
           summary: input.summary,
           recheck: input.recheck,
+          recheckRequestId: input.recheckRequestId,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
         }

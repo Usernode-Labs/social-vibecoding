@@ -420,6 +420,7 @@ async function updateProposalFromForkBranch(deps, params) {
         summary: normalizeProposedSummary(params.summary),
         // #1323. A re-run of the checks against the commit already there.
         recheck: params.recheck === true,
+        recheckRequestId: params.recheckRequestId,
         linkedIssues: normalizeLinkedIssues(params.linkedIssues),
         // The one module the same-commit resubmit path needs and no other
         // path does: re-running the checks against corrected capture routes
@@ -1000,7 +1001,7 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
 // paths } — `changed` false when nothing was supplied OR when what was
 // supplied is what the row already said, which is what stops a duplicate
 // resubmit from kicking a pointless capture run.
-async function applyTestingMetadata({ pool, session, testing }) {
+async function applyTestingMetadata({ pool, session, testing, strict = false }) {
   const unchangedResult = (paths) => ({
     changed: false, pathsChanged: false, stepsChanged: false, paths: paths || null,
   });
@@ -1026,6 +1027,7 @@ async function applyTestingMetadata({ pool, session, testing }) {
   try {
     await pool.query(`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $${values.length}`, values);
   } catch (err) {
+    if (strict) throw err;
     log.error('proposal-update', 'could not store the revision\'s testing metadata', {
       sessionId: Number(session.id), err: err.message,
     });
@@ -1258,7 +1260,33 @@ async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues 
 async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
-  const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  const enrolled = require('./cli-preview-handoff/work');
+  const nativeOwner = require('./cli-preview-handoff/source-policy').ordinaryNative(session)
+    && typeof pool.connect === 'function' && await enrolled.enrolled(pool, sessionId);
+  let applied;
+  let checksRequest;
+  if (nativeOwner && (ctx.testing || ctx.visibleChanges || ctx.recheck)) {
+    const submittedMetadata = ctx.testing || ctx.visibleChanges;
+    const requestId = ctx.recheckRequestId;
+    const recovery = ctx.recovery || require('./staging-recovery');
+    const updatedSession = { ...session };
+    checksRequest = await recovery.recheckSessionChecks({
+      config, pool, session, reason: 'testing-update', requestId,
+      metadataKey: submittedMetadata ? require('./decision-runtime').hashJson({
+        testing: ctx.testing || null, visibleChanges: ctx.visibleChanges || null,
+      }) : null,
+      async persistDetails(client, currentSession) {
+        Object.assign(updatedSession, currentSession);
+        applied = await applyTestingMetadata({
+          pool: client, session: updatedSession, testing: ctx.testing, strict: true,
+        });
+      },
+    });
+    if (checksRequest.status === 'durable' && !checksRequest.replayed) Object.assign(session, updatedSession);
+    applied ||= { changed: false, paths: ctx.testing?.testingPaths || null };
+  } else {
+    applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  }
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
   });
@@ -1292,6 +1320,13 @@ async function resubmitUnchanged(ctx, headSha, via) {
     ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
+  if (checksRequest) {
+    const { work, ...delivery } = checksRequest;
+    const delivered = delivery.status === 'durable';
+    return { ...reported, captureRerun: delivered, checksRerun: delivered,
+      checksRequest: { ...delivery, ...(work ? { workId: work.id, workStatus: work.status } : {}) } };
+  }
+
   // #1323. Until `recheck` existed, THIS early return was the reason an agent
   // could not ask for a fresh verdict: the re-run below was reachable only as
   // a side effect of changing a capture route, so correcting a stale verdict

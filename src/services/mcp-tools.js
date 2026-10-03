@@ -4040,6 +4040,8 @@ function registerTools(server, ctx) {
         .describe('Older name for visibleChanges, still accepted. Send visibleChanges.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
+      recheckRequestId: z.string().uuid().optional()
+        .describe('Stable identity for an explicit same-head recheck on an enrolled native session. Generate once per new request and reuse after lost replies, even after completion.'),
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and legacy capture pipeline. The before/after shots have their own take-again action. No code moves and NO votes are cleared. Use it when the checks verdict is stale for a reason outside this proposal instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
@@ -4081,6 +4083,8 @@ function registerTools(server, ctx) {
       // no-op in the answer the agent reads.
       testingUpdated: z.boolean().nullable(),
       captureRerun: z.boolean().nullable(),
+      checksRequest: z.record(z.unknown()).optional()
+        .describe('Durable native recheck delivery or explicit waiting/blocked outcome; includes its owner and intent/work identity when available.'),
       shotsState: z.string().nullable()
         .describe('Revision-scoped before & after shots state after this submission, or null when the feature is disabled or the target already existed.'),
       visibleChangesAccepted: z.boolean().nullable()
@@ -4111,7 +4115,7 @@ function registerTools(server, ctx) {
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
     testingPaths, testingSteps, visibleChanges, visualEvidence,
-    expectedHeadSha, propose, recheck, share,
+    expectedHeadSha, propose, recheck, recheckRequestId, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -4278,6 +4282,7 @@ function registerTools(server, ctx) {
       title,
       body: testing.description,
       recheck: recheck === true,
+      recheckRequestId,
       // The same shaped metadata the import above carries. An UPDATE used to
       // drop it (#1199), so every revised proposal kept the routes its FIRST
       // submission named — or, when it named none, '/' — and the group voted
@@ -4322,7 +4327,7 @@ function registerTools(server, ctx) {
       // different one in each.
       // Named by its pull request first, wherever the sentence names it (#2136).
       const named = proposalRefSentence(result.proposalId, result.prNumber);
-      const resubmitStep = result.testingUpdated
+      let resubmitStep = result.testingUpdated
         ? `${named} was already at that commit, so no code moved and no votes were affected — but the testing `
           + `routes you passed were different, so they are now this proposal's.${shotOn}`
           + (result.captureRerun
@@ -4331,6 +4336,16 @@ function registerTools(server, ctx) {
         : `${named} was already at that commit and the testing routes you passed are the ones it already had, `
           + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
           + 'push first, then submit again.';
+
+      if (result.checksRequest) {
+        const delivery = result.checksRequest;
+        const state = delivery.status === 'durable'
+          ? (delivery.replayed && delivery.workStatus === 'succeeded'
+            ? 'The original recheck request is already complete; this reply repeats its receipt.'
+            : 'The recheck request is durably queued or running; use get_proposal to follow it.')
+          : `The recheck is ${delivery.status}: ${delivery.code}. Retry the same request after its recovery owner resolves the obstruction.`;
+        resubmitStep = `${named} is still at the same commit; no votes were cleared. ${state}`;
+      }
 
       // The review boundary, crossed on the owner's explicit ask. A session
       // continuation deliberately lands quietly — the work order tells the
@@ -4487,6 +4502,7 @@ function registerTools(server, ctx) {
         // build deliberately did not.
         previewRebuilding: result.previewRebuilding === true,
         checksRerun: result.checksRerun === true,
+        ...(result.checksRequest ? { checksRequest: result.checksRequest } : {}),
         resumeRequired: result.resumeRequired === true,
         targetKind: result.targetKind || null,
         proposed,
