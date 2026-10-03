@@ -170,7 +170,8 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({ started_at: 'x', open_question: 1 }), 'looking at it now');
   assert.equal(mayor.statusOf({ open_question: 1, proposal_status: 'promoted' }), 'waiting for their answer to your question');
   assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
-  assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting in your queue (number 4)');
+  // Not its number across every project's queue: what decides when it starts is not that.
+  assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting for a free builder');
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false }), 'you could not build it');
   // WP1: a build that was not needed stopped; it did not fail.
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),

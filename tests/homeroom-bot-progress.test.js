@@ -39,7 +39,7 @@ test('a request being read, asked about, or waiting in the queue', () => {
   assert.deepEqual(stage({ question_at: ago(9) }), {
     stage: 'question', since: ago(9), doing: 'waiting for an answer to the question asked', waitingOn: 'them',
   });
-  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, 'waiting in the queue (number 2) to be read');
+  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, 'waiting for a free builder');
   assert.equal(stage({ verdict: 'person', mode: 'live' }), null, 'nothing in progress');
 });
 
@@ -84,12 +84,12 @@ test('a proposal: its checks, then the group\'s vote', () => {
   // #3734: a follow-up waiting its turn is the bot's next step, not the vote:
   // a change asked for in the DM (#3740), a reply, or its own red checks.
   assert.deepEqual(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 }), {
-    stage: 'followup_queued', since: ago(1), doing: 'waiting in the queue (number 1) to follow up on the newest replies on its proposal',
+    stage: 'followup_queued', since: ago(1), doing: 'waiting for a free builder to follow up on the newest replies on its proposal',
   });
   assert.equal(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }).stage, 'followup_queued',
     'a reply since the question is read next');
   assert.deepEqual(stage({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), {
-    stage: 'fix_queued', since: ago(1), doing: 'waiting in the queue to fix its failing checks',
+    stage: 'fix_queued', since: ago(1), doing: 'waiting for a free builder to fix its failing checks',
   });
   assert.equal(stage({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }).stage, 'merging',
     'a proposal being merged is not followed up on');
@@ -177,11 +177,11 @@ test('#3771: a request in the queue says what it waits for', () => {
   });
   // Its own row being read is not something it waits for.
   const self = new Map([[7, [{ issueNumber: 14, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
-  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line to be read');
+  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line for a free builder');
   assert.deepEqual(progress.queuedWait(row, { working: 2, perPerson: 2 }).waitingFor, { reason: 'person_limit', inProgress: 2, most: 2 });
   assert.equal(progress.queuedWait(row, { working: 2, perPerson: 2 }).doing,
     'waiting its turn: 2 things of theirs are in progress, the most at once for one person');
-  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting in the queue to be read, with 3 requests ahead of it');
+  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting for a free builder');
   assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
 });
 

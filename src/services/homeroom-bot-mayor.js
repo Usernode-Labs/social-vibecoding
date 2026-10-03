@@ -573,7 +573,9 @@ function statusOf(row) {
   if (row.started_at) return 'looking at it now';
   if (row.open_question) return 'waiting for their answer to your question';
   if (proposal === 'promoted') return 'proposal up for the group\'s vote';
-  if (row.enqueued_at) return row.queue_position ? `waiting in your queue (number ${row.queue_position})` : 'waiting in your queue';
+  // A place in the queue across every project was not when it would start:
+  // per-project and per-person limits decide that (progress.js queuedWait).
+  if (row.enqueued_at) return 'waiting for a free builder';
   switch (row.verdict) {
     case 'person': return 'left for the group to decide';
     case 'empty': return 'nothing to build in it yet';
@@ -620,7 +622,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
   // platform's own requests as "reading them, not mine to build". As
   // `progress` already does (#3734), only a project it acts on has a queue
   // for them, and only its acted-on ('live') looks are its verdicts.
-  const acts = new Set([...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])]);
+  const scope = liveModule(deps).appsScope(settings);
   const { rows: found } = await pool.query(
     `WITH mine AS (
        SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded
@@ -664,17 +666,17 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
   const rows = found
     // Waiting in a queue only on a project it acts on, and a request that
     // was only ever in the background queue is not theirs to hear about.
-    .map((row) => (acts.has(row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
+    .map((row) => (liveModule(deps).inScope(scope, row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
     .filter((row) => row.recorded || row.queue_id);
   // Where each waiting request is in the live queue.
-  const liveSlugs = [...new Set([...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])])];
   const position = new Map();
-  if (liveSlugs.length && rows.some((r) => r.queue_id && !r.started_at)) {
+  if (!liveModule(deps).scopeIsEmpty(scope) && rows.some((r) => r.queue_id && !r.started_at)) {
     const { rows: queue } = await pool.query(
       `SELECT q.id FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-        WHERE q.started_at IS NULL AND a.slug = ANY($1::text[])
+        WHERE q.started_at IS NULL
+          AND (CASE WHEN $2::boolean THEN NOT (a.slug = ANY($3::text[])) ELSE a.slug = ANY($1::text[]) END)
         ORDER BY q.priority, q.enqueued_at LIMIT 500`,
-      [liveSlugs],
+      [scope.slugs, scope.all, scope.except],
     );
     queue.forEach((q, i) => position.set(Number(q.id), i + 1));
   }
@@ -1667,7 +1669,7 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
   if (newer.length) return null;
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
-  if (!dm.isDmUser(settings, user.username)) return null;
+  if (!dm.hasBot(settings, user)) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   const run = () => runDmTurn(pool, config, {
     bot, user, settings, conversationId, message, deps: { ...deps, deferAttempt: attempt },
@@ -2175,7 +2177,11 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
       // runTriage) and it follows the request from "waiting" to the end.
       const card = await activityModule(deps).startCard(pool, {
         app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true,
-        requester: { userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false },
+        requester: {
+          userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false,
+          // What dm.hasBot reads, from the signed-in person who tapped File it.
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+        },
         deps: { dm },
       });
       if (card?.messageId) return card;

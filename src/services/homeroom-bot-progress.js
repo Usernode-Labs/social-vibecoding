@@ -40,6 +40,18 @@
 // claimed queue rows alone, so a build (whose queue row is gone) and a
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
+// Lazy: the live module is large, and only the queue readers below need it.
+function live() { return require('./homeroom-bot-live'); }
+
+/**
+ * #3734: the projects a queue row is the bot's own work on (live.appsScope),
+ * whether or not it is switched on: that is said apart (botIsOn). Null when
+ * there are no settings to read them from.
+ */
+function actsScope(settings) {
+  return settings ? live().appsScope(settings) : null;
+}
+
 const MINUTE_MS = 60 * 1000;
 // A ready verdict with no build session yet is a build starting. Past this,
 // nothing about it is recorded, and that is what is said.
@@ -202,10 +214,9 @@ function stageOf(input, { now = new Date() } = {}) {
     // asked for in the DM, its own failing checks). Only while it is up for
     // a vote: the loop does not follow up on a proposal being merged.
     if (row.queue_id && row.proposal_status === 'promoted') {
-      const at = row.queue_position ? ` (number ${row.queue_position})` : '';
       return row.queue_reason === 'checks_failing'
-        ? { stage: 'fix_queued', since: row.enqueued_at, doing: `waiting in the queue${at} to fix its failing checks` }
-        : { stage: 'followup_queued', since: row.enqueued_at, doing: `waiting in the queue${at} to follow up on the newest replies on its proposal` };
+        ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix its failing checks' }
+        : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on its proposal' };
     }
     if (row.question_at) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
@@ -262,8 +273,9 @@ function stageOf(input, { now = new Date() } = {}) {
     return { stage: 'planning', since: row.build_started_at || row.run_at, doing: 'writing the plan for the build', limit: 'plan' };
   }
   if (row.queue_id) {
-    const at = row.queue_position ? ` (number ${row.queue_position})` : '';
-    return { stage: 'queued', since: row.enqueued_at, doing: `waiting in the queue${at} to be read` };
+    // Not its number in the queue: that counts every project's requests, and
+    // the per-project and per-person limits decide more (queuedWait).
+    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
   }
   return null;
 }
@@ -489,13 +501,14 @@ async function attachAttempts(pool, rows) {
 /** Where each of `rows`' waiting requests is in the live queue, by queue id. */
 async function queuePositions(pool, rows, settings) {
   const position = new Map();
-  const liveSlugs = [...new Set([...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])])];
-  if (!liveSlugs.length || !rows.some((r) => r.queue_id && !r.started_at)) return position;
+  const scope = actsScope(settings);
+  if (!scope || live().scopeIsEmpty(scope) || !rows.some((r) => r.queue_id && !r.started_at)) return position;
   const { rows: queue } = await pool.query(
     `SELECT q.id FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-      WHERE q.started_at IS NULL AND a.slug = ANY($1::text[])
+      WHERE q.started_at IS NULL
+        AND (CASE WHEN $2::boolean THEN NOT (a.slug = ANY($3::text[])) ELSE a.slug = ANY($1::text[]) END)
       ORDER BY q.priority, q.enqueued_at LIMIT 500`,
-    [liveSlugs],
+    [scope.slugs, scope.all, scope.except],
   );
   queue.forEach((q, i) => position.set(Number(q.id), i + 1));
   return position;
@@ -622,10 +635,12 @@ function queuedWait(row, { busy = new Map(), working = 0, perPerson = 2, queuePo
       waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
     };
   }
-  if (queuePosition === 1) return { doing: 'next in line to be read', waitingFor: { reason: 'queue', ahead: 0 } };
+  if (queuePosition === 1) return { doing: 'next in line for a free builder', waitingFor: { reason: 'queue', ahead: 0 } };
   if (Number.isInteger(queuePosition) && queuePosition > 1) {
+    // How many are ahead stays in `waitingFor`, for the model to answer
+    // "how long?" with; the words say what it waits for.
     return {
-      doing: `waiting in the queue to be read, with ${plural(queuePosition - 1, 'request')} ahead of it`,
+      doing: 'waiting for a free builder',
       waitingFor: { reason: 'queue', ahead: queuePosition - 1 },
     };
   }
@@ -786,10 +801,8 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   // real. On any other the queue is its background triage, which says
   // nothing to anybody, so it is neither "waiting in the queue" nor "reading
   // it" for them. Whether the bot is switched on is said apart (botIsOn).
-  const acts = settings
-    ? new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])
-    : null;
-  const rows = (await requestRows(pool, userId)).map((row) => (!acts || acts.has(row.slug) ? row : {
+  const acts = actsScope(settings);
+  const rows = (await requestRows(pool, userId)).map((row) => (!acts || live().inScope(acts, row.slug) ? row : {
     ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
   }));
   await attachAttempts(pool, rows);

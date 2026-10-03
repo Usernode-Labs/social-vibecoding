@@ -280,7 +280,8 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
     liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7]);
+  // The last two are the everyone audience's (live.liveScope): not here.
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, []]);
   // Plant Pal #1 and #3: a request whose live build waits or runs is read
   // once that build ends, whatever queued it.
   assert.match(s, /AND NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_runs b\s+WHERE b\.app_id = q\.app_id AND b\.issue_number = q\.issue_number/);
@@ -451,7 +452,8 @@ test('a project\'s next request is read while its build runs, and its builds go 
       // The builds wait here, then find their requests closed.
       async fetchPublicIssue() { await gate; return { issue: { state: 'closed' } }; },
     },
-    limits: { async checkBudget() { await gate; return { error: true }; } },
+    // The budget has room: builds check it before they start too, now.
+    limits: { async checkBudget() { return { ok: true }; } },
     worker: { async listWorkerVolumes() { return []; } },
     dm: { async overWeeklyAllowance() { return false; }, async requesterOf() { return null; } },
   };
@@ -562,4 +564,56 @@ test('Run now never starts a second turn on a request already being worked on', 
   assert.match(insert, /WHERE homeroom_bot_queue\.started_at IS NULL/);
   const route = require('node:fs').readFileSync(require.resolve('../src/routes/admin.js'), 'utf8');
   assert.match(route, /res\.status\(202\)\.json\(\{ item: result\.item, \.\.\.\(result\.running \? \{ running: true \} : \{\}\) \}\);/);
+});
+
+test('a spent weekly budget holds builds waiting their turn too, and their people hear it once', async () => {
+  bot._resetForTests();
+  const settings = [
+    { key: bot.KEY_MODE, value: 'shadow' },
+    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
+    { key: bot.KEY_PER_PERSON, value: '3' },
+    { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
+  ];
+  // Two builds waiting and nothing to read: before, the budget was checked
+  // before a read only, so these started on a spent budget.
+  const pool = loopPool({ settings, apps: APPS, waiting: [waitingBuild(900, 101, 1, 7), waitingBuild(902, 102, 4, 8)] });
+  const told = [];
+  const deps = {
+    drain: false,
+    github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
+    limits: { async checkBudget() { return { error: 'Weekly limit reached', reason: 'weekly_limit' }; } },
+    worker: { async listWorkerVolumes() { return []; } },
+    dm: {
+      async overWeeklyAllowance() { return false; },
+      async requesterOf() { return null; },
+      async notePausedForWeek(_pool, { userId }) { told.push(userId); return { messageId: 1 }; },
+    },
+  };
+  const out = await bot.runOnce(pool, {}, deps);
+  assert.equal(out.dispatched, 0, 'no build starts');
+  assert.equal(bot._inFlightForTests().length, 0);
+  assert.deepEqual(told.sort(), [7, 8], 'each person whose build was next is told (the DM keeps it to once a week)');
+  const again = await bot.runOnce(pool, {}, deps);
+  assert.equal(again.paused, 'budget', 'and the loop stays paused until the idle pass looks again');
+  bot._resetForTests();
+});
+
+test('a budget that runs out for another reason pauses without telling anybody it is for the week', async () => {
+  bot._resetForTests();
+  const settings = [
+    { key: bot.KEY_MODE, value: 'shadow' },
+    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
+  ];
+  const pool = loopPool({ settings, apps: APPS, waiting: [waitingBuild(900, 101, 1, 7)] });
+  const told = [];
+  const out = await bot.runOnce(pool, {}, {
+    drain: false,
+    github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
+    limits: { async checkBudget() { return { error: 'Global daily limit reached', reason: 'global_limit' }; } },
+    worker: { async listWorkerVolumes() { return []; } },
+    dm: { async overWeeklyAllowance() { return false; }, async notePausedForWeek(_p, { userId }) { told.push(userId); } },
+  });
+  assert.equal(out.dispatched, 0);
+  assert.deepEqual(told, []);
+  bot._resetForTests();
 });

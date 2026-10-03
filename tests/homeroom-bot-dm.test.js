@@ -111,6 +111,21 @@ test('the bot talks in a DM only to people on the list', () => {
   assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
 });
 
+test('hasBot: the list is the gate, until everyone with platform access has the bot', () => {
+  const list = { mode: 'shadow', dmUsers: ['evan'] };
+  const evan = { username: 'Evan', hasPlatformAccess: true };
+  const ada = { username: 'ada', hasPlatformAccess: true };
+  assert.equal(dm.hasBot(list, evan), true);
+  assert.equal(dm.hasBot(list, ada), false, 'not on the list');
+  const everyone = { mode: 'shadow', audience: 'everyone', dmUsers: [] };
+  assert.equal(dm.hasBot(everyone, ada), true, 'an empty list silences nobody');
+  assert.equal(dm.hasBot(everyone, { username: 'waiting', hasPlatformAccess: false }), false, 'still on the waitlist');
+  assert.equal(dm.hasBot(everyone, { username: 'boss', hasPlatformAccess: false, isAdmin: true }), true, 'an admin always has access');
+  assert.equal(dm.hasBot(everyone, { username: 'homeroom_bot', hasPlatformAccess: true, isSynthetic: true }), false);
+  assert.equal(dm.hasBot(everyone, null), false);
+  assert.equal(dm.hasBot(null, ada), false);
+});
+
 test('a first version gets the longer build clocks', () => {
   const app = { repo_url: 'https://github.com/usernode-bot/x' };
   const plain = bot.buildBudgets(app, {}, 60_000);

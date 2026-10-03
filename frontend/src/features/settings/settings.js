@@ -142,7 +142,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -731,6 +731,7 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.homeroomBotDm = !!j.user?.homeroomBotDm;
+        this.state.homeroomBotForEveryone = !!j.user?.homeroomBotForEveryone;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -1539,6 +1540,10 @@
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const botDm = document.getElementById('homeroom-bot-dm-enabled');
       if (botDm) botDm.checked = !!this.state.homeroomBotDm;
+      // With the bot on for everyone there is no list to join or leave: its
+      // whole block (the switch, its note and its status line) goes.
+      const botDmBlock = botDm ? botDm.closest('.border-t') : null;
+      if (botDmBlock) botDmBlock.classList.toggle('hidden', !!this.state.homeroomBotForEveryone);
       const botDmStatus = document.getElementById('homeroom-bot-dm-status');
       if (botDmStatus) { botDmStatus.classList.add('hidden'); botDmStatus.textContent = ''; }
       this._renderLocalAgentsSection();

@@ -260,7 +260,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(by.get('note-board#5').proposal.checks, 'passed');
     assert.equal(by.get('note-board#5').proposal.link, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
     // #3771: what it waits for, in words: here nothing is ahead of it.
-    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line to be read');
+    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line for a free builder');
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
@@ -1197,7 +1197,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(said.stage, 'followup_queued');
     assert.equal(progressSvc.inFlight(said), true);
-    assert.match(said.doing, /^waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/);
+    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on its proposal$/);
     const work = await tray.workFor(pool, { user: ada, settings });
     const shown = work.now.find((job) => job.appSlug === 'note-board' && job.issueNumber === 5);
     assert.ok(shown, 'the tray lists it under Now');
@@ -1205,7 +1205,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(shown.href, `#app/note-board/dev/proposals/${proposal.id}`);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
     assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
-      /^step 5 of 6: waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/,
+      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on its proposal$/,
       'and the bot\'s list of her work says the same');
     // Running it: both say so.
     await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
