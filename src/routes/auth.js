@@ -1114,6 +1114,41 @@ function authRoutes(config) {
     }
   });
 
+  // #3624: join the Homeroom bot's DM yourself (Settings -> Experimental),
+  // or leave it. It is the list an admin keeps on the bot's dashboard, so
+  // it is capped the same and each person's requests still count against
+  // the bot's weekly allowance per person (homeroom-bot.js setDmMember).
+  // /api/auth/me reports the result as `homeroomBotDm`. Guarded like the
+  // other writes that spend: joining is what lets the platform pay for
+  // this person's requests.
+  router.post('/api/me/homeroom-bot-dm', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      const out = await require('../services/homeroom-bot')
+        .setDmMember(pool, req.user.username, enabled, req.user.id);
+      if (!out.ok) {
+        if (out.error === 'full') {
+          return res.status(409).json({
+            error: `The Homeroom bot is already talking to as many people as it can (${out.max}). Try again later.`,
+          });
+        }
+        if (out.error === 'busy') {
+          return res.status(503).json({ error: 'Could not save just now. Try again.' });
+        }
+        return res.status(400).json({ error: 'This username cannot be added to the Homeroom bot.' });
+      }
+      log.info('settings', 'Homeroom bot DM toggled', { userId: req.user.id, enabled, changed: out.changed });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle Homeroom bot DM', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Preferred development flow (issue #1049). Written by the "remember my
   // option" checkbox on the dev-chat flow picker and by Settings →
   // Connections. Body { flow: 'platform' | 'claude-code' | 'codex' | null }

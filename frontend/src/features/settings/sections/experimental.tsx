@@ -22,6 +22,13 @@ import { LocalAgentsList } from '../local-agents-list';
  * #2779 Agent sessions used to have a switch here too. They are no longer
  * experimental: new work starts in one for everyone, so the switch is gone.
  *
+ * #3624 Homeroom bot (default OFF) puts this person on the bot's DM list, or
+ * takes them off it: the same list an admin keeps on the bot's dashboard
+ * (homeroom_bot_dm_users), so its cap and the weekly allowance per person
+ * hold either way. settings.js wires the change handler to
+ * POST /api/me/homeroom-bot-dm and paints the switch from /api/auth/me's
+ * `homeroomBotDm`; a full list answers 409 and the switch goes back off.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -52,6 +59,15 @@ export function ExperimentalSection() {
             Adds <span className="font-mono">Your computer &middot; Homeroom session</span> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
+        </div>
+        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SwitchRow id="homeroom-bot-dm-enabled">
+            Homeroom bot (build with it in Messages)
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            Create a project and describe what it should do, and Homeroom bot builds the first version. On the projects it works on, it asks you its questions about your requests in Messages, with answers you can tap, and tells you when something is building, ready to vote on, and live. Your answers are still posted on the request, where everyone can see them. You can also write to it to ask what it's working on. The platform pays for its work for you, up to a weekly limit. Turning this off stops it, including on projects it built for you.
+          </p>
+          <StatusLine id="homeroom-bot-dm-status" size="xs" />
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">

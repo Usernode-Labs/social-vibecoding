@@ -3197,6 +3197,21 @@
     {
       "source": "src/routes/auth.js",
       "method": "POST",
+      "path": "/api/me/homeroom-bot-dm",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.homeroom.bot.dm.c6765bbe",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
       "path": "/api/me/dev-flow",
       "expression": null,
       "status": "mapped",

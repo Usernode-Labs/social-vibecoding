@@ -9980,7 +9980,8 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_shadow_builds', 'off'),
   ('homeroom_bot_build_concurrency', '2'),
   ('homeroom_bot_shadow_build_platform', 'off'),
-  -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
+  -- #3624: nobody gets the DM until an admin adds them or they join from
+  -- Settings -> Experimental; $50 a week each.
   ('homeroom_bot_dm_users', '[]'),
   ('homeroom_bot_user_weekly_cents', '5000'),
   -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
