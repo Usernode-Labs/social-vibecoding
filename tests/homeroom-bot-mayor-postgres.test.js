@@ -1440,6 +1440,37 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
   });
 
+  await t.test('a request filed from "Ask for a change" is a request: the bot can post on it, start it and name it', async () => {
+    // Filed through POST /api/feedback: a feedback report beside the GitHub
+    // issue and no `issues` twin (by design), and the bot has not looked at
+    // it yet, so no requester, queue row or run either.
+    await pool.query(
+      `INSERT INTO feedback_reports (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description)
+       VALUES ($1, 'app', $2, 'usernode-bot', 'note-board', 77, 'Undo a deleted note', 'Let me undo deleting a note')`,
+      [ada.id, notes.id],
+    );
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    threadPosts.length = 0;
+    const asked = await say('add that undo should last ten seconds');
+    const ctx = (extra = {}) => ({
+      bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, userText: 'add that undo should last ten seconds',
+      cards: [], appIds: new Set(), messageId: asked.id, ...extra,
+    });
+    const commented = await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 77, comment: 'Undo lasts ten seconds' });
+    assert.equal(commented.ok, true, commented.error);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].msg.thread.ref, 77);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+    const started = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 77 });
+    assert.equal(started.ok, true, started.error);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+    // And a reply that names it is not taken for a made-up number.
+    const named = [];
+    await turn('what is #77?', scripted([[['reply', { text: 'Request #77 is Undo a deleted note, filed by you.' }]]], named));
+    assert.equal(named.length, 1, 'passed in one pass, with no check note');
+    await pool.query('DELETE FROM feedback_reports WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+  });
+
   await t.test('#3772: her status is her work: nothing the bot only read in the background', async () => {
     const { rows: [side] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)

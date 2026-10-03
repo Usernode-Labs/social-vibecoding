@@ -843,6 +843,9 @@ async function unknownRequests(pool, ctx, numbers) {
        SELECT issue_number, app_id FROM homeroom_bot_queue WHERE issue_number = ANY($2::int[])
        UNION ALL
        SELECT issue_number, app_id FROM homeroom_bot_runs WHERE issue_number = ANY($2::int[])
+       UNION ALL
+       -- A request filed from an app's "Ask for a change" dialog has no twin.
+       SELECT issue_number, app_id FROM feedback_reports WHERE issue_number = ANY($2::int[])
      ) x
       WHERE x.app_id IN (
         SELECT a.id FROM apps a JOIN community_members m ON m.community_id = a.community_id WHERE m.user_id = $1
@@ -2115,12 +2118,26 @@ function commentText(theirs, comment) {
   return chatPostText(theirs, comment, 'What they asked to add');
 }
 
-/** Whether `app` has a request numbered `n` that the platform knows of. */
+/**
+ * Whether `app` has a request numbered `n` that the platform knows of: the
+ * same records unknownRequests reads (the platform's own twin, a requester,
+ * the bot's queue and runs), and the feedback report of a request filed from
+ * the app's "Ask for a change" dialog, which keeps no twin by design
+ * (routes/issues.js isIssueAuthor). Reading only the first two, a request
+ * filed there was "no request" until the live loop had looked at it, and on
+ * an app the bot does not build on it always was.
+ */
 async function requestExists(pool, appId, n) {
   const { rows } = await pool.query(
     `SELECT 1 FROM issues WHERE app_id = $1 AND github_issue_number = $2
      UNION ALL
      SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM feedback_reports WHERE app_id = $1 AND issue_number = $2
      LIMIT 1`,
     [appId, n],
   );
