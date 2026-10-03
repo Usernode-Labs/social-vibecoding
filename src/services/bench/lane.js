@@ -226,8 +226,9 @@ async function planRun(pool, body = {}) {
   const calibration = catalog.costCalibration(v.models.map((id) => catalog.modelInfo(models, id)), history);
 
   // `est` is the pessimistic figure the cap is scheduled against; `likely`
-  // is what the trial will probably cost, for the preview (#3710).
-  const plan = { task: [], stage: [], model: [], attempt: [], status: [], error: [], est: [], likely: [], token: [] };
+  // is what the trial will probably cost, for the preview (#3710); `range`
+  // is what the launcher shows: a low and a high, and what they rest on.
+  const plan = { task: [], stage: [], model: [], attempt: [], status: [], error: [], est: [], likely: [], range: [], token: [] };
   let estimate = 0;
   let likely = 0;
   for (const task of tasks) {
@@ -242,6 +243,7 @@ async function planRun(pool, body = {}) {
       const past = history.get(`${id}|${task.stage}`) || [];
       const est = catalog.estimateTrialCost(info, task.stage, past);
       const probable = catalog.likelyTrialCost(info, task.stage, past, calibration);
+      const range = catalog.costRange(info, task.stage, history, calibration);
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         plan.task.push(task.id);
         plan.stage.push(task.stage);
@@ -251,6 +253,7 @@ async function planRun(pool, body = {}) {
         plan.error.push(reason);
         plan.est.push(Math.round(est * 10000) / 10000);
         plan.likely.push(probable);
+        plan.range.push(range);
         plan.token.push(token());
         if (!reason) { estimate += est; likely += probable; }
       }
@@ -332,6 +335,9 @@ function estimateWallMs(items, concurrency) {
   return Math.round(Math.max(heavyMs / heavySlots, allMs / slots));
 }
 
+// What a stage's cost range rests on, strongest first (catalog.costRange).
+const BASIS_ORDER = Object.freeze([null, 'none', 'own', 'stage', 'comparable', 'price', 'fixed']);
+
 /**
  * What a launch with this body would do, without launching it: trials,
  * the ones not applicable, the estimate in dollars (per stage too), about
@@ -345,20 +351,35 @@ async function estimateRun(pool, body = {}) {
   const durations = await durationHistory(pool);
   const byStage = {};
   const items = [];
+  let low = 0;
+  let high = 0;
   for (let i = 0; i < plan.task.length; i += 1) {
     const stage = plan.stage[i];
-    if (!byStage[stage]) byStage[stage] = { trials: 0, notApplicable: 0, estimateUsd: 0, likelyUsd: 0 };
+    if (!byStage[stage]) {
+      byStage[stage] = { trials: 0, notApplicable: 0, estimateUsd: 0, likelyUsd: 0, lowUsd: 0, highUsd: 0, basis: null, from: null };
+    }
     if (plan.status[i] === 'not_applicable') {
       byStage[stage].notApplicable += 1;
       continue;
     }
-    byStage[stage].trials += 1;
-    byStage[stage].estimateUsd += plan.est[i];
-    byStage[stage].likelyUsd += plan.likely[i];
+    const s = byStage[stage];
+    const range = plan.range[i];
+    s.trials += 1;
+    s.estimateUsd += plan.est[i];
+    s.likelyUsd += plan.likely[i];
+    s.lowUsd += range.low;
+    s.highUsd += range.high;
+    low += range.low;
+    high += range.high;
+    // A stage's range rests on the weakest of its trials' (a model with no
+    // history makes the whole stage a guess).
+    if (BASIS_ORDER.indexOf(range.basis) > BASIS_ORDER.indexOf(s.basis)) { s.basis = range.basis; s.from = range.from; }
     items.push({ stage, est: plan.est[i], ms: durations.get(`${plan.model[i]}|${stage}`) ?? TRIAL_MS_FALLBACK[stage] ?? 120_000 });
   }
   const cents = (n) => Math.round(n * 100) / 100;
-  for (const s of Object.values(byStage)) { s.estimateUsd = cents(s.estimateUsd); s.likelyUsd = cents(s.likelyUsd); }
+  for (const s of Object.values(byStage)) {
+    s.estimateUsd = cents(s.estimateUsd); s.likelyUsd = cents(s.likelyUsd); s.lowUsd = cents(s.lowUsd); s.highUsd = cents(s.highUsd);
+  }
   const headroomUsd = capHeadroom(items, v.concurrency);
   return {
     ok: true,
@@ -368,9 +389,16 @@ async function estimateRun(pool, body = {}) {
     // cap is scheduled against, the one a launch records.
     likelyUsd: cents(likely),
     estimateUsd: cents(estimate),
+    // The range the launcher shows, each stage's resting on what it says in
+    // byStage[stage].basis (catalog.costRange).
+    lowUsd: cents(low),
+    highUsd: cents(high),
     byStage,
     calibratedFrom: calibration.any ? calibration.any.from : 0,
-    suggestedCapUsd: suggestCap({ likelyUsd: likely, pessimisticUsd: estimate, headroomUsd }),
+    // Suggested from the range where it is above the single figure: a stage
+    // priced from the stage it is most like would otherwise get a cap that
+    // stops it after a trial or two.
+    suggestedCapUsd: suggestCap({ likelyUsd: Math.max(likely, low), pessimisticUsd: Math.max(estimate, high), headroomUsd }),
     estimatedMs: estimateWallMs(items, v.concurrency),
     capUsd: v.capUsd,
     maxCapUsd: MAX_CAP_USD,

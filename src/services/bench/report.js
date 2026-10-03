@@ -66,10 +66,12 @@ async function runTrials(pool, runId) {
             tr.build_branch, tr.build_sha, tr.build_commits, tr.created_at, tr.finished_at,
             tk.stage, tk.tags, tk.issue_number, a.slug AS app_slug,
             tk.reference->'dm_script'->>'source' AS dm_answer_source,
-            CASE WHEN tk.stage IN ('first_version', 'capture') THEN tr.capture END AS capture
+            CASE WHEN tk.stage IN ('first_version', 'capture') THEN tr.capture END AS capture,
+            CASE WHEN tk.stage IN ('first_version', 'capture') THEN sn.extra->>'appName' END AS taste_app_name
        FROM bench_trials tr
        JOIN bench_tasks tk ON tk.id = tr.task_id
        LEFT JOIN apps a ON a.id = tk.app_id
+       LEFT JOIN homeroom_bot_run_snapshots sn ON sn.id = tk.snapshot_id
       WHERE tr.run_id = $1
       ORDER BY tr.id`,
     [Number(runId)],
@@ -153,6 +155,33 @@ function tasteAggregates(trials) {
       hexColours: avg((c) => c.tells?.hexColours?.count),
     },
   };
+}
+
+/**
+ * A taste run's trials one by one, for the console's side-by-side view: the
+ * app, the arm (the stage, and the model for a first version), what happened,
+ * the screenshots the judge was shown, and how many of the rubric's criteria
+ * the grade that counts said held. The console's view only: runAggregates
+ * copies its fields by name and never reaches this, so nothing here names a
+ * trial to the connector. Pure over runTrials' rows.
+ */
+function tasteTrials(trials) {
+  const { pickShots } = require('./capture');
+  return trials.filter((t) => t.stage === 'first_version' || t.stage === 'capture').map((t) => {
+    const answered = Object.values(t.criteria || {}).filter((v) => typeof v === 'boolean');
+    return {
+      trialId: t.id,
+      stage: t.stage,
+      model: t.model,
+      attempt: t.attempt,
+      status: t.status,
+      appSlug: t.appSlug,
+      appName: t.taste_app_name || t.appSlug,
+      booted: t.capture ? t.capture.booted === true : null,
+      shots: t.capture ? pickShots(t.capture).chosen.map((sh) => ({ caption: sh.caption, artifactId: sh.artifactId })) : [],
+      criteria: answered.length ? { held: answered.filter(Boolean).length, of: answered.length } : null,
+    };
+  });
 }
 
 /** One cell of the results table: a stage on a model. */
@@ -271,6 +300,7 @@ async function runReport(pool, runId, { slice = 'verdict', trials: loaded = null
     paired,
     slice: { key, keys: SLICE_KEYS, groups: slices },
     pareto: points.map((p) => ({ ...p, frontier: frontier.has(p.key) })),
+    tasteTrials: tasteTrials(trials),
   };
 }
 
@@ -444,6 +474,7 @@ module.exports = {
   answerSource,
   sliceGroups,
   tasteAggregates,
+  tasteTrials,
   taskScores,
   runReport,
   reasonText,

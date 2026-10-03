@@ -216,6 +216,72 @@ function likelyTrialCost(model, stage, history = [], calibration = null) {
   return estimateTrialCost(model, stage, history);
 }
 
+// The stage a stage with no trials of its own is priced from: a first
+// version is a build on a starter (with a triage and a spec before it), and
+// the two kinds of follow-up turn on a proposal are alike.
+const COMPARABLE_STAGE = Object.freeze({ first_version: 'build', checks_fix: 'followup', followup: 'checks_fix' });
+
+/**
+ * What one trial will probably cost, as a range, and what the range rests on
+ * (`basis`), for the launcher. The closest trials that exist, in this order:
+ *
+ *   own         this model's trials at this stage: from MIN_HISTORY of them,
+ *               their median to the dearest tenth (the figure the cap is
+ *               scheduled against);
+ *   stage       other models' trials at this stage: from MIN_HISTORY a
+ *               model, this model's price-based guess and that guess scaled
+ *               as theirs compared with their price; fewer, their trials;
+ *   comparable  nothing has run at this stage, so the stage it is most like
+ *               (COMPARABLE_STAGE, named in `from`): this model's trials
+ *               there, else any model's;
+ *   price       nothing like it has run: from the price scaled by every
+ *               stage's history up to the price-based guess itself;
+ *   fixed       no price either: the stage's fixed guess (FALLBACK_USD);
+ *   none        a trial that runs no model (a capture) costs nothing.
+ *
+ * Fewer trials than MIN_HISTORY, or another model's, say what such a trial
+ * cost without saying what this one will: the range runs from the cheapest
+ * of them to the dearest, and takes in this model's price-based guess too,
+ * so one trial never reads as a confident figure. likelyTrialCost answers
+ * with one figure, and for a stage with no history it borrows every stage's
+ * calibration: four first versions read $0.05 while a build costs a dollar
+ * or two. Pure.
+ */
+function costRange(model, stage, history, calibration = null) {
+  const sorted = (list) => (list || []).filter((c) => Number.isFinite(c) && c >= 0).sort((a, b) => a - b);
+  const p90 = (s) => s[Math.min(s.length - 1, Math.ceil(0.9 * s.length) - 1)];
+  const mine = (st) => sorted(history && history.get ? history.get(`${model.id}|${st}`) : null);
+  const anyModel = (st) => {
+    const all = [];
+    if (history && history.forEach) history.forEach((list, key) => { if (key.endsWith(`|${st}`)) all.push(...list); });
+    return sorted(all);
+  };
+  const own = mine(stage);
+  if (own.length >= MIN_HISTORY) return { low: median(own), high: p90(own), basis: 'own', from: stage };
+  if (!TOKEN_BUDGET[stage] && FALLBACK_USD[stage] === 0) return { low: 0, high: 0, basis: 'none', from: null };
+  const est = estimateTrialCost(model, stage, own);
+  const likely = likelyTrialCost(model, stage, own, calibration);
+  const around = (costs, basis, from) => {
+    const all = sorted([...costs, est]);
+    return { low: all[0], high: all[all.length - 1], basis, from };
+  };
+  if (own.length) return around(own, 'own', stage);
+  const cal = calibration?.byStage?.[stage];
+  const budget = budgetTrialCost(model, stage);
+  if (cal && budget != null) return around([budget * cal.ratio], 'stage', stage);
+  const theirs = anyModel(stage);
+  if (theirs.length) return around(theirs, 'stage', stage);
+  const like = COMPARABLE_STAGE[stage];
+  if (like) {
+    const there = mine(like);
+    if (there.length >= MIN_HISTORY) return { low: median(there), high: p90(there), basis: 'comparable', from: like };
+    if (there.length) return around(there, 'comparable', like);
+    const others = anyModel(like);
+    if (others.length) return around(others, 'comparable', like);
+  }
+  return { low: Math.min(likely, est), high: Math.max(likely, est), basis: budget != null ? 'price' : 'fixed', from: null };
+}
+
 module.exports = {
   CANDIDATES,
   BASELINE,
@@ -230,4 +296,6 @@ module.exports = {
   budgetTrialCost,
   costCalibration,
   likelyTrialCost,
+  COMPARABLE_STAGE,
+  costRange,
 };

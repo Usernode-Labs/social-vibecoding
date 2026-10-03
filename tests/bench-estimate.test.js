@@ -106,3 +106,52 @@ test('the suggested cap leaves room for the trials in flight, and never asks for
   assert.equal(lane.suggestCap({ likelyUsd: 0, pessimisticUsd: 0, headroomUsd: 0 }), 1);
   assert.equal(lane.suggestCap({ likelyUsd: 5000, pessimisticUsd: 9000, headroomUsd: 50 }), 1000, 'inside the lane\'s range');
 });
+
+// The launcher's range (catalog.costRange): the closest trials that exist,
+// and what they are, never one confident figure with nothing behind it. The
+// single "likely" figure priced four first versions at $0.05 with no first
+// version run yet, from triage's calibration, while a build cost a dollar or
+// two (#3737's first taste runs).
+test('a cost range rests on the closest trials there are, and says which', () => {
+  const history = new Map([
+    ['z-ai/glm-5.3-flash|triage', [0.003, 0.004, 0.005, 0.006]],
+    ['z-ai/glm-5.3-flash|build', [1.0, 1.4, 2.5]],
+    ['x/fresh|build', [9]],
+  ]);
+  const cal = catalog.costCalibration([glm, fresh], history);
+  const range = (m, st, h = history, c = cal) => catalog.costRange(m, st, h, c);
+
+  const own = range(glm, 'triage');
+  assert.deepEqual({ ...own, low: Math.round(own.low * 1e6) / 1e6 }, { low: 0.0045, high: 0.006, basis: 'own', from: 'triage' }, 'its own trials: the median to the dearest tenth');
+  assert.equal(range(glm, 'triage').high, catalog.estimateTrialCost(glm, 'triage', history.get('z-ai/glm-5.3-flash|triage')),
+    'the top is the figure the cap is scheduled against');
+
+  // The bug: a first version nobody has run.
+  const fv = range(glm, 'first_version');
+  assert.deepEqual(fv, { low: 1.4, high: 2.5, basis: 'comparable', from: 'build' }, 'a first version is priced from its builds');
+  assert.ok(4 * fv.low >= 4 && 4 * fv.high <= 10, 'four first versions: about $4 to $10, not $0.05');
+
+  // One build of another model's says what a build cost, not what this one's will: the range takes in this model's price.
+  const thin = range(fresh, 'first_version', new Map([['z-ai/glm-5.3-flash|build', [1.2]]]), null);
+  assert.equal(thin.basis, 'comparable');
+  assert.equal(thin.low, 1.2);
+  assert.equal(thin.high, catalog.budgetTrialCost(fresh, 'first_version'), 'up to its own price-based guess');
+  assert.ok(thin.high > thin.low, 'a range, not a figure');
+
+  // Its own few trials at the stage come before a stage like it.
+  assert.deepEqual(range(fresh, 'build'), { low: 9, high: catalog.budgetTrialCost(fresh, 'build'), basis: 'own', from: 'build' },
+    'its one build, up to its own price-based guess');
+
+  // Other models' trials at the stage, from enough of them: the calibrated price, as before.
+  const qwen = { id: 'qwen/qwen3.8-flash', inputPerMillion: 0.15, outputPerMillion: 0.47 };
+  const triage = range(qwen, 'triage');
+  assert.equal(triage.basis, 'stage');
+  assert.ok(Math.abs(triage.low - catalog.likelyTrialCost(qwen, 'triage', [], cal)) < 1e-12);
+  assert.equal(triage.high, catalog.estimateTrialCost(qwen, 'triage', []));
+
+  // Nothing like it: a guess from the price, or with no price the fixed guess, and said so.
+  assert.equal(range(glm, 'spec').basis, 'price');
+  assert.deepEqual(range({ id: 'x/noprice' }, 'spec', new Map(), null), { low: catalog.FALLBACK_USD.spec, high: catalog.FALLBACK_USD.spec, basis: 'fixed', from: null });
+  assert.deepEqual(range(glm, 'capture'), { low: 0, high: 0, basis: 'none', from: null }, 'a capture runs no model');
+  assert.deepEqual(catalog.COMPARABLE_STAGE, { first_version: 'build', checks_fix: 'followup', followup: 'checks_fix' });
+});

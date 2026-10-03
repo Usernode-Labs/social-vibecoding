@@ -4106,9 +4106,9 @@
       "expectText": "On Shadow apps it only records what it would do"
     },
     {
-      "name": "Homeroom bot Benchmark area shows Core v1's state, its suites, a run's results per stage and model, and the cost-vs-quality chart (#3654), and the taste eval's suite and a run of both its arms (#3737)",
+      "name": "Homeroom bot Benchmark opens on its Overview: the places with their counts, what is happening now, which model each stage should use on the default suite, and the taste eval's latest scores (#3654, #3737)",
       "path": "/#admin/homeroom-bot/benchmark",
-      "expectSelector": "#admin-homeroom-bench:has(#admin-homeroom-bench-core-state):has(#admin-homeroom-bench-pareto):has(#admin-homeroom-bench-suites [data-bench-suite-taste]):has(#admin-homeroom-bench-runs [data-bench-run=\"936550\"]) #admin-homeroom-bench-results-table",
+      "expectSelector": "#admin-homeroom-bench[data-bench-view=\"overview\"]:has(#admin-homeroom-bench-tab-runs span):has(#admin-homeroom-bench-now a[href$=\"/runs/936551\"]):has([data-bench-taste-score=\"capture\"]) #admin-homeroom-bench-best-table [data-bench-stage-row=\"triage\"]",
       "expectText": "Staging demo core v1"
     },
     {
