@@ -3259,6 +3259,19 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     let restartedOut = 0;
     if (plan.lost || (plan.mode === 'scout' && !specRead?.blocked)) {
       await archive();
+      // WP1 (#2): a build its request no longer needs (stopped by its merge,
+      // or answered by another proposal of the bot's) is not started again:
+      // recorded as the skip it is, with nothing said.
+      const notNeeded = await whyNotBuild(pool, {
+        runId: plan.runId, botId: session.user_id, appId: app.id, issueNumber: plan.issueNumber,
+      });
+      if (notNeeded) {
+        await recordLiveBuild(pool, plan.runId, { ok: false, sessionId: Number(sessionId), costUsd, error: notNeeded });
+        log.info('homeroom-bot', 'A live build a restart interrupted is not needed any more', {
+          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: notNeeded,
+        });
+        return 'skipped';
+      }
       const before = await restartedBuildsBefore(pool, plan).catch(() => 0);
       if (before + 1 < MAX_RESTARTED_BUILDS) {
         // The run says what became of its build: it was interrupted, and the
@@ -3274,6 +3287,11 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
           app: app.slug, issueNumber: plan.issueNumber, sessionId, why: plan.why || plan.mode,
         });
+        // WP1 (#9): the person it is for hears it once, so a card that goes
+        // back a step is never a mystery. Never a reason recovery fails.
+        await (deps.dm || require('./homeroom-bot-dm')).noteBuildRestarted(pool, {
+          app, issueNumber: plan.issueNumber, runId: plan.runId,
+        }).catch((err) => log.warn('homeroom-bot', 'Could not say a build was started again', { sessionId, err: err.message }));
         return 'requeued';
       }
       // Not sent round again: said below as a failed build, so the person
@@ -3317,6 +3335,19 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       const pushed = {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
+      // WP1 (#2): not proposed once a proposal of the bot's answers the
+      // request, or it was closed, as the live path does (whyNotBuild).
+      const skipped = await whyNotBuild(pool, {
+        runId: plan.runId, botId: bot.id, appId: app.id, issueNumber: plan.issueNumber, github, repo,
+      });
+      if (skipped) {
+        await archive();
+        await recordLiveBuild(pool, plan.runId, { ok: false, sessionId: Number(sessionId), costUsd, ...pushed, error: skipped });
+        log.info('homeroom-bot', 'A live build a restart interrupted was not proposed', {
+          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: skipped,
+        });
+        return 'skipped';
+      }
       // Named and described from the spec and the build's own message, as
       // the live path does before it proposes (#3518).
       await live.prepareProposal({
@@ -4458,6 +4489,16 @@ async function buildLive({
       threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
       dm: { building: true },
     });
+    // WP1 (#2): what the run has seen moves past its own plan comment now,
+    // not only once the build is announced. The request is held while it is
+    // built (classifyIssue), but a build can end without that last step (it
+    // throws, or restart recovery finishes it), and the comment then read as
+    // a change the moment the hold lifted. A reply from somebody else since
+    // the build read the request still leaves it to be read again.
+    await live.advanceSeen({
+      pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
+      since: seedReadAt, postedAt,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
   };
   // Under way in this process: the sweep for live builds nothing finished
   // (settleAbandonedLiveBuilds) leaves it alone whatever its age.
@@ -4474,6 +4515,9 @@ async function buildLive({
       platformRepo: isPlatformRepo(app, config),
       // #3737: a first version's spec and build decide and record its look.
       firstVersion,
+      // WP1 (#2): asked once the plan is written and again just before it is
+      // proposed (whyNotBuild).
+      skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does
       // not. From here restart recovery owns it, so it is no longer waiting.
@@ -4498,7 +4542,20 @@ async function buildLive({
       log.warn('homeroom-bot', 'Build spend debit failed', { err: err.message });
     }
   }
-  const acted = await announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain });
+  let acted;
+  if (built.skipped) {
+    // WP1 (#2): stopped, not failed, and nothing said: a proposal of the
+    // bot's already answers the request, or it was closed. Recorded as a
+    // skip, which the cards, the tray and the bot's own words read as
+    // stopped. Never the "couldn't finish" note.
+    await recordLiveBuild(pool, runId, built, built.model || null);
+    log.info('homeroom-bot', 'Live build stopped before it was proposed', {
+      app: app.slug, issueNumber, runId, sessionId: built.sessionId || null, why: built.skipped,
+    });
+    acted = 'skipped';
+  } else {
+    acted = await announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain });
+  }
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   await live.advanceSeen({
     pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
@@ -4726,6 +4783,61 @@ function pickLiveBuilds(candidates, { buildingAppIds = [], active = [], slots = 
 }
 
 /**
+ * The bot's own proposal for a request, up for a vote or merging, or merged
+ * at or after `since` (the verdict of the build that asks): `{ id }`, or
+ * null. Throws when it cannot be read. Asked before a build starts
+ * (buildOne), and again before one is proposed (whyNotBuild).
+ */
+async function requestProposal(pool, { appId, botId, issueNumber, since = null }) {
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_sessions
+      WHERE app_id = $1 AND user_id = $2 AND $3 = ANY(linked_issues) AND is_headless = FALSE
+        AND (status IN ('promoted', 'merging') OR (status = 'merged' AND merged_at >= $4::timestamptz))
+      ORDER BY id DESC LIMIT 1`,
+    [appId, botId, issueNumber, since || null],
+  );
+  return rows[0] || null;
+}
+
+/** What a build its request's proposal made unneeded records: a skip, read as stopped. */
+function hasProposalSkip(sessionId) {
+  return `skipped: the request already has a proposal (${Number(sessionId)})`;
+}
+
+// What a build whose request was closed while it was built records.
+const CLOSED_WHILE_BUILDING = 'skipped: the request was closed before it was proposed';
+
+/**
+ * WP1 (#2): why a live build under way should stop where it is, or null to
+ * go on. buildOne asks before a build starts; this is asked once its plan is
+ * written and again just before it is proposed (buildAndPropose's
+ * `skipCheck`), and before restart recovery proposes one. A reason is a
+ * skip: the run already stopped (noteRequestMerged), a proposal of the
+ * bot's for the request (up for a vote, merging, or merged since this
+ * verdict), or the request's issue closed. Both of Plant Pal's duplicate
+ * proposals went up after their issue had closed. What cannot be read never
+ * stops a build: this is the backstop, not the guard.
+ */
+async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = null, repo = null }) {
+  try {
+    const { rows: [run] = [] } = await pool.query(
+      'SELECT created_at, build_ok, build_error FROM homeroom_bot_runs WHERE id = $1', [runId],
+    );
+    if (run?.build_ok === false && /^skipped:/.test(String(run.build_error || ''))) return String(run.build_error);
+    const proposed = await requestProposal(pool, { appId, botId, issueNumber, since: run?.created_at || null });
+    if (proposed) return hasProposalSkip(proposed.id);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not look for the request\'s proposal during its build', { runId, issueNumber, err: err.message });
+  }
+  if (github && repo) {
+    const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber).catch(() => null);
+    const state = fetched?.issue?.state;
+    if (state && state !== 'open') return CLOSED_WHILE_BUILDING;
+  }
+  return null;
+}
+
+/**
  * Start one waiting live build: the issue, its discussion and who it is for
  * read fresh (a comment since the verdict is in the build's seed), then
  * buildLive. A closed issue is skipped and recorded so; a platform that
@@ -4771,13 +4883,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
   // keeps waiting, and the next pass looks again.
   let proposed;
   try {
-    ({ rows: [proposed] = [] } = await pool.query(
-      `SELECT id FROM chat_sessions
-        WHERE app_id = $1 AND user_id = $2 AND $3 = ANY(linked_issues) AND is_headless = FALSE
-          AND (status IN ('promoted', 'merging') OR (status = 'merged' AND merged_at >= $4::timestamptz))
-        ORDER BY id DESC LIMIT 1`,
-      [app.id, bot.id, issueNumber, run.created_at || null],
-    ));
+    proposed = await requestProposal(pool, { appId: app.id, botId: bot.id, issueNumber, since: run.created_at || null });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not look for the request\'s proposal before its build', { app: app.slug, issueNumber, err: err.message });
     return { ran: false, reason: 'infra', detail: 'proposal_unreadable' };
@@ -4786,7 +4892,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     await pool.query(
       `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2
         WHERE id = $1 AND build_ok IS NULL`,
-      [run.id, `skipped: the request already has a proposal (${Number(proposed.id)})`],
+      [run.id, hasProposalSkip(proposed.id)],
     ).catch(() => {});
     log.info('homeroom-bot', 'Live build skipped: its request already has a proposal', {
       app: app.slug, issueNumber, runId: run.id, sessionId: Number(proposed.id),
@@ -4826,6 +4932,99 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     }).catch(() => {});
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});
     return { ran: true, verdict: 'ready', runId: Number(run.id), acted: 'build_failed' };
+  }
+}
+
+// ── A request's proposal merged (WP1, #2) ────────────────────────────────
+//
+// The safety net behind the hold and the checks before a build starts and
+// before it is proposed. Once the bot's proposal for a request is merged,
+// nothing else of the bot's on that request goes on: a build still waiting
+// its turn is stopped, one under way is stopped too (its turn ended, which
+// frees its project's build slot, and the build reads the stop as a skip,
+// whyNotBuild), another proposal of the bot's for the request is withdrawn,
+// and the request's queue rows go, except one a person waits on (priority
+// 0). Before, a second build of Plant Pal #1 held the project's build slot
+// after the first was merged, and the next request waited behind it.
+
+/**
+ * Called by the merge (routes/votes.js finalizeMerge) once `session` is
+ * merged. Only for a proposal of the bot's. Never throws; resolves what it
+ * did ({ skipped, stopped, withdrawn, dequeued }), or null.
+ */
+async function noteRequestMerged(pool, session, deps = {}) {
+  if (!session?.id) return null;
+  try {
+    const { rows: [merged] = [] } = await pool.query(
+      `SELECT cs.id, cs.app_id, cs.user_id, cs.linked_issues
+         FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.status = 'merged' AND u.username = $2 AND u.is_synthetic = TRUE`,
+      [session.id, BOT_USERNAME],
+    );
+    if (!merged) return null;
+    const issues = [...new Set((merged.linked_issues || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!issues.length) return null;
+    const appId = Number(merged.app_id);
+    const why = hasProposalSkip(merged.id);
+    const out = { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 0 };
+    // Recorded before anything is stopped: whatever the stopped turn comes
+    // to then reads as this skip, never as a failure.
+    const { rows: settled } = await pool.query(
+      `UPDATE homeroom_bot_runs r
+          SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $3
+        WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[])
+          AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+          AND r.build_session_id IS DISTINCT FROM $4
+          AND ((r.live_build_waiting_at IS NOT NULL AND r.build_session_id IS NULL)
+               OR EXISTS (SELECT 1 FROM chat_sessions bs
+                           WHERE bs.id = r.build_session_id AND bs.status IN ('active', 'paused')))
+        RETURNING r.id, r.build_session_id`,
+      [appId, issues, why, Number(merged.id)],
+    );
+    const worker = deps.worker || require('./worker');
+    for (const run of settled) {
+      if (!run.build_session_id) { out.skipped += 1; continue; }
+      out.stopped += 1;
+      await Promise.resolve(worker.stopTurn(run.build_session_id)).catch((err) => {
+        log.warn('homeroom-bot', 'Could not stop a build its request\'s merge made unneeded', {
+          runId: run.id, sessionId: run.build_session_id, err: err.message,
+        });
+      });
+    }
+    // The same request's other proposals of the bot's, still up for a vote:
+    // withdrawn as the platform withdraws one (no person withdrew it).
+    const { rows: others } = await pool.query(
+      `SELECT id FROM chat_sessions
+        WHERE app_id = $1 AND user_id = $2 AND linked_issues && $3::int[] AND is_headless = FALSE
+          AND status = 'promoted' AND id <> $4
+        ORDER BY id`,
+      [appId, merged.user_id, issues, Number(merged.id)],
+    );
+    const sessionLifecycle = deps.sessionLifecycle || require('./session-lifecycle');
+    for (const other of others) {
+      try {
+        const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded' });
+        if (done?.archived) out.withdrawn += 1;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not withdraw a duplicate proposal', { sessionId: other.id, err: err.message });
+      }
+    }
+    const { rowCount } = await pool.query(
+      `DELETE FROM homeroom_bot_queue
+        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND priority > 0 AND started_at IS NULL`,
+      [appId, issues],
+    );
+    out.dequeued = rowCount || 0;
+    if (out.skipped || out.stopped || out.withdrawn || out.dequeued) {
+      log.info('homeroom-bot', 'A request\'s proposal merged; the rest of the bot\'s work on it stopped', {
+        sessionId: Number(merged.id), appId, issues, ...out,
+      });
+      wake({ appId });
+    }
+    return out;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not settle a merged request\'s other work', { sessionId: session.id, err: err.message });
+    return null;
   }
 }
 
@@ -6097,6 +6296,12 @@ module.exports = {
   // Live builds in slots of their own, one per project.
   buildLive,
   buildOne,
+  // WP1 (#2): a build re-checked before it is proposed, and a merge's net.
+  requestProposal,
+  whyNotBuild,
+  hasProposalSkip,
+  CLOSED_WHILE_BUILDING,
+  noteRequestMerged,
   queueLiveBuild,
   liveBuildCandidates,
   pickLiveBuilds,
@@ -6113,6 +6318,7 @@ module.exports = {
   describeStop,
   relaySpend,
   STOP_SETTLE_MS,
+  ABANDONED_LIVE_WINDOW_DAYS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
   TRIPWIRE_VERDICTS,

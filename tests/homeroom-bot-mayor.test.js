@@ -21,7 +21,11 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /or "what are you doing\?", call progress first/);
   assert.match(prompt, /say it, for example "step 4 of 7: building it, 6 minutes so far"/);
   assert.match(prompt, /For the whole list of their requests, call my_work\. For ANY question about their\n  work, answer only from what these return/);
-  assert.match(prompt, /Never guess how long something will take, and never say it is nearly done/);
+  // #19 (WP3): "how long?" is answered with how long the step usually takes,
+  // and its time limit only ever as the most it can take.
+  assert.match(prompt, /When they ask how long something will take, lead with how long its step usually takes \(typicalMinutes in\n  progress, a range of minutes\)/);
+  assert.match(prompt, /A step's time limit is only the most it can take before it is stopped:\n  mention it as that, never as the wait\. Never guess a time of your own, and never say it is nearly done\./);
+  assert.doesNotMatch(prompt, /say it that way if they ask how long/, 'the old rule, which had it quote the limit as the answer, is gone');
   assert.match(prompt, /Write a link in the text only when a tool returned it, exactly as returned/);
   assert.match(prompt, /Nothing is filed until they tap File it/);
   assert.match(prompt, /Finish every turn by calling reply exactly once/);
@@ -62,10 +66,10 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: nine lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: eleven lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'reply']);
+      'comment_on_request', 'start_request', 'offer_request', 'withdraw_proposal', 'report_problem', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -79,6 +83,9 @@ test('the tools: nine lookups and actions and a reply, every one closed to extra
   const progress = mayor.TOOLS.find((t) => t.function.name === 'progress').function;
   assert.match(progress.description, /the step it is on/);
   assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal's checks, the group's vote/);
+  // #19 (WP3): the typical range is what to say; the limit never is.
+  assert.match(progress.description, /typicalMinutes when the step takes a while \(how long it usually takes, from and to, in minutes: what to say when they ask how long\)/);
+  assert.match(progress.description, /stepTimeLimitMinutes: the most it can take before it is stopped, never the wait/);
 });
 
 test('#3733: a failed model request is asked again while that can help, and never past the key', () => {
@@ -165,6 +172,9 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
   assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting in your queue (number 4)');
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false }), 'you could not build it');
+  // WP1: a build that was not needed stopped; it did not fail.
+  assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'you stopped before building it: it was not needed');
   assert.equal(mayor.statusOf({ verdict: 'person' }), 'left for the group to decide');
   assert.equal(mayor.statusOf({}), 'looked at; nothing new since');
 });
@@ -205,8 +215,14 @@ test('#3734, #3740: the prompt never lets the bot promise what no tool started, 
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
   assert.match(prompt, /- Change one of your own proposals that is up for a vote when they clearly ask you to \(revise_proposal\)/);
   assert.match(prompt, /When it is not clear what they want changed, or which proposal, ask them, or\n  offer it \("Want me to change the proposal to \.\.\.\?"\), and call revise_proposal once they say yes\./);
-  assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, look at it again\) unless a tool you\n  called in this turn started it and its result says so, or progress or my_work shows it under way\./);
-  assert.match(prompt, /If a\n  tool refused, say plainly why, and that nothing was done\. When you have not started it, offer to do it\n  instead of promising it\./);
+  // #11 (WP3): and never a promise to come back to it later, nor "the team
+  // has been told" or "it was withdrawn" with nothing behind it.
+  assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, withdraw, report, look at it again\)\n  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it\n  under way\./);
+  assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it\./);
+  assert.match(prompt, /Never say the team has been told, or that a proposal was withdrawn or closed, unless\n  report_problem or withdraw_proposal did it in this turn\./);
+  assert.match(prompt, /When you cannot do something, say so plainly, and what they can do instead: leave it, vote\n  No on the proposal, comment on the request, or use Send feedback\./);
+  assert.match(prompt, /If a tool refused, say plainly why, and that\n  nothing was done\./);
+  assert.match(prompt, /When you have not started something you\n  can do, offer to do it instead of promising it\./);
   assert.match(prompt, /or change anybody else's\n  proposal\. Changes happen through requests and their proposals, and to your own proposals through\n  revise_proposal\./);
   assert.doesNotMatch(prompt, /From this chat you cannot build, merge, vote, close requests or change settings\. Changes happen/,
     'the old rule, which told it it could not change its own proposals either, is gone');
@@ -269,8 +285,14 @@ test('#3769: a reply never opens with a bracketed note, and the history no longe
 });
 
 test('#3772: what a typed message decides about a draft', () => {
-  for (const text of ['File it', 'file it.', 'FILE IT!', 'please file it']) assert.deepEqual(mayor.typedDecision(text), { yes: true, plain: false }, text);
-  assert.deepEqual(mayor.typedDecision('Not now'), { yes: false, plain: false });
+  for (const text of ['File it', 'file it.', 'FILE IT!', 'please file it']) {
+    assert.deepEqual(mayor.typedDecision(text), { yes: true, plain: false, kind: 'file_request' }, text);
+  }
+  assert.deepEqual(mayor.typedDecision('Not now'), { yes: false, plain: false, kind: 'file_request' });
+  // #11 (WP3): an offer to withdraw a proposal has words of its own, which
+  // decide only an offer of that kind (decideTyped).
+  assert.deepEqual(mayor.typedDecision('Withdraw it'), { yes: true, plain: false, kind: 'withdraw_proposal' });
+  assert.deepEqual(mayor.typedDecision('keep it.'), { yes: false, plain: false, kind: 'withdraw_proposal' });
   for (const text of ['yes', 'Yep', 'do it', 'go ahead!', 'ok']) assert.deepEqual(mayor.typedDecision(text), { yes: true, plain: true }, text);
   for (const text of ['no', 'nope', 'cancel']) assert.deepEqual(mayor.typedDecision(text), { yes: false, plain: true }, text);
   for (const text of ['yes, but make it blue', 'file it on ear trainer instead', 'what is it?', '']) {
@@ -321,6 +343,112 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
   assert.equal(mayor.stripClaims('Unchanged.', []), 'Unchanged.');
 });
 
+test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  // The 3 October replies about the duplicate proposal.
+  for (const text of [
+    'I\'ll look into why there are two proposals.', 'I will follow up on this.', 'Let me sort that out for you.',
+    'I\'ll investigate and get back to you.', 'I\'m going to dig into it.', 'We\'ll look into it.',
+  ]) assert.deepEqual(await kinds(text), ['promised'], text);
+  for (const done of [{ revised: true }, { commented: 'x' }, { started: 'x' }, { withdrew: { proposal: 1 } }, { reported: { title: 'x' } }]) {
+    assert.deepEqual(await kinds('I\'ll follow up on it next.', done), [], JSON.stringify(done));
+  }
+  assert.deepEqual(await kinds('You can look into it on its page, or vote No on it.'), [], 'what they can do is no promise');
+  assert.deepEqual(await kinds('I\'ll message you here when it\'s ready.'), [], 'the platform does that itself');
+
+  assert.deepEqual(await kinds('I\'ve let the team know.'), ['reported']);
+  assert.deepEqual(await kinds('The Homeroom team has been told.'), ['reported']);
+  assert.deepEqual(await kinds('I\'ve sent your report to the Homeroom team.'), ['reported']);
+  assert.deepEqual(await kinds('I\'ve filed a report for the team.', { reported: { title: 'x' } }), [],
+    'a report is not a request filed, and this turn sent one');
+  assert.deepEqual(await kinds('I\'ve filed it for you.'), ['filed'], 'a filing still is');
+
+  assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.'), ['withdrew']);
+  assert.deepEqual(await kinds('I closed the second proposal.'), ['withdrew']);
+  assert.deepEqual(await kinds('It has been withdrawn.'), ['withdrew']);
+  assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.', { withdrew: { proposal: 1 } }), []);
+  assert.deepEqual(await kinds('Tap Withdraw it below and I\'ll withdraw it.'), [], 'an offer is no withdrawal');
+
+  // What is cut is said plainly, with the words the plan gives it.
+  assert.equal(mayor.CANT_LOOK_TEXT, 'I can\'t look into that myself from here.');
+  assert.equal(
+    mayor.stripClaims('I\'ll look into why there are two proposals. You can vote No on the second one meanwhile.', [{ kind: 'promised' }]),
+    'I can\'t look into that myself from here.\n\nYou can vote No on the second one meanwhile.',
+  );
+  assert.equal(mayor.stripClaims('I\'ve let the team know.', [{ kind: 'reported' }]), 'I haven\'t told the team yet.');
+  assert.equal(mayor.stripClaims('Done, I withdrew the duplicate proposal.', [{ kind: 'withdrew' }]), 'I haven\'t withdrawn anything.');
+  const note = mayor.checkNote([{ kind: 'promised', said: 'promises to come back to something later' }]);
+  assert.match(note, /^\[Homeroom check, not from them: your reply promises to come back to something later\./);
+  assert.match(note, /withdraw_proposal withdraws one of your proposals, report_problem tells the Homeroom team/);
+  assert.match(note, /Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do \(leave it, vote No on the proposal, comment on the request, or use Send feedback\), or offer report_problem\. Then call reply again\.\]$/);
+  for (const text of [note, ...['promised', 'reported', 'withdrew'].map((k) => mayor.stripClaims('x', [{ kind: k }]))]) {
+    assert.doesNotMatch(text, /—/);
+  }
+});
+
+test('#11 (WP3): withdrawing a proposal and telling the team are tools, described precisely', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /- Withdraw one of your own proposals that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
+  assert.match(prompt, /The one exception: a second proposal for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
+  assert.match(prompt, /\(report_problem\)\. It is filed as a report from them where the team tracks problems, which\n  anyone can read; the last few messages of this chat go only to the team, privately\. Say so\./);
+  assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
+
+  const withdraw = mayor.TOOLS.find((t) => t.function.name === 'withdraw_proposal').function;
+  assert.deepEqual(withdraw.parameters.required, ['proposal', 'reason']);
+  assert.deepEqual(Object.keys(withdraw.parameters.properties).sort(), ['proposal', 'reason']);
+  assert.match(withdraw.description, /^Withdraw one of YOUR OWN proposals that is still open \(up for a vote: not still being built, not approved, not already closed\)/);
+  assert.match(withdraw.description, /Only when the person who asked for the request it was built for, or the owner of its project, asked you to\./);
+  assert.match(withdraw.description, /it is withdrawn now, without asking, and the result says so\./);
+  assert.match(withdraw.description, /it is withdrawn only when they tap Withdraw it, so ask them to and never say it was withdrawn\./);
+  const report = mayor.TOOLS.find((t) => t.function.name === 'report_problem').function;
+  assert.deepEqual(report.parameters.required, ['summary', 'details']);
+  assert.deepEqual(Object.keys(report.parameters.properties).sort(), ['details', 'number', 'project', 'summary']);
+  assert.match(report.description, /Call it only when they ask you to tell the team, or say yes when you offer\./);
+  assert.match(report.description, /the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there\./);
+  assert.match(report.description, /The last few messages of this chat go only to the team, privately: say so\./);
+  assert.match(report.description, /Keep anything private out of the summary and details/);
+  assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
+  assert.deepEqual(mayor.OFFER_ANSWERS, { file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'] });
+  assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
+});
+
+test('#11 (WP3): what a withdrawal leaves on its request, and what a report carries', () => {
+  const session = { id: 6191, title: 'Watering reminders', pr_number: 12 };
+  assert.equal(mayor.withdrawNote({ session, duplicateOf: { id: 6190, status: 'merged', pr_number: 11 } }, { reason: 'superseded', username: 'ada' }),
+    'Homeroom bot withdrew its proposal "Watering reminders" (PR #12) for this request: it repeated PR #11, which was already approved.');
+  assert.equal(mayor.withdrawNote({ session, duplicateOf: { id: 6190, status: 'promoted' } }, { reason: 'superseded', username: 'ada' }),
+    'Homeroom bot withdrew its proposal "Watering reminders" (PR #12) for this request: it repeated another of its proposals, which is already up for a vote.');
+  assert.equal(mayor.withdrawNote({ session: { id: 5 } }, { reason: 'withdrawn', username: 'ada' }),
+    'Homeroom bot withdrew its proposal for this request, at ada\'s request.');
+  // The PUBLIC issue: what happened, the request, the bot's records, and the
+  // project only when it is public. Never the chat.
+  const about = { app: { id: 2034, slug: 'plant-pal', name: 'Plant Pal', view_visibility: 'public' }, issueNumber: 3, runs: [779, 778], proposals: [6193, 6192] };
+  const chat = [{ who: 'ada', text: 'why are there two?' }, { who: 'Homeroom bot', text: 'I can tell the team.' }];
+  const details = 'Two proposals for the same request.';
+  assert.equal(mayor.reportBody({ details, about, chat }), [
+    '**App:** Plant Pal (plant-pal)', '**Request:** #3', '**Homeroom bot runs:** 779, 778', '**Proposals:** 6193, 6192', '',
+    'Two proposals for the same request.',
+  ].join('\n'));
+  // A private or Just-you project is not named in public.
+  const hidden = { ...about, app: { ...about.app, view_visibility: 'private' } };
+  const publicBody = mayor.reportBody({ details, about: hidden, chat });
+  assert.equal(publicBody, [
+    '**App:** a private project (app id 2034)', '**Request:** #3', '**Homeroom bot runs:** 779, 778', '**Proposals:** 6193, 6192', '',
+    'Two proposals for the same request.',
+  ].join('\n'));
+  assert.doesNotMatch(publicBody, /Plant Pal|plant-pal|why are there two|I can tell the team/);
+  // The team's PRIVATE copy keeps the name and the chat.
+  assert.equal(mayor.reportReceipt({ details, about: hidden, chat }), [
+    '**App:** Plant Pal (plant-pal)', '**Request:** #3', '**Homeroom bot runs:** 779, 778', '**Proposals:** 6193, 6192', '',
+    'Two proposals for the same request.', '', '**The last messages of their chat with Homeroom bot:**', '',
+    '> **ada:** why are there two?\n>\n> **Homeroom bot:** I can tell the team.',
+  ].join('\n'));
+  assert.equal(mayor.reportBody({ details: 'Broken.', about: { app: null, runs: [], proposals: [] } }), 'Broken.');
+  assert.equal(mayor.reportReceipt({ details: 'Broken.', about: { app: null, runs: [], proposals: [] }, chat: [] }), 'Broken.');
+});
+
 test('#3768, #3771: the DM can comment on a request and start one, and says what it can do', () => {
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /\(comment_on_request\): posted on its\n {2}public discussion under their name/);
@@ -336,4 +464,49 @@ test('#3768, #3771: the DM can comment on a request and start one, and says what
     'yeah add it as a comment on that issue\n\n(Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot '
       + 'understood it: Use the Web Audio API for richer, piano-like tones.)',
   );
+});
+
+// WP1 (#10): asked about Plant Pal #1 while a second build of it ran, the
+// bot said "Nothing broke" beside a card that read "Didn't finish". Its
+// tools showed nothing of a build in progress, and the cards never reached
+// it.
+test('WP1: request_detail says a build is in progress, and a build that was not needed stopped', () => {
+  const words = (r) => mayor.buildWords({ verdict: 'ready', ...r });
+  assert.equal(words({}), 'building now', 'while build_ok is null, nothing else recorded');
+  assert.equal(words({ build_session_id: 5 }), 'building now');
+  assert.equal(words({ live_build_waiting_at: '2026-10-03T16:45:36Z' }), 'waiting its turn to be built');
+  assert.equal(words({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, so not built yet');
+  assert.equal(words({ build_error: 'superseded: a later verdict on the same issue' }), 'not built: a later verdict on the same issue');
+  assert.equal(words({ build_ok: true }), 'built');
+  assert.equal(words({ proposal_session_id: 6190 }), 'built');
+  assert.equal(words({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'stopped before it was built: the request already has a proposal (6190)');
+  assert.equal(words({ build_ok: false, build_error: 'the build ran past its time limit' }), 'could not build: the build ran past its time limit');
+  assert.equal(mayor.buildWords({ verdict: 'question' }), undefined, 'a look that built nothing says nothing about a build');
+  assert.equal(mayor.buildWords({ verdict: 'revise', build_ok: true }), 'built');
+});
+
+test('WP1: the model reads what each activity card shows now, beside the card\'s own words', async () => {
+  const rows = [
+    { id: 30, sender_id: 77, content: '**Plant Pal**, its first version\n\nI\'m working on the first version now. This card updates as I go.', metadata: { homeroomBot: { kind: 'activity' } } },
+    { id: 31, sender_id: 77, content: '**Plant Pal**, its first version\n\nIt\'s built.', metadata: { homeroomBot: { kind: 'proposal' } } },
+    { id: 32, sender_id: 8, content: 'is anything broken?', metadata: null },
+  ];
+  const pool = { async query(sql) { return /FROM conversation_messages/.test(String(sql)) ? { rows: [...rows].reverse() } : { rows: [] }; } };
+  let asked = 0;
+  const cardsOf = async () => { asked += 1; return { cards: [{ messageId: 30, state: 'done', outcome: 'stopped' }] }; };
+  const history = await mayor.historyMessages(pool, { conversationId: 4, botId: 77, upToId: 32, cardsOf });
+  assert.equal(asked, 1);
+  assert.equal(history[0].role, 'assistant');
+  assert.match(history[0].content, /\n\[Homeroom: this activity card now reads "Didn't finish: Stopped before it finished"\.\]$/);
+  assert.doesNotMatch(history[1].content, /this activity card/, 'only on a card');
+  // No card in the history: nothing read. A read that fails costs the history nothing.
+  asked = 0;
+  await mayor.historyMessages({ async query() { return { rows: [rows[2]] }; } }, { conversationId: 4, botId: 77, upToId: 32, cardsOf });
+  assert.equal(asked, 0);
+  const plain = await mayor.historyMessages(pool, { conversationId: 4, botId: 77, upToId: 32, cardsOf: async () => { throw new Error('down'); } });
+  assert.doesNotMatch(plain[0].content, /this activity card/);
+  // The turn hands it the person's own cards.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /cardsOf: \(\) => activityModule\(deps\)\.cardsFor\(pool, \{ user, settings, config \}\),/);
 });

@@ -27,6 +27,7 @@ require.cache[wsId] = {
     pushConversationEvent(memberIds) { return memberIds.length; },
     pushToUser() { return 1; },
     pushNotificationToUser() { return 1; },
+    pushSessionUpdate() {},
     async handleMessage(_pool, client, msg) {
       threadPosts.push({ userId: client.user.id, appId: client.appId, msg });
       return { ok: true, message: { id: threadPosts.length } };
@@ -618,9 +619,28 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
       [notes.id, n, built.id],
     );
-    const live = await dm.noteProposalMerged(pool, { id: built.id });
-    assert.match((await read(live)).content, /approved and is live now/);
-    assert.equal((await read(live)).reply.id, ask.id);
+    // #7 (WP3): "live now" once the app answered its health check on what
+    // the merge deployed, with the app's own card to open it, then the
+    // proposal's, and the app's address as its link.
+    const probed = [];
+    const healthy = {
+      applicationRuntime: {
+        productionRef: (_config, app) => ({ runtimeKind: 'kubernetes', runtimeName: `app-${app.slug}` }),
+        async probeHealth(_config, ref) { probed.push(ref.runtimeName); return true; },
+      },
+      sleep: async () => {},
+    };
+    const live = await dm.noteProposalMerged(pool, { id: built.id }, { config: {}, sha: 'a'.repeat(40), deps: healthy });
+    const liveMessage = await read(live);
+    assert.equal(liveMessage.content, `**Note board** · request #${n}: Tags\n\nIt was approved and is live now. Open Note board below to try it.`);
+    assert.deepEqual(probed, ['app-note-board']);
+    assert.equal(liveMessage.reply.id, ask.id);
+    assert.equal(liveMessage.metadata.homeroomBot.link, '#app/note-board');
+    const { rows: liveCards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [live.messageId],
+    );
+    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`app:${notes.id}`, `code_proposal:${built.id}`],
+      'the app first, to open it, then its proposal');
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.
@@ -661,6 +681,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(building.stage, 'building');
     assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Build it']);
     assert.equal(building.stepTimeLimitMinutes, 20, 'a build is stopped at its clock: the most it can take');
+    // #19 (WP3): and how long a build usually takes, never past that clock.
+    assert.deepEqual(building.typicalMinutes, { from: 10, to: 20 });
+    assert.equal(by.get('seed-swap#4').typicalMinutes, undefined, 'waiting in the queue takes no usual time');
     assert.equal(building.busyNow, true);
     assert.ok(Number.isInteger(building.minutesSoFar));
     assert.deepEqual(building.links, {
@@ -1440,6 +1463,37 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
   });
 
+  await t.test('a request filed from "Ask for a change" is a request: the bot can post on it, start it and name it', async () => {
+    // Filed through POST /api/feedback: a feedback report beside the GitHub
+    // issue and no `issues` twin (by design), and the bot has not looked at
+    // it yet, so no requester, queue row or run either.
+    await pool.query(
+      `INSERT INTO feedback_reports (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description)
+       VALUES ($1, 'app', $2, 'usernode-bot', 'note-board', 77, 'Undo a deleted note', 'Let me undo deleting a note')`,
+      [ada.id, notes.id],
+    );
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    threadPosts.length = 0;
+    const asked = await say('add that undo should last ten seconds');
+    const ctx = (extra = {}) => ({
+      bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, userText: 'add that undo should last ten seconds',
+      cards: [], appIds: new Set(), messageId: asked.id, ...extra,
+    });
+    const commented = await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 77, comment: 'Undo lasts ten seconds' });
+    assert.equal(commented.ok, true, commented.error);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].msg.thread.ref, 77);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+    const started = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 77 });
+    assert.equal(started.ok, true, started.error);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+    // And a reply that names it is not taken for a made-up number.
+    const named = [];
+    await turn('what is #77?', scripted([[['reply', { text: 'Request #77 is Undo a deleted note, filed by you.' }]]], named));
+    assert.equal(named.length, 1, 'passed in one pass, with no check note');
+    await pool.query('DELETE FROM feedback_reports WHERE app_id = $1 AND issue_number = 77', [notes.id]);
+  });
+
   await t.test('#3772: her status is her work: nothing the bot only read in the background', async () => {
     const { rows: [side] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)
@@ -1456,5 +1510,294 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     assert.ok(!work.requests.some((r) => r.project === 'side-project'), 'a request only ever read in the background is not hers to hear about');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [side.id]);
+  });
+
+  // ── #11 (WP3): withdrawing one of its proposals, and telling the team ──
+
+  // Plant pal, Ada's project, as on 3 October: request #1 built twice (the
+  // first proposal merged, the second still up), #3 built once and up for a
+  // vote, #4 asked for by Sam, and a proposal of Sam's own for #3.
+  const plant = await project('plant-pal', ada);
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
+       ($1, 1, $2, 'Watering reminders'), ($1, 3, $2, 'Plant photos'), ($1, 4, $3, 'Share a plant')`,
+    [plant.id, ada.id, sam.id],
+  );
+  const botProposal = async (issue, status, title) => (await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues, pr_number)
+     VALUES ($1, $2, $3, $4, $5, NOW(), ARRAY[$6]::int[], $7) RETURNING id`,
+    [plant.id, bot.id, `b-${issue}-${status}-${title.length}`, status, title, issue, 100 + issue * 10 + title.length % 7],
+  )).rows[0].id;
+  const firstMerged = await botProposal(1, 'merged', 'Watering reminders');
+  const duplicate = await botProposal(1, 'promoted', 'Watering reminders again');
+  const photos = await botProposal(3, 'promoted', 'Plant photos');
+  const share = await botProposal(4, 'promoted', 'Share a plant');
+  const { rows: [samsOwn] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues)
+     VALUES ($1, $2, 'sams-photos', 'promoted', 'Sam''s photos', NOW(), ARRAY[3]) RETURNING id`,
+    [plant.id, sam.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES
+       ($1, 1, 'live', 'ready', $2), ($1, 1, 'live', 'ready', $3), ($1, 3, 'live', 'ready', $4)`,
+    [plant.id, firstMerged, duplicate, photos],
+  );
+  // The system's archive, as session-lifecycle.js does it, recorded.
+  const archives = [];
+  const sessionLifecycle = {
+    async archiveSession(args) {
+      archives.push({ sessionId: args.sessionId, reason: args.reason, userId: args.userId ?? null });
+      const { rowCount } = await pool.query(
+        `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+          WHERE id = $1 AND status IN ('active', 'promoted', 'paused')`,
+        [args.sessionId],
+      );
+      return { archived: rowCount > 0 };
+    },
+  };
+  const statusOf = async (id) => (await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [id])).rows[0].status;
+  const withdrawCtx = (who, extra = {}) => ({
+    bot, user: { ...who, isAdmin: false }, settings, deps: { sessionLifecycle }, userText: 'withdraw it', cards: [], appIds: new Set(), ...extra,
+  });
+
+  await t.test('#11: a second proposal for a request already approved is withdrawn at once, and it says so', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    systemMessages.length = 0;
+    let result = null;
+    const sent = await turn('why are there two proposals for watering reminders? close the extra one', scripted([
+      [['withdraw_proposal', { proposal: duplicate, reason: 'It repeats the one already approved' }]],
+      (req) => {
+        result = lastToolResult(req, 'withdraw_proposal');
+        return [['reply', { text: 'I withdrew the duplicate proposal; the approved one is the one that went live.' }]];
+      },
+    ]), { deps: { sessionLifecycle } });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.withdrawn, { proposal: duplicate, project: 'plant-pal', projectName: 'Plant pal', number: 1, title: 'Watering reminders again' });
+    assert.match(result.why, new RegExp(`^It repeated your proposal ${firstMerged} for the same request, which was already approved, so you withdrew it now without asking\\.$`));
+    // The system's archive, with no user, as superseded; and a note on the request.
+    assert.deepEqual(archives, [{ sessionId: duplicate, reason: 'superseded', userId: null }]);
+    assert.equal(await statusOf(duplicate), 'archived');
+    assert.deepEqual(systemMessages.map((m) => [m.appId, m.thread]), [[plant.id, { type: 'issue', ref: 1 }]]);
+    assert.match(systemMessages[0].content, /^Homeroom bot withdrew its proposal "Watering reminders again" \(PR #\d+\) for this request: it repeated PR #\d+, which was already approved\.$/);
+    // Its reply said it, and that was true: sent as written, with the request.
+    const message = await read(sent);
+    assert.equal(message.content, 'I withdrew the duplicate proposal; the approved one is the one that went live.');
+    const { rows: [turned] } = await pool.query('SELECT tools, failures FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
+    assert.deepEqual(turned.tools, ['withdraw_proposal', 'reply']);
+    assert.deepEqual(turned.failures, [], 'no claim to check: it did it');
+  });
+
+  await t.test('#11: any other proposal is withdrawn only when she taps Withdraw it', async () => {
+    archives.length = 0;
+    systemMessages.length = 0;
+    let result = null;
+    const offered = await turn('take the plant photos proposal down', scripted([
+      [['withdraw_proposal', { proposal: photos, reason: 'She wants to rethink it' }]],
+      (req) => {
+        result = lastToolResult(req, 'withdraw_proposal');
+        return [['reply', { text: 'Want me to withdraw it? Tap Withdraw it below.' }]];
+      },
+    ]), { deps: { sessionLifecycle } });
+    assert.equal(result.ok, true);
+    assert.match(result.shown, /Nothing is withdrawn until they tap Withdraw it/);
+    assert.deepEqual(archives, [], 'nothing yet');
+    assert.equal(await statusOf(photos), 'promoted');
+    const offer = await read(offered);
+    assert.equal(offer.content, 'Want me to withdraw it? Tap Withdraw it below.\n\n**Plant pal** · proposal: Plant photos\n\nWhy: She wants to rethink it');
+    assert.deepEqual(
+      [offer.metadata.homeroomBot.kind, offer.metadata.homeroomBot.question, offer.metadata.homeroomBot.answers],
+      ['confirm', 'Withdraw this proposal on Plant pal?', ['Withdraw it', 'Keep it']],
+    );
+    const { rows: offerCards } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [offered.messageId]);
+    assert.deepEqual(offerCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${photos}`], 'the proposal, to open before deciding');
+    const { rows: [action] } = await pool.query('SELECT kind, session_id, status, title FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    assert.deepEqual(action, { kind: 'withdraw_proposal', session_id: photos, status: 'open', title: 'Plant photos' });
+
+    // "File it" typed is no decision on it; "Withdraw it" tapped is.
+    await pool.query(`UPDATE homeroom_bot_dm_actions SET status = 'declined' WHERE user_id = $1 AND kind = 'file_request' AND status = 'open'`, [ada.id]);
+    const typed = await say('file it');
+    assert.deepEqual(
+      await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: typed, deps: { sessionLifecycle } }),
+      { decisionWithoutOffer: true },
+    );
+    assert.deepEqual(archives, []);
+    const tap = await say('Withdraw it', { reply_to_id: offered.messageId });
+    const ack = await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: { sessionLifecycle } }));
+    assert.equal(ack.content, 'Done. I withdrew the Plant pal proposal "Plant photos", and left a note on its request saying so.');
+    assert.equal(ack.metadata.homeroomBot.kind, 'withdrawn');
+    assert.deepEqual(archives, [{ sessionId: photos, reason: 'withdrawn', userId: null }]);
+    assert.equal(await statusOf(photos), 'archived');
+    assert.match(systemMessages.at(-1).content, /^Homeroom bot withdrew its proposal "Plant photos" \(PR #\d+\) for this request, at ada_\d+'s request\.$/);
+    assert.equal((await read(offered)).metadata.homeroomBot.answer, 'Withdraw it');
+    const again = await say('Withdraw it', { reply_to_id: offered.messageId });
+    assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: again, deps: { sessionLifecycle } }))).content,
+      'That one is already decided.');
+    assert.equal(archives.length, 1, 'decided once');
+  });
+
+  await t.test('#11: Keep it keeps it; a proposal no longer open by the tap is not withdrawn', async () => {
+    archives.length = 0;
+    const offerOn = async (id) => {
+      const msg = await say('withdraw it?');
+      const sent = await mayor.runDmTurn(pool, CONFIG, {
+        bot, user: ada, settings, conversationId: opened.conversationId, message: msg,
+        deps: {
+          chat: scripted([[['withdraw_proposal', { proposal: id, reason: 'not needed' }]], [['reply', { text: 'Sure, tap below.' }]]]),
+          apiKey: 'sk-test', openMcp, sessionLifecycle,
+        },
+      });
+      return sent;
+    };
+    const kept = await offerOn(share);
+    const keep = await say('Keep it', { reply_to_id: kept.messageId });
+    assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: keep, deps: { sessionLifecycle } }))).content,
+      'OK, I\'ll leave it up.');
+    assert.equal(await statusOf(share), 'promoted');
+    // Offered, then merged before the tap: refused, and said why.
+    const late = await offerOn(share);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [share]);
+    const tap = await say('Withdraw it', { reply_to_id: late.messageId });
+    assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: { sessionLifecycle } }))).content,
+      'I couldn\'t withdraw it: it was approved, so it is being merged or is already live.');
+    const { rows: [failed] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE message_id = $1', [late.messageId]);
+    assert.deepEqual(failed, { status: 'failed', error: 'approved' });
+    assert.deepEqual(archives, []);
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [share]);
+  });
+
+  await t.test('#11: who may have one withdrawn, and which: refused, and nothing is withdrawn', async () => {
+    archives.length = 0;
+    const ask = (who, id, extra = {}) => mayor.withdrawProposal(pool, withdrawCtx(who, extra), { proposal: id, reason: 'x' });
+    // Sam asked for none of Ada's requests and does not own Plant pal.
+    const photosAgain = await botProposal(3, 'promoted', 'Plant photos v2');
+    const notHers = await ask(sam, photosAgain);
+    assert.equal(notHers.ok, false);
+    assert.match(notHers.error, /^Only whoever asked for the request it was built for, or the owner of Plant pal, can have it withdrawn, and they are neither\..* Nothing was withdrawn\.$/);
+    // Merged, not the bot's, already withdrawn.
+    assert.match((await ask(ada, firstMerged)).error, /^That proposal was approved, so it can no longer be withdrawn\. Nothing was withdrawn\.$/);
+    assert.match((await ask(ada, samsOwn.id)).error, /^That proposal is not one you built, so you cannot withdraw it\./);
+    assert.match((await ask(ada, duplicate)).error, /^That proposal is already closed\. Nothing was withdrawn\.$/);
+    assert.match((await ask(ada, 999999)).error, /^No such proposal on a project they can see\./);
+    // Still being built: the loop's to end, not the DM's.
+    const building = await botProposal(3, 'active', 'Plant photos v3');
+    assert.match((await ask(ada, building)).error, /^That proposal is still being built, so it is not up for a vote yet and there is nothing to withdraw\. Nothing was withdrawn\.$/);
+    assert.deepEqual(archives, []);
+    // Sam asked for #4: his to have withdrawn. Ada owns Plant pal: hers too.
+    const samCtx = withdrawCtx(sam);
+    assert.equal((await mayor.withdrawProposal(pool, samCtx, { proposal: share, reason: 'x' })).ok, true);
+    assert.equal(samCtx.offer.kind, 'withdraw_proposal');
+    const adaCtx = withdrawCtx(ada);
+    assert.equal((await mayor.withdrawProposal(pool, adaCtx, { proposal: share, reason: 'x' })).ok, true, 'the project\'s owner');
+    // One per turn, and never beside another offer.
+    assert.match((await mayor.withdrawProposal(pool, adaCtx, { proposal: share, reason: 'x' })).error, /^You already put one thing under this reply/);
+    assert.match((await mayor.withdrawProposal(pool, withdrawCtx(ada, { withdrew: { proposal: 1 } }), { proposal: share, reason: 'x' })).error,
+      /^One withdrawal per turn\.$/);
+    assert.deepEqual(archives, [], 'an offer withdraws nothing');
+  });
+
+  await t.test('#11: report_problem files one report to the team for her, through the feedback service, a few a day at most', async (tt) => {
+    const token = process.env.GITHUB_BOT_TOKEN;
+    process.env.GITHUB_BOT_TOKEN = 'test-pat';
+    tt.after(() => { if (token === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = token; });
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const posted = [];
+    const fetch = async (url, init) => {
+      posted.push({ url, init, body: JSON.parse(init.body) });
+      return { ok: true, json: async () => ({ number: 900 + posted.length, html_url: `https://github.com/o/r/issues/${900 + posted.length}` }) };
+    };
+    const config = { ...CONFIG, platformRepoUrl: 'https://github.com/usernode-labs/social-vibecoding' };
+    const report = async (text, args) => {
+      let result = null;
+      const message = await say(text);
+      const sent = await mayor.runDmTurn(pool, config, {
+        bot, user: ada, settings, conversationId: opened.conversationId, message,
+        deps: {
+          chat: scripted([[['report_problem', args]], (req) => {
+            result = lastToolResult(req, 'report_problem');
+            return [['reply', { text: result.ok ? 'I\'ve sent your report to the Homeroom team.' : 'I couldn\'t send it.' }]];
+          }]),
+          apiKey: 'sk-test', openMcp, fetch, sleep: async () => {},
+        },
+      });
+      return { result, sent };
+    };
+    const args = {
+      summary: 'Two proposals for one request', details: 'Plant pal request #1 got two proposals; the second should not be there.',
+      project: 'plant-pal', number: 1,
+    };
+    const first = await report('can you tell the team about the duplicate?', args);
+    assert.equal(first.result.ok, true);
+    assert.equal((await read(first.sent)).content, 'I\'ve sent your report to the Homeroom team.', 'true, and said as written');
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].url, 'https://api.github.com/repos/usernode-labs/social-vibecoding/issues');
+    assert.equal(posted[0].init.headers.Authorization, 'token test-pat');
+    assert.equal(posted[0].body.title, 'Two proposals for one request');
+    const body = posted[0].body.body;
+    assert.match(body, new RegExp(`^\\*\\*Source:\\*\\* Homeroom user \\(${ada.username}\\), through Homeroom bot\\n\\n`), 'attributed to her');
+    assert.equal(require('../src/routes/issues').creatorFromSourceLine(body), ada.username);
+    // Plant pal is public: named. Her words, the request, the bot's records.
+    assert.match(body, /\*\*App:\*\* Plant pal \(plant-pal\)\n\*\*Request:\*\* #1\n/);
+    assert.match(body, new RegExp(`\\*\\*Homeroom bot runs:\\*\\* \\d+, \\d+\\n\\*\\*Proposals:\\*\\* ${duplicate}, ${firstMerged}`));
+    assert.match(body, /Plant pal request #1 got two proposals/);
+    // The chat never reaches the public issue.
+    assert.doesNotMatch(body, /can you tell the team about the duplicate|last messages of their chat/);
+    const { rows: reports } = await pool.query('SELECT user_id, target, app_id, source, issue_number, title, description FROM feedback_reports WHERE user_id = $1', [ada.id]);
+    assert.deepEqual(reports.map(({ description, ...r }) => r),
+      [{ user_id: ada.id, target: 'platform', app_id: null, source: 'homeroom_bot', issue_number: 901, title: 'Two proposals for one request' }],
+      'one receipt, under her name, from the bot');
+    // The team's private copy keeps it.
+    assert.match(reports[0].description, /Plant pal request #1 got two proposals/);
+    assert.match(reports[0].description, new RegExp(`> \\*\\*${ada.username}:\\*\\* can you tell the team about the duplicate\\?$`),
+      'the chat\'s last lines, hers last, in the receipt alone');
+
+    // A few a day, per person.
+    for (let i = 1; i < mayor.MAX_REPORTS_PER_DAY; i += 1) assert.equal((await report(`and another ${i}`, args)).result.ok, true);
+    const over = await report('one more', args);
+    assert.equal(over.result.ok, false);
+    assert.match(over.result.error, new RegExp(`^They have sent ${mayor.MAX_REPORTS_PER_DAY} reports through you in the last day`));
+    assert.equal(posted.length, mayor.MAX_REPORTS_PER_DAY, 'nothing more reached GitHub');
+    // Her own feedback, sent from the dialog, is not the bot's to count.
+    await pool.query('UPDATE feedback_reports SET source = NULL WHERE user_id = $1', [ada.id]);
+    assert.equal((await report('one more now', args)).result.ok, true);
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+
+    // A private project of hers (Just her): never named in the public issue.
+    const diary = await project('secret-diary', ada);
+    await pool.query(`UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1`, [diary.id]);
+    // A private project is seen by its collaborators: she is its one.
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [diary.id, ada.id]);
+    const hidden = await report('the diary build is stuck, please tell the team', {
+      summary: 'A build that never finishes', details: 'My request has been building for hours.', project: 'secret-diary', number: 2,
+    });
+    assert.equal(hidden.result.ok, true);
+    assert.match(hidden.result.sent, /which anyone can read\. The last few messages of this chat went only to the team, privately\.$/);
+    const privateBody = posted.at(-1).body.body;
+    assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
+    assert.match(privateBody, /My request has been building for hours\./);
+    assert.doesNotMatch(privateBody, /Secret diary|secret-diary|the diary build is stuck/, 'neither its name nor her chat');
+    const { rows: [receipt] } = await pool.query(
+      `SELECT description FROM feedback_reports WHERE user_id = $1 AND source = 'homeroom_bot' ORDER BY id DESC LIMIT 1`, [ada.id],
+    );
+    assert.match(receipt.description, /^\*\*App:\*\* Secret diary \(secret-diary\)\n/, 'the team\'s private copy names it');
+    assert.match(receipt.description, /> \*\*ada_\d+:\*\* the diary build is stuck, please tell the team$/);
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+  });
+
+  await t.test('#11: a promise to look into something later is asked about, then cut, and said plainly', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const seen = [];
+    const fixed = await turn('why are there two proposals?', scripted([
+      [['reply', { text: 'I\'ll look into why there are two proposals and get back to you.' }]],
+      (req) => {
+        assert.match(req.messages.at(-1).content, /your reply promises to come back to something later\./);
+        return [['reply', { text: 'I can\'t look into that myself from here. You can vote No on the extra one, or I can tell the team.' }]];
+      },
+    ], seen));
+    assert.equal(seen.length, 2);
+    assert.equal((await read(fixed)).content, 'I can\'t look into that myself from here. You can vote No on the extra one, or I can tell the team.');
+    const stubborn = await turn('why are there two proposals?', scripted([
+      [['reply', { text: 'Good question. I\'ll look into it.' }]],
+    ]));
+    assert.equal((await read(stubborn)).content, 'I can\'t look into that myself from here.');
   });
 });

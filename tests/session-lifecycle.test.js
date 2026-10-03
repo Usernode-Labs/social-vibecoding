@@ -320,6 +320,28 @@ test('archiveSession: sweeper archive announces the actor-less form', async () =
   }
 });
 
+test('#11 (WP3): the Homeroom bot withdrawing its own proposal says so, never that it went quiet', async () => {
+  for (const [reason, said] of [
+    ['superseded', 'PR #99: Watering reminders was withdrawn: another proposal for the same request covers it'],
+    ['withdrawn', 'PR #99: Watering reminders was withdrawn'],
+  ]) {
+    const { subject, spies, restore } = loadWithStubs();
+    try {
+      const pool = makePool([
+        [/SET status = 'archived'/, [{ id: 9 }]],
+        [/SELECT cs\.\*/, [{
+          id: 9, app_id: 4, app_slug: 'w', repo_url: REPO, pr_number: 99, pr_title: 'Watering reminders', owner_username: 'homeroom_bot',
+        }]],
+      ]);
+      // The system's archive: no user, as the bot's DM tool calls it.
+      await subject.archiveSession({ pool, sessionId: 9, reason });
+      assert.equal(spies.sendSystemMessage[0].content, said, reason);
+    } finally {
+      restore();
+    }
+  }
+});
+
 test('archiveSession: no announcement when the session has no PR', async () => {
   const { subject, spies, restore } = loadWithStubs();
   try {

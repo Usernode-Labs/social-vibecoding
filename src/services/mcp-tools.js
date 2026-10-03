@@ -195,6 +195,11 @@ const ACTING_TOOLS = Object.freeze([
   // launch spends the platform's money up to its cap, and a cancel stops one.
   'launch_bench_run',
   'cancel_bench_run',
+  // Test accounts: admin-only. A create mints a new sign-in and a retire
+  // deletes an account with the apps it made, so both stay out of the setup
+  // hint and the shipped read-only allow rules like every write.
+  'create_test_account',
+  'retire_test_account',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -5473,6 +5478,183 @@ function registerTools(server, ctx) {
         runId,
         cancelled: true,
         nextStep: 'Cancelled. Its results so far stay readable with get_bench_run.',
+      });
+    });
+  }
+
+  // ── Test accounts (full platform admins only) ──────────────────────────
+  //
+  // Three tools over routes/test-accounts.js: make a genuinely new account for
+  // first-time-user testing, list the live ones, and retire one with the apps
+  // it made. services/test-accounts.js has the whole design, and the
+  // charter's "test-accounts" section the rules for the session using them.
+  //
+  // Admin-only three times over, like the benchmark's: registered only for a
+  // connector whose user is a full platform admin, refused in every handler
+  // for a user who is not one before any call, and refused by every route
+  // they reach (requireAdminWrite), which is the wall that counts. The
+  // password create_test_account returns is the one credential any tool here
+  // hands back: it is minted for a throwaway, flagged account that is fenced
+  // from every real outcome, it is shown once, and the platform keeps only
+  // its hash.
+  if (user && user.canAdminWrite) {
+    const testAccountAdminOnly = () => (user && user.canAdminWrite
+      ? null
+      : toolError('admin_only', 'Test accounts are for full platform admins.'));
+    const TEST_ACCOUNT_NOTE_MAX = 200;
+    const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : 0);
+    // The route's own code and sentence, where it gave one; the generic
+    // mapping (which reads a 404 as a missing app) for anything else.
+    const testAccountRefusal = (result) => {
+      const b = result.body && typeof result.body === 'object' ? result.body : {};
+      const code = typeof b.code === 'string' && PLATFORM_CODE_RE.test(b.code) ? b.code : null;
+      if (code && [400, 404, 409, 502].includes(result.status)) {
+        const message = typeof b.error === 'string' && b.error.trim() ? b.error.trim() : `Homeroom returned HTTP ${result.status}.`;
+        const extra = {};
+        if (Array.isArray(b.removedApps)) extra.removedApps = b.removedApps.map(String);
+        if (typeof b.failedApp === 'string') extra.failedApp = b.failedApp;
+        return toolError(code, message, extra);
+      }
+      return platformError(result);
+    };
+
+    server.registerTool('create_test_account', {
+      title: 'Test accounts: make one',
+      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and Getting started, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
+      inputSchema: {
+        username: z.string().optional().describe('A handle to use, checked like any username. Omit it for a placeholder and the real "choose your username" step.'),
+        platformAccess: z.boolean().optional().describe('Let the account in at once (default true). false leaves it in the waiting room.'),
+        homeroomBotDm: z.boolean().optional().describe('Put the account on the Homeroom bot\'s DM list (default false).'),
+        welcomeDm: z.boolean().optional().describe('Let the welcome DM reach it (default false). The welcome DM puts staff into a group with the account.'),
+        note: z.string().optional().describe(`What the account is for, at most ${TEST_ACCOUNT_NOTE_MAX} characters. Shown by list_test_accounts.`),
+      },
+      outputSchema: {
+        userId: z.number(),
+        username: z.string(),
+        password: z.string(),
+        needsUsernameChoice: z.boolean(),
+        platformAccess: z.boolean(),
+        homeroomBotDm: z.boolean(),
+        welcomeDm: z.boolean(),
+        signIn: z.object({ url: z.string(), steps: z.array(z.string()) }),
+        retireWith: z.string(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ username, platformAccess, homeroomBotDm, welcomeDm, note }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      let noteText;
+      if (note != null) {
+        const check = checkWriteLength(note, { field: 'note', max: TEST_ACCOUNT_NOTE_MAX, hint: 'Say what the account is for in a sentence.' });
+        if (!check.ok) return writeLengthError(check);
+        noteText = check.value;
+      }
+      const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/test-accounts', {
+        username, platformAccess, homeroomBotDm, welcomeDm, note: noteText,
+      });
+      if (!r.ok) return testAccountRefusal(r);
+      const a = (r.body && r.body.account) || {};
+      const userId = num(a.userId);
+      return toolResult({
+        userId,
+        username: String(a.username || ''),
+        password: String(a.password || ''),
+        needsUsernameChoice: !!a.needsUsernameChoice,
+        platformAccess: a.platformAccess !== false,
+        homeroomBotDm: !!a.homeroomBotDm,
+        welcomeDm: !!a.welcomeDm,
+        signIn: {
+          url: `${origin || ''}/#login`,
+          steps: [
+            'If the device or browser is signed in, sign out first.',
+            'Open Homeroom and choose Sign in.',
+            'Enter the username and password above.',
+          ],
+        },
+        retireWith: `retire_test_account({ userId: ${userId}, confirm: "RETIRE" })`,
+        nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. Retire the account when they have finished testing.',
+      });
+    });
+
+    server.registerTool('list_test_accounts', {
+      title: 'Test accounts: the live ones',
+      description: 'Admin only. The live test accounts made with create_test_account, newest first: each one\'s id, username, who made it and when, when it was last active (its latest sign-in or day of app use), its note, and the apps it created with their status. Retired accounts are not listed. Use it to find accounts to retire: at most 25 are live at once.',
+      inputSchema: {},
+      outputSchema: {
+        accounts: z.array(z.object({
+          userId: z.number(),
+          username: z.string(),
+          createdBy: z.string().nullable(),
+          createdAt: z.string().nullable(),
+          lastActiveAt: z.string().nullable(),
+          note: z.string().nullable(),
+          apps: z.array(z.object({ slug: z.string(), status: z.string().nullable() })),
+        })),
+        live: z.number(),
+        max: z.number(),
+        nextStep: z.string(),
+      },
+      annotations: readAnnotations,
+    }, async () => {
+      const guard = scopeGuard(READ_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'GET', '/api/test-accounts');
+      if (!r.ok) return testAccountRefusal(r);
+      const b = r.body || {};
+      const accounts = (Array.isArray(b.accounts) ? b.accounts : []).map((a) => ({
+        userId: num(a.userId),
+        username: String(a.username || ''),
+        createdBy: a.createdBy == null ? null : String(a.createdBy),
+        createdAt: a.createdAt == null ? null : String(a.createdAt),
+        lastActiveAt: a.lastActiveAt == null ? null : String(a.lastActiveAt),
+        // An admin wrote it, but it is still text a model should not obey.
+        note: a.note == null ? null : (untrusted(a.note, TEST_ACCOUNT_NOTE_MAX) || null),
+        apps: (Array.isArray(a.apps) ? a.apps : []).map((app) => ({
+          slug: String(app.slug || ''), status: app.status == null ? null : String(app.status),
+        })),
+      }));
+      const max = num(b.max) || 25;
+      return readResult('list_test_accounts', {
+        accounts,
+        live: accounts.length,
+        max,
+        nextStep: accounts.length
+          ? `Retire the ones testing is done with: retire_test_account with the userId and confirm "RETIRE". ${accounts.length} of ${max} are live.`
+          : 'No test accounts are live.',
+      });
+    });
+
+    server.registerTool('retire_test_account', {
+      title: 'Test accounts: retire one',
+      description: 'Admin only. Retire a test account made with create_test_account: take down every app it created (container, database and stored files, as deleting the app does), then delete the account, which signs it out everywhere, withdraws its open votes and takes it off the Homeroom bot\'s DM list. Pass confirm: "RETIRE". It refuses any account that is not a test account. If an app cannot be taken down it stops and says which, leaving the account in place; calling it again finishes the job. Ask the person before retiring an account somebody else made.',
+      inputSchema: {
+        userId: z.number().int().positive().describe('The test account\'s id, from create_test_account or list_test_accounts.'),
+        confirm: z.string().describe('Must be "RETIRE".'),
+      },
+      outputSchema: {
+        userId: z.number(),
+        username: z.string(),
+        appsDeleted: z.array(z.string()),
+        homeroomBotDm: z.boolean(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ userId, confirm }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      if (!Number.isInteger(userId) || userId <= 0) return toolError('invalid_request', 'userId must be a test account\'s id from list_test_accounts.');
+      if (confirm !== 'RETIRE') return toolError('confirmation_required', 'Pass confirm: "RETIRE" to retire a test account. Nothing was changed.');
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/test-accounts/${userId}/retire`, { confirm });
+      if (!r.ok) return testAccountRefusal(r);
+      const t = (r.body && r.body.retired) || {};
+      const appsDeleted = (Array.isArray(t.appsDeleted) ? t.appsDeleted : []).map(String);
+      return toolResult({
+        userId: num(t.userId) || userId,
+        username: String(t.username || ''),
+        appsDeleted,
+        homeroomBotDm: !!t.homeroomBotDm,
+        nextStep: `Retired${appsDeleted.length ? `, with ${appsDeleted.length} app${appsDeleted.length === 1 ? '' : 's'}` : ''}. Its username and password no longer sign in.`,
       });
     });
   }

@@ -72,7 +72,7 @@ const github = require('./github');
 const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
-const { currentVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -140,10 +140,10 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
                        AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2`,

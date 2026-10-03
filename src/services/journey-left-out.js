@@ -145,21 +145,27 @@ function parseInput(body) {
   return { userId, reason, note };
 }
 
+// The locked read-modify-write itself, on a client already inside a
+// transaction. The caller commits.
+async function lockedEntries(client, fn) {
+  await client.query(
+    `INSERT INTO platform_settings (key, value, description) VALUES ($1, '[]', $2)
+     ON CONFLICT (key) DO NOTHING`,
+    [SETTING_KEY, SETTING_DESCRIPTION]
+  );
+  const { rows } = await client.query(
+    'SELECT value FROM platform_settings WHERE key = $1 FOR UPDATE',
+    [SETTING_KEY]
+  );
+  const entries = parseEntries(rows[0] ? rows[0].value : '[]');
+  return fn(client, entries);
+}
+
 async function withLockedEntries(pool, fn) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(
-      `INSERT INTO platform_settings (key, value, description) VALUES ($1, '[]', $2)
-       ON CONFLICT (key) DO NOTHING`,
-      [SETTING_KEY, SETTING_DESCRIPTION]
-    );
-    const { rows } = await client.query(
-      'SELECT value FROM platform_settings WHERE key = $1 FOR UPDATE',
-      [SETTING_KEY]
-    );
-    const entries = parseEntries(rows[0] ? rows[0].value : '[]');
-    const result = await fn(client, entries);
+    const result = await lockedEntries(client, fn);
     await client.query('COMMIT');
     caches.delete(pool);
     return result;
@@ -203,6 +209,27 @@ async function add(pool, body, { actorId = null } = {}) {
   });
 }
 
+/**
+ * Add a 'test' entry inside the caller's own transaction, for an account the
+ * same transaction just created (services/test-accounts.js): the row is not
+ * visible to `add`'s separate connection until that transaction commits. Only
+ * the 'test' reason, which erases nothing. Call `forget(pool)` once the
+ * transaction has committed so this server stops serving the cached list.
+ */
+async function addTestInTransaction(client, { userId, note = '' }, { actorId = null } = {}) {
+  const parsed = parseInput({ userId, reason: 'test', note });
+  return lockedEntries(client, async (c, entries) => {
+    const entry = { userId: parsed.userId, reason: 'test', note: parsed.note, addedBy: actorId, addedAt: new Date().toISOString() };
+    await save(c, entries.filter((e) => e.userId !== parsed.userId).concat(entry), actorId);
+    return { entry };
+  });
+}
+
+/** Drop this pool's cached list, after a write committed elsewhere. */
+function forget(pool) {
+  caches.delete(pool);
+}
+
 /** Remove one person's entry. Nothing erased comes back. */
 async function remove(pool, rawUserId, { actorId = null } = {}) {
   const userId = Number(rawUserId);
@@ -222,6 +249,8 @@ module.exports = {
   UI_EVENT_TYPES,
   LeftOutError,
   add,
+  addTestInTransaction,
+  forget,
   hasObjected,
   idsByReason,
   leftOutIds,

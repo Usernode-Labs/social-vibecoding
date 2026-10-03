@@ -9,6 +9,7 @@ import * as api from './api';
 import {
   ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityLead, ActivityLink, TONE_WORDS, spanText, type ActivityTone,
 } from './bot-activity';
+import { POLL_MS } from './bot-activity-store';
 import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
 import type {
   ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob,
@@ -53,6 +54,13 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  * socket reconnects). Like every conversation event, it carries no data: the
  * tray re-reads its endpoint under the viewer's own session. Opening the
  * panel reads it too.
+ *
+ * #8 (WP3): every one of those re-reads asks the server (`fresh`), never the
+ * service worker's offline copy, which on a slow answer was the state from
+ * before the news; the worker's own late correction (store.ts resync) reads
+ * it again too; and while the bot has work in hand and the page is in view,
+ * it reads again every POLL_MS, as the activity cards do, for the steps the
+ * loop announces nothing for. Only opening the DM keeps the ordinary read.
  *
  * ONE STATE, THREE PLACES. The header's status line, its disc and the
  * panel are drawn by different parts of the thread pane, so what was read,
@@ -109,9 +117,10 @@ export function toggleBotWork(): void {
 // Only the newest read may land: an older one finishing late is dropped.
 let seq = 0;
 
-export function loadBotWork(): void {
+/** Read the tray again. `fresh` (every read but the DM opening): past the worker's offline copy. */
+export function loadBotWork({ fresh = true }: { fresh?: boolean } = {}): void {
   const mine = ++seq;
-  api.getHomeroomBotWork().then((work) => {
+  api.getHomeroomBotWork({ fresh }).then((work) => {
     if (mine === seq) publish({ work, failed: false });
   }).catch(() => {
     if (mine === seq) publish({ failed: true });
@@ -175,6 +184,9 @@ function shortName(job: Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'firstV
   return !job.firstVersion && job.issueNumber ? `#${job.issueNumber}` : job.appName;
 }
 
+/** #8 (WP3): the steps of Now that wait their turn in the bot's queue rather than run. */
+const QUEUED_PHASES: ReadonlySet<HomeroomBotPhase> = new Set<HomeroomBotPhase>(['queued', 'follow_up_queued']);
+
 export interface TrayStatus {
   /** working: the bot has something in hand; you: something waits on the viewer; last: what it did last. */
   kind: 'working' | 'you' | 'last' | 'idle';
@@ -187,27 +199,31 @@ export interface TrayStatus {
  * following up", "Ear Trainer #12 needs you", "Last: answered on Ear Trainer
  * #9 · 16h ago", and a short form of each for a phone. Before the first
  * read, and with nothing to say, it names what opens: "Activity".
+ *
+ * #8 (WP3, D6): when everything in hand only waits its turn in the queue,
+ * the phone's short form says so ("#3 queued") rather than "Working on #3".
+ * The long form keeps counting it ("Working on 3 requests", which a declared
+ * check reads).
  */
 export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date()): TrayStatus {
   const plain: TrayStatus = { kind: 'idle', long: 'Activity', short: 'Activity' };
   if (!work) return plain;
   const waiting = work.needsYou.length;
   const needs = waiting ? ` · ${waiting} ${waiting === 1 ? 'needs' : 'need'} you` : '';
+  const queued = work.now.length > 0 && work.now.every((job) => QUEUED_PHASES.has(job.phase));
   // A phone's line has room for one of the two: what waits on them wins.
   if (work.now.length === 1) {
     const job = work.now[0];
-    return {
-      kind: 'working',
-      long: `Working on ${jobName(job)} · ${SHORT_PHASES[job.phase]}${needs}`,
-      short: needs ? `Working${needs}` : `Working on ${shortName(job)}`,
-    };
+    let short = `Working on ${shortName(job)}`;
+    if (queued) short = needs ? `Queued${needs}` : `${shortName(job)} queued`;
+    else if (needs) short = `Working${needs}`;
+    return { kind: 'working', long: `Working on ${jobName(job)} · ${SHORT_PHASES[job.phase]}${needs}`, short };
   }
   if (work.now.length) {
-    return {
-      kind: 'working',
-      long: `Working on ${work.now.length} requests${needs}`,
-      short: needs ? `Working${needs}` : `Working on ${work.now.length}`,
-    };
+    let short = `Working on ${work.now.length}`;
+    if (queued) short = needs ? `Queued${needs}` : `${work.now.length} queued`;
+    else if (needs) short = `Working${needs}`;
+    return { kind: 'working', long: `Working on ${work.now.length} requests${needs}`, short };
   }
   if (waiting === 1) {
     const job = work.needsYou[0];
@@ -569,7 +585,7 @@ export function BotWorkPanel() {
         failed={failed}
         historyOpen={historyOpen}
         onToggleHistory={() => publish({ historyOpen: !historyOpen })}
-        onRetry={loadBotWork}
+        onRetry={() => loadBotWork()}
       />
     </div>
   );
@@ -581,17 +597,20 @@ export function BotWorkPanel() {
  * Renders nothing.
  */
 export function BotWorkSync({ conversationId, newsKey }: { conversationId: number; newsKey: number | null }) {
-  const { open } = useBotWork();
+  const { open, work } = useBotWork();
+  const working = !!work && work.now.length > 0;
   // The newest bot message already accounted for. Null until this
   // conversation's transcript has drawn one: the first value it shows is
   // what was there when the read below was made, not news.
   const seenNews = useRef<number | null>(null);
 
-  // Another conversation is another tray: its panel starts shut and it reads afresh.
+  // Another conversation is another tray: its panel starts shut and it reads
+  // afresh. The one ordinary read: what the worker kept is a fine first
+  // paint, and its late correction reads it again (store.ts resync).
   useEffect(() => {
     resetBotWork();
     seenNews.current = null;
-    loadBotWork();
+    loadBotWork({ fresh: false });
   }, [conversationId]);
 
   // The bot's news here moves its work on.
@@ -607,6 +626,17 @@ export function BotWorkSync({ conversationId, newsKey }: { conversationId: numbe
     window.addEventListener(WORK_CHANGED_EVENT, changed);
     return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
   }, []);
+
+  // #8 (WP3): while the bot has work in hand, and only while the page is in
+  // view, again every POLL_MS: the plan starting after the read, a check
+  // finishing, are steps nothing announces.
+  useEffect(() => {
+    if (!working) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') loadBotWork();
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [working]);
 
   // Opening the panel reads it fresh; leaving the DM shuts it.
   useEffect(() => { if (open) loadBotWork(); }, [open]);

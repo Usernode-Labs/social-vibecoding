@@ -413,7 +413,9 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 // Params:
 //   pool, sessionId
 //   userId  - optional owner scope (HTTP authz). Omit for system actions.
-//   reason  - 'manual' | 'stale-pr' | ...
+//   reason  - 'manual' | 'stale-pr' | ... The Homeroom bot's own proposals
+//             (#11, WP3) close with 'withdrawn' (asked for in its DM) or
+//             'superseded' (another proposal for the same request covers it).
 //   purgeCc - destroy the CC volume immediately (skip retention). Default
 //             false. The activeWorkers in-flight set (routes/sessions.js)
 //             is cleared by the HTTP handler, not here.
@@ -533,6 +535,10 @@ async function finalizeArchivedSession({
       ? `${label} was set aside for now (more No than Yes, and not enough support to carry it)`
       : reason === 'proposal-replaced' && userId != null && session.owner_username
         ? `${session.owner_username} replaced ${label} with a new proposal`
+      : reason === 'superseded'
+        ? `${label} was withdrawn: another proposal for the same request covers it`
+      : reason === 'withdrawn'
+        ? `${label} was withdrawn`
       : userId != null && session.owner_username
         ? `${session.owner_username} withdrew ${label}`
         : `${label} went quiet and was set aside. It can always come back as a new proposal`;
@@ -567,6 +573,10 @@ async function finalizeArchivedSession({
 
   const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
   pushSessionUpdate({ action: 'archived', sessionId, appSlug });
+  // #8 (WP3): one of the Homeroom bot's proposals closed, by any of the
+  // paths above: the activity tray of whoever asked for it reads again.
+  // Never throws, and finds nobody for anybody else's session.
+  await require('./homeroom-bot-dm').noteProposalChanged(pool, sessionId);
   // Issues this session's dispatches declared lose their contribution to
   // the derived "In progress" chip the moment the row leaves the live
   // statuses — tell open Dev panels to refetch. This one hook covers every

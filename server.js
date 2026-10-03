@@ -623,6 +623,9 @@ app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
 // #3654: the Homeroom bot's benchmark (services/bench/), beside its console.
 app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
+// Test accounts for first-run testing, minted by a full admin's connector
+// session (services/test-accounts.js).
+app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));

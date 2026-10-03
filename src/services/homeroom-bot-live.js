@@ -1458,6 +1458,12 @@ async function buildAndPropose({
   // #3737: a project's first version, whose spec and build decide and
   // record its look.
   firstVersion = false,
+  // WP1 (#2): resolves why this build should stop where it is, or null to
+  // go on (homeroom-bot.js whyNotBuild). Asked once the plan is written,
+  // before the build turn, and again once the build turn is over, just
+  // before it is proposed. A reason ends the build there: its session put
+  // away, nothing proposed, and `skipped` on the result.
+  skipCheck = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1519,6 +1525,16 @@ async function buildAndPropose({
     ).catch(() => {});
     return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut() };
   };
+  // A skip is put away as a failed attempt is, and says why it stopped.
+  const skipNow = async () => {
+    if (!skipCheck) return null;
+    try {
+      return (await skipCheck()) || null;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check whether the build is still wanted (going on)', { sessionId: session.id, err: err.message });
+      return null;
+    }
+  };
 
   let branchName;
   try {
@@ -1571,6 +1587,10 @@ async function buildAndPropose({
     });
     return { ...(await fail(spec.error)), blocked: spec.blocked, costUsd: spec.costUsd };
   }
+  // WP1 (#2): before its plan is posted and the build turn starts, which a
+  // stopped spec turn (noteRequestMerged stops one) would otherwise go on to.
+  const skippedEarly = await skipNow();
+  if (skippedEarly) return { ...(await fail(skippedEarly)), skipped: skippedEarly, costUsd: spec.costUsd ?? null };
   if (spec.ok) {
     if (onSpec && !spec.preset) {
       // Posted, not waited on: the build starts whatever happens to the post.
@@ -1678,6 +1698,11 @@ async function buildAndPropose({
   const costUsd = buildCostUsd == null && spec.costUsd == null
     ? null
     : (buildCostUsd || 0) + (spec.costUsd || 0);
+  // WP1 (#2): and once the build turn is over, whatever it came to, just
+  // before it is proposed. A build stopped for this (noteRequestMerged ends
+  // its turn) is a skip, not a failure.
+  const skipped = await skipNow();
+  if (skipped) return { ...(await fail(skipped)), skipped, costUsd };
   if (stopped) {
     return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }

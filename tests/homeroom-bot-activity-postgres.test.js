@@ -248,6 +248,134 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     assert.equal((await byId(asAda, lost.messageId)).outcome, 'stopped');
   });
 
+  // WP1 (#9): Plant Pal #1's card flipped to "Didn't finish" the moment a
+  // second look at the request began, with its build healthy and nothing
+  // said: a card with no outcome read as stopped as soon as a newer card on
+  // its request existed.
+  await t.test('WP1 (#9): a card whose build still waits or runs is working, whatever began after it', async () => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Watering log')`,
+      [seeds.id, ada.id],
+    );
+    const card = await activity.startCard(pool, {
+      app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: await claim(seeds, 8), settings,
+    });
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 8', [seeds.id]);
+    const { rows: [run8] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, live_build_waiting_at)
+       VALUES ($1, 8, 'live', 'ready', NOW()) RETURNING id`,
+      [seeds.id],
+    );
+    // A second look at the same request begins, with a card of its own.
+    const second = await activity.startCard(pool, {
+      app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: await claim(seeds, 8), settings,
+    });
+    assert.notEqual(second.messageId, card.messageId);
+    let read = await byId(asAda, card.messageId);
+    assert.deepEqual([read.state, read.stage, read.doing], ['working', 'build_queued', 'ready to build; waiting its turn to be built'],
+      'its build waits its turn: not stopped');
+
+    const { rows: [build] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues)
+       VALUES ($1, $2, 'bot-build-8', 'active', 'Watering log', '{8}') RETURNING id`,
+      [seeds.id, bot.id],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [run8.id, build.id]);
+    read = await byId(asAda, card.messageId);
+    assert.deepEqual([read.state, read.stage, read.doing], ['working', 'building', 'building it'], 'and while it runs');
+
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW() WHERE id = $1`, [build.id]);
+    await pool.query('UPDATE homeroom_bot_runs SET build_ok = TRUE, proposal_session_id = $2 WHERE id = $1', [run8.id, build.id]);
+    read = await byId(asAda, card.messageId);
+    assert.equal(read.outcome, 'proposed', 'and it ends in what its build came to');
+
+    // A proposal withdrawn (a duplicate of a merged one, noteRequestMerged)
+    // reads as closed, never as still up for a vote.
+    await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [build.id]);
+    assert.equal((await byId(asAda, card.messageId)).outcome, 'closed');
+
+    // A build that ended with nothing recorded is not working for ever: its
+    // session put away, the card before the newer one stopped.
+    const third = await activity.startCard(pool, {
+      app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: 'wp1-third', settings,
+    });
+    const { rows: [lost] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, archived_at, session_title)
+       VALUES ($1, $2, 'bot-build-8b', 'archived', NOW(), 'Watering log') RETURNING id`,
+      [seeds.id, bot.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id)
+       VALUES ($1, 8, 'live', 'ready', $2)`,
+      [seeds.id, lost.id],
+    );
+    // Its run is the third card's: it began after that card, before the next.
+    const { rows: [order] } = await pool.query(
+      `SELECT (SELECT created_at FROM homeroom_bot_runs WHERE build_session_id = $1)
+                > (SELECT created_at FROM homeroom_bot_dm_messages WHERE message_id = $2) AS after`,
+      [lost.id, third.messageId],
+    );
+    assert.equal(order.after, true);
+    await activity.startCard(pool, {
+      app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: 'wp1-later', settings,
+    });
+    assert.equal((await byId(asAda, third.messageId)).outcome, 'stopped');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 8', [seeds.id]);
+  });
+
+  // WP1 (#10): the bot's answers read a request's newest look and newest
+  // proposal only, so a second build of Plant Pal #1 was invisible to it and
+  // it said "Nothing broke". Its progress now names the request's other
+  // builds beside the one it describes.
+  await t.test('WP1 (#10): progress names another build of the same request, and the build before', async () => {
+    const progressSvc = require('../src/services/homeroom-bot-progress');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
+         ($1, 10, $2, 'Plant list'), ($1, 11, $2, 'Reminders')`,
+      [seeds.id, ada.id],
+    );
+    const session = async (status, issue) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at)
+       VALUES ($1, $2, $3, $4, 'x', $5, NOW()) RETURNING id`,
+      [seeds.id, bot.id, `bot-${issue}-${status}`, status, [issue]],
+    )).rows[0].id;
+    const ready = async (issue, fields = {}) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id, proposal_session_id, build_ok, build_error)
+       VALUES ($1, $2, 'live', 'ready', $3, $4, $5, $6) RETURNING id`,
+      [seeds.id, issue, fields.build || null, fields.proposal || null, fields.ok ?? null, fields.error || null],
+    )).rows[0].id;
+    const entries = async () => {
+      const p = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: null } });
+      return new Map(p.rightNow.map((e) => [e.number, e]));
+    };
+
+    // #10: the first build's proposal is up for a vote while a second build
+    // of the same request runs.
+    const first = await session('promoted', 10);
+    await ready(10, { build: first, proposal: first, ok: true });
+    await ready(10, { build: await session('active', 10) });
+    let entry = (await entries()).get(10);
+    assert.equal(entry.proposal.proposal, first, 'it is still described by its proposal');
+    assert.equal(entry.alsoBuilding.doing, 'another build of this same request is under way');
+    assert.ok(entry.alsoBuilding.since);
+    assert.equal(entry.earlierAttempt, undefined);
+
+    // #11: a build that failed, then another look that builds it again.
+    await ready(11, { build: await session('archived', 11), ok: false, error: 'the build ran past its time limit' });
+    await ready(11, { build: await session('active', 11) });
+    entry = (await entries()).get(11);
+    assert.equal(entry.stage, 'planning');
+    assert.equal(entry.alsoBuilding, undefined, 'the one it describes is not "also" building');
+    assert.equal(entry.earlierAttempt.outcome, 'the build did not succeed: the build ran past its time limit');
+    assert.ok(entry.earlierAttempt.when);
+
+    // A request with one build says neither.
+    for (const [n, e] of await entries()) {
+      if (n !== 10 && n !== 11) assert.ok(!e.alsoBuilding && !e.earlierAttempt, `request #${n}`);
+    }
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number IN (10, 11)', [seeds.id]);
+  });
+
   await t.test('nobody else\'s cards, never an app they cannot view, and none for somebody the bot does not DM', async () => {
     const samsCard = await activity.startCard(pool, {
       app: samsApp, issueNumber: 9, requester: requester(sam, 'Sam\'s secret'), bot, jobKey: await claim(samsApp, 9), settings,

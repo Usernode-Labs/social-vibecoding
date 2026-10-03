@@ -71,6 +71,27 @@ test('the box is there from the start and its words follow the switch; Vote no i
   assert.match(blank, /dev-vote-reason-send-no" disabled=""/, 'whitespace is not a line');
 });
 
+test('#22: on a project that is just yours the Yes line is a note; the No side is unchanged', () => {
+  // "Add a line for the group" spoke to a group that a solo project does not
+  // have. Only the Yes side's optional line changes: No keeps its words and
+  // still needs its line before it can be sent.
+  const onYes = picker({ solo: true });
+  assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(onYes, /for the group/);
+  assert.match(onYes, /placeholder="What do you like about it\?"/, 'the box itself is the same');
+  assert.match(onYes, /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes<\/button>/, 'and a Yes needs no note');
+  const onNo = picker({ solo: true, side: 'no' });
+  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/);
+  assert.match(onNo, /placeholder="What would you want to change\?"/);
+  assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no<\/button>/,
+    'No still waits for its line');
+  assert.match(picker({ solo: false }), /Add a line for the group, if you like\./, 'a group keeps its wording');
+  // The card's button reads it off the Yes spec, which app-view.js marks
+  // from the app's own record.
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /solo=\{!!yes\.solo\}/);
+});
+
 test('withLine false: the switch and the button only, and the send is never off', () => {
   // #2603 left no caller passing false — every vote the group casts carries
   // a line now — but the panel still draws without the box for anything
@@ -166,4 +187,20 @@ test('the switch has two filled states, the popover one even inset, and the shee
   const block = CSS.slice(CSS.indexOf('.dev-vote-sheet {'), CSS.indexOf('.dev-vote-sheet .dev-vote-reason-cancel'));
   assert.doesNotMatch(block, /position: fixed|bottom: |un-kb-inset|touch-action/, 'the kit owns the sheet\'s placement and keyboard inset; nothing here fights it');
   assert.doesNotMatch(block, /#[0-9a-f]{3,6}\b|rgb\(/i, 'tokens only');
+});
+
+// ── Test accounts ─────────────────────────────────────────────────────
+
+test('a test account\'s vote on an app a real person made says, in one line, that it will not count', () => {
+  const html = picker({ uncounted: true });
+  assert.match(html, /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><p class="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count\.<\/p><div class="dev-vote-switch"/,
+    'the line sits under "Your vote", above the switch');
+  assert.doesNotMatch(picker(), /dev-vote-uncounted/, 'nobody else sees it');
+  // The flag rides the Yes spec from the /promoted row, as `prior` does.
+  assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
+  const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
+  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(CSS, /\.dev-vote-uncounted \{/);
+  assert.match(CSS, /\.gc-vote-uncounted \{/);
 });

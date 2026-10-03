@@ -15,7 +15,15 @@
 //   * the Workshop VISIT that ticks Vote when nothing is up for a vote:
 //     recorded only then, refused cross-origin and for an account without the
 //     card, counted on the spot by the real scorer's VOTE_CAST as a vote is,
-//     once, and never from the old card's "workshop" key.
+//     once, and never from the old card's "workshop" key;
+//   * THE ONE GATE (first-session test, 2026-10-03, decision D1): a newcomer
+//     who keeps only Homeroom and has the Homeroom bot build a project only
+//     they can see has not joined a community, so Join stays to do and Try,
+//     Vote and Suggest stay locked on the card's `needs_join`, read through
+//     the client's own stepView; voting on the bot's build of their app, or
+//     asking for a change to it, pays nothing; once Join is ticked nothing is
+//     locked, and with no default app the card falls back to an app Discover
+//     leads with.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is
 // set, like tests/onboarding-postgres.test.js.
@@ -48,8 +56,11 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
   ws.sendSystemMessage = async () => {};
   require('../src/services/events').record = async () => {};
   const onboarding = require('../src/services/onboarding');
+  const communities = require('../src/services/communities');
   const scorer = require('../src/services/topochain/challenge-scorer');
-  const { NEEDS_FEED_SQL, NEEDS_FEED_MAX } = require('../src/routes/workshop-overview');
+  const { NEEDS_FEED_SQL, NEEDS_FEED_MAX, owedByCommunity } = require('../src/routes/workshop-overview');
+  // The client's own row logic, run on what the server sends.
+  const cardView = require('./lib/render-tsx').loadTsx('frontend/src/features/home/getting-started.tsx');
   const { onboardingRoutes } = require('../src/routes/onboarding');
 
   const app = async (n, fields = {}) => {
@@ -104,7 +115,8 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
   const { rows: challengeRows } = await pool.query(
     `INSERT INTO challenges (season_event_id, challenge_template_id, display_order)
      SELECT $1, id, id FROM challenge_templates ORDER BY id RETURNING id, challenge_template_id`, [event.id]);
-  const VOTE = Number(challengeRows.find((r) => Number(r.challenge_template_id) === Number(tplOf('Vote on an app'))).id);
+  const challengeOf = (goal) => Number(challengeRows.find((r) => Number(r.challenge_template_id) === Number(tplOf(goal))).id);
+  const VOTE = challengeOf('Vote on an app');
   await pool.query(
     `INSERT INTO challenge_scoring_rules (name, measure, challenge_template_id) VALUES
        ('Join', 'COMMUNITY_JOINED', $1), ('Try', 'TRY_APPS', $2), ('Vote', 'VOTE_CAST', $3),
@@ -275,5 +287,197 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
     assert.equal(both.length, 1);
     [candidate] = both;
     assert.equal(candidate.sourceKey, `vote:pr:${p}`, 'the vote came first');
+    await settle(p);
+  });
+
+  // ── The one gate (first-session test, 2026-10-03; D1) ───────────────────
+  //
+  // The tester signed up, kept only Homeroom on the join screen, asked the
+  // Homeroom bot for a houseplant app made "Just me", voted on its first
+  // version and asked for a change from inside it. The card never ticked
+  // Join (by design: neither counts), drew no lock under it, and paid the
+  // vote and the request as if they were about somebody else's app.
+  const { rows: [bot] } = await pool.query(
+    `INSERT INTO users (username, password) VALUES ('homeroom_bot', 'x') RETURNING id`);
+  const { rows: [plant] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, needs_communities_choice, getting_started_gate)
+     VALUES ('plant_lover', 'x', TRUE, TRUE, TRUE) RETURNING id, username`);
+  const SUGGEST = challengeOf('Suggest an improvement');
+  const JOIN = challengeOf('Join a community');
+  const creditsOf = async (userId, challengeId) => (await pool.query(
+    `SELECT points, metadata FROM user_activities WHERE user_id = $1 AND challenge_id = $2`,
+    [userId, challengeId])).rows;
+  const window = () => ({ startMs: Date.now() - 86400000, endMs: Date.now() + 86400000 });
+  const candidatesOf = async (measure, userId) => (await scorer.loadCandidates(pool, measure, window(), {}))
+    .filter((c) => Number(c.userId) === Number(userId));
+  // A project made "Just me": private, its maker the only member.
+  const solo = async (n, slug, by) => {
+    const { rows: [made] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, self_hosted, status, view_visibility, collab_visibility)
+       VALUES ($1, $2, $3, FALSE, 'running', 'private', 'private') RETURNING *`, [n, slug, by]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [made.id, by]);
+    return (await pool.query('SELECT * FROM apps WHERE id = $1', [made.id])).rows[0];
+  };
+  // The bot's build of a request somebody made: the session is the bot's,
+  // the request is theirs (homeroom-bot-live.js buildAndPropose).
+  const botBuild = async (a, issueNumber, requester) => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
+       VALUES ($1, $2, $3, 'Track my plants', $4)`, [a.id, issueNumber, requester, issueNumber === 1]);
+    return Number((await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, requires_explicit_approval,
+                                  created_from_issue_number)
+       VALUES ($1, $2, 'promoted', 'First version', NOW(), TRUE, $3) RETURNING id`,
+      [a.id, bot.id, issueNumber])).rows[0].id);
+  };
+  const ask = async (a, by) => pool.query(
+    `INSERT INTO feedback_reports (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description)
+     VALUES ($1, 'app', $2, 'o', 'r', $3, 'Watering reminders',
+             'Please add a reminder that tells me which plants need water today, with a snooze button.')`,
+    [by, a.id, 1000 + Number(a.id)]);
+  const LOCK = ['Join a community first.', null];
+  const rows = (c) => c.steps.map((st) => {
+    const v = cardView.stepView(st, c);
+    return [st.action, v.detail, v.button ? v.button.short : null];
+  });
+  let plantPal = null;
+
+  await t.test('keeping only Homeroom and a project only you can see: Join stays to do, and Try, Vote and Suggest lock', async () => {
+    viewer = { id: plant.id, username: plant.username, isAdmin: false };
+    try {
+      const offered = (await call('GET', '/api/me/join-suggestions')).data.communities;
+      assert.deepEqual(offered.filter((c) => c.checked).map((c) => c.slug), ['homeroom'], 'Homeroom arrives ticked');
+      const answer = await fetch(`${base}/api/me/communities`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ join: ['homeroom'] }),
+      });
+      assert.equal(answer.status, 200);
+      assert.deepEqual((await answer.json()).joined, ['homeroom'], 'the screen kept it, and scored the answer on the spot');
+      plantPal = await solo('Plant Pal', 'plant-pal', plant.id);
+      const firstVersion = await botBuild(plantPal, 1, plant.id);
+      await scorer.scoreOnJoin(pool, config);
+      assert.deepEqual(await creditsOf(plant.id, JOIN), [], 'neither Homeroom nor a "Just you" project is a community joined');
+
+      const c = await card();
+      assert.equal(c.show, true);
+      assert.equal(c.steps.find((st) => st.action === 'join').done, false);
+      assert.equal(c.needs_join, true, 'the one gate is the Join row\'s own tick');
+      assert.equal(c.app, null, 'Homeroom and their own project are no default app, and nothing falls back before Join');
+      assert.equal(c.vote, null);
+      assert.deepEqual(rows(c), [
+        ['tour', 'See how Homeroom works.', 'Start'],
+        ['join', 'Find people to build with. Homeroom and projects only you can see don’t count.', 'Join'],
+        ['try', ...LOCK], ['vote', ...LOCK], ['suggest', ...LOCK],
+      ]);
+
+      // The bot's first version waits in their Needs you like any proposal,
+      // but a vote on it is not one the Vote step counts.
+      const owed = await owedByCommunity(pool, plant.id, { showSelfHosted: true });
+      assert.deepEqual(owed.map((w) => [w.slug, w.waiting, w.paying]), [['plant-pal', 1, 0]]);
+
+      // They vote on it anyway, and ask for a change from inside it.
+      await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [firstVersion, plant.id]);
+      await scorer.scoreOnVote(pool, config);
+      await ask(plantPal, plant.id);
+      await scorer.scoreOnFeedback(pool, config);
+      assert.deepEqual(await creditsOf(plant.id, VOTE), [], 'voting on the bot\'s build of their own app pays nothing');
+      assert.deepEqual(await creditsOf(plant.id, SUGGEST), [], 'nor does asking for a change to it');
+      assert.deepEqual(await candidatesOf('VOTE_CAST', plant.id), [], 'and the schedule agrees');
+      assert.deepEqual(await candidatesOf('FEEDBACK_SENT', plant.id), []);
+      assert.deepEqual(await candidatesOf('USEFUL_FEEDBACK', plant.id), [], 'nor does the weekly feedback challenge');
+      assert.equal((await card()).needs_join, true, 'still locked');
+    } finally {
+      viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
+    }
+  });
+
+  await t.test('a vote on the bot\'s build of your own request does not count in a public community either', async () => {
+    // Somebody else's vote on the same build is a vote on somebody else's
+    // change, and counts.
+    const build = await botBuild(garden, 7, plant.id);
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes'), ($1, $3, 'yes')`,
+      [build, plant.id, oldHand.id]);
+    assert.deepEqual(await candidatesOf('VOTE_CAST', plant.id), [], 'their own request, built by the bot');
+    const [other] = await candidatesOf('VOTE_CAST', oldHand.id);
+    assert.equal(other && other.sourceKey, `vote:pr:${build}`, 'not the bot build of somebody else\'s request');
+    // Feedback on somebody else's public app counts; on their own public app it does not.
+    await ask(garden, plant.id);
+    const [sent] = await candidatesOf('FEEDBACK_SENT', plant.id);
+    assert.match(sent.description, /^Sent feedback on City garden$/);
+    await ask(garden, maker.id);
+    assert.deepEqual(await candidatesOf('USEFUL_FEEDBACK', maker.id), [], 'the maker asking their own project');
+    await pool.query('DELETE FROM pr_votes WHERE session_id = $1', [build]);
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = ANY($1::int[])', [[plant.id, maker.id]]);
+    await settle(build);
+  });
+
+  await t.test('once Join ticks nothing is locked, and Vote never points at their own app\'s build', async () => {
+    viewer = { id: plant.id, username: plant.username, isAdmin: false };
+    try {
+      await communities.join(pool, garden, plant.id);
+      await scorer.scoreOnJoin(pool, config);
+      assert.equal((await creditsOf(plant.id, JOIN)).length, 1, 'a public community joined');
+      // A second build of their own app is waiting, and nothing that would
+      // count is waiting anywhere.
+      await botBuild(plantPal, 2, plant.id);
+      const c = await card();
+      assert.equal(c.needs_join, false);
+      assert.deepEqual(c.app, { slug: 'city-garden', name: 'City garden' });
+      assert.deepEqual(c.vote, { kind: 'workshop', app: { slug: 'city-garden', name: 'City garden' }, count: 0 },
+        'not "1 change is waiting in Plant Pal"');
+      assert.deepEqual(rows(c).slice(2), [
+        ['try', 'Spend 10 seconds in City garden.', 'Try'],
+        ['vote', 'Nothing is up for a vote yet. See what people are building.', 'Look'],
+        ['suggest', 'Tell City garden’s builders what would make it better.', 'Suggest'],
+      ]);
+      // So the Look is the step, and the waiting build does not refuse it.
+      const res = await call('POST', '/api/me/getting-started/workshop-visit');
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      const [credit] = await creditsOf(plant.id, VOTE);
+      assert.equal(credit && credit.metadata.source_key, `vote:workshop:${plant.id}`);
+      // Something that pays, waiting in the garden: Vote goes there.
+      await pool.query(`UPDATE users SET getting_started_seen = NULL WHERE id = $1`, [plant.id]);
+      await pool.query('DELETE FROM user_activities WHERE user_id = $1 AND challenge_id = $2', [plant.id, VOTE]);
+      const waiting = await propose(garden);
+      assert.deepEqual((await card()).vote, { kind: 'needs', app: { slug: 'city-garden', name: 'City garden' }, count: 1 });
+      assert.equal((await call('POST', '/api/me/getting-started/workshop-visit')).status, 409, 'a vote that counts is waiting');
+      await settle(waiting);
+    } finally {
+      viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
+    }
+  });
+
+  await t.test('joined with no default app: the card falls back to an app Discover leads with, never a lock', async () => {
+    // Somebody who started a public community of their own has joined one,
+    // and every app in it is theirs.
+    const { rows: [founder] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, needs_communities_choice, getting_started_gate,
+                          communities_onboarded_at)
+       VALUES ('founder', 'x', TRUE, FALSE, TRUE, NOW()) RETURNING id, username`);
+    const club = await app('Founders club', { slug: 'founders-club', createdBy: founder.id });
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [club.id, founder.id]);
+    await scorer.scoreOnJoin(pool, config);
+    assert.equal((await creditsOf(founder.id, JOIN)).length, 1, 'starting a public community is joining one');
+    assert.equal(await onboarding.defaultApp(pool, founder.id), null, 'their own app is not the default');
+
+    viewer = { id: founder.id, username: founder.username, isAdmin: false };
+    try {
+      // Nothing featured: the open community with the most members.
+      let c = await card();
+      assert.equal(c.needs_join, false);
+      assert.deepEqual(c.app, { slug: 'city-garden', name: 'City garden' });
+      assert.deepEqual(rows(c).slice(2).map(([action, , button]) => [action, button]),
+        [['try', 'Try'], ['vote', 'Look'], ['suggest', 'Suggest']], 'every step has its button');
+      // A featured app comes first, in the admin's order.
+      await pool.query(`INSERT INTO featured_apps (app_id, sort_order) VALUES ($1, 2), ($2, 1), ($3, 0)`,
+        [owls.id, garden.id, club.id]);
+      c = await card();
+      assert.deepEqual(c.app, { slug: 'city-garden', name: 'City garden' }, 'their own featured app is passed over');
+      await pool.query('UPDATE featured_apps SET sort_order = 3 WHERE app_id = $1', [garden.id]);
+      assert.deepEqual((await card()).app, { slug: 'night-owls', name: 'Night owls' });
+      assert.deepEqual(await onboarding.fallbackApp(pool, founder.id), { slug: 'night-owls', name: 'Night owls' });
+      await pool.query('DELETE FROM featured_apps');
+    } finally {
+      viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
+    }
   });
 });

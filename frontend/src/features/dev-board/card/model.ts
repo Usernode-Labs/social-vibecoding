@@ -145,6 +145,18 @@ export interface ActionSpec {
    * without asking for it again.
    */
   prior?: 'yes' | 'no';
+  /**
+   * On the Yes spec: the project is just the viewer's (`audience === 'solo'`),
+   * so the vote picker's optional line is a note rather than "a line for the
+   * group".
+   */
+  solo?: boolean;
+  /**
+   * On the Yes spec: the viewer is a test account and a real person made this
+   * app, so their vote is recorded and shown but not counted. The picker says
+   * so in one line.
+   */
+  uncounted?: boolean;
 }
 
 /** Everything that can appear in the status band, as a tagged union. */

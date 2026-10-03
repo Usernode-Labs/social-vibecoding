@@ -193,17 +193,25 @@ async function importedAt(pool, appId) {
 // Cards under one bot message (Messages allows six; three is plenty).
 const MAX_CARDS = 3;
 
+/** Pure: whether a post's news carries its proposal's card (cardsFor below). */
+function hasProposalCard(dm) {
+  const sessionId = Number(dm?.sessionId);
+  return Number.isInteger(sessionId) && sessionId > 0;
+}
+
 /**
  * #3624 stage 2: the card a post's news is about. The proposal once there
- * is one (built, revised, merged), else the request itself.
+ * is one (built, revised, merged), else the request itself. #7 (WP3): the
+ * news that it went live leads with the app itself, which is what there is
+ * to open now (`dm.appCard`), then the proposal.
  */
 function cardsFor(kind, dm, app, issueNumber) {
   const appId = Number(app?.id);
   if (!Number.isInteger(appId) || appId <= 0) return [];
   const sessionId = Number(dm?.sessionId);
-  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged')
-      && Number.isInteger(sessionId) && sessionId > 0) {
-    return [{ type: 'proposal', appId, sessionId }];
+  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged') && hasProposalCard(dm)) {
+    const proposal = { type: 'proposal', appId, sessionId };
+    return kind === 'merged' && dm.appCard ? [{ type: 'app', appId }, proposal] : [proposal];
   }
   const n = Number(issueNumber);
   return Number.isInteger(n) && n > 0 ? [{ type: 'issue', appId, issueNumber: n }] : [];
@@ -252,11 +260,16 @@ async function quotable(pool, conversationId, userId, messageId) {
  * is not in) never costs the message: it is sent without its cards.
  * `replyToId` (#3707) is the person's message this one answers, quoted
  * above it as a person's reply quotes; one that cannot be quoted (see
- * quotable) is left off, never the message.
+ * quotable) is left off, never the message. #20 (WP3): `withoutCards` is
+ * what the message says when its cards cannot go with it, for a message
+ * whose words point at a card ("open the proposal below"): with the link
+ * written out instead.
  * Resolves { conversationId, messageId, duplicate } or null when the person
  * blocked the bot or left the chat.
  */
-async function sendDm(pool, { bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null }) {
+async function sendDm(pool, {
+  bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
+}) {
   if (!bot?.id || !userId) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
   if (!opened) return null;
@@ -267,7 +280,9 @@ async function sendDm(pool, { bot, userId, content, metadata = null, idempotency
   if (quote) input.reply_to_id = quote;
   const cards = Array.isArray(objects) ? objects.filter(Boolean).slice(0, MAX_CARDS) : [];
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
-    withCards.length ? { ...input, objects: withCards } : input,
+    withCards.length
+      ? { ...input, objects: withCards }
+      : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     { metadata: metadata ? { [META]: metadata } : null });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -532,6 +547,37 @@ async function noteOverAllowance(pool, { settings, requester, app, issueNumber, 
   });
 }
 
+// WP1 (#9): what the person hears when a build the platform restarted under
+// is started again (homeroom-bot.js completeRecoveredLive).
+const RESTARTED_TEXT = 'My build was interrupted, so I\'ve started it again. Nothing you need to do.';
+
+/**
+ * WP1 (#9): a build of one of their requests was interrupted (a restart
+ * took its worker, or cut its plan short) and the request was sent back to
+ * be built again: its requester hears it once per run, so the card going
+ * back a step is never a mystery. Resolves what sendDm did, or null.
+ */
+async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
+  if (!app?.id || !runId) return null;
+  const settings = await settingsModule().readSettings(pool);
+  const requester = await requesterOf(pool, app.id, issueNumber);
+  if (!requester || !isDmUser(settings, requester.username)) return null;
+  const bot = await botAccount(pool);
+  if (!bot) return null;
+  const context = {
+    appName: app.name || app.slug, issueNumber,
+    issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
+  };
+  return sendDm(pool, {
+    bot,
+    userId: requester.userId,
+    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
+    idempotencyKey: `hrbot-restart-${Number(runId)}`,
+    content: `${requestLine(context)}\n\n${RESTARTED_TEXT}`,
+    metadata: { kind: 'restarted', appSlug: app.slug, appName: context.appName, issueNumber },
+  });
+}
+
 // ── The request's news, in the DM ────────────────────────────────────────
 
 function requestLine({ appName, issueNumber, issueTitle, firstVersion }) {
@@ -554,12 +600,22 @@ function dmText(kind, dm, context) {
       return `${line}\n\nI have a question before I change the proposal:\n\n${clip(dm.question, 2000)}`;
     case 'spec':
       return `${line}\n\nI'm building ${it} now. I'll message you here when it's ready to try.`;
+    // #20 (WP3): the proposal's card under the message is its link (cardsFor
+    // attaches it whenever the news names its session), so the text points
+    // at the card. The address is written out only when there is no card:
+    // beside one it was a raw URL next to the same link, in the DM and in
+    // its push.
     case 'proposal':
-      return `${line}\n\nIt's built. Open the proposal to try the preview and vote on it: ${dm.link}\n\n`
-        + 'It goes live once it is approved.';
-    case 'followup_revise':
-      return `${line}\n\nI changed the proposal after the latest replies: ${clip(dm.summary, 600)}`
-        + `${dm.link ? `\n\nTake another look: ${dm.link}` : ''}`;
+      return hasProposalCard(dm)
+        ? `${line}\n\nIt's built. Open the proposal below to try the preview and vote on it.\n\nIt goes live once it is approved.`
+        : `${line}\n\nIt's built. Open the proposal to try the preview and vote on it: ${dm.link}\n\n`
+          + 'It goes live once it is approved.';
+    case 'followup_revise': {
+      let look = '';
+      if (hasProposalCard(dm)) look = '\n\nTake another look at it below.';
+      else if (dm.link) look = `\n\nTake another look: ${dm.link}`;
+      return `${line}\n\nI changed the proposal after the latest replies: ${clip(dm.summary, 600)}${look}`;
+    }
     case 'blocked':
       return `${line}\n\nI looked into this and can't build it as it's written: ${clip(dm.reason, 600)}\n\n`
         + 'Reply to this message with more detail and I\'ll look again.';
@@ -623,7 +679,9 @@ async function dmRecipient(pool, appId, issueNumber) {
  * has to reach them once.
  */
 async function untaggedRequester(pool, { appId, issueNumber, bot, told = null }) {
-  if (told?.messageId && told.username) return told.username;
+  // WP1 (#6): news that was stale by the time it was relayed reached
+  // nobody's DM on purpose, and the post does not ring them about it either.
+  if ((told?.messageId || told?.stale) && told.username) return told.username;
   if (!bot?.id) return null;
   const recipient = await dmRecipient(pool, appId, issueNumber);
   if (!recipient) return null;
@@ -650,6 +708,41 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
 // #3767: the news an activity card that is still the newest message about
 // its request already says, so it is not sent again.
 const CARD_SAYS = new Set(['spec']);
+
+// WP1 (#6): the news of one build, which can be overtaken before it is told.
+const BUILD_NEWS = new Set(['spec', 'proposal', 'build_failed']);
+
+/**
+ * WP1 (#6): why one build's news (BUILD_NEWS) is stale by the time it is
+ * relayed, or null. Another run's proposal for the request is up for a
+ * vote, being merged, or merged since this run's verdict: the request is
+ * answered, and this run is a second build of it. Or, for its plan and its
+ * failure, a newer look at the request overtook this run. On 3 October a
+ * second build of Plant Pal #1 said "I'm building this now" after the first
+ * had said "It's built". A proposal is never stale for being older than the
+ * newest look: it is the one people vote on, and they hear it is built.
+ */
+async function staleBuildNews(pool, { appId, issueNumber, runId, kind }) {
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT EXISTS (
+              SELECT 1 FROM homeroom_bot_runs n
+               WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id AND n.mode = 'live'
+            ) AS overtaken,
+            (SELECT cs.id FROM homeroom_bot_runs o
+               JOIN chat_sessions cs ON cs.id = o.proposal_session_id
+              WHERE o.app_id = r.app_id AND o.issue_number = r.issue_number AND o.id <> r.id
+                AND cs.id IS DISTINCT FROM r.proposal_session_id AND cs.id IS DISTINCT FROM r.build_session_id
+                AND (cs.status IN ('promoted', 'merging') OR (cs.status = 'merged' AND cs.merged_at >= r.created_at))
+              ORDER BY o.id LIMIT 1) AS other_proposal
+       FROM homeroom_bot_runs r
+      WHERE r.id = $1 AND r.app_id = $2 AND r.issue_number = $3`,
+    [runId, appId, issueNumber],
+  );
+  if (!row) return null;
+  if (row.other_proposal) return `proposal ${Number(row.other_proposal)} already answers the request`;
+  if (kind !== 'proposal' && row.overtaken) return 'a newer look at the request overtook it';
+  return null;
+}
 
 /**
  * #3767: whether a person's DM has an activity card for this request:
@@ -689,6 +782,17 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   };
   const content = dmText(kind, dm, context);
   if (!content) return null;
+  // WP1 (#6): a build's news that something newer overtook is not sent.
+  if (BUILD_NEWS.has(kind) && runId) {
+    const stale = await staleBuildNews(pool, { appId: app.id, issueNumber, runId, kind }).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not check whether news is stale (sending it)', { app: app.slug, issueNumber, kind, err: err.message });
+      return null;
+    });
+    if (stale) {
+      log.info('homeroom-bot-dm', 'Stale news not sent', { app: app.slug, issueNumber, kind, runId, why: stale });
+      return { conversationId: null, messageId: null, stale: true, userId: requester.userId, username: requester.username };
+    }
+  }
   // #3767: the request's activity card already shows it. While the card is
   // the newest thing in the DM about the request, "I'm building this now"
   // repeats it word for word, so it is not sent; and no news about the
@@ -719,6 +823,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     bot,
     userId: requester.userId,
     content,
+    withoutCards: dmText(kind, { ...dm, sessionId: null }, context),
     metadata,
     idempotencyKey: postId ? `hrbot-post-${postId}` : null,
     objects: cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
@@ -755,11 +860,88 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   return told;
 }
 
-/** A proposal the bot built is merged: its requester hears it is live. */
-async function noteProposalMerged(pool, session) {
+// #7 (WP3): how many times, and how far apart, a merged app's health is read
+// before its requester is told it is live now.
+const LIVE_PROBES = 3;
+const LIVE_PROBE_WAIT_MS = 5000;
+
+/**
+ * #8 (WP3): one of the bot's proposals was promoted, merged, or closed:
+ * whoever asked for the request it answers has their activity tray read
+ * again (homeroom-bot-tray.js noteWorkChanged). The loop announces the work
+ * it starts and finishes itself; these three ends happen outside it, and
+ * the tray in an open DM kept saying "Working on…" past them. The build
+ * session becomes the proposal, so a proposal just promoted is found by its
+ * build too, before its run records it. Resolves the requester's id, or
+ * null for a session that is not the bot's. Never throws.
+ */
+async function noteProposalChanged(pool, sessionId, deps = {}) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT q.user_id
+         FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
+        ORDER BY r.id DESC LIMIT 1`,
+      [id],
+    );
+    if (!rows.length) return null;
+    require('./homeroom-bot-tray').noteWorkChanged(rows[0].user_id, deps);
+    return Number(rows[0].user_id);
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not announce a change to the bot\'s proposal', { sessionId: id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Pure (#7, WP3): what the requester is told when the bot's proposal for
+ * them merged. "Live now" only once the app answered its health check on
+ * the build that merge deployed (`live`). The platform's own app
+ * (`platform`) is released after the merge and outside this process, so it
+ * merged and will be live in a few minutes, as the merge's own line in its
+ * discussion says (routes/votes.js liveSoon); so is a child app whose
+ * health could not be confirmed yet. `card`: the app's card goes under it.
+ */
+function mergedText({ line, appName, live, platform = false, card = true }) {
+  const said = live ? 'It was approved and is live now.' : 'It was approved and merged, and it\'ll be live in a few minutes.';
+  const open = card && !platform ? ` Open ${appName} below to try it${live ? '' : ' then'}.` : '';
+  return `${line}\n\n${said}${open}`;
+}
+
+/**
+ * #7 (WP3): whether a child app answers its health check after the merge
+ * deployed `sha` (staging.rebuildProduction, which already waited for the
+ * rollout). Read a few times, a few seconds apart, before it says no. No
+ * config, no deployed SHA, or the platform's own app: no.
+ */
+async function liveAfterMerge(config, app, { sha = null, deps = {} } = {}) {
+  if (!config || !app || app.self_hosted || !sha) return false;
+  const runtime = deps.applicationRuntime || require('./application-runtime');
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }));
+  let ref;
+  try { ref = runtime.productionRef(config, app); } catch { return false; }
+  for (let attempt = 1; attempt <= LIVE_PROBES; attempt += 1) {
+    if (await Promise.resolve(runtime.probeHealth(config, ref, { timeoutMs: 3000 })).catch(() => false)) return true;
+    if (attempt < LIVE_PROBES) await sleep(LIVE_PROBE_WAIT_MS);
+  }
+  log.warn('homeroom-bot-dm', 'A merged app did not answer its health check; saying it will be live soon', { app: app.slug, sha });
+  return false;
+}
+
+/**
+ * A proposal the bot built is merged: its requester hears it in their DM.
+ * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
+ * and "live now" waits for the app to answer its health check on it
+ * (liveAfterMerge). The news carries the app's own card, to open it, and the
+ * proposal's, and records the app's address as its link.
+ */
+async function noteProposalMerged(pool, session, { config = null, sha = null, deps = {} } = {}) {
   if (!session?.id) return null;
   const { rows } = await pool.query(
-    `SELECT r.app_id, r.issue_number, a.slug, a.name
+    `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
       WHERE r.proposal_session_id = $1
       ORDER BY r.id DESC LIMIT 1`,
@@ -767,8 +949,10 @@ async function noteProposalMerged(pool, session) {
   );
   if (!rows.length) return null;
   const run = rows[0];
-  const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
+  // #8: their activity tray reads again, whether or not the DM says it.
+  if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+  const settings = await settingsModule().readSettings(pool);
   if (!requester || !isDmUser(settings, requester.username)) return null;
   const bot = await botAccount(pool);
   if (!bot) return null;
@@ -777,14 +961,21 @@ async function noteProposalMerged(pool, session) {
     appName: run.name || run.slug, issueNumber: run.issue_number,
     issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
   };
+  const platform = !!run.self_hosted;
+  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   return sendDm(pool, {
     bot,
     userId: requester.userId,
     replyToId: await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number }),
     idempotencyKey: `hrbot-merged-${session.id}`,
-    content: `${requestLine(context)}\n\nIt was approved and is live now.`,
-    metadata: { kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number },
-    objects: cardsFor('merged', { sessionId: session.id }, { id: run.app_id }, run.issue_number),
+    content: mergedText({ line: requestLine(context), appName: context.appName, live, platform }),
+    withoutCards: mergedText({ line: requestLine(context), appName: context.appName, live, platform, card: false }),
+    metadata: {
+      kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number,
+      link: `#app/${encodeURIComponent(run.slug)}`, live,
+    },
+    // The platform's own app has no app of its own to open: its proposal.
+    objects: cardsFor('merged', { sessionId: session.id, appCard: !platform }, { id: run.app_id }, run.issue_number),
   });
 }
 
@@ -1217,6 +1408,81 @@ async function sweepFirstVersions(pool, config, deps = {}) {
   return filed;
 }
 
+/**
+ * #15 (D9): whether the Homeroom bot is still building a project's first
+ * version from its description, and where it is, for the App tab. While it
+ * builds, the app's own page is the starter its repo was scaffolded with
+ * (services/template.js), which says "Start a new change" to somebody whose
+ * change is already being made; the shell shows this state instead.
+ *
+ * Building while the bot builds it (`bot_builds`) and either the request is
+ * not filed yet (waiting or filing: the project is being set up), or it is
+ * filed and no proposal for it has merged. Null once one has, once filing
+ * failed, once the project failed to set up, and once the request came to
+ * something other than a merge (the bot left it to the group, its build did
+ * not succeed, its proposal was closed): then the app is what there is.
+ *
+ * `{ userId, creator, conversationId, step, of, stepName, question, ready }`:
+ * whose description it is, their DM with the bot, the step of
+ * homeroom-bot-progress.js's FIRST_VERSION_STEPS, whether the bot waits on
+ * an answer from them, and whether its proposal is up for the vote (ready
+ * to try). GET /api/apps/:slug reads it best-effort: a read that fails is
+ * no state, never a failed page.
+ */
+async function firstVersionState(pool, appId, deps = {}) {
+  if (!appId) return null;
+  const { rows } = await pool.query(
+    `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
+            a.slug, a.name, a.status AS app_status, a.created_at AS app_created_at,
+            u.username,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+                JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+               WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+            ) AS merged,
+            (SELECT p.conversation_id
+               FROM users b
+               JOIN conversation_direct_pairs p
+                 ON p.user_low_id = LEAST(b.id, f.user_id) AND p.user_high_id = GREATEST(b.id, f.user_id)
+               JOIN conversation_members m
+                 ON m.conversation_id = p.conversation_id AND m.user_id = f.user_id AND m.status = 'member'
+              WHERE b.username = $2 AND b.is_synthetic = TRUE
+              LIMIT 1) AS conversation_id
+       FROM homeroom_bot_first_versions f
+       JOIN apps a ON a.id = f.app_id
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.app_id = $1 AND f.bot_builds = TRUE`,
+    [appId, BOT_USERNAME],
+  );
+  const row = rows[0];
+  if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
+  const progress = deps.progress || require('./homeroom-bot-progress');
+  const at = (stage) => {
+    const step = progress.stepNumber(stage, true);
+    return { step, of: progress.FIRST_VERSION_STEPS.length, stepName: step ? progress.FIRST_VERSION_STEPS[step - 1] : null };
+  };
+  const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
+  if (row.status !== 'filed') {
+    if (progress.setupOf(row).outcome) return null;
+    return { ...base, ...at('setting_up'), question: false, ready: false };
+  }
+  const states = await progress.requestStates(pool, { userId: row.user_id });
+  const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
+    && Number(s.row.issue_number) === Number(row.issue_number));
+  if (found?.state) {
+    return {
+      ...base,
+      ...at(found.state.stage),
+      question: found.state.stage === 'question' && found.state.waitingOn === 'them',
+      ready: found.state.stage === 'vote',
+    };
+  }
+  // Filed, and nothing in progress: either it came to something, or the bot
+  // has not picked it up yet (filing wakes it, and it reads it next).
+  if (found && progress.outcomeOf(found.row)) return null;
+  return { ...base, ...at('queued'), question: false, ready: false };
+}
+
 /** The create dialog's suggested one-line description, from the longer one. */
 async function suggestShortDescription({ name, brief, max = 90, deps = {} }) {
   const text = normalizeBrief(brief);
@@ -1274,6 +1540,9 @@ module.exports = {
   closeOpenQuestions,
   setQuestionState,
   relayIssuePost,
+  staleBuildNews,
+  noteBuildRestarted,
+  RESTARTED_TEXT,
   cardsFor,
   quotedTarget,
   quotable,
@@ -1282,6 +1551,13 @@ module.exports = {
   postOnRequest,
   postOnProposal,
   noteProposalMerged,
+  // #7, #8, #20 (WP3)
+  LIVE_PROBES,
+  LIVE_PROBE_WAIT_MS,
+  hasProposalCard,
+  mergedText,
+  liveAfterMerge,
+  noteProposalChanged,
   isBotDirect,
   mirroredText,
   noteUserMessage,
@@ -1290,6 +1566,7 @@ module.exports = {
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,
+  firstVersionState,
   suggestShortDescription,
   firstSentence,
 };

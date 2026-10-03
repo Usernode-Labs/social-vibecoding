@@ -588,3 +588,106 @@ test('_bucketDevItems routes in-progress issues (sessions, claims, headless) to 
   // visible in the list feed but findable nowhere on the board.
   assert.deepEqual(inProgressNums, [2, 3, 4, 5]);
 });
+
+// ── 6. #17: the Homeroom bot on the request ──────────────────────────────
+//
+// `issue.bot` ({ what: 'reading' | 'building', since }) is the bot's work on
+// the request, from /github-issues. The bot is never `in_progress` (its
+// sessions are synthetic, left out on purpose), so before this state a
+// request it was building read as nobody's: "Unassigned", Start work, and a
+// Claim that told the bot to step back mid-build.
+
+const building = (over) => ({ what: 'building', since: new Date(Date.now() - 20 * 60000).toISOString(), ...over });
+
+test('#17: a request the bot is on is in progress, in its own state, naming nobody', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._issueInProgress(baseIssue({ bot: building() })), true, 'underway, not offered to whoever passes');
+
+  const st = AppView._issueWorkState(baseIssue({ bot: building() }));
+  assert.equal(st.key, 'bot');
+  assert.equal(st.label, 'Homeroom bot is building this');
+  assert.equal(st.spinner, true, 'it is working this minute');
+  assert.equal(st.tone, 'sky');
+  assert.equal(st.who, null, 'there is no person to name');
+  assert.match(st.note, /^The Homeroom bot started building this request 20 minutes ago, so nobody needs to claim it\.$/);
+
+  const reading = AppView._issueWorkState(baseIssue({ bot: building({ what: 'reading' }) }));
+  assert.equal(reading.label, 'Homeroom bot is reading this');
+  assert.match(reading.note, /^The Homeroom bot started reading this request/);
+
+  const chip = workChipHtml(AppView, baseIssue({ bot: building() }));
+  assert.match(chip, /<span[^>]*data-work-state="bot"/, 'an informational chip');
+  assert.match(chip, /Homeroom bot is building this/);
+  assert.ok(!chip.includes(' · '), 'no name on a bot state');
+});
+
+test('#17: precedence: a person in review or at work outranks the bot; the bot outranks the rest', () => {
+  const AppView = makeAppView();
+  const st = (over) => AppView._issueWorkState(baseIssue({ bot: building(), ...over }));
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
+  assert.equal(st({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) }).key, 'in_review');
+  const working = st({ in_progress: ip({ sessions: [sess()] }) });
+  assert.equal(working.key, 'working');
+  assert.match(working.note, /Also: the Homeroom bot is building it\./, 'the note still says the bot is on it');
+  assert.equal(st({ headless: { status: 'generating' } }).key, 'bot');
+  assert.equal(st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) }).key, 'bot');
+  assert.equal(st({
+    in_progress: ip({ count: 0, users: [], claims: [{ username: 'bob', userId: 8, mine: false }] }),
+  }).key, 'bot');
+});
+
+test('#17: the card: a disabled "Homeroom bot is building…" and no Claim, on the face or in ⋯', () => {
+  const AppView = makeAppView();
+  const model = AppView._issueCardModel(baseIssue({ bot: building() }));
+  const html = cardHtml(model);
+  assert.match(html, /disabled[^>]*>Homeroom bot is building…</, 'the primary waits, like a run in flight');
+  assert.ok(!hasAction(model, 'chooseIssueWork'), 'no Start work: a second session would build it twice');
+  assert.equal(claimLabels(AppView, html).join('|'), '', 'nothing to claim');
+  assert.ok(!hasAction(model, 'markIssueInProgress'));
+  assert.equal(model.actions.length, 1, 'the one disabled primary');
+  assert.match(cardHtml(AppView._issueCardModel(baseIssue({ bot: building({ what: 'reading' }) }))),
+    /disabled[^>]*>Homeroom bot is reading…</);
+
+  // A claim the viewer already holds can still be let go.
+  const mine = AppView._issueCardModel(baseIssue({
+    bot: building(),
+    in_progress: { count: 0, users: [], mine: true, sessions: [], claims: [{ username: 'me', userId: 42, mine: true }], target: null },
+  }));
+  assert.equal(claimLabels(AppView, cardHtml(mine)).join('|'), 'Release my claim');
+
+  // Where the face does not carry the toggle, the ⋯ row follows the same rule.
+  const rows = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
+  assert.ok(!rows(baseIssue({ bot: building() })).includes('Claim this issue'));
+  assert.ok(rows(baseIssue()).includes('Claim this issue'), 'and comes back once the bot is done');
+});
+
+test('#17: the request page says so in a sentence and offers no Claim in its actions', () => {
+  const AppView = makeAppView();
+  const issue = baseIssue({ bot: building() });
+  const head = cardHtml(AppView._issueCardModel(issue, { noNav: true }));
+  const note = head.match(/data-work-note="bot"[^>]*>([^<]*)</);
+  assert.ok(note, 'the head carries the bot work note');
+  assert.match(note[1], /The Homeroom bot started building this request/);
+  assert.match(head, /disabled[^>]*>Homeroom bot is building…</);
+
+  const keys = (item) => Array.from(AppView._detailActionsView('issue', item).pills, (p) => p.key);
+  assert.ok(!keys(issue).includes('claim'), 'no Claim this issue while the bot builds it');
+  assert.ok(keys(issue).includes('bounty') && keys(issue).includes('close'), 'the rest of the list stays');
+  assert.ok(keys(baseIssue()).includes('claim'), 'an ordinary request still offers it');
+  const held = baseIssue({
+    bot: building(),
+    in_progress: { count: 0, users: [], mine: true, sessions: [], claims: [{ username: 'me', userId: 42, mine: true }], target: null },
+  });
+  const release = AppView._detailActionsView('issue', held).pills.find((p) => p.key === 'claim');
+  assert.equal(release && release.label, 'Release my claim');
+});
+
+test('#17: the bot\'s request sits in In progress on the board', () => {
+  const AppView = makeAppView();
+  const buckets = AppView._bucketDevItems({
+    issues: [baseIssue({ number: 1 }), baseIssue({ number: 2, bot: building() })],
+    proposals: [], gov: [], merged: [], mySessions: [], sharedSessions: [],
+  });
+  assert.deepEqual(Array.from(buckets.issues, (i) => i.number), [1]);
+  assert.deepEqual(Array.from(buckets.inProgress, (x) => x.item.number), [2]);
+});

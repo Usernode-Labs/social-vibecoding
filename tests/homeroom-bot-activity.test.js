@@ -107,6 +107,59 @@ test('a card still going takes its step from progressFor; with nothing in progre
     'no record says when a build stopped');
 });
 
+// WP1 (#9): Plant Pal #1's card read "Didn't finish" the moment a second
+// look at the request began, with its build healthy and nothing said.
+test('WP1: a card whose build still waits or runs is working, whatever began after it', () => {
+  const row = {
+    message_id: 31, created_at: '2026-10-03T16:44:00Z', slug: 'plant-pal', issue_number: 1,
+    run_id: 776, verdict: 'ready', run_at: '2026-10-03T16:45:36Z', next_at: '2026-10-03T16:55:03Z',
+  };
+  const waiting = activity.cardOf({ ...row, build_waiting_at: '2026-10-03T16:45:36Z' }, null);
+  assert.deepEqual([waiting.state, waiting.stage, waiting.doing], ['working', 'build_queued', 'ready to build; waiting its turn to be built']);
+  const building = activity.cardOf({ ...row, build_status: 'active' }, null);
+  assert.deepEqual([building.state, building.stage, building.step, building.doing], ['working', 'building', null, 'building it'],
+    'a newer card on its request does not end it');
+  assert.equal(activity.cardOf({ ...row, build_status: 'paused' }, null).state, 'working', 'proposing it');
+  // The newer card's progress is the request's, not this card's.
+  const entry = { stage: 'reading', step: 1, of: 6, stepName: 'Read the request', doing: 'reading the request' };
+  assert.equal(activity.cardOf({ ...row, build_status: 'active' }, entry).stage, 'building');
+  // Its own progress, while it is the newest card, is read as before.
+  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' }, { stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it' });
+  assert.deepEqual([own.stage, own.step], ['building', 3]);
+  // A build with nothing under way any more (its session put away, never
+  // recorded) is not working for ever, and an outcome always wins.
+  assert.equal(activity.cardOf({ ...row, build_status: 'archived' }, null).outcome, 'stopped');
+  assert.equal(activity.cardOf({ ...row, build_status: 'active', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }, null).outcome, 'stopped');
+  assert.equal(activity.cardOf({ ...row, build_waiting_at: '2026-10-03T16:45:36Z', cap_suppressed: 'proposals_per_app' }, null).outcome, 'held');
+  // A proposal withdrawn (a duplicate, noteRequestMerged) is closed.
+  assert.equal(activity.outcomeOf({ run_id: 1, verdict: 'ready', proposal_session_id: 6191, proposal_status: 'archived' }), 'closed');
+  // The read carries what the rule needs.
+  const service = read('src/services/homeroom-bot-activity.js');
+  assert.match(service, /run\.live_build_waiting_at AS build_waiting_at, bs\.status AS build_status,/);
+  assert.match(service, /LEFT JOIN chat_sessions bs ON bs\.id = run\.build_session_id/);
+});
+
+// WP1 (#10): the bot's model reads the DM as text and never sees a card, so
+// its history says what each card shows, in the card's own words.
+test('WP1: a card in words, as the person reads it, in the client\'s own labels', () => {
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'stopped' }), 'Didn\'t finish: Stopped before it finished');
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Done: Built it. The proposal is up for a vote');
+  assert.equal(activity.cardWords({ state: 'working', step: 3, of: 6, stepName: 'Build it', doing: 'building it' }), 'Step 3 of 6 · Build it: building it');
+  assert.equal(activity.cardWords({ state: 'working', step: null, of: null, doing: 'building it' }), 'Working on it: building it');
+  assert.equal(activity.cardWords(null), null);
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'something new' }), null);
+  // The same words the client draws (curly apostrophes there).
+  const tsx = read(CARD);
+  const table = (name) => {
+    const body = tsx.slice(tsx.indexOf(`export const ${name}`), tsx.indexOf('};', tsx.indexOf(`export const ${name}`)));
+    return Object.fromEntries([...body.matchAll(/(\w+): '([^']*)'/g)].map((m) => [m[1], m[2].replace(/’/g, '\'')]));
+  };
+  assert.deepEqual(table('ACTIVITY_OUTCOME_LABELS'), { ...activity.OUTCOME_LABELS });
+  assert.deepEqual(table('ACTIVITY_OUTCOME_TONES'), { ...activity.OUTCOME_TONES });
+  assert.deepEqual(table('TONE_WORDS'), { ...activity.TONE_WORDS });
+  for (const outcome of activity.OUTCOMES) assert.ok(activity.OUTCOME_LABELS[outcome], outcome);
+});
+
 test('a card links its request, and its proposal only once people can open it', () => {
   const row = { slug: 'x', issue_number: 3, proposal_session_id: 9 };
   for (const status of ['promoted', 'merging', 'merged']) {

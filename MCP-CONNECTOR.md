@@ -209,6 +209,52 @@ name the partner, and the read-only `get_demo_status` lists what would spoil
 a take. In the permission model they are acting tools like the others: out of
 the setup hint, out of the shipped allow rules, prompted like any other write.
 
+### Admin only: test accounts
+
+First-time-user testing needs a genuinely new account each run, and "Reset
+first run" on an old one keeps its memberships, votes and history. A full
+platform admin's connector (and nobody else's) gets three tools for that, over
+`routes/test-accounts.js` and `services/test-accounts.js`:
+
+| Tool | What it actually does |
+|---|---|
+| `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `homeroomBotDm`, `welcomeDm` (both default `false`), `note` (≤ 200 characters) |
+| `list_test_accounts` | The live ones: id, username, who made it and when, last active, note, and the apps it made with their status. Read-only |
+| `retire_test_account` | With `confirm: "RETIRE"`: takes down every app the account made (the same teardown as deleting the app), then deletes the account. Refuses an account that is not a test account, and stops without deleting it if an app cannot be taken down |
+
+Username plus a generated password, typed into the ordinary sign-in form, is
+the one sign-in that works on the web and in the iOS app (which signs in
+through the same form) against local, staging and production alike. A device
+that is already signed in must sign out first. No endpoint mints a sign-in
+link or token: that would be a new credential type with a larger blast radius
+than a random password on a flagged account.
+
+A test account is a real account, so it is fenced from real outcomes rather
+than trusted not to use them:
+
+- **Vote thresholds.** It is left out of the active-member denominator.
+- **Votes.** Its vote on an app a real person made is recorded and shown, with
+  "Test account: this vote won't count." in the vote picker, and left out of
+  every tally. On an app a test account made, it counts, so one tester can take
+  a project through a vote end to end. One SQL predicate,
+  `counts_toward_outcome(voter, app)`, decides both.
+- **Rankings and Journey.** `exclude_podium`, and a `test` entry on the Journey
+  page's left-out list.
+- **People.** No welcome DM unless `welcomeDm` is set. What it posts in a
+  shared space is still seen by everyone there.
+- **Wallets.** A native sign-in never assigns it a season wallet.
+- **Scale.** At most 25 live at once (refused as `at_capacity`); 10 creates and
+  10 retires an hour per admin.
+
+The password is in the tool result, so it lands in the client's transcript.
+That is accepted for a throwaway account that can do nothing a full admin
+cannot, is flagged, and is fenced as above; the platform keeps only its hash
+and logs it nowhere. The routes sit at `/api/test-accounts` (a connector can
+reach neither `/api/admin` nor `/api/auth`), each gated `requireAdminWrite,
+testAccountLimiter, sameOriginBrowserOnly`, and no path has a `password`
+segment. `create_test_account` and `retire_test_account` are acting tools;
+`list_test_accounts` is a `list_` read.
+
 ---
 
 ## 3. The allowlist Homeroom ships

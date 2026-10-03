@@ -331,7 +331,7 @@ function makeHarness({ appData = null, sessionDraft = null } = {}) {
     sandbox,
     el,
     fetchCalls,
-    open() { sandbox.Feedback._open({}); },
+    open(opts = {}) { sandbox.Feedback._open(opts); },
     filed: () => fetchCalls.filter((c) => c.url === '/api/feedback'),
     hintShown: () => !el('feedback-target-hint').classList.contains('hidden'),
     checked: (which) => el(`feedback-target-${which}`).getAttribute('aria-checked'),
@@ -494,6 +494,36 @@ test('the destination that was tapped is the one submitted', async () => {
   const body = JSON.parse(call.opts.body);
   assert.equal(body.target, 'app');
   assert.equal(body.appSlug, 'example-app');
+});
+
+// #21: asking for a change from inside an app (Improve.giveFeedback, the
+// Workshop "+" menu's row) passes `target: 'app'`: that press was the choice,
+// so the dialog opens on the app. `fromDev` alone still asks, as #2707 wants.
+test('#21: opened from inside an app with target app, "This app" is chosen and Submit is live', () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open({ fromDev: true, target: 'app' });
+
+  assert.equal(h.checked('app'), 'true', 'the app the change is for');
+  assert.equal(h.checked('platform'), 'false');
+  assert.equal(h.caretShown('app'), true);
+  assert.equal(h.hintShown(), false, 'nothing left to ask');
+  assert.equal(h.el('feedback-submit').disabled, false);
+
+  const asked = makeHarness({ appData: OPEN_APP });
+  asked.open({ fromDev: true });
+  assert.equal(asked.checked('app'), 'false', 'fromDev alone still leaves the choice open');
+  assert.equal(asked.checked('platform'), 'false');
+});
+
+test('#21: target app is ignored where "This app" cannot be chosen', () => {
+  const selfHosted = makeHarness({ appData: { ...OPEN_APP, self_hosted: true } });
+  selfHosted.open({ fromDev: true, target: 'app' });
+  assert.equal(selfHosted.checked('platform'), 'true', 'the self-hosted app files to the platform');
+  assert.equal(selfHosted.checked('app'), 'false');
+
+  const noRepo = makeHarness({ appData: { name: 'Example App', repo_url: '' } });
+  noRepo.open({ fromDev: true, target: 'app' });
+  assert.equal(noRepo.checked('platform'), 'true', 'and so does an app with no repository yet');
 });
 
 test('with ONE destination it stays selected and Submit is live on open', () => {

@@ -76,6 +76,21 @@ function currentVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
   return `(${pv}.approval_epoch = ${cs}.approval_epoch)`;
 }
 
+/**
+ * The predicate every TALLY counts with: a current vote (above) that also
+ * counts toward the app's outcome. A test account's vote on an app a real
+ * person made is current — it is the voter's own, shown on their card as
+ * theirs and labelled — but it is not counted (D1, services/test-accounts.js;
+ * the rule itself is counts_toward_outcome in schema.sql, which the active-
+ * member denominator shares). So "what did I vote" reads currentVotePredicateSql
+ * and "how many approvals" reads this one. `cs` must expose `app_id`.
+ */
+function countedVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
+  const pv = checkedAlias(voteAlias);
+  const cs = checkedAlias(sessionAlias);
+  return `(${currentVotePredicateSql(pv, cs)} AND counts_toward_outcome(${pv}.user_id, ${cs}.app_id))`;
+}
+
 // The one place that decides "is this stamp the reviewed revision?" for JS
 // callers. Still case-insensitive: every writer lands a lower-case sha, but a
 // single upper-case character would make an IDENTICAL commit read as a
@@ -90,5 +105,6 @@ module.exports = {
   visualHeadForSession,
   reviewedHeadSql,
   currentVotePredicateSql,
+  countedVotePredicateSql,
   sameSha,
 };

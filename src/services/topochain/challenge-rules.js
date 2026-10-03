@@ -177,7 +177,7 @@ const MEASURES = {
   USEFUL_FEEDBACK: {
     label: 'Sent useful feedback',
     phrase: 'sends a report worth acting on',
-    summary: 'Filed a report through the feedback dialog inside the window. Each one is graded on how easy it is to act on.',
+    summary: 'Filed a report through the feedback dialog inside the window, about the platform or somebody else\'s project. A report on a project they made, or one only they can see, does not count. Each one is graded on how easy it is to act on.',
     unit: 'report',
     targetUnit: 'reports',
     counted: true,
@@ -259,6 +259,16 @@ const MEASURES = {
   // It also keeps the demo partner (which votes on its own demo proposal)
   // out of the measure without a special case.
   //
+  // Nor does a vote on what the Homeroom bot built from your own request, or
+  // any vote in a project only you are in ("Just you"), and a report on a
+  // project you made, or one only you are in, is not feedback to anybody
+  // (first-session test, 2026-10-03). The bot is the author of the proposal
+  // it writes for a request, so "not your own proposal" let the requester's
+  // vote on their own app's first version through, and the in-app "Ask for
+  // a change" on that app paid both feedback measures. Your own projects
+  // count for none of the First challenges: not Join, not Try, not Vote and
+  // not Suggest.
+  //
   // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
   // 2026-10-01): a newcomer whose communities have nothing waiting cannot
   // vote, so the Getting started card's Vote step sends them to the Workshop
@@ -269,7 +279,7 @@ const MEASURES = {
   VOTE_CAST: {
     label: 'Voted on a change, or looked at the Workshop when nothing was up for a vote',
     phrase: 'votes on somebody else\'s change, or looks at the Workshop when nothing is up for a vote',
-    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card. Votes on their own proposals and requests do not count, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
+    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card. Votes on their own proposals and requests do not count, nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
     unit: 'vote',
     targetUnit: null,
     counted: false,
@@ -285,7 +295,7 @@ const MEASURES = {
   FEEDBACK_SENT: {
     label: 'Sent feedback',
     phrase: 'sends a report',
-    summary: 'Sent a report through the feedback dialog inside the window, and it reached GitHub. A report too short to act on, or a copy of one they already sent, does not count. One is enough, and it is not graded.',
+    summary: 'Sent a report through the feedback dialog inside the window, and it reached GitHub. A report too short to act on, a copy of one they already sent, or a report on a project they made or one only they can see does not count. One is enough, and it is not graded.',
     unit: 'report',
     targetUnit: null,
     counted: false,

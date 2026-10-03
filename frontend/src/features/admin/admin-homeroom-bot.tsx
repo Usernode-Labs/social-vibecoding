@@ -401,6 +401,15 @@ function LiveBuild({ run }: { run: Run }) {
   if (run.build_ok == null) return null;
   if (!run.build_ok) {
     const why = run.build_error || 'no reason recorded';
+    // WP1: a build that was not needed (its request already had a proposal,
+    // or was closed) stopped; it did not fail.
+    if (why.startsWith('skipped: ')) {
+      return (
+        <p className={`${AdminUI.muted} break-words`} data-live-build="skipped">
+          {`Live build stopped, not needed: ${why.slice('skipped: '.length)}.`}
+        </p>
+      );
+    }
     return (
       <p className={`${AdminUI.muted} break-words`} data-live-build={why.startsWith('blocked: ') ? 'blocked' : 'failed'}>
         {why.startsWith('blocked: ')

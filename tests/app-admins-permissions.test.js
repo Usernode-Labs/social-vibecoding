@@ -260,8 +260,12 @@ test('delete uses the sole-contributor predicate, never general app-admin rights
   const at = src.indexOf("router.delete('/api/apps/:slug'");
   assert.notEqual(at, -1);
   // The window covers the whole pre-teardown gate: #2161 put the core-app
-  // refusal and the typed-name check in front of the contributor read.
-  const body = src.slice(at, src.indexOf('applicationRuntime.remove', at));
+  // refusal and the typed-name check in front of the contributor read. The
+  // teardown itself lives in services/app-teardown.js (shared with retiring a
+  // test account), so the window ends at the call into it.
+  const end = src.indexOf("require('../services/app-teardown').teardownApp(", at);
+  assert.ok(end > at, 'the route tears the app down through services/app-teardown.js');
+  const body = src.slice(at, end);
   assert.match(body, /isCoreApp\(app, config\.selfAppSlug\)/,
     'the core-app refusal is the first gate (#2161)');
   assert.match(body, /loadContributorCounts/,

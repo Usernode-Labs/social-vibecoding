@@ -180,9 +180,14 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
  *
  * A conversation whose kind is `channel` (#general) is a channel, not a
  * person, however it arrived.
+ *
+ * #18 (WP3): the Homeroom bot's DM (`homeroomBot`, set by the server) is an
+ * agent conversation, as a change is: Agents lists it and People does not.
+ * It is still drawn as the DM it is (`kind: 'person'`), so only the filter
+ * reads it differently.
  */
 export function buildInbox(input: {
-  conversations: Array<{ id: number; lastActivityAt: string; kind?: string }>;
+  conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean }>;
   discussions: AppDiscussion[];
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
@@ -196,7 +201,7 @@ export function buildInbox(input: {
     // #general is the Homeroom community's channel, drawn on its hub; and
     // an app's channel (`input.discussions`) is drawn on its own hub.
     if (item.kind === 'channel') continue;
-    if (admits(input.filter, 'person')) {
+    if (admits(input.filter, item.homeroomBot ? 'agent' : 'person')) {
       chats.push({ key: `person:${item.id}`, kind: 'person', section: 'chats', at: item.lastActivityAt });
     }
   }

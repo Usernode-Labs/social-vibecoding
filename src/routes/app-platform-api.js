@@ -8,7 +8,7 @@ const governance = require('../services/governance');
 const userDirectory = require('../services/user-directory');
 const { listPublicApps } = require('../services/public-app-directory');
 const log = require('../services/logger');
-const { currentVotePredicateSql } = require('../services/pr-vote-revision');
+const { countedVotePredicateSql } = require('../services/pr-vote-revision');
 
 // App-facing read-only platform API. `/v1` is the stable contract; every
 // unversioned path remains an alias for apps deployed before issue #1908.
@@ -273,10 +273,10 @@ function appPlatformApiRoutes(config) {
                 ${activityExpr} AS activity_at,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
            FROM chat_sessions cs
            LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.status = ANY($2::text[])
