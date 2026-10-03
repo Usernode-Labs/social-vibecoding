@@ -280,7 +280,10 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
     liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5']]);
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7]);
+  // Plant Pal #1 and #3: a request whose live build waits or runs is read
+  // once that build ends, whatever queued it.
+  assert.match(s, /AND NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_runs b\s+WHERE b\.app_id = q\.app_id AND b\.issue_number = q\.issue_number/);
   // The bot's own proposal on the issue, still up for a vote: what runTriage
   // follows up on (live.openBotProposal, runFollowUp).
   assert.match(s, /cs\.user_id = \$6\s+AND q\.issue_number = ANY\(cs\.linked_issues\)\s+AND cs\.status = 'promoted' AND cs\.is_headless = FALSE/);
@@ -470,6 +473,45 @@ test('a project\'s next request is read while its build runs, and its builds go 
     [902, 'skipped: the request was closed before its build started'],
   ], 'a request closed while its build waited is not built');
   bot._resetForTests();
+});
+
+test('a waiting build whose request the bot already proposed is not built (Plant Pal #1, #3)', async () => {
+  const log = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      log.push({ s, params });
+      if (/FROM chat_sessions/.test(s) && /AND \(status IN \('promoted', 'merging'\) OR \(status = 'merged' AND merged_at >= \$4::timestamptz\)\)/.test(s)) {
+        return { rows: [{ id: 6190 }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const github = { isEnabled: () => true, async fetchPublicIssue() { return { issue: { number: 1, state: 'open' } }; } };
+  const run = { id: 777, issue_number: 1, build_note: 'build it', created_at: '2026-10-03T16:55:03Z' };
+  const app = { id: 2034, slug: 'plant-pal-1ad9b5', repo_url: 'https://github.com/usernode-bot/plant-pal-1ad9b5' };
+  const out = await bot.buildOne(pool, {}, { bot: { id: 330 }, app, run, settings: {}, deps: { github } });
+  assert.deepEqual(out, { ran: false, reason: 'has_proposal' });
+  const looked = log.find((l) => /FROM chat_sessions/.test(l.s));
+  assert.deepEqual(looked.params, [2034, 330, 1, '2026-10-03T16:55:03Z'], 'the bot\'s own, on this request, since this verdict');
+  assert.match(looked.s, /user_id = \$2 AND \$3 = ANY\(linked_issues\) AND is_headless = FALSE/);
+  const skipped = log.find((l) => /SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = \$2/.test(l.s));
+  assert.deepEqual(skipped.params, [777, 'skipped: the request already has a proposal (6190)'],
+    'recorded as skipped, which the cards and the tray read as stopped');
+  assert.ok(!log.some((l) => /build_session_id = \$2/.test(l.s)), 'and nothing was built');
+
+  // Unread, it is not built either: it keeps waiting for the next pass.
+  const failing = {
+    async query(sql) {
+      if (/FROM chat_sessions/.test(String(sql))) throw new Error('connection lost');
+      log.push({ s: String(sql) });
+      return { rows: [] };
+    },
+  };
+  log.length = 0;
+  assert.deepEqual(await bot.buildOne(failing, {}, { bot: { id: 330 }, app, run, settings: {}, deps: { github } }),
+    { ran: false, reason: 'infra', detail: 'proposal_unreadable' });
+  assert.ok(!log.some((l) => /live_build_waiting_at = NULL/.test(l.s)), 'still waiting');
 });
 
 test('a ready verdict waits on its run, and only for a build of the same project', () => {

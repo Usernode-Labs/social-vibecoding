@@ -929,17 +929,25 @@ function toMs(value) {
  *   busy         true when a person has a live claim, session or proposal
  *                on it — the bot never competes with a human who started
  *   lastRun      the bot's most recent run on it ({ thread_seen_at,
- *                cap_suppressed }), or null
+ *                cap_suppressed, live_building }), or null
  *
  * `threadSeenAt` is the newest activity the bot knows of. A run is only
  * worth repeating when something happened after the last one saw it, or
  * (#3152) when a live cap held its verdict: that issue comes back as `held`,
  * naming the cap, and refreshApp decides whether the cap has room again.
+ *
+ * A request whose live build is waiting its turn or under way
+ * (`live_building`, lastRunsByIssue) is the bot's own work in progress, and
+ * is not read again until that build ends. The build posts its spec on the
+ * issue as it goes, which moves the issue's updated_at, and records what it
+ * has seen only once it is over: read as a change, the request was read
+ * again mid-build and built twice (Plant Pal #1 and #3, 2026-10-03).
  */
 function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
   if (issue.state && issue.state !== 'open') return { eligible: false, reason: 'closed' };
   if (busy) return { eligible: false, reason: 'in_progress' };
+  if (lastRun?.live_building) return { eligible: false, reason: 'building' };
   const seenMs = Math.max(toMs(issue.updatedAt), toMs(issue.createdAt), toMs(threadLastAt));
   const threadSeenAt = seenMs ? new Date(seenMs).toISOString() : null;
   if (lastRun) {
@@ -1088,16 +1096,23 @@ function latestOf(a, b) {
  * Skipping them puts those issues back on the next refresh; no new rows of
  * either kind are written once the causes are gone, so the filter is a
  * recovery that costs nothing afterwards.
+ *
+ * `live_building`: that run is a live build waiting its turn or under way
+ * (classifyIssue), as liveCandidates reads it. One the abandoned-build
+ * sweep can no longer reach (older than its window) holds nothing.
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at
+    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at,
+            (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
+             AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
+             AND created_at > NOW() - make_interval(days => $2)) AS live_building
        FROM homeroom_bot_runs
       WHERE app_id = $1
         AND budget_stop IS DISTINCT FROM 'input tokens'
         AND (error IS NULL OR error NOT LIKE 'collateral:%')
       ORDER BY issue_number, created_at DESC`,
-    [appId],
+    [appId, ABANDONED_LIVE_WINDOW_DAYS],
   );
   return new Map(rows.map((r) => [Number(r.issue_number), r]));
 }
@@ -1164,7 +1179,9 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
     });
     if (verdict.eligible) eligible.push({ n, ...verdict });
     else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
-    if (verdict.reason === 'unchanged' || verdict.reason === 'held') quiet.push(n);
+    // A request the bot is building keeps a row it queued for itself, as an
+    // unchanged one does: it is read once the build ends.
+    if (verdict.reason === 'unchanged' || verdict.reason === 'held' || verdict.reason === 'building') quiet.push(n);
   }
   if (capRoom) {
     const room = { ...capRoom };
@@ -4569,9 +4586,21 @@ async function liveCandidates(pool, {
         AND (fu.id IS NULL OR NOT ((q.app_id::text || ':' || q.issue_number::text) = ANY($7::text[])))
         AND (fu.id IS NOT NULL OR NOT (q.app_id = ANY($5::int[])))
         AND NOT (a.slug = ANY($3::text[]))
+        -- A request whose live build is waiting its turn or under way is
+        -- read once that build ends (classifyIssue): read now, it was found
+        -- ready again and built twice. Whatever queued it (a refresh, Run
+        -- now, an answer in the DM) waits, and is a follow-up on the
+        -- proposal by then.
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_runs b
+           WHERE b.app_id = q.app_id AND b.issue_number = q.issue_number
+             AND b.mode = 'live' AND b.verdict = 'ready' AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
+             AND (b.live_build_waiting_at IS NOT NULL OR b.build_session_id IS NOT NULL)
+             AND b.created_at > NOW() - make_interval(days => $8)
+        )
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
-    [liveSlugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps],
+    [liveSlugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS],
   );
   return rows;
 }
@@ -4594,7 +4623,7 @@ async function liveCandidates(pool, {
 async function liveBuildCandidates(pool, { liveSlugs, pausedApps = [], limit = 50 }) {
   if (!liveSlugs.length) return [];
   const { rows } = await pool.query(
-    `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at,
+    `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -4679,6 +4708,36 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     ).catch(() => {});
     log.info('homeroom-bot', 'Live build skipped: its request was closed', { app: app.slug, issueNumber, runId: run.id });
     return { ran: false, reason: 'not_open' };
+  }
+  // A request the bot already proposed is not built again: its proposal up
+  // for a vote or merging, or one merged since this verdict. Two verdicts on
+  // one request each waited for a build and both were built (Plant Pal #1
+  // and #3, 2026-10-03); the second started seconds after the first was put
+  // up for a vote. When this cannot be read, it is not built either: it
+  // keeps waiting, and the next pass looks again.
+  let proposed;
+  try {
+    ({ rows: [proposed] = [] } = await pool.query(
+      `SELECT id FROM chat_sessions
+        WHERE app_id = $1 AND user_id = $2 AND $3 = ANY(linked_issues) AND is_headless = FALSE
+          AND (status IN ('promoted', 'merging') OR (status = 'merged' AND merged_at >= $4::timestamptz))
+        ORDER BY id DESC LIMIT 1`,
+      [app.id, bot.id, issueNumber, run.created_at || null],
+    ));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not look for the request\'s proposal before its build', { app: app.slug, issueNumber, err: err.message });
+    return { ran: false, reason: 'infra', detail: 'proposal_unreadable' };
+  }
+  if (proposed) {
+    await pool.query(
+      `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2
+        WHERE id = $1 AND build_ok IS NULL`,
+      [run.id, `skipped: the request already has a proposal (${Number(proposed.id)})`],
+    ).catch(() => {});
+    log.info('homeroom-bot', 'Live build skipped: its request already has a proposal', {
+      app: app.slug, issueNumber, runId: run.id, sessionId: Number(proposed.id),
+    });
+    return { ran: false, reason: 'has_proposal' };
   }
   const dm = deps.dm || require('./homeroom-bot-dm');
   const requester = await dm.requesterOf(pool, app.id, issueNumber).catch(() => null);
