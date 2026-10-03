@@ -273,6 +273,34 @@ test('buildThemeInput keys every card the way the client does, excludes private 
   resetBoard();
 });
 
+test('buildThemeInput reads only governance proposals, never a request\'s open twin row', async () => {
+  // The `issues` table as the query would see it on an app: a rename up for
+  // a vote, and the `general` twin of request #12, still open although the
+  // request closed (services/governance-kinds.js). The fake applies the
+  // query's own kind filter, so a query without one returns the twin too.
+  const openRows = [
+    { id: 5, kind: 'rename', title: 'x', payload: { newName: 'Demo 2' }, created_by_username: 'dana', created_at: '2026-09-01T00:00:00Z' },
+    { id: 6, kind: 'general', title: 'Dark mode resets', payload: {}, created_by_username: 'alice', created_at: '2026-09-02T00:00:00Z' },
+  ];
+  makeStore(null, []);
+  const base = queryHandler;
+  queryHandler = async (sql, params) => {
+    if (/FROM issues i[\s\S]*status = 'open'/i.test(sql)) {
+      const kinds = (params || []).find(Array.isArray);
+      return { rows: kinds ? openRows.filter((r) => kinds.includes(r.kind)) : openRows };
+    }
+    return base(sql, params);
+  };
+  queries.length = 0;
+  const { input } = await svc.buildThemeInput(pool, APP);
+  const govKeys = input.items.filter((i) => i.kind === 'governance').map((i) => i.key);
+  assert.deepEqual(govKeys, ['gov:5'], 'the twin is not a proposal in review');
+  const govQuery = queries.find((q) => /FROM issues i[\s\S]*status = 'open'/i.test(q.sql));
+  assert.match(govQuery.sql, /i\.kind = ANY\(\$3::text\[\]\)/);
+  assert.deepEqual(govQuery.params[2], [...require('../src/services/governance-kinds').GOVERNANCE_KINDS]);
+  resetBoard();
+});
+
 test('the snapshot is not capped at two hundred issues', async () => {
   boardOf(450);
   makeStore(null);

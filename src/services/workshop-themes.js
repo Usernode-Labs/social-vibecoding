@@ -70,6 +70,7 @@ const github = require('./github');
 const topicAttrs = require('./topic-attributes');
 const issueProgress = require('./issue-progress');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
+const { GOVERNANCE_KINDS } = require('./governance-kinds');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -264,14 +265,21 @@ async function buildThemeInput(pool, app) {
     });
   }
 
+  // Governance proposals only. `issues` also holds a `general` twin of
+  // every request filed through the platform (services/governance-kinds.js):
+  // the request is already here as its `issue:<n>` card, and the twin stays
+  // open long after the request closes. Read without the kind filter, each
+  // open twin came in again as a `gov:` card "in review", and enough of them
+  // pushed the real proposals past MAX_GOV.
   const { rows: govRows } = await pool.query(
     `SELECT i.id, i.kind, i.title, i.payload, u.username AS created_by_username, i.created_at
        FROM issues i
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.app_id = $1 AND i.status = 'open'
+        AND i.kind = ANY($3::text[])
       ORDER BY i.created_at DESC
       LIMIT $2`,
-    [appId, MAX_GOV + 1]
+    [appId, MAX_GOV + 1, [...GOVERNANCE_KINDS]]
   );
   for (const r of govRows.slice(0, MAX_GOV)) {
     push({
