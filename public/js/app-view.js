@@ -1492,6 +1492,7 @@ const AppView = {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     AppView._stopStatusPolling();
+    AppView._stopFirstVersionWatch();
     AppView._issueStateSource = null;
     // #931: retire any in-flight eager launch (generation bump + timers), so
     // a frame we're about to unmount can't reveal itself over the next screen.
@@ -1818,7 +1819,8 @@ const AppView = {
       const frame = AppView._appFrame();
       if (frame.hasFrame() && AppView.appData?.url
           && AppView.tokenForSlug(AppView.appData.slug)) {
-        frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });
+        const build = AppView.buildFor(AppView.appData.slug);
+        frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow(), build });
       }
     };
     AppView.tokenRefreshInterval = setInterval(tick, AppView.TOKEN_REFRESH_MS);
@@ -2179,6 +2181,7 @@ const AppView = {
     retire() { return false; },
     resume() { return false; },
     resumed() { return false; },
+    markStale() { return false; },
     evict() { return false; },
     evictAll() {},
     liveSlugs() { return []; },
@@ -2267,11 +2270,14 @@ const AppView = {
     const src = el && el.src;
     if (!src) return false;
     const granted = typeof AppView._grantedNow === 'function' ? AppView._grantedNow() : [];
+    // The build it reloads onto, so the frame is not taken for the old one
+    // when it is next left and resumed (see buildFor).
+    const build = AppView.buildFor(typeof frame.slug === 'function' ? frame.slug() : '');
     frame.setOnLoad(() => {
       frame.setOnLoad(null);
-      setTimeout(() => { frame.setSrc(src, { granted }); }, AppView.APP_RELOAD_SETTLE_MS);
+      setTimeout(() => { frame.setSrc(src, { granted, build }); }, AppView.APP_RELOAD_SETTLE_MS);
     });
-    frame.setSrc(src, { granted });
+    frame.setSrc(src, { granted, build });
     return true;
   },
 
@@ -2297,10 +2303,12 @@ const AppView = {
   },
 
   // Bring `slug`'s kept (or still-mounted) frame back as it was. False, and
-  // nothing changed, when there is none to bring back or it is too old.
+  // nothing changed, when there is none to bring back, it is too old, or it is
+  // a build other than the one the app is on now (see buildFor).
   _resumeAppFrame(slug) {
     const frame = AppView._appFrame();
-    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS })) return false;
+    const build = AppView.buildFor(slug);
+    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS, build })) return false;
     // #685: an issue-state provider that announced itself from this document
     // is still that document. Believe it again, and only if it is.
     const prior = AppView._issueStateBySlug[slug] || null;
@@ -2317,20 +2325,64 @@ const AppView = {
 
   // A build that just landed for an app that is kept alive, or an app that
   // stopped running: its hidden document is the previous build (or nothing),
-  // so let it go and the next open loads afresh. The app on screen is not
-  // touched here — its reload is the Improve panel's offer to make.
+  // so let it go and the next open loads afresh. That includes a frame parked
+  // behind the app's own Workshop, where the build is watched landing.
+  //
+  // The app on screen is not touched here: its reload is the Improve panel's
+  // offer to make. It is marked stale instead: closing it lets it go rather
+  // than keeping it, and the next open loads the new build. True only when a
+  // frame was let go.
   evictKeptApp(slug) {
     if (!slug) return false;
     const frame = AppView._appFrame();
-    if (frame.slug && frame.slug() === slug && frame.isActive()) return false;
+    if (frame.slug && frame.slug() === slug && frame.isActive()) {
+      frame.markStale?.(slug);
+      return false;
+    }
     delete AppView._issueStateBySlug[slug];
     return frame.evict(slug);
+  },
+
+  // The build each app is on, as the last app_version_changed announced it,
+  // with the list sha it replaced (see buildFor). By slug.
+  _builds: {},
+
+  // app_version_changed: `sha` is now live for `slug`.
+  noteBuild(slug, sha) {
+    if (!slug || !sha) return false;
+    AppView._builds[slug] = { sha: String(sha), was: AppView._listedBuild(slug) };
+    return true;
+  },
+
+  // The commit the app records this tab holds say `slug` is on: the app on
+  // screen's own record, else the launcher's cached row. '' when neither says.
+  _listedBuild(slug) {
+    const shaOf = (rec) => (rec && ((rec.version && rec.version.sha) || rec.main_sha)) || '';
+    const own = AppView.appData && AppView.appData.slug === slug ? AppView.appData : null;
+    return shaOf(own) || shaOf(AppView.launchRecordFor(slug));
+  },
+
+  // The build `slug` is on now, as far as this tab knows: what a frame is
+  // stamped with when it loads, and what a kept frame must match to resume.
+  //
+  // The sha app_version_changed announced wins while the records still say
+  // what they said before it: the Home list re-read on the redeploy's end
+  // event is fetched before apps.main_sha is written, so it still names the
+  // old build. A record that has moved on since is newer than the event.
+  // '' when nothing says, and an unknown build never stops a resume.
+  buildFor(slug) {
+    if (!slug) return '';
+    const listed = AppView._listedBuild(slug);
+    const landed = AppView._builds[slug];
+    if (landed && (!listed || listed === landed.was)) return landed.sha;
+    return listed;
   },
 
   // Sign-out: nothing of one viewer's apps outlives their session.
   evictAllAppFrames() {
     AppView._issueStateSource = null;
     AppView._issueStateBySlug = {};
+    AppView._builds = {};
     AppView._appActivity().clearAccount();
     AppView._appFrame().evictAll();
   },
@@ -2406,7 +2458,7 @@ const AppView = {
       AppView._watchLaunchLoad(iframe, launchId);
       // `slug`, not appData: on the launch path the detail fetch may not
       // have landed yet, and grantedForSlug answers [] for the wrong app.
-      frame.setSrc(src, { granted: AppView.grantedForSlug(slug) });
+      frame.setSrc(src, { granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug) });
     };
 
     if (AppView.hasFreshToken(slug)) {
@@ -2768,13 +2820,44 @@ const AppView = {
     // away on its next render anyway, so it was a write with no reader.
   },
 
+  // `?shot=first-version` (#15): the App tab while the Homeroom bot builds a
+  // project's first version, as its creator sees it. Synthesised like the
+  // offline shots above, and for the same reason: what it shows is the
+  // shell's own screen, so no project has to be mid-build on the database
+  // the shot runs against. Nothing is behind it: the record has no address
+  // and is not the routed app, so "Show the starter for now" frames nothing,
+  // and the chat button opens Messages.
+  showFirstVersionShot() {
+    AppView.appData = {
+      slug: 'staging-demo-first-version',
+      name: 'Plant Pal',
+      icon_emoji: '🪴',
+      status: 'running',
+      url: null,
+      self_hosted: false,
+      first_version: {
+        building: true, mine: true, step: 4, of: 7, stepName: 'Build it',
+        creator: null, ready: false, question: false, conversationId: null,
+      },
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._unmountAppFrame();
+    AppView._paintAppStatus(document.getElementById('app-content'), AppView._appStatusView(AppView.appData));
+    AppView._setSurface('platform');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+  },
+
   // ── The App tab's placeholder states ────────────────────────────────
   //
   // Five of them, and what distinguishes them is data, not markup: a dot or
   // no dot, a line of prose, sometimes a mono red detail line, sometimes one
   // button. `renderAppTab` used to build five `innerHTML` strings and then
   // bind two buttons by id; it builds the ANSWER here and
-  // `features/app-frame/app-status.tsx` draws it.
+  // `features/app-frame/app-status.tsx` draws it. A sixth since #15, the
+  // first version being built (_firstVersionView below), adds a few plain
+  // lines and a second, quieter button.
   //
   // Unlike `_appFrameDom` above there is NO string twin. That adapter exists
   // because the frame's element identity has to be assertable in Node; a
@@ -2788,6 +2871,12 @@ const AppView = {
       detail: null,
       action: null,
     };
+    // #15: the Homeroom bot is building the first version from the
+    // project's description, from its setup on (see _firstVersionView).
+    if (AppView._firstVersionPending(appData)
+        && (appData.status === 'creating' || appData.status === 'running')) {
+      return AppView._firstVersionView(appData);
+    }
     if (appData?.status === 'creating') {
       return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
     }
@@ -2838,6 +2927,139 @@ const AppView = {
     if (window.BuildLog && slug) BuildLog.open(slug);
   },
 
+  // ── #15: "being built from your description" (D9) ──────────────────
+  //
+  // A project created with a description is set up from the starter
+  // template, and the Homeroom bot then builds its first version from what
+  // its creator said it should do. Until that version merges, the app's own
+  // page is the starter, which tells somebody whose change is already being
+  // made to "Start a new change". The server knows the state
+  // (`first_version` on GET /api/apps/:slug, from
+  // services/homeroom-bot-dm.js firstVersionState); while it says building,
+  // the App tab shows that instead of mounting the frame. Its creator gets
+  // their DM with the bot (and its question, when the bot waits on one);
+  // anyone else is told whose description it is. "Show the starter for now"
+  // mounts the frame anyway, for the rest of this visit to the page.
+  FIRST_VERSION_POLL_MS: 10000,
+  _firstVersionTimer: null,
+  _firstVersionRecord: null,
+  _starterShown: new Set(),
+
+  _firstVersionPending(appData) {
+    const fv = appData && appData.first_version;
+    return !!(fv && fv.building && appData.slug && !AppView._starterShown.has(appData.slug));
+  },
+
+  _firstVersionView(appData) {
+    const fv = appData.first_version || {};
+    const name = appData.name || appData.slug;
+    const mine = !!fv.mine;
+    const from = mine ? 'your description'
+      : (fv.creator ? `@${fv.creator}’s description` : 'its description');
+    const lines = [];
+    if (Number.isInteger(fv.step) && Number.isInteger(fv.of) && fv.stepName) {
+      lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
+    }
+    if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
+    else if (fv.ready) {
+      lines.push(mine ? 'Its first version is ready. Try it and vote on it from your chat.'
+        : 'Its first version is up for a vote.');
+    } else {
+      lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
+    }
+    return {
+      dot: 'creating',
+      message: `${name} is being built from ${from}`,
+      detail: null,
+      lines,
+      action: mine
+        ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: appData.slug,
+          conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
+        : null,
+      // While it is still being set up there is no starter to show.
+      secondary: appData.status === 'running'
+        ? { key: 'starter', label: 'Show the starter for now', slug: appData.slug }
+        : null,
+    };
+  },
+
+  /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
+  openBotChat(_slug, conversationId) {
+    const id = Number.isInteger(conversationId) && conversationId > 0 ? conversationId : null;
+    const messages = window.UsernodeReact && window.UsernodeReact.messages;
+    if (messages && typeof messages.open === 'function') messages.open(id);
+    else location.hash = id ? `#messages/${id}` : '#messages';
+  },
+
+  /** "Show the starter for now": the app as it runs, for this visit. */
+  showStarter(slug) {
+    if (!slug) return;
+    AppView._starterShown.add(slug);
+    AppView._stopFirstVersionWatch();
+    if (AppView.appData && AppView.appData.slug === slug
+        && App.currentApp === slug && App.currentTab === 'app') {
+      AppView.renderAppTab();
+    }
+  },
+
+  _stopFirstVersionWatch() {
+    if (AppView._firstVersionTimer) clearTimeout(AppView._firstVersionTimer);
+    AppView._firstVersionTimer = null;
+    AppView._firstVersionRecord = null;
+  },
+
+  // Re-asked while the screen is up, like _watchCreatingStatus: no event
+  // marks each step, and the one that matters (the merge) must not need a
+  // reload. One timer, owned by the record it was armed for.
+  _watchFirstVersion(appData) {
+    if (!AppView._firstVersionPending(appData) || App.currentApp !== appData.slug
+        || App.currentTab !== 'app') {
+      AppView._stopFirstVersionWatch();
+      return;
+    }
+    if (AppView._firstVersionRecord === appData && AppView._firstVersionTimer) return;
+    AppView._stopFirstVersionWatch();
+    AppView._firstVersionRecord = appData;
+    AppView._firstVersionTimer = setTimeout(() => {
+      AppView._firstVersionTimer = null;
+      AppView._recheckFirstVersion(appData);
+    }, AppView.FIRST_VERSION_POLL_MS);
+  },
+
+  async _recheckFirstVersion(expected) {
+    const current = () => AppView.appData === expected && App.currentApp === expected.slug
+      && App.currentTab === 'app' && AppView._firstVersionPending(expected);
+    if (!current()) return;
+    // A page in the background asks nothing; it asks again on the next tick.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      AppView._watchFirstVersion(expected);
+      return;
+    }
+    let updated = null;
+    try {
+      // The tagged URL bypasses the service worker's boot cache, as
+      // pollStatus's does: a cached record is what this is correcting.
+      const res = await fetch(`/api/apps/${encodeURIComponent(expected.slug)}?status_recheck=1&manifest=summary`,
+        { cache: 'no-store' });
+      if (res.ok) ({ app: updated } = await res.json());
+    } catch {
+      // A transient failure changes nothing on screen; try again below.
+    }
+    if (!current()) return;
+    if (!updated || updated.slug !== expected.slug) {
+      AppView._watchFirstVersion(expected);
+      return;
+    }
+    AppView.appData = updated;
+    if (updated.status === 'running' && !AppView._firstVersionPending(updated)) {
+      // Built: the frame mounts now, so it gets a fresh app-scoped token.
+      await AppView.refreshToken(updated.slug);
+      if (AppView.appData !== updated || App.currentApp !== updated.slug || App.currentTab !== 'app') return;
+    }
+    // A new step, or the app itself. Either branch re-arms what it needs.
+    AppView.renderAppTab();
+  },
+
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
@@ -2872,6 +3094,7 @@ const AppView = {
       } else {
         AppView._stopStatusPolling();
       }
+      AppView._stopFirstVersionWatch();
       // #931: this branch replaces #app-content, so any launch surface under
       // it is gone — retire the generation so its pending callbacks and the
       // adoption offer can't outlive the frame they belong to.
@@ -2897,6 +3120,19 @@ const AppView = {
     // service-worker correction, or the recovery poll below). No scheduled
     // recheck may survive it.
     AppView._stopStatusPolling();
+
+    // #15: the first version is still being built from the description, so
+    // the running app is the starter. Say so instead of framing it, and keep
+    // asking until it is built (or the viewer asks for the starter).
+    if (AppView._firstVersionPending(appData)) {
+      AppView._teardownLaunch();
+      AppView._unmountAppFrame();
+      AppView._paintAppStatus(content, AppView._appStatusView(appData));
+      AppView._setSurface('platform');
+      AppView._watchFirstVersion(appData);
+      return;
+    }
+    AppView._stopFirstVersionWatch();
 
     // Offline mode (#487): the running app lives on its own subdomain — a
     // different origin the platform's service worker can't cache — so
@@ -3012,7 +3248,7 @@ const AppView = {
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
     });
-    frame.setSrc(iframeSrc, { granted: AppView._grantedNow() });
+    frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) });
   },
 
   // Single source of truth for the per-app version pill on home cards.
@@ -13012,6 +13248,9 @@ const AppView = {
     // The button then asks "Still yes?" instead of "Vote".
     const prior = pr.my_vote == null && (pr.my_prior_vote === 'yes' || pr.my_prior_vote === 'no')
       ? { prior: pr.my_prior_vote } : {};
+    // Test accounts: the viewer's vote here is recorded but not counted
+    // (my_vote_uncounted on the /promoted row); the picker says so.
+    const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
     return [
       {
         key: 'yes',
@@ -13020,6 +13259,7 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
         ...AppView._voteSolo(),
+        ...uncounted,
       },
       {
         key: 'no',
@@ -20122,7 +20362,7 @@ const AppView = {
     // so voters can re-cast or preview after voting.
     if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
       const choice = pr.my_vote === 'yes' ? 'Yes' : 'No';
-      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>`;
+      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
     }
     // In the chat, a merging/merged PR has closed voting — don't render live
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
@@ -20161,7 +20401,16 @@ const AppView = {
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
-    return preview + retryPreview + yesBtn + noBtn + adminMerge;
+    return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
+  },
+
+  // Test accounts: one line beside the legacy vote controls when the viewer's
+  // vote on this proposal is recorded but not counted (my_vote_uncounted).
+  // The board card's picker carries the same words (VotePicker).
+  _uncountedVoteNoteHtml(pr) {
+    return pr && pr.my_vote_uncounted === true
+      ? '<span class="gc-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</span>'
+      : '';
   },
 
   // #866: the Preview slot has three states, not two.
@@ -23041,7 +23290,9 @@ const AppView = {
     // grant needs a reload and the next launch will apply it.
     if (!AppView.tokenForSlug(slug)) return false;
     if (!AppView.appData || AppView.appData.slug !== slug) return false;
-    frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView.grantedForSlug(slug) });
+    frame.setSrc(AppView.buildAppIframeSrc(), {
+      granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug),
+    });
     return true;
   },
 

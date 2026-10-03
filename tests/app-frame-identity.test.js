@@ -222,7 +222,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
   // them to the prerendered state between cases.
   storeMod.appFrameStore.set({
     slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
-    seq: 0, navigatedAt: 0, kept: [],
+    seq: 0, navigatedAt: 0, build: '', stale: false, kept: [],
   });
   storeMod.appFrameRefs.iframe = null;
   storeMod.appFrameRefs.kept = {};
@@ -731,6 +731,93 @@ test('#2154: a new creating phase invalidates a terminal event from an earlier a
     'retry progress clears the obsolete terminal event');
 });
 
+// ── #15: a first version being built mounts no frame ─────────────────────
+//
+// While the Homeroom bot builds a project's first version from its
+// description, the running app is the starter its repo was scaffolded with.
+// The App tab says what is happening instead, BEFORE any frame mounts, and
+// mounts the app once it is built or once the viewer asks for the starter.
+
+const BUILDING = { building: true, mine: true, step: 4, of: 7, stepName: 'Build it', creator: 'ada', ready: false, question: false, conversationId: 9 };
+
+test('#15: a first version being built shows its screen, not the starter, and drops a launched frame', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  // The Home tile's eager launch mounts the starter off the cached list
+  // record, which knows nothing of the first version…
+  AppView._tokenFresh = { slug: SLUG, token: 'tok-1', at: Date.now() };
+  assert.equal(AppView.beginLaunch(SLUG, 'app'), true);
+  assert.ok(bridge.frame(), 'launched');
+  // …and the detail record does: the render drops it rather than adopting it.
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null, 'no frame while it is being built');
+  assert.equal(AppView._launchAdopt, null, 'and the launch offer is retired with it');
+  assert.equal(h.surface(), 'platform', 'a platform screen keeps the clearance');
+  const shown = h.status();
+  assert.equal(shown.message, 'Homeroom is being built from your description');
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.equal(shown.action.key, 'botChat');
+  assert.notEqual(AppView._firstVersionTimer, null, 'one recheck is armed while it is up');
+
+  // Rendering again keeps the one timer.
+  const timer = AppView._firstVersionTimer;
+  AppView.renderAppTab();
+  assert.equal(AppView._firstVersionTimer, timer);
+
+  // "Show the starter for now": the app, framed as usual.
+  AppView.showStarter(SLUG);
+  assert.ok(bridge.frame(), 'the starter is framed');
+  assert.equal(h.status(), null, 'the screen is gone');
+  assert.equal(h.surface(), 'app');
+  assert.equal(AppView._firstVersionTimer, null, 'nothing is re-asked once the viewer chose the app');
+  AppView._starterShown.delete(SLUG);
+});
+
+test('#15: once it is built, the next render mounts the app', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null);
+  AppView.appData = { ...h.record, self_hosted: false, first_version: null };
+  AppView.renderAppTab();
+  assert.ok(bridge.frame(), 'mounted');
+  assert.equal(h.status(), null);
+  assert.equal(AppView._firstVersionTimer, null, 'and the recheck stops');
+  // So does a placeholder of another kind, and leaving the app.
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.notEqual(AppView._firstVersionTimer, null);
+  AppView.appData = { slug: SLUG, status: 'error', url: null, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(AppView._firstVersionTimer, null);
+  assert.equal(h.status().message, 'App failed to start');
+  const close = SRC.slice(SRC.indexOf('  close() {'), SRC.indexOf('AppView.appData = null;', SRC.indexOf('  close() {')));
+  assert.match(close, /AppView\._stopFirstVersionWatch\(\);/);
+});
+
+test('#15: the first-version screenshot state is self-contained, and mounts no frame', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  AppView.renderAppTab();
+  assert.ok(bridge.frame(), 'an app was up');
+  AppView.showFirstVersionShot();
+  assert.equal(bridge.frame(), null, 'the shot drops it, and loads nothing of its own');
+  assert.equal(h.surface(), 'platform');
+  const shown = h.status();
+  assert.equal(shown.message, 'Plant Pal is being built from your description');
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.equal(shown.action.key, 'botChat');
+  assert.equal(shown.secondary.key, 'starter');
+  assert.equal(AppView.appData.url, null, 'no address, so the starter never frames anything');
+  const appJs = read('public/js/app.js');
+  const routeShots = appJs.slice(appJs.indexOf('  _applyRouteShots() {'), appJs.indexOf('\n  },', appJs.indexOf('  _applyRouteShots() {')));
+  assert.match(routeShots, /App\._applyFirstVersionShot\(\);/, 'reached as ?shot=first-version');
+  assert.match(appJs, /if \(shot !== 'first-version'\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(\);/);
+});
+
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
 //
 // It answers "would an eager launch mount the same frame renderAppTab would
@@ -1193,7 +1280,8 @@ test('every path that owned #app-content goes through the frame seam', () => {
     'frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true })', // #931 launch
     // QA 2026-09-24 Q20: the plain render names the frame after the app.
     "frame.mount({ slug: appData.slug, faded: false, title: appData.name || '' })", // plain render
-    'frame.setSrc(iframeSrc, { granted: AppView._grantedNow() })', // imperative navigation
+    // Imperative navigation, stamped with the build it loads (WP2).
+    'frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) })',
     'frame.setOnLoad(',               // one slot, not a stacking listener
     'AppView._parkAppFrame()',        // Dev tab
     'AppView._unmountAppFrame()',     // leaving the app
@@ -1243,9 +1331,11 @@ test('background updates preserve the app frame and clear when another app opens
 // frame; these cases prove the kept ones are the same elements and the same
 // documents when they come back, and that the list is least-recently-used.
 
-function openApp(h, slug, { innerPath = null } = {}) {
+function openApp(h, slug, { innerPath = null, sha = null } = {}) {
   h.AppView.appData = {
     slug, name: slug, url: `https://${slug}.example`, status: 'running', self_hosted: false,
+    // The commit the app is on, as the detail payload carries it (WP2).
+    ...(sha ? { main_sha: sha } : {}),
   };
   h.AppView.iframeToken = `tok-${slug}-${h.bridge.stats().navigations}`;
   h.AppView.iframeTokenSlug = slug;
@@ -1361,24 +1451,231 @@ test('#2902: a stale kept document, or a deep link into it, reloads rather than 
 test('#2902: a new build, a placeholder and a sign-out each let frames go', async () => {
   const h = await makeHarness();
   openApp(h, 'app-a');
-  openApp(h, 'app-b');
+  const b = openApp(h, 'app-b');
   // A build landed for kept app-a: its hidden document is the old build.
   assert.equal(h.AppView.evictKeptApp('app-a'), true);
   assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
-  // The app on screen is not evicted from under the viewer.
+  // The app on screen is not evicted from under the viewer, nor reloaded…
+  const loads = b.loads;
   assert.equal(h.AppView.evictKeptApp('app-b'), false);
   assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+  assert.equal(h.bridge.frame(), b);
+  assert.equal(b.loads, loads);
+  // …but it is the old build now, so leaving it lets it go (WP2, below).
+  openApp(h, 'app-c');
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-c'], 'app-b was not kept');
 
   // A placeholder drops the mounted frame but not the kept ones.
-  openApp(h, 'app-c');
+  openApp(h, 'app-d');
   h.AppView._unmountAppFrame();
-  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-c']);
 
   // Sign-out drops everything.
-  openApp(h, 'app-d');
+  openApp(h, 'app-e');
   h.AppView.evictAllAppFrames();
   assert.deepEqual(h.bridge.liveSlugs(), []);
   assert.equal(h.bridge.frame(), null);
+});
+
+// ── 4. A NEW BUILD LANDS (WP2, issue #1) ─────────────────────────────────
+//
+// A kept frame is a whole document of the build that was live when it loaded.
+// When a new build lands, every way back into the app has to load the new
+// one, or the person who just approved a change opens their app and finds
+// the old version, until they force-quit Homeroom. The redeploy broadcasts
+// are driven through the REAL handlers in app.js, lifted into this harness,
+// so what is asserted is what a socket event actually does to the frames.
+
+/** App.handleAppRedeployStatus and App.handleAppVersionChanged, run for real. */
+function withBuildHandlers(h, { currentApp } = {}) {
+  const APP_JS = read('public/js/app.js');
+  const methods = ['handleAppRedeployStatus', 'handleAppVersionChanged'].map((name) => {
+    const start = APP_JS.indexOf(`  ${name}(data) {`);
+    assert.ok(start > 0, `app.js has ${name}`);
+    return APP_JS.slice(start, APP_JS.indexOf('\n  },\n', start) + 4);
+  });
+  const offers = [];
+  h.sandbox.App.currentApp = currentApp;
+  h.sandbox.App._isScreenVisible = () => false;
+  h.sandbox.Improve = { update: (patch) => offers.push(JSON.parse(JSON.stringify(patch))) };
+  vm.runInContext(`Object.assign(App, {\n${methods.join(',\n')}\n});`, h.sandbox);
+  const App = h.sandbox.App;
+  return {
+    offers,
+    landed: (slug, sha) => {
+      App.handleAppRedeployStatus({ appSlug: slug, deploying: false, toSha: sha });
+      App.handleAppVersionChanged({ appSlug: slug, sha });
+    },
+  };
+}
+
+test('WP2: a build that lands while the app is parked behind its Workshop loads on Open app', async () => {
+  const h = await makeHarness();
+  const { landed, offers } = withBuildHandlers(h, { currentApp: 'app-a' });
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  // App → its Workshop: the frame is parked, the router still has the app
+  // open. This is where "✓ Deployed" is watched.
+  h.AppView._parkAppFrame();
+  landed('app-a', 'sha-new');
+  assert.deepEqual(h.bridge.liveSlugs(), [], 'the parked old build is let go');
+  assert.deepEqual(offers, [{ deploying: false, appUpdateReady: false }],
+    'and nothing is offered to reload: the next open loads the new build anyway');
+  // Open app is switchTab('app'), which renders the App tab.
+  const navigations = h.navigations();
+  h.AppView.renderAppTab();
+  const fresh = h.bridge.frame();
+  assert.equal(h.navigations(), navigations + 1, 'Open app loads the app');
+  assert.notEqual(fresh.contentWindow, win, 'a new document, not the old build');
+  assert.equal(h.store.get().build, 'sha-new', 'stamped with the build it loaded');
+});
+
+test('WP2: the same, with the frame kept from an earlier visit and the Workshop opened from Home', async () => {
+  const h = await makeHarness();
+  const { landed } = withBuildHandlers(h);
+  const a = openApp(h, 'app-a');
+  h.AppView._retireAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-a'], 'kept, hidden, from the last visit');
+  // The Workshop, opened from Home: the router's current app, and no frame
+  // mounted. Before WP2 this was exactly the case the old guard skipped.
+  h.sandbox.App.currentApp = 'app-a';
+  landed('app-a', 'sha-new');
+  assert.deepEqual(h.bridge.liveSlugs(), []);
+  assert.equal(a.isConnected, false);
+  const navigations = h.navigations();
+  const back = openApp(h, 'app-a');
+  assert.notEqual(back, a, 'a fresh frame…');
+  assert.equal(back.loads, 1, '…that loads');
+  assert.equal(h.navigations(), navigations + 1);
+});
+
+test('WP2: a build that lands while the app is on screen keeps it until it is closed, then opens fresh', async () => {
+  const h = await makeHarness();
+  const { landed, offers } = withBuildHandlers(h, { currentApp: 'app-a' });
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  const loads = a.loads;
+  win.typed = 'half a sentence';
+  landed('app-a', 'sha-new');
+  // D3: the viewer keeps their document, and the Improve offer stays.
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(a.contentWindow, win, 'not reloaded from under the viewer');
+  assert.equal(a.loads, loads);
+  assert.deepEqual(offers, [{ deploying: false, appUpdateReady: true }],
+    'the update-ready offer is made, and not withdrawn by the version event');
+  // A render while it is on screen leaves it alone too: no auto-reload.
+  h.AppView.renderAppTab();
+  assert.equal(a.loads, loads, 'a re-render on screen is not an open');
+  assert.equal(h.store.get().stale, true);
+
+  // Closing it lets it go rather than keeping the old build…
+  h.AppView._retireAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), [], 'not kept');
+  assert.equal(a.isConnected, false);
+  // …so the next open, from its tile, is fresh.
+  h.sandbox.Home._apps = [{ slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running' }];
+  h.AppView._tokenFresh = { slug: 'app-a', token: 'tok-fresh', at: Date.now() };
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  const back = h.bridge.frame();
+  assert.notEqual(back, a);
+  assert.equal(back.loads, 1, 'the new build loads');
+  assert.equal(h.store.get().stale, false);
+});
+
+test('WP2: on screen when it landed, then to its Workshop and back, is the next open', async () => {
+  const h = await makeHarness();
+  const { landed } = withBuildHandlers(h, { currentApp: 'app-a' });
+  const a = openApp(h, 'app-a');
+  const loads = a.loads;
+  landed('app-a', 'sha-new');
+  // App → Workshop: parked, not left. It stays mounted.
+  h.AppView._parkAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-a']);
+  // Workshop → App: the same element, navigated to the new build.
+  h.AppView.renderAppTab();
+  assert.equal(h.bridge.frame(), a, 'the element is reused');
+  assert.equal(a.loads, loads + 1, 'and loads the new build');
+  assert.equal(h.store.get().stale, false, 'which is no longer stale');
+  assert.equal(h.store.get().build, 'sha-new');
+  // So leaving it now keeps it, like any other app.
+  h.AppView._retireAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-a']);
+});
+
+test('WP2: a kept frame of another build reloads instead of resuming, even with every event missed', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a', { sha: 'sha-1' });
+  assert.equal(h.store.get().build, 'sha-1', 'a load is stamped with its build');
+  openApp(h, 'app-b');
+  assert.equal(h.store.get().kept.find((k) => k.slug === 'app-a').build, 'sha-1',
+    'and the stamp is kept with the frame');
+  // The phone slept through the redeploy: no event let app-a go. Its record
+  // now names a newer build.
+  const loads = a.loads;
+  const back = openApp(h, 'app-a', { sha: 'sha-2' });
+  assert.equal(back, a, 'the element is reused');
+  assert.equal(back.loads, loads + 1, 'but the old build is reloaded, not resumed');
+  assert.equal(h.store.get().build, 'sha-2');
+
+  // From its Home tile, the launcher's cached row is what says so.
+  h.AppView._retireAppFrame();
+  h.sandbox.Home._apps = [{
+    slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running',
+    version: { sha: 'sha-3' },
+  }];
+  h.AppView._tokenFresh = { slug: 'app-a', token: 'tok-fresh', at: Date.now() };
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(a.loads, loads + 2, 'the tile reloads it too');
+  assert.equal(h.store.get().build, 'sha-3');
+
+  // The same build resumes as before, and an UNKNOWN build on either side is
+  // not a reason to throw the document away: only a known mismatch is.
+  h.AppView._retireAppFrame();
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  assert.equal(a.loads, loads + 2, 'same build: resumed');
+  openApp(h, 'app-b');
+  h.sandbox.Home._apps = [];
+  assert.equal(openApp(h, 'app-a').loads, loads + 2, 'no build known now: resumed');
+  const c = openApp(h, 'app-c');
+  openApp(h, 'app-b');
+  assert.equal(openApp(h, 'app-c', { sha: 'sha-9' }).loads, c.loads, 'no build stamped: resumed');
+});
+
+test('WP2: the version event names the build, over a list read before it was written', async () => {
+  const h = await makeHarness();
+  const { landed } = withBuildHandlers(h);
+  // The Home list re-read on the redeploy's end event is fetched before
+  // apps.main_sha is written, so it still names the old build.
+  const stale = [{
+    slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running',
+    version: { sha: 'sha-old' },
+  }];
+  h.sandbox.Home._apps = stale;
+  h.AppView.appData = null;
+  landed('app-a', 'sha-new');
+  assert.equal(h.AppView.buildFor('app-a'), 'sha-new', 'the event wins over the list it beat');
+  // A list that has moved on since is newer than the event.
+  h.sandbox.Home._apps = [{ ...stale[0], version: { sha: 'sha-newer' } }];
+  assert.equal(h.AppView.buildFor('app-a'), 'sha-newer');
+  // A frame opened in between is stamped with the build that is live, so it
+  // resumes once the list catches up.
+  h.sandbox.Home._apps = stale;
+  h.AppView._tokenFresh = { slug: 'app-a', token: 'tok-fresh', at: Date.now() };
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  const a = h.bridge.frame();
+  assert.equal(h.store.get().build, 'sha-new');
+  h.AppView._retireAppFrame();
+  h.sandbox.Home._apps = [{ ...stale[0], version: { sha: 'sha-new' } }];
+  const loads = a.loads;
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(a.loads, loads, 'resumed: it is the build that is live');
+  // Sign-out forgets what it was told.
+  h.AppView.evictAllAppFrames();
+  h.AppView.appData = null;
+  h.sandbox.Home._apps = stale;
+  assert.equal(h.AppView.buildFor('app-a'), 'sha-old');
 });
 
 test('#2902: a small device keeps one app fewer', async () => {

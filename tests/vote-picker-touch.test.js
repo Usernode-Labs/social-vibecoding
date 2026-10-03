@@ -188,3 +188,19 @@ test('the switch has two filled states, the popover one even inset, and the shee
   assert.doesNotMatch(block, /position: fixed|bottom: |un-kb-inset|touch-action/, 'the kit owns the sheet\'s placement and keyboard inset; nothing here fights it');
   assert.doesNotMatch(block, /#[0-9a-f]{3,6}\b|rgb\(/i, 'tokens only');
 });
+
+// ── Test accounts ─────────────────────────────────────────────────────
+
+test('a test account\'s vote on an app a real person made says, in one line, that it will not count', () => {
+  const html = picker({ uncounted: true });
+  assert.match(html, /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><p class="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count\.<\/p><div class="dev-vote-switch"/,
+    'the line sits under "Your vote", above the switch');
+  assert.doesNotMatch(picker(), /dev-vote-uncounted/, 'nobody else sees it');
+  // The flag rides the Yes spec from the /promoted row, as `prior` does.
+  assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
+  const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
+  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(CSS, /\.dev-vote-uncounted \{/);
+  assert.match(CSS, /\.gc-vote-uncounted \{/);
+});

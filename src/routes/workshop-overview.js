@@ -50,9 +50,10 @@
 // the request board's own rows, which the deck excludes and which the
 // paragraph above says this endpoint excludes too. Counting them is what
 // made this screen report forty-six votes waiting on an app whose board had
-// three open requests — a twin is only ever closed by a passed close-issue
-// vote, so it outlives its GitHub issue by however long that issue has been
-// closed. Both `issues` CTEs below carry governanceKindsSql for that reason,
+// three open requests — a twin was only ever closed by a passed close-issue
+// vote, so it outlived its GitHub issue by however long that issue had been
+// closed (merges close it now; a close by hand on GitHub still does not).
+// Both `issues` CTEs below carry governanceKindsSql for that reason,
 // and tests/workshop-screen.test.js pins it there.
 //
 // ── Scope ──────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { currentVotePredicateSql } = require('../services/pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
 const { governanceKindsSql } = require('../services/governance-kinds');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -323,10 +324,10 @@ const NEEDS_FEED_SQL = `
            cs.last_activity_at AS at,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-               AND ${currentVotePredicateSql('pv', 'cs')})::int AS yes,
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${currentVotePredicateSql('pv', 'cs')})::int AS no
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -360,17 +361,36 @@ const NEEDS_FEED_SQL = `
 // visibility filter and the same membership rule as NEEDS_FEED_SQL; only the
 // shape differs. `$1` is the viewer, `$2` "may see self-hosted rows", `$3`
 // "is an admin", as above.
+//
+// `paying` is how many of a project's `waiting` the card's Vote step can
+// send somebody to: the ones whose vote the scorer's VOTE_CAST pays
+// (services/topochain/challenge-scorer.js VOTE_CAST_SQL, the same two
+// tests). Not a proposal the Homeroom bot built from a request the viewer
+// made, and nothing in a project only the viewer is in ("Just you"): the
+// bot's first version of their own solo app waits in their Needs you like
+// any other proposal, but voting on it is not judging somebody else's
+// change. The feed itself still lists them; only the card skips them.
 const OWED_BY_COMMUNITY_SQL = `
   WITH owed AS (
-    SELECT cs.app_id
+    SELECT cs.app_id,
+           NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r
+                        WHERE r.app_id = cs.app_id
+                          AND r.issue_number = cs.created_from_issue_number
+                          AND r.user_id = $1) AS pays
       FROM chat_sessions cs
      WHERE ${OWED_PROPOSALS_WHERE}
     UNION ALL
-    SELECT i.app_id
+    SELECT i.app_id, TRUE AS pays
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
   )
-  SELECT a.id, a.slug, a.name, COUNT(*)::int AS waiting, MIN(cm.joined_at) AS joined_at
+  SELECT a.id, a.slug, a.name, COUNT(*)::int AS waiting,
+         (CASE WHEN a.view_visibility = 'public'
+                 OR (SELECT COUNT(*) FROM community_members om WHERE om.community_id = a.community_id) > 1
+                 OR EXISTS (SELECT 1 FROM app_collaborators ic
+                             WHERE ic.app_id = a.id AND ic.status = 'invited')
+               THEN COUNT(*) FILTER (WHERE o.pays) ELSE 0 END)::int AS paying,
+         MIN(cm.joined_at) AS joined_at
     FROM owed o
     JOIN apps a ON a.id = o.app_id
     JOIN community_members cm ON cm.community_id = a.community_id AND cm.user_id = $1
@@ -383,9 +403,10 @@ const OWED_BY_COMMUNITY_SQL = `
 
 /**
  * The votes waiting for a viewer, per project they are a member of, in the
- * order they joined them: `[{ slug, name, waiting }]`, projects with nothing
- * waiting left out. The Needs you feed's population (NEEDS_FEED_SQL),
- * counted rather than listed.
+ * order they joined them: `[{ slug, name, waiting, paying }]`, projects with
+ * nothing waiting left out. The Needs you feed's population (NEEDS_FEED_SQL),
+ * counted rather than listed; `paying` is how many of them a vote on would
+ * count for the Vote on an app challenge (OWED_BY_COMMUNITY_SQL).
  */
 async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin = false } = {}) {
   const { rows } = await pool.query(OWED_BY_COMMUNITY_SQL, [userId, !!showSelfHosted, !!isAdmin]);
@@ -393,6 +414,7 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
     slug: row.slug,
     name: row.name || row.slug,
     waiting: Number(row.waiting) || 0,
+    paying: Number(row.paying) || 0,
   }));
 }
 

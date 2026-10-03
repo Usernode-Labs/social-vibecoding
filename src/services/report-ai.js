@@ -12,7 +12,8 @@
 const crypto = require('crypto');
 const github = require('./github');
 const topicAttrs = require('./topic-attributes');
-const { currentVotePredicateSql } = require('./pr-vote-revision');
+const { countedVotePredicateSql } = require('./pr-vote-revision');
+const { GOVERNANCE_KINDS } = require('./governance-kinds');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -92,10 +93,10 @@ async function buildReportInput(pool, app, opts) {
     `SELECT cs.pr_number, cs.pr_title, cs.status, cs.check_state, cs.created_at, u.username,
             (SELECT COUNT(*) FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
             (SELECT COUNT(*) FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND cs.status IN ('promoted', 'merging')
@@ -114,15 +115,21 @@ async function buildReportInput(pool, app, opts) {
   }));
 
   // Open governance proposals. payload is consulted ONLY for rename (the
-  // new name) — secret_change payloads never leave the server.
+  // new name) — secret_change payloads never leave the server. Only the
+  // governance kinds: the `general` twin a platform-filed request keeps in
+  // the table (services/governance-kinds.js) reaches the model through the
+  // GitHub board above while the request is open, and the twin stays open
+  // after it closes, so read without the filter every open twin counted as a
+  // proposal awaiting review.
   const { rows: govRows } = await pool.query(
     `SELECT i.kind, i.title, i.payload, u.username AS created_by_username, i.created_at
        FROM issues i
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.app_id = $1 AND i.status = 'open'
+        AND i.kind = ANY($2::text[])
       ORDER BY i.created_at DESC
       LIMIT ${MAX_GOV + 1}`,
-    [appId]
+    [appId, [...GOVERNANCE_KINDS]]
   );
   const gov = govRows.slice(0, MAX_GOV).map((r) => ({
     kind: r.kind,

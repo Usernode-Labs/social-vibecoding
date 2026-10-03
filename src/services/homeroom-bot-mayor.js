@@ -503,7 +503,10 @@ function statusOf(row) {
     case 'person': return 'left for the group to decide';
     case 'empty': return 'nothing to build in it yet';
     case 'failed': return 'your last look at it failed';
-    case 'ready': return row.build_ok === false ? 'you could not build it' : 'ready; the build is next';
+    case 'ready':
+      if (row.build_ok !== false) return 'ready; the build is next';
+      // WP1: a build that was not needed (skipped) stopped; it did not fail.
+      return /^skipped:/.test(String(row.build_error || '')) ? 'you stopped before building it: it was not needed' : 'you could not build it';
     case 'question': return 'asked a question, answered; waiting to look again';
     default: return proposal === 'closed' ? 'its proposal was closed' : 'looked at; nothing new since';
   }
@@ -557,14 +560,14 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
      )
      SELECT m.app_id, a.slug, a.name, m.issue_number, m.issue_title, m.first_version, m.recorded,
             q.id AS queue_id, q.started_at, q.enqueued_at,
-            run.verdict, run.created_at AS run_at, run.build_ok,
+            run.verdict, run.created_at AS run_at, run.build_ok, run.build_error,
             prop.proposal_session_id, cs.status AS proposal_status,
             oq.message_id AS open_question
        FROM mine m
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
        LEFT JOIN LATERAL (
-         SELECT verdict, created_at, build_ok FROM homeroom_bot_runs
+         SELECT verdict, created_at, build_ok, build_error FROM homeroom_bot_runs
           WHERE app_id = m.app_id AND issue_number = m.issue_number AND mode = 'live'
           ORDER BY id DESC LIMIT 1
        ) run ON TRUE
@@ -693,6 +696,28 @@ async function canView(pool, app, user) {
   } catch { return false; }
 }
 
+/**
+ * Pure: what became of one look's build, for request_detail, or undefined
+ * when the look built nothing. WP1 (#10): a build that waits or runs says
+ * so ("building now"), so a second build of a request is never invisible;
+ * and a build that was not needed (skipped) stopped, it did not fail.
+ */
+function buildWords(r) {
+  const error = clip(r.build_error || 'no reason recorded', 300);
+  if (r.verdict !== 'ready') return r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${error}`);
+  if (r.build_ok === true || r.proposal_session_id) return 'built';
+  if (r.build_ok === false) {
+    return /^skipped:/.test(String(r.build_error || ''))
+      ? `stopped before it was built: ${error.replace(/^skipped:\s*/, '')}`
+      : `could not build: ${error}`;
+  }
+  if (r.cap_suppressed) return 'held back by a limit, so not built yet';
+  // A wait a later look replaced (homeroom-bot.js runTriage) was never built.
+  if (r.build_error) return `not built: ${error.replace(/^superseded:\s*/, '')}`;
+  if (r.live_build_waiting_at && !r.build_session_id) return 'waiting its turn to be built';
+  return 'building now';
+}
+
 async function requestDetail(pool, { user, project, number, settings = null, deps = {} }) {
   const app = await findApp(pool, project);
   const n = Number(number);
@@ -703,7 +728,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id
+            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
     [app.id, n],
@@ -739,7 +764,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       question: r.question ? clip(r.question, 600) : undefined,
       why: r.reason ? clip(r.reason, 600) : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
-      build: r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${clip(r.build_error || 'no reason recorded', 300)}`),
+      build: buildWords(r),
     })),
     proposal: sessionId ? await progressSvc.proposalFacts(pool, Number(sessionId), { domain: domainOf(deps) }) : null,
   };
@@ -843,6 +868,9 @@ async function unknownRequests(pool, ctx, numbers) {
        SELECT issue_number, app_id FROM homeroom_bot_queue WHERE issue_number = ANY($2::int[])
        UNION ALL
        SELECT issue_number, app_id FROM homeroom_bot_runs WHERE issue_number = ANY($2::int[])
+       UNION ALL
+       -- A request filed from an app's "Ask for a change" dialog has no twin.
+       SELECT issue_number, app_id FROM feedback_reports WHERE issue_number = ANY($2::int[])
      ) x
       WHERE x.app_id IN (
         SELECT a.id FROM apps a JOIN community_members m ON m.community_id = a.community_id WHERE m.user_id = $1
@@ -935,7 +963,7 @@ function imagePart(picture) {
  * again on every round of a turn, so older pictures stay a line. A message
  * moderation hid shows no files at all, as it shows none to people.
  */
-async function historyMessages(pool, { conversationId, botId, upToId, imageInput = false, takeImages = null }) {
+async function historyMessages(pool, { conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null }) {
   const { rows } = await pool.query(
     `SELECT id, sender_id, content, metadata, moderation_hidden_at FROM conversation_messages
       WHERE conversation_id = $1 AND id <= $2 AND deleted_at IS NULL AND thread_root_id IS NULL
@@ -960,6 +988,23 @@ async function historyMessages(pool, { conversationId, botId, upToId, imageInput
       .sort((a, b) => Number(b.message_id) - Number(a.message_id))
     : [];
   const kept = takeImages ? takeImages({ images: wanted }).images : wanted;
+  // WP1 (#10): what each of the bot's activity cards shows now, by message.
+  // Its words say only that work began; the card itself follows it, and the
+  // model never saw it ("Nothing broke" beside a card that read "Didn't
+  // finish"). `cardsOf` is the person's cards (homeroom-bot-activity.js
+  // cardsFor), read only when the history has one. Never a reason the
+  // history is not read.
+  const cardNow = new Map();
+  if (cardsOf && rows.some((m) => Number(m.sender_id) === Number(botId) && m.metadata?.homeroomBot?.kind === 'activity')) {
+    try {
+      for (const card of (await cardsOf())?.cards || []) {
+        const words = require('./homeroom-bot-activity').cardWords(card);
+        if (words) cardNow.set(Number(card.messageId), words);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not read the activity cards for the history', { conversationId, err: err.message });
+    }
+  }
   const shown = new Map();
   if (kept.length) {
     const { rows: data } = await pool.query(
@@ -997,6 +1042,8 @@ async function historyMessages(pool, { conversationId, botId, upToId, imageInput
         ? `[Homeroom: they attached the picture ${clip(f.filename, 120)}. Only the newest pictures are shown.]`
         : `[Homeroom: they attached the picture ${clip(f.filename, 120)}, which you cannot see: your model reads text only.]`;
     });
+    const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
+    if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
     const text = [`${about}${clip(m.content, 2000)}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
     return parts.length ? { role, content: [{ type: 'text', text }, ...parts] } : { role, content: text };
@@ -1668,7 +1715,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // #3733: the conversation could not be read: their message alone is
       // still answered.
       try {
-        history = await historyMessages(pool, { conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages });
+        history = await historyMessages(pool, {
+          conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages,
+          cardsOf: () => activityModule(deps).cardsFor(pool, { user, settings, config }),
+        });
       } catch (err) {
         t.failures.push(`context:history:${codeOf(err)}`);
         log.warn('homeroom-bot-mayor', 'Could not read a DM\'s history; answering its newest message alone', {
@@ -2115,12 +2165,26 @@ function commentText(theirs, comment) {
   return chatPostText(theirs, comment, 'What they asked to add');
 }
 
-/** Whether `app` has a request numbered `n` that the platform knows of. */
+/**
+ * Whether `app` has a request numbered `n` that the platform knows of: the
+ * same records unknownRequests reads (the platform's own twin, a requester,
+ * the bot's queue and runs), and the feedback report of a request filed from
+ * the app's "Ask for a change" dialog, which keeps no twin by design
+ * (routes/issues.js isIssueAuthor). Reading only the first two, a request
+ * filed there was "no request" until the live loop had looked at it, and on
+ * an app the bot does not build on it always was.
+ */
 async function requestExists(pool, appId, n) {
   const { rows } = await pool.query(
     `SELECT 1 FROM issues WHERE app_id = $1 AND github_issue_number = $2
      UNION ALL
      SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2
+     UNION ALL
+     SELECT 1 FROM feedback_reports WHERE app_id = $1 AND issue_number = $2
      LIMIT 1`,
     [appId, n],
   );
@@ -2398,6 +2462,7 @@ module.exports = {
   RATE_LIMIT_WAITS_MS,
   PROGRESS_QUESTION,
   statusOf,
+  buildWords,
   retryPlan,
   normalizeCalls,
   myWork,

@@ -24,6 +24,10 @@
 // and only after re-reading the PR as merged into the repo's default branch.
 // Numbers that come solely from a hand-edited PR body are watched but never
 // closed here.
+//
+// Every number it sees closed, or closes, also closes the platform's own
+// `general` twin row for that request (closeTwinRows below), which nothing
+// else did on a merge.
 
 // Everything here is best-effort. watchIssuesClosedAfterMerge is
 // fired-and-forgotten from the merge path (routes/votes.js checkAndMerge)
@@ -169,6 +173,36 @@ function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers })
   }
 }
 
+// Close the platform's own record of each request just observed closed: the
+// `general` twin row a platform-filed request keeps beside its GitHub issue
+// to remember who filed it (services/governance-kinds.js). Until this, the
+// only path that closed a twin was an applied close-issue vote
+// (routes/issues.js), so every request a merged proposal closed kept an open
+// twin for good, and every reader counting open rows counted it (Plant Pal's
+// #1 still read open after PR #2 closed it). Only numbers GitHub reported
+// closed, or that the watcher closed itself, land here. Same contract as
+// resolveSupersededProposals: a no-op without a pool, fired-and-forgotten,
+// and a failure never touches the poll loop.
+function closeTwinRows({ pool, appId, prNumber, numbers }) {
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+  try {
+    Promise.resolve(pool.query(
+      `UPDATE issues SET status = 'closed'
+        WHERE app_id = $1 AND kind = 'general' AND status = 'open'
+          AND github_issue_number = ANY($2::int[])`,
+      [appId, numbers]
+    )).catch((err) => {
+      log.warn('issue-close-watcher', 'Closing request twin rows failed', {
+        pr: prNumber, issues: numbers, err: err.message,
+      });
+    });
+  } catch (err) {
+    log.warn('issue-close-watcher', 'Closing request twin rows failed', {
+      pr: prNumber, issues: numbers, err: err.message,
+    });
+  }
+}
+
 // Close, on GitHub, the linked issues GitHub left open after the grace polls.
 // Returns { closed, failed }.
 //
@@ -260,6 +294,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     if (newlyClosed.length) {
       closed.push(...newlyClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
+      closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed });
     }
     if (newlySkipped.length) skipped.push(...newlySkipped);
     // Retire close-issue proposals for closed AND skipped numbers: a
@@ -298,6 +333,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
       closed.push(...selfClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: selfClosed });
       resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed });
+      closeTwinRows({ pool, appId, prNumber, numbers: selfClosed });
       pending = pending.filter((n) => !selfClosed.includes(n));
     }
   }

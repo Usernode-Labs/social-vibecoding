@@ -1432,6 +1432,33 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         );
         demoPartner = partnerRows[0]?.username || null;
       }
+      // #15 (D9): the Homeroom bot is building this project's first version
+      // from its description. The App tab shows that, and where it is, in
+      // place of the starter the repo was scaffolded with. `mine` is the
+      // person whose description it is: only they get the way into their
+      // DM with the bot, and its question when it has one. Best-effort.
+      let firstVersion = null;
+      if (!appRow.self_hosted && !stagingSample) {
+        try {
+          const state = await require('../services/homeroom-bot-dm').firstVersionState(pool, appRow.id);
+          if (state) {
+            const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
+            firstVersion = {
+              building: true,
+              mine,
+              step: state.step,
+              of: state.of,
+              stepName: state.stepName,
+              creator: state.creator,
+              ready: !!state.ready,
+              question: mine && !!state.question,
+              conversationId: mine ? state.conversationId : null,
+            };
+          }
+        } catch (err) {
+          log.warn('apps', 'Could not read the first version state', { slug: appRow.slug, message: err.message });
+        }
+      }
       const [adminAppIds, contributorCounts] = await Promise.all([
         appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
         contributors.loadContributorCounts(pool, [appRow.id]),
@@ -1463,6 +1490,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         url,
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
+        first_version: firstVersion,
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
@@ -3014,52 +3042,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // contributor set is derived from rows the app delete cascades away.
       const recipients = shared ? await otherContributorIds(app, req.user) : [];
 
-      // Teardown through the backend that owns this app. Historical rows
-      // without runtime_kind/runtime_name remain Docker-compatible.
-      if (app.runtime_name || app.container_id) {
-        const applicationRuntime = require('../services/application-runtime');
-        await applicationRuntime.remove(config, {
-          runtimeKind: app.runtime_kind || 'docker',
-          runtimeName: app.runtime_name || app.container_id,
-          appId: app.id,
-        }, { deleteBuilds: app.runtime_kind === 'kubernetes' }).catch(() => {});
-        if (!app.runtime_kind || app.runtime_kind === 'docker') {
-          await applicationRuntime.remove(config, {
-            runtimeKind: 'docker', runtimeName: `usernode-app-${app.slug}`,
-          }).catch(() => {});
-        }
-      }
-
-      // No Caddy route to remove — the wildcard site maps hostnames to
-      // container names dynamically, so removing the container above
-      // takes the app offline. The on-demand cert lingers harmlessly and
-      // the ask endpoint stops vouching once the app row is deleted below.
-
-      // Drop app database
-      const dbManager = require('../services/db-manager');
-      await dbManager.dropDatabase(dbManager.appDbName(app.slug)).catch(() => {});
-
-      // Remove the app's stored user files from the object store (#752)
-      // BEFORE the row delete cascades away the app_files metadata.
-      // Best-effort with a loud log: a failure here leaves orphaned
-      // objects under app/<id>/ for manual cleanup, never a broken
-      // delete.
-      try {
-        const appFilesSvc = require('../services/app-files');
-        const store = appFilesSvc.getStore(config);
-        if (store) {
-          const removed = await store.removeAppPrefix(app.id);
-          if (removed) log.info('apps', 'Removed app files from object store', { appId: app.id, count: removed });
-        }
-      } catch (err) {
-        log.warn('apps', 'Object-store cleanup failed on app delete (orphans remain under app/<id>/)', {
-          appId: app.id, err: err.message,
-        });
-      }
-
-      // Delete from DB (cascades to chat_messages, sessions, etc.)
-      await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
-      appAccess.invalidateVisibility(app.id, app.slug);
+      // The runtime, the app database, its stored files, then the row
+      // (services/app-teardown.js, shared with retiring a test account).
+      await require('../services/app-teardown').teardownApp(pool, config, app);
 
       log.info('apps', 'App deleted', {
         appId: app.id, slug: app.slug, by: req.user?.id, shared, notified: recipients.length,

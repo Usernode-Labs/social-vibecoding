@@ -61,6 +61,19 @@ test('a vote counts while its epoch matches the proposal it was cast on', () => 
   );
 });
 
+test('a tally counts a current vote that also counts toward the app\'s outcome', () => {
+  // Test accounts (D1): a test account's vote on an app a real person made
+  // is current (the voter's own, shown as theirs) but not counted. The
+  // counted predicate is the current one AND the shared SQL rule.
+  const { countedVotePredicateSql } = require('../src/services/pr-vote-revision');
+  assert.equal(
+    countedVotePredicateSql(),
+    '((pv.approval_epoch = cs.approval_epoch) AND counts_toward_outcome(pv.user_id, cs.app_id))'
+  );
+  assert.ok(countedVotePredicateSql('v', 's').includes(currentVotePredicateSql('v', 's')));
+  assert.throws(() => countedVotePredicateSql('pv; DROP TABLE pr_votes --', 'cs'), /Invalid SQL alias/);
+});
+
 test('a NULL vote epoch never counts — the property, and its cost', () => {
   // Votes that were stale under the old commit rule were backfilled to NULL
   // and votes that were counting were backfilled to 0. SQL's NULL semantics

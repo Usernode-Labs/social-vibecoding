@@ -670,6 +670,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       yes={yes}
       no={no}
       prior={prior}
+      uncounted={!!yes.uncounted}
       side={side}
       line={line}
       reasonId={reasonId}
@@ -743,11 +744,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * directly; the state lives in `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, side, line, reasonId, boxRef, tally, withLine, solo, onSide, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, uncounted = false, side, line, reasonId, boxRef, tally, withLine, solo, onSide, onLine, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
   prior: 'yes' | 'no' | null;
+  /** The viewer is a test account on an app a real person made (`ActionSpec.uncounted`). */
+  uncounted?: boolean;
   side: 'yes' | 'no';
   line: string;
   reasonId: string;
@@ -768,6 +771,9 @@ export function VotePicker({
   return (
     <>
       <div className="dev-vote-switch-label" id={headId}>Your vote</div>
+      {uncounted ? (
+        <p className="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</p>
+      ) : null}
       <div className="dev-vote-switch" role="group" aria-labelledby={headId}>
         <button
           type="button"

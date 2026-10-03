@@ -532,6 +532,37 @@ async function noteOverAllowance(pool, { settings, requester, app, issueNumber, 
   });
 }
 
+// WP1 (#9): what the person hears when a build the platform restarted under
+// is started again (homeroom-bot.js completeRecoveredLive).
+const RESTARTED_TEXT = 'My build was interrupted, so I\'ve started it again. Nothing you need to do.';
+
+/**
+ * WP1 (#9): a build of one of their requests was interrupted (a restart
+ * took its worker, or cut its plan short) and the request was sent back to
+ * be built again: its requester hears it once per run, so the card going
+ * back a step is never a mystery. Resolves what sendDm did, or null.
+ */
+async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
+  if (!app?.id || !runId) return null;
+  const settings = await settingsModule().readSettings(pool);
+  const requester = await requesterOf(pool, app.id, issueNumber);
+  if (!requester || !isDmUser(settings, requester.username)) return null;
+  const bot = await botAccount(pool);
+  if (!bot) return null;
+  const context = {
+    appName: app.name || app.slug, issueNumber,
+    issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
+  };
+  return sendDm(pool, {
+    bot,
+    userId: requester.userId,
+    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
+    idempotencyKey: `hrbot-restart-${Number(runId)}`,
+    content: `${requestLine(context)}\n\n${RESTARTED_TEXT}`,
+    metadata: { kind: 'restarted', appSlug: app.slug, appName: context.appName, issueNumber },
+  });
+}
+
 // ── The request's news, in the DM ────────────────────────────────────────
 
 function requestLine({ appName, issueNumber, issueTitle, firstVersion }) {
@@ -623,7 +654,9 @@ async function dmRecipient(pool, appId, issueNumber) {
  * has to reach them once.
  */
 async function untaggedRequester(pool, { appId, issueNumber, bot, told = null }) {
-  if (told?.messageId && told.username) return told.username;
+  // WP1 (#6): news that was stale by the time it was relayed reached
+  // nobody's DM on purpose, and the post does not ring them about it either.
+  if ((told?.messageId || told?.stale) && told.username) return told.username;
   if (!bot?.id) return null;
   const recipient = await dmRecipient(pool, appId, issueNumber);
   if (!recipient) return null;
@@ -650,6 +683,41 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
 // #3767: the news an activity card that is still the newest message about
 // its request already says, so it is not sent again.
 const CARD_SAYS = new Set(['spec']);
+
+// WP1 (#6): the news of one build, which can be overtaken before it is told.
+const BUILD_NEWS = new Set(['spec', 'proposal', 'build_failed']);
+
+/**
+ * WP1 (#6): why one build's news (BUILD_NEWS) is stale by the time it is
+ * relayed, or null. Another run's proposal for the request is up for a
+ * vote, being merged, or merged since this run's verdict: the request is
+ * answered, and this run is a second build of it. Or, for its plan and its
+ * failure, a newer look at the request overtook this run. On 3 October a
+ * second build of Plant Pal #1 said "I'm building this now" after the first
+ * had said "It's built". A proposal is never stale for being older than the
+ * newest look: it is the one people vote on, and they hear it is built.
+ */
+async function staleBuildNews(pool, { appId, issueNumber, runId, kind }) {
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT EXISTS (
+              SELECT 1 FROM homeroom_bot_runs n
+               WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id AND n.mode = 'live'
+            ) AS overtaken,
+            (SELECT cs.id FROM homeroom_bot_runs o
+               JOIN chat_sessions cs ON cs.id = o.proposal_session_id
+              WHERE o.app_id = r.app_id AND o.issue_number = r.issue_number AND o.id <> r.id
+                AND cs.id IS DISTINCT FROM r.proposal_session_id AND cs.id IS DISTINCT FROM r.build_session_id
+                AND (cs.status IN ('promoted', 'merging') OR (cs.status = 'merged' AND cs.merged_at >= r.created_at))
+              ORDER BY o.id LIMIT 1) AS other_proposal
+       FROM homeroom_bot_runs r
+      WHERE r.id = $1 AND r.app_id = $2 AND r.issue_number = $3`,
+    [runId, appId, issueNumber],
+  );
+  if (!row) return null;
+  if (row.other_proposal) return `proposal ${Number(row.other_proposal)} already answers the request`;
+  if (kind !== 'proposal' && row.overtaken) return 'a newer look at the request overtook it';
+  return null;
+}
 
 /**
  * #3767: whether a person's DM has an activity card for this request:
@@ -689,6 +757,17 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   };
   const content = dmText(kind, dm, context);
   if (!content) return null;
+  // WP1 (#6): a build's news that something newer overtook is not sent.
+  if (BUILD_NEWS.has(kind) && runId) {
+    const stale = await staleBuildNews(pool, { appId: app.id, issueNumber, runId, kind }).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not check whether news is stale (sending it)', { app: app.slug, issueNumber, kind, err: err.message });
+      return null;
+    });
+    if (stale) {
+      log.info('homeroom-bot-dm', 'Stale news not sent', { app: app.slug, issueNumber, kind, runId, why: stale });
+      return { conversationId: null, messageId: null, stale: true, userId: requester.userId, username: requester.username };
+    }
+  }
   // #3767: the request's activity card already shows it. While the card is
   // the newest thing in the DM about the request, "I'm building this now"
   // repeats it word for word, so it is not sent; and no news about the
@@ -1217,6 +1296,81 @@ async function sweepFirstVersions(pool, config, deps = {}) {
   return filed;
 }
 
+/**
+ * #15 (D9): whether the Homeroom bot is still building a project's first
+ * version from its description, and where it is, for the App tab. While it
+ * builds, the app's own page is the starter its repo was scaffolded with
+ * (services/template.js), which says "Start a new change" to somebody whose
+ * change is already being made; the shell shows this state instead.
+ *
+ * Building while the bot builds it (`bot_builds`) and either the request is
+ * not filed yet (waiting or filing: the project is being set up), or it is
+ * filed and no proposal for it has merged. Null once one has, once filing
+ * failed, once the project failed to set up, and once the request came to
+ * something other than a merge (the bot left it to the group, its build did
+ * not succeed, its proposal was closed): then the app is what there is.
+ *
+ * `{ userId, creator, conversationId, step, of, stepName, question, ready }`:
+ * whose description it is, their DM with the bot, the step of
+ * homeroom-bot-progress.js's FIRST_VERSION_STEPS, whether the bot waits on
+ * an answer from them, and whether its proposal is up for the vote (ready
+ * to try). GET /api/apps/:slug reads it best-effort: a read that fails is
+ * no state, never a failed page.
+ */
+async function firstVersionState(pool, appId, deps = {}) {
+  if (!appId) return null;
+  const { rows } = await pool.query(
+    `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
+            a.slug, a.name, a.status AS app_status, a.created_at AS app_created_at,
+            u.username,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+                JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+               WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+            ) AS merged,
+            (SELECT p.conversation_id
+               FROM users b
+               JOIN conversation_direct_pairs p
+                 ON p.user_low_id = LEAST(b.id, f.user_id) AND p.user_high_id = GREATEST(b.id, f.user_id)
+               JOIN conversation_members m
+                 ON m.conversation_id = p.conversation_id AND m.user_id = f.user_id AND m.status = 'member'
+              WHERE b.username = $2 AND b.is_synthetic = TRUE
+              LIMIT 1) AS conversation_id
+       FROM homeroom_bot_first_versions f
+       JOIN apps a ON a.id = f.app_id
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.app_id = $1 AND f.bot_builds = TRUE`,
+    [appId, BOT_USERNAME],
+  );
+  const row = rows[0];
+  if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
+  const progress = deps.progress || require('./homeroom-bot-progress');
+  const at = (stage) => {
+    const step = progress.stepNumber(stage, true);
+    return { step, of: progress.FIRST_VERSION_STEPS.length, stepName: step ? progress.FIRST_VERSION_STEPS[step - 1] : null };
+  };
+  const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
+  if (row.status !== 'filed') {
+    if (progress.setupOf(row).outcome) return null;
+    return { ...base, ...at('setting_up'), question: false, ready: false };
+  }
+  const states = await progress.requestStates(pool, { userId: row.user_id });
+  const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
+    && Number(s.row.issue_number) === Number(row.issue_number));
+  if (found?.state) {
+    return {
+      ...base,
+      ...at(found.state.stage),
+      question: found.state.stage === 'question' && found.state.waitingOn === 'them',
+      ready: found.state.stage === 'vote',
+    };
+  }
+  // Filed, and nothing in progress: either it came to something, or the bot
+  // has not picked it up yet (filing wakes it, and it reads it next).
+  if (found && progress.outcomeOf(found.row)) return null;
+  return { ...base, ...at('queued'), question: false, ready: false };
+}
+
 /** The create dialog's suggested one-line description, from the longer one. */
 async function suggestShortDescription({ name, brief, max = 90, deps = {} }) {
   const text = normalizeBrief(brief);
@@ -1274,6 +1428,9 @@ module.exports = {
   closeOpenQuestions,
   setQuestionState,
   relayIssuePost,
+  staleBuildNews,
+  noteBuildRestarted,
+  RESTARTED_TEXT,
   cardsFor,
   quotedTarget,
   quotable,
@@ -1290,6 +1447,7 @@ module.exports = {
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,
+  firstVersionState,
   suggestShortDescription,
   firstSentence,
 };

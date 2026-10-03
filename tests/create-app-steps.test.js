@@ -331,7 +331,8 @@ test('app.css unfolds the steps in place, keeps each step to the answers it belo
   assert.doesNotMatch(CSS, /\[data-step="start"\]\) #create-next \{\s*display: none/, 'Next is never hidden on a question step now');
   // A question step collapses to its chosen row once the card moves past it.
   assert.match(CSS, rule('#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"])'));
-  assert.match(CSS, rule('#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon)'));
+  assert.match(CSS, rule('#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-marker, .create-choice-caption, .create-kind-soon)'));
+  assert.match(CSS, rule('#create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-marker, .create-choice-caption)'));
   // How to start does too, keeping a picked starter and the repo's check.
   assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="import"]   .create-mode-pill:not([data-mode-pill="import"])'));
   assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-caption, .create-template-pill:not([aria-pressed="true"]), .create-import-hint)'));
@@ -342,6 +343,34 @@ test('app.css unfolds the steps in place, keeps each step to the answers it belo
   assert.match(CSS, rule('#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-repo-tag="vis"]'));
   assert.match(CSS, rule('#create-card[data-mode="import"][data-repo-sets~="name"] [data-repo-tag="details"]'));
   assert.doesNotMatch(CSS, /\[data-repo-sets~="name"\] \.create-name-row/, 'a name typed over the repo\'s is never made unclickable');
+});
+
+test('#24 (D8): a question\'s rows end in a selection marker, not a chevron, because pressing one only selects it', () => {
+  // The behaviour is select-then-Next, unchanged: the handlers above only
+  // set the answer. What changed is the mark at each row's edge.
+  const who = SRC.slice(SRC.indexOf('data-create-step="who"'), SRC.indexOf('data-create-step="invite"'));
+  const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="start"'));
+  assert.match(who, /<ChoiceMarker chosen=\{audience === choice\.key\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
+  assert.match(kind, /<ChoiceMarker chosen=\{kind === 'app'\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
+  assert.doesNotMatch(SRC, /ChevronRightIcon|create-choice-chevron/, 'no chevron left on a row that only selects');
+  // The marker is a ring, and the chosen row's carries the shell's own check
+  // (an existing glyph, not one drawn here).
+  assert.match(SRC, /import \{[^}]*\bCheckIcon\b[^}]*\} from '@\/components\/ui\/icons';/);
+  const marker = SRC.slice(SRC.indexOf('function ChoiceMarker('), SRC.indexOf('/* The small numbered heading'));
+  assert.match(marker, /<span className=\{CHOICE_MARKER\} aria-hidden="true">\s*\{chosen \? <CheckIcon className="h-3\.5 w-3\.5" strokeWidth="3" \/> : null\}/);
+  assert.doesNotMatch(marker, /<svg|<path/, 'no hand-drawn glyph');
+  assert.match(SRC, /const CHOICE_MARKER = 'create-choice-marker [^']*rounded-full ring-\[1\.5px\] ring-inset ring-current[^']*';/);
+  // The chosen ring fills with the row's ink and its check takes the accent.
+  assert.match(CSS, /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker \{\s*background-color: currentColor;\s*opacity: 1;\s*\}/);
+  assert.match(CSS, /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker > svg \{\s*color: #0a6ee0;/);
+  // And in the prerendered document: four rows with a marker (three
+  // audiences and App), none chosen yet, and no chevron among them.
+  const html = shellMarkup();
+  const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
+  const rows = card.slice(card.indexOf('data-create-step="who"'), card.indexOf('data-create-step="start"'));
+  assert.equal((rows.match(/class="create-choice-marker /g) || []).length, 4, 'every who and kind row has the marker');
+  assert.ok(!rows.includes('d="M9 5l7 7-7 7"'), 'and none draws the chevron');
+  assert.ok(!rows.includes('d="M5 13l4 4L19 7"'), 'nothing is chosen on arrival, so no check yet');
 });
 
 test('every selected choice wears the Create button\'s accent, the moment it is pressed', () => {

@@ -9,7 +9,7 @@
  *
  * ── Why this component is pure ────────────────────────────────────────
  *
- * It takes the store state and four callbacks and renders. The
+ * It takes the store state and its callbacks and renders. The
  * subscription, the WS wiring and the `GET /api/apps/:slug` poll all
  * live in the parent (create-app.tsx). That split is what lets
  * tests/create-progress-view.test.js render every outcome — including
@@ -37,6 +37,10 @@ import {
   type StepState,
 } from './creation-progress-store.js';
 
+export type Builder = 'bot' | 'request' | null;
+/** services/communities.js's audiences, as the create dialog names them. */
+export type Audience = 'solo' | 'invited' | 'open';
+
 export interface CreateProgressProps {
   /** The name the user typed. Rendered as a text child — never markup. */
   appName: string;
@@ -52,12 +56,27 @@ export interface CreateProgressProps {
   surface?: 'card' | 'pane';
   progress: CreationProgressState;
   /**
+   * Who takes the project on from its description (#13, #14). `bot`: the
+   * Homeroom bot builds its first version and says so in its DM. `request`:
+   * the description is filed as the project's first request, for the group.
+   * Null (an import, a fork): nothing is built from a description.
+   */
+  builder?: Builder;
+  /** Who the project is for, which decides who approves its changes. Null for a fork. */
+  audience?: Audience | null;
+  /**
    * The live ending's primary label. "Open app" (the default) for the fork
    * dialog; the create dialog lands on the new project's own page instead
    * and says "Open project" (communities, stage 3).
    */
   openLabel?: string;
   onOpenApp: () => void;
+  /**
+   * #13: the bot case's way to the app itself. Its page says the first
+   * version is being built (public/js/app-view.js, #15) and offers the
+   * starter meanwhile, so it is worth a button beside the bot's DM.
+   */
+  onViewApp?: () => void;
   onRetry: () => void;
   onSetSecrets: () => void;
   onClose: () => void;
@@ -111,8 +130,17 @@ function statusLine(
   progress: CreationProgressState,
   outcome: CreationOutcome,
   states: readonly StepState[] = [],
+  { builder = null, appName = '' }: { builder?: Builder; appName?: string } = {},
 ): string {
   if (outcome === 'live') {
+    // #13: what is running now is the starter. The bot's DM had just said
+    // it would build the first version and send it to try, and this line
+    // used to send the person off to "see what it shipped with".
+    if (builder === 'bot') {
+      return `${appName} is set up. Homeroom bot is building its first version from your description `
+        + 'and will message you when it’s ready to try.';
+    }
+    if (builder === 'request') return 'Your project is ready. Its first request is waiting on its page.';
     return 'Your app is running. Open it to see what it shipped with.';
   }
   if (outcome === 'needs-secrets') {
@@ -145,7 +173,43 @@ const NEXT_STEPS = [
   'Open your app and try what it shipped with.',
   'Describe a change in chat, and a coding agent writes it.',
   'Collaborators vote it in, and it goes live.',
-];
+] as const;
+
+/**
+ * What happens next, in the order it happens (#14). The fixed three lines
+ * told somebody whose first version the Homeroom bot was already building
+ * to open the starter and describe a change, and told somebody making a
+ * project for just themselves that collaborators vote. Who builds from the
+ * description decides the first two lines, and who the project is for the
+ * last: on a Just me project the one vote is the creator's
+ * (services/active-users.js counts its one member, so one Yes merges). A
+ * fork keeps the three lines it had. Exported and pure for
+ * tests/create-progress-view.test.js.
+ */
+export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
+  builder?: Builder;
+  audience?: Audience | null;
+  mode?: 'new' | 'import' | 'fork';
+} = {}): readonly string[] {
+  if (mode === 'fork') return NEXT_STEPS;
+  const approve = audience === 'solo' ? 'You approve it, and it goes live.'
+    : audience ? 'Members vote it in, and it goes live.' : NEXT_STEPS[2];
+  if (builder === 'bot') {
+    return [
+      'Homeroom bot builds the first version from your description.',
+      'It messages you in your chat when it’s ready, and asks there if anything is unclear.',
+      approve,
+    ];
+  }
+  if (builder === 'request') {
+    return [
+      'Your description is the project’s first request.',
+      'Start a change from it, and a coding agent writes it.',
+      approve,
+    ];
+  }
+  return [NEXT_STEPS[0], NEXT_STEPS[1], approve];
+}
 
 /**
  * The two surfaces, keyed by `surface`. Every string a complete literal, for
@@ -164,6 +228,7 @@ const SURFACES = {
     next: 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3',
     actions: 'flex gap-3',
     close: 'flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
+    secondary: 'w-full rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
     primary: {} as const,
   },
   pane: {
@@ -172,6 +237,8 @@ const SURFACES = {
     next: 'rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
     actions: 'flex gap-2 pt-1',
     close: 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
+      + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors',
+    secondary: 'w-full h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
       + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors',
     primary: { variant: 'pillAccent', size: 'pill' } as const,
   },
@@ -182,8 +249,11 @@ export function CreateProgress({
   mode,
   surface = 'card',
   progress,
+  builder = null,
+  audience = null,
   openLabel = 'Open app',
   onOpenApp,
+  onViewApp,
   onRetry,
   onSetSecrets,
   onClose,
@@ -227,7 +297,7 @@ export function CreateProgress({
             aria-hidden="true"
           />
         ) : null}
-        {statusLine(progress, outcome, states)}
+        {statusLine(progress, outcome, states, { builder, appName })}
       </p>
 
       {/*
@@ -257,7 +327,7 @@ export function CreateProgress({
             What happens next
           </p>
           <ol className="space-y-1.5">
-            {NEXT_STEPS.map((line, i) => (
+            {nextSteps({ builder, audience, mode }).map((line, i) => (
               <li key={line} className="flex gap-2 text-sm text-zinc-600 dark:text-zinc-300">
                 <span className="text-zinc-500 dark:text-zinc-500 tabular-nums">{i + 1}.</span>
                 <span>{line}</span>
@@ -266,6 +336,16 @@ export function CreateProgress({
           </ol>
         </div>
       )}
+
+      {/*
+          #13: the bot is building the first version, so the primary act is
+          its DM; the app is one press away too, above the footer.
+      */}
+      {outcome === 'live' && builder === 'bot' && onViewApp ? (
+        <button type="button" id="create-progress-view-app" className={look.secondary} onClick={onViewApp}>
+          Open app
+        </button>
+      ) : null}
 
       <div className={look.actions}>
         <button

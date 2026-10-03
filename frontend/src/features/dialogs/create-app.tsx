@@ -118,7 +118,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import {
-  AppWindowIcon, ChevronRightIcon, EnvelopeIcon, InfoCircleIcon, LockIcon, NewspaperIcon, PlayIcon, PlusIcon,
+  AppWindowIcon, CheckIcon, EnvelopeIcon, InfoCircleIcon, LockIcon, NewspaperIcon, PlayIcon, PlusIcon,
   SpinnerArcIcon, UserGroupIcon, UserIcon, XIcon,
 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
@@ -509,8 +509,9 @@ const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semib
   + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors';
 /*
  * A choice row: one white card each, full width, a title and a one-line
- * caption, and a chevron at the trailing edge. The selection colours stay in
- * app.css, keyed off the card's data attribute for that question.
+ * caption, and on a question's rows a selection marker at the trailing edge
+ * (ChoiceMarker below). The selection colours stay in app.css, keyed off the
+ * card's data attribute for that question.
  */
 const CHOICE_BASE = 'w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
 const CHOICE = 'create-mode-pill ' + CHOICE_BASE;
@@ -518,9 +519,24 @@ const WHO_CHOICE = 'create-who-pill ' + CHOICE_BASE;
 const APPROVER_CHOICE = 'create-approver-pill ' + CHOICE_BASE;
 const CHOICE_TITLE = 'block text-[15px] font-semibold';
 const CHOICE_CAPTION = 'create-choice-caption block text-xs mt-0.5';
-// Shown in place of the chevron once the step has collapsed to the chosen
+// Shown in place of the marker once the step has collapsed to the chosen
 // row: pressing the row then reopens the choice.
 const CHOICE_CHANGE = 'create-choice-change text-xs font-medium shrink-0';
+/*
+ * The selection marker (#24, D8). Pressing a row selects it and Next moves
+ * on, so the row is a choice, and a chevron at its edge promised a jump that
+ * never came. A ring in its place, like a radio's; the chosen row's ring
+ * fills (app.css, off the row's aria-pressed) and carries the shell's check.
+ */
+const CHOICE_MARKER = 'create-choice-marker flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-[1.5px] ring-inset ring-current opacity-60';
+
+function ChoiceMarker({ chosen }: { chosen: boolean }) {
+  return (
+    <span className={CHOICE_MARKER} aria-hidden="true">
+      {chosen ? <CheckIcon className="h-3.5 w-3.5" strokeWidth="3" /> : null}
+    </span>
+  );
+}
 /* The small numbered heading each unfolded step opens with. */
 const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300 mb-2';
 /* A row that is there but cannot be pressed yet: dimmed, saying Soon. */
@@ -1332,6 +1348,10 @@ export function CreateAppDialog() {
             mode={mode === 'import' ? 'import' : 'new'}
             surface="pane"
             progress={progress}
+            // #13, #14: who builds from the description, and who approves,
+            // decide what the view says comes next.
+            builder={botChat ? 'bot' : (mode !== 'import' ? 'request' : null)}
+            audience={audience ?? 'solo'}
             openLabel={botChat ? 'Open my chat with Homeroom bot' : 'Open project'}
             onOpenApp={() => {
               // Both destinations write an address right after the close,
@@ -1353,6 +1373,13 @@ export function CreateAppDialog() {
               const slug = created.slug;
               dialog.closeForNavigation();
               (window.App?.navigateToApp as ((s: string, v: string) => void) | undefined)?.(slug, 'dev');
+            }}
+            onViewApp={() => {
+              // #13: the app's own page, which says the bot is building its
+              // first version (#15) rather than showing the starter.
+              const slug = created.slug;
+              dialog.closeForNavigation();
+              (window.App?.navigateToApp as ((s: string, v: string) => void) | undefined)?.(slug, 'app');
             }}
             onSetSecrets={() => {
               const slug = created.slug;
@@ -1402,7 +1429,11 @@ export function CreateAppDialog() {
         >
           {`Step ${stepIndex} of ${steps.length}`}
         </p>
-        <AppAllowance id="create-app-quota" surface="pane" />
+        {/*
+            Quiet (#23): only when the allowance bears on what happens next,
+            not "0 of 2 app slots used" above every step.
+        */}
+        <AppAllowance id="create-app-quota" surface="pane" quiet />
         <form id="create-form" ref={formRef} className="space-y-4" onSubmit={submit}>
           {/*
               STEP 1: who it is for. The rows are the Workshop's three
@@ -1429,7 +1460,7 @@ export function CreateAppDialog() {
                   <span className={CHOICE_TITLE}>{choice.title}</span>
                   <span className={CHOICE_CAPTION}>{choice.caption}</span>
                 </span>
-                <ChevronRightIcon className="create-choice-chevron w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+                <ChoiceMarker chosen={audience === choice.key} />
                 <span className={CHOICE_CHANGE}>Change</span>
               </button>
             ))}
@@ -1465,7 +1496,7 @@ export function CreateAppDialog() {
                 <span className={CHOICE_TITLE}>App</span>
                 <span className={CHOICE_CAPTION}>Something you build and use together.</span>
               </span>
-              <ChevronRightIcon className="create-choice-chevron w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+              <ChoiceMarker chosen={kind === 'app'} />
               <span className={CHOICE_CHANGE}>Change</span>
             </button>
             <div className={SOON + ' create-kind-soon'} data-kind-pill="doc" aria-disabled="true">

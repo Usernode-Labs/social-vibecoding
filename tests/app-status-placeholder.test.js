@@ -285,3 +285,138 @@ test('the placeholder is the primary button, not a hand-written violet fill', ()
 test('an empty view renders nothing, so a swept host stays empty', () => {
   assert.equal(html(null), '');
 });
+
+// ── #15: the first version, being built from the description (D9) ──
+
+const FIRST = { building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan', creator: 'ada', ready: false, question: false, conversationId: 42 };
+
+function firstVersionApp(over = {}, fv = {}) {
+  return { slug: 'plant-pal', name: 'Plant Pal', status: 'running', url: 'https://plant-pal.example.test', ...over, first_version: { ...FIRST, ...fv } };
+}
+
+test('#15: the creator sees whose description it is, the step, and the way into their chat', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp());
+  assert.deepEqual(v, {
+    dot: 'creating',
+    message: 'Plant Pal is being built from your description',
+    detail: null,
+    lines: ['Step 3 of 7: Write a plan', 'We’ll message you when it’s ready.'],
+    action: { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: 'plant-pal', conversationId: 42 },
+    secondary: { key: 'starter', label: 'Show the starter for now', slug: 'plant-pal' },
+  });
+  const out = html(v);
+  assert.match(out, /class="status-dot creating"/);
+  assert.match(out, /<p class="max-w-sm text-base font-semibold[^"]*">Plant Pal is being built from your description<\/p>/);
+  assert.match(out, />Step 3 of 7: Write a plan</);
+  assert.match(out, />We’ll message you when it’s ready\.</);
+  assert.match(out, /<button id="app-first-version-chat"[^>]*>Open my chat with Homeroom bot<\/button>/);
+  assert.match(out, /<button id="app-first-version-starter"[^>]*>Show the starter for now<\/button>/);
+  assert.doesNotMatch(out, /Start a new change/);
+});
+
+test('#15: anyone else is told whose description it is, and gets no chat of somebody else\'s', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { mine: false, conversationId: null, question: false }));
+  assert.equal(v.message, 'Plant Pal is being built from @ada’s description');
+  assert.deepEqual(v.lines, ['Step 3 of 7: Write a plan', 'It opens here once it’s ready.']);
+  assert.equal(v.action, null);
+  assert.deepEqual(v.secondary, { key: 'starter', label: 'Show the starter for now', slug: 'plant-pal' }, 'the escape is for everyone');
+  assert.doesNotMatch(html(v), /app-first-version-chat/);
+});
+
+test('#15: a question waiting on the creator, and a first version up for its vote, each say so', () => {
+  const { AppView } = makeAppView();
+  const asked = view(AppView, firstVersionApp({}, { step: 2, stepName: 'Read the description', question: true }));
+  assert.deepEqual(asked.lines, ['Step 2 of 7: Read the description', 'Homeroom bot has a question for you.']);
+  assert.equal(asked.action.key, 'botChat', 'the chat is where it is answered');
+  const ready = view(AppView, firstVersionApp({}, { step: 6, stepName: 'Group vote', ready: true }));
+  assert.deepEqual(ready.lines, ['Step 6 of 7: Group vote', 'Its first version is ready. Try it and vote on it from your chat.']);
+  const theirs = view(AppView, firstVersionApp({}, { mine: false, step: 6, stepName: 'Group vote', ready: true }));
+  assert.equal(theirs.lines[1], 'Its first version is up for a vote.');
+});
+
+test('#15: while the project is still being set up there is no starter to offer', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({ status: 'creating', url: null }, { step: 1, stepName: 'Set up the project' }));
+  assert.equal(v.message, 'Plant Pal is being built from your description');
+  assert.deepEqual(v.lines, ['Step 1 of 7: Set up the project', 'We’ll message you when it’s ready.']);
+  assert.equal(v.secondary, null);
+  // Not building any more (or never was): the ordinary states, unchanged.
+  assert.deepEqual(view(AppView, { status: 'creating', slug: 'plant-pal', first_version: null }),
+    { dot: 'creating', message: 'App is spinning up...', detail: null, action: null });
+  const failed = view(AppView, { status: 'error', slug: 'plant-pal', first_version: { ...FIRST } });
+  assert.equal(failed.message, 'App failed to start', 'a failed project is the failure, whatever the bot was doing');
+});
+
+test('#15: the chat button opens the DM by its id, and the starter shows for the rest of the visit', () => {
+  const { AppView, sandbox } = makeAppView();
+  const opened = [];
+  sandbox.UsernodeReact = { messages: { open: (id) => opened.push(id) } };
+  AppView.openBotChat('plant-pal', 42);
+  AppView.openBotChat('plant-pal', null);
+  assert.deepEqual(opened, [42, null], 'no id opens Messages, where the bot DM is');
+  sandbox.UsernodeReact = null;
+  sandbox.location = { hash: '' };
+  AppView.openBotChat('plant-pal', 7);
+  assert.equal(sandbox.location.hash, '#messages/7', 'without the bundle, the address does it');
+
+  const app = firstVersionApp();
+  sandbox.App.currentApp = 'plant-pal';
+  sandbox.App.currentTab = 'app';
+  AppView.appData = app;
+  let renders = 0;
+  AppView.renderAppTab = () => { renders += 1; };
+  assert.equal(AppView._firstVersionPending(app), true);
+  AppView.showStarter('plant-pal');
+  assert.equal(AppView._firstVersionPending(app), false, 'the frame may mount now');
+  assert.equal(renders, 1, 'and the tab re-renders to mount it');
+  assert.notEqual(view(AppView, app).message, 'Plant Pal is being built from your description');
+});
+
+test('#15: the screen re-asks the server while it is up, past the service worker\'s cache', async () => {
+  const calls = [];
+  let answer = firstVersionApp({}, { step: 4, stepName: 'Build it' });
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: async (...args) => { calls.push(args); return { ok: true, json: async () => ({ app: answer }) }; },
+    setTimeoutImpl: () => 1,
+    clearTimeoutImpl: () => {},
+  });
+  const app = firstVersionApp();
+  sandbox.App.currentApp = 'plant-pal';
+  sandbox.App.currentTab = 'app';
+  AppView.appData = app;
+  let renders = 0;
+  const tokens = [];
+  AppView.renderAppTab = () => { renders += 1; };
+  AppView.refreshToken = async (slug) => { tokens.push(slug); };
+
+  AppView._watchFirstVersion(app);
+  assert.equal(AppView._firstVersionTimer, 1, 'one recheck armed');
+  AppView._watchFirstVersion(app);
+  assert.equal(AppView._firstVersionRecord, app, 'repeated paints keep the one timer');
+
+  await AppView._recheckFirstVersion(app);
+  assert.equal(calls[0][0], '/api/apps/plant-pal?status_recheck=1&manifest=summary');
+  assert.equal(calls[0][1].cache, 'no-store');
+  assert.equal(AppView.appData, answer, 'the newer record replaces the old one');
+  assert.equal(renders, 1, 'a new step is painted');
+  assert.deepEqual(tokens, [], 'still building: no frame, so no token yet');
+
+  // Built: the frame mounts, with a fresh token first.
+  answer = { ...firstVersionApp(), first_version: null };
+  const building = AppView.appData;
+  await AppView._recheckFirstVersion(building);
+  assert.deepEqual(tokens, ['plant-pal']);
+  assert.equal(renders, 2);
+
+  // Gone from the page: nothing is fetched, nothing is painted.
+  const before = calls.length;
+  const again = firstVersionApp();
+  AppView.appData = again;
+  sandbox.App.currentTab = 'dev';
+  await AppView._recheckFirstVersion(again);
+  assert.equal(calls.length, before);
+  AppView._stopFirstVersionWatch();
+  assert.equal(AppView._firstVersionTimer, null);
+});

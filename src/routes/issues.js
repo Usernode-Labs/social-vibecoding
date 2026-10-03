@@ -848,8 +848,8 @@ function issueRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT i.*, u.username as created_by_username,
-           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
-           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) as up_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) as down_count,
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $2) as my_vote,
            -- #194: governance-thread message count for the chat badge,
            -- plus the latest thread-message timestamp for the forum
@@ -865,7 +865,7 @@ function issueRoutes(config) {
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.status = 'open'
            AND ($3::text[] IS NULL OR i.kind = ANY($3::text[]))
-         ORDER BY (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') DESC, i.created_at DESC`,
+         ORDER BY (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) DESC, i.created_at DESC`,
         // `?kinds=governance`: only the governance kinds. The Workshop draws
         // no others and discarded them on arrival — on the platform app that
         // was all 325 open rows (request twins), ~540 KB, and the five
@@ -964,8 +964,8 @@ function issueRoutes(config) {
       // renders identically whether the row came from a list or from here.
       const { rows } = await pool.query(
         `SELECT i.*, u.username as created_by_username,
-           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
-           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) as up_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) as down_count,
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $3) as my_vote,
            (SELECT COUNT(*)::int FROM chat_messages cm
              WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id

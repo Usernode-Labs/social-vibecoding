@@ -295,6 +295,29 @@ test('on a phone the create screen\'s own backdrop is its ground, and it casts n
     /document\.body\.appendChild\(backdrop\);\s*document\.body\.appendChild\(card\);/);
 });
 
+// #25: on an iPhone the form scrolled up under the status bar. The top inset
+// was the scroller's own padding, and padding scrolls with what it pads. It
+// is a border in the screen's ground now, which sits outside the scrollport,
+// on both the kit's shell and the card it falls back to, and in a rule of its
+// own rather than inside the box-shadow rules above.
+test('the full-screen create screen keeps the status bar\'s band out of its scroll (#25)', () => {
+  const pads = APP_CSS.match(/--create-modal-padding:[^;]+;/g) || [];
+  assert.equal(pads.length, 2, 'the two full-screen layouts');
+  for (const pad of pads) {
+    assert.doesNotMatch(pad, /safe-inset-top|safe-area-inset-top/, 'the top inset is not scrolling padding');
+    assert.match(pad, /^--create-modal-padding: 20px /, 'the top padding is the plain 20px');
+  }
+  const tops = APP_CSS.match(/--create-modal-safe-top:[^;]+;/g) || [];
+  assert.deepEqual(tops, Array(2).fill('--create-modal-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));'),
+    'set only where the dialog fills the screen');
+  assert.match(APP_CSS, /\n\.un-modal:has\(> #create-card\),\n#create-modal #create-card \{\n  border-top: var\(--create-modal-safe-top, 0px\) solid var\(--create-modal-fill, transparent\);\n\}/,
+    'one rule on both scrollers, zero wide when not full screen');
+  // Not folded into the backdrop and shadow rules pinned above.
+  for (const block of APP_CSS.match(/html(?:\.in-native-webview)? \.un-modal:has\(> #create-card\) \{[^}]*\}/g) || []) {
+    assert.doesNotMatch(block, /border-top/);
+  }
+});
+
 // ── 4. The launch cover holds room for its spinner ───────────────────────
 
 test('the launch spinner keeps its box while hidden, so the cover does not lift at 500ms', () => {

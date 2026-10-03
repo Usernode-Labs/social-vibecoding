@@ -212,3 +212,31 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
   assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
 });
+
+// WP1 (#10): a second build of one request was invisible to the bot's
+// answers, which read the request's newest look and newest proposal only.
+// The PostgreSQL side is tests/homeroom-bot-activity-postgres.test.js.
+test('WP1: another build of a request, and the build before, in plain words', () => {
+  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3) }), true, 'waiting its turn');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active' }), true, 'under way');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'paused' }), true, 'being proposed');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'archived' }), false, 'put away');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active', build_ok: false }), false, 'ended');
+  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3), cap_suppressed: 'proposals_per_app' }), false, 'held');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'promoted', proposal_session_id: 5 }), false, 'proposed');
+
+  const said = (run) => progress.attemptOutcome(run);
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'promoted' }), 'built; its proposal is up for a vote');
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merged' }), 'built; approved and live');
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merging' }), 'built; its proposal is being merged');
+  assert.equal(said({ proposal_session_id: 6191, proposal_status: 'archived' }), 'built; its proposal was closed');
+  assert.equal(said({ build_ok: true }), 'built');
+  assert.equal(said({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'stopped before it was built: the request already has a proposal (6190)', 'a skip stopped; it did not fail');
+  assert.equal(said({ build_ok: false, build_error: 'blocked: needs a paid API' }), 'found it cannot be built as written: needs a paid API');
+  assert.equal(said({ build_ok: false, build_error: 'the build ran past its time limit' }), 'the build did not succeed: the build ran past its time limit');
+  assert.equal(said({ build_ok: false }), 'the build did not succeed');
+  assert.equal(said({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, never built');
+  assert.equal(said({ build_error: 'superseded: a later verdict on the same issue' }), 'never built: a later verdict on the same issue');
+  assert.equal(said({}), 'nothing recorded about how it ended');
+});

@@ -208,7 +208,7 @@ const issueDraft = require('../services/issue-draft');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
-  currentVotePredicateSql,
+  countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
@@ -3701,10 +3701,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
                 -- #1258: the upstream commit this proposal's branch started
                 -- from. It is not a column on the session — it lives on the
                 -- job that produced the branch — and a coding agent that
