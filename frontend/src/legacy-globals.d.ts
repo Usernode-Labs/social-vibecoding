@@ -220,6 +220,8 @@ declare global {
     /** public/js/app-view.js — the app screen. The dialogs read its appData. */
     AppView?: {
       appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
+      /** Let `slug`'s kept-alive frame go, so its next open loads afresh; true when one went. */
+      evictKeptApp?(slug: string): boolean;
       /**
        * POST /api/apps/:slug/main-check/resume — the admin's "I know, let
        * them through" while main's unit suite is red. One implementation,

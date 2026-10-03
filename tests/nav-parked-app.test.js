@@ -92,8 +92,44 @@ test('the dismiss means forget, and says whose', () => {
   const html = render({ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null });
   assert.match(html, /id="platform-parked-forget"[^>]*aria-label="Forget Notes"/);
   const SRC = read('frontend/src/features/nav/parked-strip.tsx');
-  assert.match(SRC, /onClick=\{\(\) => setParked\(null\)\}/,
+  assert.match(SRC, /onClick=\{\(\) => forgetParked\(app\)\}/,
+    'the ✕ forgets the strip and closes the app (below)');
+  assert.match(SRC, /export function forgetParked\(app: ParkedApp \| null\): void \{\n  setParked\(null\);/,
     'it clears the store AND storage, which is what forgetting is');
+});
+
+test('the dismiss also closes the app: its kept frame is let go (WP2, D2)', () => {
+  // The app's frame stays loaded behind the strip so Resume is instant. A
+  // forgotten app has nothing to resume into, and a kept copy of it would
+  // come back on its next open, on whatever build it loaded with (issue #1).
+  const notes = { slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null };
+  const evicted = [];
+  const removed = [];
+  const prevWindow = global.window;
+  global.window = {
+    AppView: { evictKeptApp: (slug) => { evicted.push(slug); return true; } },
+    localStorage: { getItem: () => null, setItem() {}, removeItem: (k) => removed.push(k) },
+  };
+  const before = ui.parkedStore.get().app;
+  try {
+    ui.parkedStore.set({ app: notes });
+    ui.forgetParked(notes);
+    assert.equal(ui.parkedStore.get().app, null, 'the strip is forgotten');
+    assert.deepEqual(removed, [ui.PARKED_KEY], 'in storage too');
+    assert.deepEqual(evicted, ['notes-ab12'], "and the app's frame is let go");
+    // A strip already on its way out has no app: nothing more to close.
+    ui.forgetParked(null);
+    assert.deepEqual(evicted, ['notes-ab12']);
+    // A shell without the legacy app view (a harness, a failed script) still
+    // forgets the strip.
+    global.window = { localStorage: global.window.localStorage };
+    ui.parkedStore.set({ app: notes });
+    ui.forgetParked(notes);
+    assert.equal(ui.parkedStore.get().app, null);
+  } finally {
+    ui.parkedStore.set({ app: before });
+    global.window = prevWindow;
+  }
 });
 
 test('a slug with no record still draws a strip', () => {

@@ -2424,25 +2424,62 @@ const App = {
     }
 
     // #2902: an app kept loaded in the background is running the build before
-    // this one. Let it go, so the next open loads what just landed. The app in
-    // view keeps its frame — the Improve panel below offers that reload.
-    if (!data.deploying && !data.failed && slug !== App.currentApp
-        && typeof AppView !== 'undefined') {
-      AppView.evictKeptApp?.(slug);
+    // this one. Let it go, so the next open loads what just landed. That
+    // includes the app whose Workshop or change is on screen, which is where
+    // a merge is watched landing: its frame is parked or kept behind it, and
+    // "Open app" must not bring the old build back. Only the frame actually on
+    // screen is kept (evictKeptApp's own guard), and it is marked stale so the
+    // next open after it is closed loads the new build.
+    let evicted = false;
+    if (!data.deploying && !data.failed && typeof AppView !== 'undefined') {
+      evicted = !!AppView.evictKeptApp?.(slug);
     }
 
     // The app tab, for the app in view. Its Improve button spins while the
     // build rolls out and offers the reload once it has landed. Nothing here
-    // touches the frame: it keeps showing the build before this one on
-    // purpose, and AppView.reloadAppFrame is what moves it. Another app's
+    // touches a frame on screen: it keeps showing the build before this one
+    // on purpose, and AppView.reloadAppFrame is what moves it. Another app's
     // build is that app's news.
     if (slug === App.currentApp && window.Improve) {
       if (data.deploying) {
         window.Improve.update({ deploying: true, appUpdateReady: false });
       } else {
-        // A failed build leaves nothing new to load onto.
-        window.Improve.update({ deploying: false, appUpdateReady: !data.failed });
+        // A failed build leaves nothing new to load onto, and a frame let go
+        // above loads the new build when the app is next opened, so offering
+        // a reload too would load it twice more.
+        window.Improve.update({ deploying: false, appUpdateReady: !data.failed && !evicted });
       }
+    }
+  },
+
+  // A merge (or a heal, or a drift redeploy) put a new build of `appSlug` live
+  // and wrote its commit to the app's row. Sent after app_redeploy_status's end
+  // event, so whatever a frame did in between, it is let go again here (or
+  // marked stale, on screen), and `sha` is remembered as the build the app is
+  // on: the list Home re-read on the end event was fetched before main_sha
+  // was written, and still names the old one. See AppView.buildFor.
+  handleAppVersionChanged(data) {
+    if (!data) return;
+    const slug = data.appSlug;
+    if (slug && typeof AppView !== 'undefined') {
+      AppView.noteBuild?.(slug, data.sha);
+      // Nothing left to reload onto in place: the next open loads it.
+      if (AppView.evictKeptApp?.(slug) && slug === App.currentApp && window.Improve) {
+        window.Improve.update({ appUpdateReady: false });
+      }
+    }
+    // #21: a PR just merged and prod was rebuilt. Re-pull the home
+    // list so the app card's commit pill picks up the new SHA.
+    // The drawer is platform information and has no dApp SHA slot.
+    if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
+      Home.load();
+    }
+    // #405: the merge that triggered this rebuild also flips the
+    // session to 'merged' — advance the open session's header pill +
+    // change card to "✓ Merged" if it's the one being viewed.
+    if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus
+        && DevChat.currentSession && DevChat.currentSession.app_slug === slug) {
+      DevChat.refreshCurrentSessionStatus(DevChat.currentSession.id);
     }
   },
 
@@ -2625,19 +2662,9 @@ const App = {
             window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
             break;
           case 'app_version_changed':
-            // #21: a PR just merged and prod was rebuilt. Re-pull the home
-            // list so the app card's commit pill picks up the new SHA.
-            // The drawer is platform information and has no dApp SHA slot.
-            if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
-              Home.load();
-            }
-            // #405: the merge that triggered this rebuild also flips the
-            // session to 'merged' — advance the open session's header pill +
-            // change card to "✓ Merged" if it's the one being viewed.
-            if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus
-                && DevChat.currentSession && DevChat.currentSession.app_slug === data.appSlug) {
-              DevChat.refreshCurrentSessionStatus(DevChat.currentSession.id);
-            }
+            // A new build of an app is live: its pills, its open change, and
+            // any frame still showing the build before it.
+            App.handleAppVersionChanged(data);
             break;
           case 'app_redeploy_status':
             // Per-app rebuild started/ended. Flip the home-screen card pill

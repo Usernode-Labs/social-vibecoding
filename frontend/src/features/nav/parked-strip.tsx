@@ -17,6 +17,9 @@
  * The ✕ is that dismiss, and it means FORGET rather than hide: a strip that
  * comes back on the next screen swap is a strip you cannot get rid of, and
  * the handle's whole promise is that it is there until you are done with it.
+ * Being done with it closes the app too: its frame, still loaded behind the
+ * strip, is let go, so the next open starts it fresh (on whatever build is
+ * live by then) instead of resuming the copy you dismissed.
  *
  * ── Resume goes BACK INTO the app, from wherever you are (#2762) ──────
  *
@@ -110,6 +113,18 @@ type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji
 const ENTER_MS = 220;
 const LEAVE_MS = 160;
 const SLACK_MS = 80;
+
+/**
+ * The ✕: forget the strip AND close the app it offered. Its frame is kept
+ * loaded so Resume is instant, and a forgotten app has nothing to resume
+ * into, so it is let go (AppView keeps an app on screen, which this never
+ * is: the strip only shows while the bar is up). A strip on its way out
+ * (`app` null) has already been forgotten.
+ */
+export function forgetParked(app: ParkedApp | null): void {
+  setParked(null);
+  if (app) window.AppView?.evictKeptApp?.(app.slug);
+}
 
 /** Whether a leave would actually be drawn: the phone, with motion allowed. */
 function leaveAnimates(): boolean {
@@ -247,7 +262,7 @@ export function ParkedStrip() {
             type="button"
             className="platform-parked-x"
             aria-label={`Forget ${shown.name}`}
-            onClick={() => setParked(null)}
+            onClick={() => forgetParked(app)}
           >
             <XIcon className="w-4 h-4" />
           </button>
