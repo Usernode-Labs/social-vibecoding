@@ -43,7 +43,8 @@ export interface HomeroomBotMeta {
  * people can open one, else the request), or null for one that opens
  * nowhere (the staging demo's).
  */
-export type HomeroomBotPhase = 'looking' | 'building' | 'following_up' | 'setting_up';
+export type HomeroomBotPhase =
+  | 'setting_up' | 'queued' | 'looking' | 'building' | 'follow_up_queued' | 'following_up' | 'merging';
 export type HomeroomBotOutcome =
   | 'question' | 'ready' | 'proposed' | 'live' | 'closed' | 'build_failed'
   | 'person' | 'empty' | 'failed' | 'answer' | 'revise';

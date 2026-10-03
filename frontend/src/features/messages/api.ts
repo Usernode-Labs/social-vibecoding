@@ -621,7 +621,9 @@ export async function listBlocks(): Promise<ConversationUser[]> {
   }).filter((user) => user.id);
 }
 
-const BOT_PHASES = new Set<HomeroomBotPhase>(['looking', 'building', 'following_up', 'setting_up']);
+const BOT_PHASES = new Set<HomeroomBotPhase>([
+  'setting_up', 'queued', 'looking', 'building', 'follow_up_queued', 'following_up', 'merging',
+]);
 const BOT_OUTCOMES = new Set<HomeroomBotOutcome>([
   'question', 'ready', 'proposed', 'live', 'closed', 'build_failed', 'person', 'empty', 'failed', 'answer', 'revise',
 ]);

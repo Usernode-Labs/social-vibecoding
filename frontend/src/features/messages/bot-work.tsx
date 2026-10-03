@@ -72,6 +72,11 @@ export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
   building: 'building',
   following_up: 'following up on its proposal',
   setting_up: 'getting the project ready',
+  // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
+  // stage of the bot's progress as, so Now says what the bot itself says.
+  queued: 'waiting its turn in my queue',
+  follow_up_queued: 'waiting its turn to follow up on its proposal',
+  merging: 'merging its approved proposal',
 };
 
 export const OUTCOME_LABELS: Record<HomeroomBotOutcome, string> = {

@@ -9,12 +9,16 @@
 // top of the DM (frontend/src/features/messages/bot-work.tsx) is that, read
 // from the platform's own records of the bot's work and nothing else:
 //
-//   - NOW: the queue rows the live loop has claimed (homeroom_bot_queue
-//     started_at) on a request that is this person's, on an app the bot acts
-//     on for real, with the step it is at: looking at it, building it (its
-//     spec was posted during this turn of work), or following up on its
-//     proposal. A project they described that is still being set up (its
-//     first version not filed yet) is in flight too.
+//   - NOW: what the bot has in hand for this person, exactly as its own
+//     answer to "how far along are you?" reads it (homeroom-bot-progress.js,
+//     its entries that are inFlight): a project of theirs being set up, a
+//     request it is reading, planning, building or opening a proposal for,
+//     a follow-up on its proposal running or waiting its turn, a request
+//     waiting in its queue, a proposal being merged. #3734: the tray used to
+//     read claimed queue rows alone, and a request leaves the queue once it
+//     has been read, before its plan and build, so for a whole build, and for
+//     a follow-up waiting its turn, the tray said "not working on anything"
+//     while the bot said it was.
 //   - HISTORY: the bot's live runs on their requests (homeroom_bot_runs),
 //     newest first, each with what came of it and where to open it: the
 //     proposal once there is one people can open, else the request.
@@ -27,9 +31,10 @@
 // same rule as homeroom-bot.js workingNow). An app they can no longer view is
 // left out, whatever the records say.
 //
-// It is deliberately separate from the bot's own answer to "how far along
-// are you?" (homeroom-bot-mayor.js my_work): that one is words for a model to
-// read; this one is rows for a screen to draw.
+// NOW is drawn from the same records as the bot's own answer to "how far
+// along are you?" (progressFor), so the two cannot disagree; only the shape
+// differs: that one is words for a model to read, this one rows for a
+// screen to draw. HISTORY is the tray's own.
 //
 // LIVE: the client reads it again when the bot's news lands in the DM (the
 // conversation's own realtime event) and when the live loop starts or ends a
@@ -39,11 +44,32 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const progressSvc = require('./homeroom-bot-progress');
 
 // The most history rows one read returns.
 const HISTORY_LIMIT = 30;
 // The most jobs "now" can show (the bot works on a few at once for anybody).
 const NOW_LIMIT = 10;
+
+// The step an in-flight progress stage is drawn as (bot-work.tsx words each).
+// Every stage in progress.IN_FLIGHT_STAGES has one.
+const PHASE_OF_STAGE = Object.freeze({
+  setting_up: 'setting_up',
+  queued: 'queued',
+  reading: 'looking',
+  starting: 'building',
+  planning: 'building',
+  building: 'building',
+  proposing: 'building',
+  followup_queued: 'follow_up_queued',
+  fix_queued: 'follow_up_queued',
+  revising: 'following_up',
+  fixing: 'following_up',
+  merging: 'merging',
+});
+const PHASES = Object.freeze([...new Set(Object.values(PHASE_OF_STAGE))]);
+// The phases that are about the bot's proposal, which is where they open.
+const PROPOSAL_PHASES = new Set(['follow_up_queued', 'following_up', 'merging']);
 
 // What a run came to, as the tray names it (the client words each one).
 const OUTCOMES = Object.freeze([
@@ -73,16 +99,30 @@ function iso(value) {
 }
 
 /**
- * Pure: the step a claimed request is at. Building once its spec was posted
- * during this turn of work; following up while its proposal is up for a
- * vote (the loop answers what people said there); else looking at it.
+ * Pure: one of progressFor's in-flight entries as a row of Now, or null for
+ * an entry that is not in flight. It opens its proposal while the step is
+ * about the proposal, its request otherwise, and a project being set up its
+ * project.
  */
-function phaseOf(row) {
-  const started = row.started_at ? new Date(row.started_at).getTime() : NaN;
-  const spec = row.spec_at ? new Date(row.spec_at).getTime() : NaN;
-  if (Number.isFinite(started) && Number.isFinite(spec) && spec >= started) return 'building';
-  if (row.proposal_status === 'promoted' || row.proposal_status === 'merging') return 'following_up';
-  return 'looking';
+function jobOfProgress(item) {
+  const phase = progressSvc.inFlight(item) ? PHASE_OF_STAGE[item.stage] : null;
+  if (!phase || !item.project) return null;
+  const firstVersion = !!item.firstVersion;
+  const issueNumber = Number(item.number) || null;
+  const proposalId = Number(item.proposal?.proposal) || null;
+  let href = `#app/${encodeURIComponent(item.project)}/app`;
+  if (proposalId && PROPOSAL_PHASES.has(phase)) href = proposalHref(item.project, proposalId);
+  else if (issueNumber) href = issueHref(item.project, issueNumber);
+  return {
+    appSlug: item.project,
+    appName: item.projectName || item.project,
+    issueNumber,
+    title: firstVersion ? null : (item.title || null),
+    firstVersion,
+    phase,
+    since: iso(item.since),
+    href,
+  };
 }
 
 /**
@@ -125,67 +165,22 @@ function jobOf(row) {
   };
 }
 
-/** The claimed queue rows that are this person's, on apps the bot acts on for real. */
+/**
+ * What the bot has in hand for this person now: progressFor's in-flight
+ * entries (see the note at the top), what it is doing this minute first.
+ * Nothing while it is switched off, or on a staging copy, which never acts.
+ */
 async function currentJobs(pool, { userId, settings, deps = {} }) {
-  const { rows } = await pool.query(
-    `SELECT q.app_id, q.issue_number, q.started_at, a.slug, a.name,
-            COALESCE(r.issue_title, i.title) AS issue_title, COALESCE(r.first_version, FALSE) AS first_version,
-            spec.created_at AS spec_at, prop.id AS proposal_session_id, prop.status AS proposal_status
-       FROM homeroom_bot_queue q
-       JOIN apps a ON a.id = q.app_id
-       LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
-       LEFT JOIN LATERAL (
-         SELECT created_by, title FROM issues
-          WHERE app_id = q.app_id AND github_issue_number = q.issue_number
-          ORDER BY id LIMIT 1
-       ) i ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT created_at FROM homeroom_bot_posts
-          WHERE app_id = q.app_id AND issue_number = q.issue_number AND kind = 'spec'
-          ORDER BY created_at DESC LIMIT 1
-       ) spec ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT cs.id, cs.status FROM homeroom_bot_runs br
-           JOIN chat_sessions cs ON cs.id = br.proposal_session_id
-          WHERE br.app_id = q.app_id AND br.issue_number = q.issue_number
-          ORDER BY br.id DESC LIMIT 1
-       ) prop ON TRUE
-      WHERE q.started_at IS NOT NULL
-        AND COALESCE(r.user_id, i.created_by) = $1
-      ORDER BY q.started_at, q.id
-      LIMIT $2`,
-    [userId, NOW_LIMIT],
-  );
-  const live = liveModule(deps);
-  const jobs = rows
-    // Shadow triage of an app the bot does not act on says nothing to anybody:
-    // it is not work for them.
-    .filter((row) => live.isLiveFor(settings, { slug: row.slug }))
-    .map((row) => ({
-      ...jobOf(row),
-      phase: phaseOf(row),
-      since: iso(phaseOf(row) === 'building' ? row.spec_at : row.started_at),
-      href: hrefOf(row),
-    }));
-  // A project they described, still being set up: its first version is
-  // filed (and the loop above takes it) once the project is running.
-  const { rows: firsts } = await pool.query(
-    `SELECT a.slug, a.name, f.created_at FROM homeroom_bot_first_versions f
-       JOIN apps a ON a.id = f.app_id
-      WHERE f.user_id = $1 AND f.bot_builds AND f.status IN ('waiting', 'filing')
-      ORDER BY f.created_at, f.app_id
-      LIMIT $2`,
-    [userId, NOW_LIMIT],
-  );
-  if (settings?.mode !== 'off') {
-    for (const row of firsts) {
-      jobs.push({
-        appSlug: row.slug, appName: row.name || row.slug, issueNumber: null, title: null, firstVersion: true,
-        phase: 'setting_up', since: iso(row.created_at), href: `#app/${encodeURIComponent(row.slug)}/app`,
-      });
-    }
-  }
-  return jobs;
+  if (!settings || settings.mode === 'off' || liveModule(deps).isStaging()) return [];
+  const progress = await progressSvc.progressFor(pool, {
+    userId, settings, facts: false, deps: { botSvc: deps.botSvc, creationPhase: deps.creationPhase, domain: null },
+  });
+  const items = progress.rightNow.filter((item) => progressSvc.inFlight(item));
+  const busy = items.filter((item) => item.busyNow);
+  return [...busy, ...items.filter((item) => !item.busyNow)]
+    .map(jobOfProgress)
+    .filter(Boolean)
+    .slice(0, NOW_LIMIT);
 }
 
 /** The bot's live runs on this person's requests, newest first. */
@@ -267,11 +262,12 @@ function noteWorkChanged(userId, deps = {}) {
 
 /**
  * The staging demo's tray (`?demo=1`, beside the bot DM fixture in
- * staging-messages.js): one request being built and a few things done
- * before. A staging copy never runs the bot, so without it the tray could
- * not be seen there. Times are relative to `now` so it always reads fresh.
- * No project stands behind it (as behind the fixture's own messages), so
- * its rows open nothing: `href` is null and the tray draws plain rows.
+ * staging-messages.js): one request being built, a change asked for on one
+ * of its proposals waiting its turn (#3734), and a few things done before.
+ * A staging copy never runs the bot, so without it the tray could not be
+ * seen there. Times are relative to `now` so it always reads fresh. No
+ * project stands behind it (as behind the fixture's own messages), so its
+ * rows open nothing: `href` is null and the tray draws plain rows.
  */
 function demoWork(now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
@@ -280,6 +276,9 @@ function demoWork(now = Date.now()) {
     now: [{
       ...app, issueNumber: 14, title: 'Staging demo, show a total under the list', firstVersion: false,
       phase: 'building', since: ago(4), href: null,
+    }, {
+      ...app, issueNumber: 9, title: 'Staging demo, show item counts', firstVersion: false,
+      phase: 'follow_up_queued', since: ago(1), href: null,
     }],
     history: [
       { id: 3, ...app, issueNumber: 12, title: 'Staging demo, sort the list by date', firstVersion: false,
@@ -294,5 +293,5 @@ function demoWork(now = Date.now()) {
 
 module.exports = {
   workFor, currentJobs, pastJobs, noteWorkChanged, demoWork,
-  phaseOf, outcomeOf, hrefOf, OUTCOMES, HISTORY_LIMIT,
+  jobOfProgress, outcomeOf, hrefOf, OUTCOMES, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT,
 };
