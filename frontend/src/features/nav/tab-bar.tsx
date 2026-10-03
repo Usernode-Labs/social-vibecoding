@@ -85,7 +85,7 @@ import {
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { navStore } from './nav-store.js';
-import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
+import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { RecentsList } from './recents-list';
 import { schedulePress, type PendingPress } from './tab-press';
 
@@ -343,7 +343,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
  */
 function useRailPeek(peek: boolean) {
   useEffect(() => clearPeekTimer, []);
-  return { enter: enterPeek, leave: peek ? leavePeek : clearPeekTimer };
+  return { enter: enterPeekByMouse, leave: peek ? leavePeekByMouse : clearPeekTimerByMouse };
 }
 
 /**
@@ -863,8 +863,8 @@ export function PlatformTabs() {
           id="platform-rail-peek"
           className="platform-rail-peek"
           aria-hidden="true"
-          onMouseEnter={enter}
-          onMouseLeave={leave}
+          onPointerEnter={enter}
+          onPointerLeave={leave}
         />
       ) : null}
       <nav
@@ -872,8 +872,8 @@ export function PlatformTabs() {
         id="platform-tabs"
         className="platform-tabs"
         aria-label="Sections"
-        onMouseEnter={enter}
-        onMouseLeave={leave}
+        onPointerEnter={enter}
+        onPointerLeave={leave}
       >
       {/*
           THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind

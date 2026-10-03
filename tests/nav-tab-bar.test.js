@@ -421,7 +421,7 @@ test('the explicit way to bring the rail back stays the sidebar toggle (#3138)',
   // peeks it when pointed at (it only exists where the route has a rail).
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
   assert.match(toggle, /navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
-  assert.match(toggle, /onMouseEnter=\{railOpen \? undefined : enterPeek\}/);
+  assert.match(toggle, /onPointerEnter=\{railOpen \? undefined : enterPeekByMouse\}/);
   // …and the toggle is not drawn over a running app, so hovering it there is
   // not a second way for the rail to appear under an app's pointer.
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle/);

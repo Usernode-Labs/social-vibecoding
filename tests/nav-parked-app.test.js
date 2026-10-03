@@ -366,8 +366,10 @@ test('on a peeked rail the strip rides on top, and holds the peek while pointed 
   // The pointer crossing from the rail onto the strip leaves the rail's
   // element; without these the rail and strip fade away under it. Only while
   // a peek is up — pointing at the strip never starts one.
-  assert.match(STRIP, /onMouseEnter=\{peek \? enterPeek : undefined\}/);
-  assert.match(STRIP, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
+  // Pointer events from a real mouse only: a tap's compatibility mouse
+  // events must not touch the peek's timers (#27).
+  assert.match(STRIP, /onPointerEnter=\{peek \? enterPeekByMouse : undefined\}/);
+  assert.match(STRIP, /onPointerLeave=\{peek \? leavePeekByMouse : undefined\}/);
 });
 
 // ── It arrives and leaves by the bar (#3376) ───────────────────────────
