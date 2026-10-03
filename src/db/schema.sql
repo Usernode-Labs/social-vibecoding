@@ -11258,6 +11258,128 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   notified_at TIMESTAMPTZ
 );
 
+-- ── Test accounts ──────────────────────────────────────────────────────
+--
+-- A full platform admin can mint a throwaway account through the connector
+-- (create_test_account; services/test-accounts.js) to walk a real first run.
+-- It is a real account — it signs in, joins the Homeroom community, can vote —
+-- so these columns are what fence it off from real outcomes:
+--
+--   test_account_created_at   set once, at creation, and never cleared (an
+--                             anonymised test account keeps it, so its old
+--                             rows still read as a test account's). NULL on
+--                             every real account. The partial index serves
+--                             the live list and the cap of 25.
+--   test_account_created_by   the admin who made it.
+--   test_account_welcome_dm   the one opt-in: the welcome DM trigger below
+--                             skips test accounts unless this is TRUE, because
+--                             the welcome DM puts staff into a group with it.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_created_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
+  ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
+
+-- Whose vote counts toward an app's outcome (test accounts, D1). Everybody's,
+-- except a test account's on an app a real person made: that vote is recorded
+-- and shown, labelled, and left out of the tally and of the active-member
+-- denominator, so minting accounts can never move a real decision. On an app a
+-- test account made, test accounts count like anybody, so one tester can take
+-- a project through a vote end to end. The one predicate every tally and the
+-- denominator call (services/pr-vote-revision.js countedVotePredicateSql,
+-- services/governance.js, services/active-users.js). LANGUAGE sql and STABLE
+-- so the planner inlines it.
+CREATE OR REPLACE FUNCTION counts_toward_outcome(voter_id INTEGER, target_app_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT NOT EXISTS (
+           SELECT 1 FROM users tv
+            WHERE tv.id = voter_id AND tv.test_account_created_at IS NOT NULL
+         )
+      OR EXISTS (
+           SELECT 1 FROM apps ta
+             JOIN users tc ON tc.id = ta.created_by
+            WHERE ta.id = target_app_id AND tc.test_account_created_at IS NOT NULL
+         )
+$$;
+-- The same rule keyed by what was voted on, for the tallies that hold only a
+-- proposal's id (services/governance.js qualifiedCounts).
+CREATE OR REPLACE FUNCTION counts_toward_session_outcome(voter_id INTEGER, target_session_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT counts_toward_outcome(voter_id, (SELECT cs.app_id FROM chat_sessions cs WHERE cs.id = target_session_id))
+$$;
+CREATE OR REPLACE FUNCTION counts_toward_issue_outcome(voter_id INTEGER, target_issue_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT counts_toward_outcome(voter_id, (SELECT i.app_id FROM issues i WHERE i.id = target_issue_id))
+$$;
+
+-- The Homeroom bot's DM list (platform_settings 'homeroom_bot_dm_users',
+-- services/homeroom-bot.js) is a JSON array of lower-cased USERNAMES, so a
+-- rename used to drop the person off it without a word, and a deleted
+-- account's name stayed on it holding one of the 50 places. This keeps the
+-- list in step with every path that writes users.username — the first-run
+-- choice (a test account made without a username renames itself there), the
+-- self-service and admin renames, and account deletion, which renames the row
+-- to its deleted-user placeholder in the same statement that stamps
+-- anonymised_at and so takes the entry off instead of carrying it. A list
+-- that does not parse is left alone: it is the bot's to repair, and a rename
+-- must never fail over it.
+CREATE OR REPLACE FUNCTION carry_homeroom_bot_dm_member() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  stored TEXT;
+  members JSONB;
+  old_name TEXT := LOWER(OLD.username);
+  new_name TEXT := LOWER(NEW.username);
+  next_members JSONB;
+BEGIN
+  IF old_name = new_name THEN
+    RETURN NULL;
+  END IF;
+  SELECT value INTO stored FROM platform_settings
+   WHERE key = 'homeroom_bot_dm_users' FOR UPDATE;
+  IF stored IS NULL THEN
+    RETURN NULL;
+  END IF;
+  BEGIN
+    members := stored::jsonb;
+  EXCEPTION WHEN others THEN
+    RETURN NULL;
+  END;
+  IF jsonb_typeof(members) <> 'array' OR NOT (members ? old_name) THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.anonymised_at IS NOT NULL OR members ? new_name THEN
+    next_members := members - old_name;
+  ELSE
+    SELECT COALESCE(jsonb_agg(CASE WHEN m.value = to_jsonb(old_name) THEN to_jsonb(new_name) ELSE m.value END
+                              ORDER BY m.ordinality), '[]'::jsonb)
+      INTO next_members
+      FROM jsonb_array_elements(members) WITH ORDINALITY AS m(value, ordinality);
+  END IF;
+  UPDATE platform_settings SET value = next_members::text, updated_at = NOW()
+   WHERE key = 'homeroom_bot_dm_users';
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_carry_homeroom_bot_dm_member'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_carry_homeroom_bot_dm_member
+      AFTER UPDATE OF username ON users
+      FOR EACH ROW WHEN (OLD.username IS DISTINCT FROM NEW.username)
+      EXECUTE FUNCTION carry_homeroom_bot_dm_member();
+  END IF;
+END $$;
+
 -- ── Welcome messages ───────────────────────────────────────────────────
 --
 -- Somebody let in gets a group conversation with the people an admin
@@ -11301,6 +11423,10 @@ BEGIN
     RETURN NULL;
   END IF;
   IF NEW.is_synthetic THEN
+    RETURN NULL;
+  END IF;
+  -- A test account is welcomed only when its creator asked for it.
+  IF NEW.test_account_created_at IS NOT NULL AND NOT NEW.test_account_welcome_dm THEN
     RETURN NULL;
   END IF;
   IF COALESCE((SELECT value FROM platform_settings WHERE key = 'welcome_dm_enabled'), 'off') <> 'on' THEN

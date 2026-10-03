@@ -23,9 +23,12 @@
 // happens when a query forgets: counting every open row in the table as a
 // vote the viewer owed, it reported forty-six votes waiting on an app whose
 // board had three open requests. The twins' `status` is what made it that
-// large — the only path that closes one is a passed close-issue vote, so an
-// issue closed by a merged PR's `Closes #N`, or closed on GitHub, leaves its
-// twin open for good. Those rows are harmless until something counts them.
+// large — for a long time the only path that closed one was a passed
+// close-issue vote, so an issue closed by a merged PR's `Closes #N` left its
+// twin open for good. The post-merge watcher (services/issue-close-watcher.js)
+// closes those now, but an issue closed by hand on GitHub still leaves its
+// twin open, and so do twins that went stale before the watcher did this.
+// Those rows are harmless until something counts them.
 //
 // The list is written out by hand at four other sites: two lookups in
 // services/shared-objects.js, the single-proposal fetch in routes/issues.js,

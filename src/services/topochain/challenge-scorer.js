@@ -190,12 +190,25 @@ const PROPOSAL_ACCEPTED_SQL = `
 
 // Only reports that reached GitHub: a report whose issue call failed helped
 // nobody, and the scorer must never pay for one.
+//
+// And only reports about somebody else's project, or about the platform
+// itself (no app). A report on a project they made is a note to themselves,
+// and a project only they are in ("Just you", by the audience test
+// COMMUNITY_JOINED_SQL spells out below) has nobody else to tell. A
+// newcomer's first session was paid twice for asking the bot to change their
+// own solo app, by the First challenge and by the weekly one.
 const USEFUL_FEEDBACK_SQL = `
   SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
     FROM feedback_reports fr
     LEFT JOIN apps a ON a.id = fr.app_id
    WHERE fr.created_at >= $1 AND fr.created_at <= $2
      AND fr.issue_number IS NOT NULL
+     AND (fr.app_id IS NULL
+          OR (a.created_by IS DISTINCT FROM fr.user_id
+              AND (a.view_visibility = 'public'
+                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+                   OR EXISTS (SELECT 1 FROM app_collaborators ic
+                               WHERE ic.app_id = a.id AND ic.status = 'invited'))))
    ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
    LIMIT $3
 `;
@@ -313,6 +326,20 @@ const INVITES_JOINED_SQL = `
 // window and the same one credit a person: whichever came first inside the
 // window, the vote or the look, is the credit. The CASE guards the cast, so
 // a value that is not a timestamp is no row rather than a failed pass.
+//
+// TWO MORE VOTES THAT ARE NOT ON SOMEBODY ELSE'S CHANGE (Getting started,
+// first-session test, 2026-10-03). The Homeroom bot writes the proposal for
+// a request it builds, so the session's author is the bot, and "not their
+// own" let a person's vote on the build of THEIR OWN request through: the
+// tester asked the bot for an app, voted on its first version, and was paid
+// for judging somebody else's change. So a vote on a bot build of a request
+// they made (homeroom_bot_requesters) is left out, and so is any vote in a
+// project only they are in ("Just you", by the audience test
+// COMMUNITY_JOINED_SQL spells out above): nobody else's change can be up for
+// a vote there. The look has no project, and is not affected. The filters
+// run before DISTINCT ON, so the credit is their earliest vote that counts.
+// routes/workshop-overview.js OWED_BY_COMMUNITY_SQL (`paying`) is the same
+// test, so the card's Vote step only points at a vote that pays.
 const VOTE_CAST_SQL = `
   SELECT DISTINCT ON (v.user_id) v.user_id, v.kind, v.ref_id, v.created_at, a.name AS app_name
     FROM (
@@ -321,6 +348,10 @@ const VOTE_CAST_SQL = `
         JOIN chat_sessions cs ON cs.id = pv.session_id
        WHERE pv.created_at >= $1 AND pv.created_at <= $2
          AND cs.user_id IS DISTINCT FROM pv.user_id
+         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r
+                          WHERE r.app_id = cs.app_id
+                            AND r.issue_number = cs.created_from_issue_number
+                            AND r.user_id = pv.user_id)
       UNION ALL
       SELECT iv.user_id, 'issue' AS kind, iv.issue_id AS ref_id, iv.created_at, i.app_id
         FROM issue_votes iv
@@ -340,6 +371,11 @@ const VOTE_CAST_SQL = `
     ) v
     LEFT JOIN apps a ON a.id = v.app_id
    WHERE v.user_id IS NOT NULL
+     AND (v.app_id IS NULL
+          OR a.view_visibility = 'public'
+          OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+          OR EXISTS (SELECT 1 FROM app_collaborators ic
+                      WHERE ic.app_id = a.id AND ic.status = 'invited'))
    ORDER BY v.user_id ASC, v.created_at ASC, v.kind ASC, v.ref_id ASC
    LIMIT $3
 `;

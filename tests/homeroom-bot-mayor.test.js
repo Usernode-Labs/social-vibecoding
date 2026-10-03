@@ -165,6 +165,9 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
   assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting in your queue (number 4)');
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false }), 'you could not build it');
+  // WP1: a build that was not needed stopped; it did not fail.
+  assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'you stopped before building it: it was not needed');
   assert.equal(mayor.statusOf({ verdict: 'person' }), 'left for the group to decide');
   assert.equal(mayor.statusOf({}), 'looked at; nothing new since');
 });
@@ -336,4 +339,49 @@ test('#3768, #3771: the DM can comment on a request and start one, and says what
     'yeah add it as a comment on that issue\n\n(Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot '
       + 'understood it: Use the Web Audio API for richer, piano-like tones.)',
   );
+});
+
+// WP1 (#10): asked about Plant Pal #1 while a second build of it ran, the
+// bot said "Nothing broke" beside a card that read "Didn't finish". Its
+// tools showed nothing of a build in progress, and the cards never reached
+// it.
+test('WP1: request_detail says a build is in progress, and a build that was not needed stopped', () => {
+  const words = (r) => mayor.buildWords({ verdict: 'ready', ...r });
+  assert.equal(words({}), 'building now', 'while build_ok is null, nothing else recorded');
+  assert.equal(words({ build_session_id: 5 }), 'building now');
+  assert.equal(words({ live_build_waiting_at: '2026-10-03T16:45:36Z' }), 'waiting its turn to be built');
+  assert.equal(words({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, so not built yet');
+  assert.equal(words({ build_error: 'superseded: a later verdict on the same issue' }), 'not built: a later verdict on the same issue');
+  assert.equal(words({ build_ok: true }), 'built');
+  assert.equal(words({ proposal_session_id: 6190 }), 'built');
+  assert.equal(words({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'stopped before it was built: the request already has a proposal (6190)');
+  assert.equal(words({ build_ok: false, build_error: 'the build ran past its time limit' }), 'could not build: the build ran past its time limit');
+  assert.equal(mayor.buildWords({ verdict: 'question' }), undefined, 'a look that built nothing says nothing about a build');
+  assert.equal(mayor.buildWords({ verdict: 'revise', build_ok: true }), 'built');
+});
+
+test('WP1: the model reads what each activity card shows now, beside the card\'s own words', async () => {
+  const rows = [
+    { id: 30, sender_id: 77, content: '**Plant Pal**, its first version\n\nI\'m working on the first version now. This card updates as I go.', metadata: { homeroomBot: { kind: 'activity' } } },
+    { id: 31, sender_id: 77, content: '**Plant Pal**, its first version\n\nIt\'s built.', metadata: { homeroomBot: { kind: 'proposal' } } },
+    { id: 32, sender_id: 8, content: 'is anything broken?', metadata: null },
+  ];
+  const pool = { async query(sql) { return /FROM conversation_messages/.test(String(sql)) ? { rows: [...rows].reverse() } : { rows: [] }; } };
+  let asked = 0;
+  const cardsOf = async () => { asked += 1; return { cards: [{ messageId: 30, state: 'done', outcome: 'stopped' }] }; };
+  const history = await mayor.historyMessages(pool, { conversationId: 4, botId: 77, upToId: 32, cardsOf });
+  assert.equal(asked, 1);
+  assert.equal(history[0].role, 'assistant');
+  assert.match(history[0].content, /\n\[Homeroom: this activity card now reads "Didn't finish: Stopped before it finished"\.\]$/);
+  assert.doesNotMatch(history[1].content, /this activity card/, 'only on a card');
+  // No card in the history: nothing read. A read that fails costs the history nothing.
+  asked = 0;
+  await mayor.historyMessages({ async query() { return { rows: [rows[2]] }; } }, { conversationId: 4, botId: 77, upToId: 32, cardsOf });
+  assert.equal(asked, 0);
+  const plain = await mayor.historyMessages(pool, { conversationId: 4, botId: 77, upToId: 32, cardsOf: async () => { throw new Error('down'); } });
+  assert.doesNotMatch(plain[0].content, /this activity card/);
+  // The turn hands it the person's own cards.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /cardsOf: \(\) => activityModule\(deps\)\.cardsFor\(pool, \{ user, settings, config \}\),/);
 });

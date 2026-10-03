@@ -690,4 +690,125 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
 
     await setting('homeroom_bot_dm_users', '[]');
   });
+
+  // WP1 (#6): on 3 October a second build of Plant Pal #1 said "I'm building
+  // this now" in the DM after the first build had said "It's built". A
+  // build's news that something newer answered or overtook is not sent, and
+  // the post on the request does not ring for it either.
+  await t.test('WP1 (#6): a build\'s news is not sent once another proposal answers its request, or a newer look overtook it', async () => {
+    const live = require('../src/services/homeroom-bot-live');
+    const io = require('../src/services/ws');
+    const github = { async createIssueComment() { return { id: 1, created_at: '2026-10-03T16:48:00Z' }; } };
+    const repo = { owner: 'usernode-bot', repo: 'seed-swap' };
+    const pip = await user('pip');
+    await setting('homeroom_bot_dm_users', JSON.stringify([pip.username]));
+    const requester = (issueNumber) => pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, 'Watering log')`,
+      [app.id, issueNumber, pip.id],
+    );
+    const runOf = async (issueNumber, { verdict = 'ready', proposal = null, ago = 0 } = {}) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, created_at)
+       VALUES ($1, $2, 'live', $3, $4, NOW() - make_interval(secs => $5)) RETURNING id`,
+      [app.id, issueNumber, verdict, proposal, ago],
+    )).rows[0].id;
+    const proposalOf = async (issueNumber, status) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, linked_issues, promoted_at)
+       VALUES ($1, $2, 'dev/homeroom_bot-x', $3, $4, NOW()) RETURNING id`,
+      [app.id, bot.id, status, [issueNumber]],
+    )).rows[0].id;
+    const dms = async () => (await pool.query(
+      `SELECT m.content FROM conversation_messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1
+        WHERE m.sender_id = $2 ORDER BY m.id`,
+      [pip.id, bot.id],
+    )).rows.map((r) => r.content);
+    const bells = async () => (await pool.query('SELECT kind FROM notifications WHERE user_id = $1', [pip.id])).rows;
+
+    // Run A built request #3783 and its proposal is up for a vote; run B, a
+    // second build of the same request, then wrote its plan.
+    await requester(3783);
+    const first = await proposalOf(3783, 'promoted');
+    const a = await runOf(3783, { proposal: first, ago: 600 });
+    const b = await runOf(3783, { ago: 300 });
+    const stale = await dm.relayIssuePost({ pool, app, issueNumber: 3783, kind: 'spec', runId: b, postId: 37831, bot, dm: { building: true } });
+    assert.deepEqual({ stale: stale.stale, messageId: stale.messageId, username: stale.username },
+      { stale: true, messageId: null, username: pip.username });
+    assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 3783, bot, told: stale }), pip.username,
+      'the post on the request leaves her untagged too');
+    for (const [kind, extra] of [['proposal', { link: 'https://x/6191', sessionId: 6191 }], ['build_failed', { reason: 'x' }]]) {
+      const sent = await dm.relayIssuePost({ pool, app, issueNumber: 3783, kind, runId: b, postId: 37832, bot, dm: extra });
+      assert.equal(sent.stale, true, kind);
+    }
+    assert.deepEqual(await dms(), [], 'none of the second build\'s news reached her');
+    // Said through the post, as a live build says it: on the request, and
+    // never rung for her.
+    const posted = await live.post({
+      pool, github, ws: io, app, repo, issueNumber: 3783, kind: 'spec', runId: b, text: 'Building it now.',
+      sender: bot, senderId: bot.id, mentions: [pip.username, sam.username], dm: { building: true },
+    });
+    assert.equal(posted.thread, true);
+    const { rows: [thread] } = await pool.query(
+      `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 3783`, [app.id],
+    );
+    assert.equal(thread.content, `@${sam.username} Building it now.`);
+    assert.deepEqual(await bells(), []);
+    assert.deepEqual(await dms(), []);
+
+    // Run A's own proposal is still told, though run B is newer: it is the
+    // one people vote on, and its news must reach her.
+    const told = await dm.relayIssuePost({
+      pool, app, issueNumber: 3783, kind: 'proposal', runId: a, postId: 37833, bot,
+      dm: { link: `https://app.onhomeroom.com/#app/seed-swap/dev/proposals/${first}`, sessionId: first },
+    });
+    assert.ok(told.messageId);
+    assert.equal(told.stale, undefined);
+    assert.equal((await dms()).length, 1);
+
+    // A proposal merged before this run's verdict is an earlier change, not
+    // an answer to this one: its news goes out.
+    await requester(3784);
+    const earlier = await proposalOf(3784, 'merged');
+    await pool.query(`UPDATE chat_sessions SET merged_at = NOW() - INTERVAL '1 day' WHERE id = $1`, [earlier]);
+    await runOf(3784, { proposal: earlier, ago: 86400 * 2 });
+    const later = await runOf(3784);
+    const going = await dm.relayIssuePost({ pool, app, issueNumber: 3784, kind: 'spec', runId: later, postId: 37841, bot, dm: { building: true } });
+    assert.ok(going.messageId, 'a later request on the same issue is news');
+
+    // A plan or a failure a newer look overtook is not sent; with no other
+    // proposal anywhere, the run's own proposal is.
+    await requester(3785);
+    const overtaken = await runOf(3785, { ago: 300 });
+    await runOf(3785, { verdict: 'question' });
+    assert.equal((await dm.relayIssuePost({ pool, app, issueNumber: 3785, kind: 'spec', runId: overtaken, postId: 37851, bot, dm: { building: true } })).stale, true);
+    assert.equal((await dm.relayIssuePost({ pool, app, issueNumber: 3785, kind: 'build_failed', runId: overtaken, postId: 37852, bot, dm: { reason: 'x' } })).stale, true);
+    assert.ok((await dm.relayIssuePost({ pool, app, issueNumber: 3785, kind: 'proposal', runId: overtaken, postId: 37853, bot, dm: { link: 'https://x/1' } })).messageId);
+    await setting('homeroom_bot_dm_users', '[]');
+  });
+
+  // WP1 (#9): a build a restart interrupted is started again, and its
+  // requester hears it once, so the card going back a step is no mystery.
+  await t.test('WP1 (#9): a build started again after a restart is said once, in plain words', async () => {
+    const kit = await user('kit');
+    await setting('homeroom_bot_dm_users', JSON.stringify([kit.username]));
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 3786, $2, 'Reminders')`,
+      [app.id, kit.id],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 3786, 'live', 'ready') RETURNING id`, [app.id],
+    );
+    const sent = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
+    assert.ok(sent.messageId);
+    const message = await conversations.getMessage(pool, kit, sent.conversationId, sent.messageId);
+    assert.equal(message.content, `**Seed swap** · request #3786: Reminders\n\n${dm.RESTARTED_TEXT}`);
+    assert.equal(dm.RESTARTED_TEXT, 'My build was interrupted, so I\'ve started it again. Nothing you need to do.');
+    assert.equal(message.metadata.homeroomBot.kind, 'restarted');
+    const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(keyed.idempotency_key, `hrbot-restart-${run.id}`);
+    const again = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
+    assert.equal(again.messageId, sent.messageId, 'once per run');
+    assert.equal(again.duplicate, true);
+    await setting('homeroom_bot_dm_users', '[]');
+    assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id + 1 }), null, 'nobody the bot DMs, nothing sent');
+  });
 });

@@ -59,9 +59,10 @@
  *
  * Every step not done carries a button to where its action is (stepAction
  * below), chosen by the MEASURE of the scoring rule bound to its challenge;
- * the button never ticks it. Try, Vote and Suggest are about ONE app, the
- * person's default app (defaultApp below), and Vote goes wherever something
- * is waiting for their vote (voteTarget below). The one step a visit ticks
+ * the button never ticks it. Try, Vote and Suggest wait on the Join step's
+ * tick (`needs_join`, gettingStarted below), are about ONE app, the person's
+ * default app (defaultApp below), and Vote goes wherever something is
+ * waiting for their vote (voteTarget below). The one step a visit ticks
  * is Vote, and only when nothing is up for a vote anywhere they are a
  * member: then its button is "Look", it opens that app's Workshop, and the
  * visit is the credit (markWorkshopVisit below; VOTE_CAST counts it).
@@ -308,9 +309,10 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
  *   * anything they could not open: an app that is not running, one
  *     moderation has suspended, a view-private one they are not a member of.
  *
- * `{ slug, name }` (the buttons open it, the rows name it), or null until
- * they have joined one, when the three steps say "Join a community first."
- * and carry no button.
+ * `{ slug, name }` (the buttons open it, the rows name it), or null when
+ * they are in none of those. It is not what locks the three steps: that is
+ * the Join step's own tick (gettingStarted's `needs_join`), and once Join is
+ * ticked with no default app the card falls back to fallbackApp below.
  */
 async function defaultApp(pool, userId) {
   const { rows } = await pool.query(
@@ -337,6 +339,40 @@ function appView(row) {
 }
 
 /**
+ * THE APP AFTER JOIN WHEN THERE IS NO DEFAULT ONE. Join can be ticked with no
+ * default app: somebody who started a public community of their own, or took
+ * an invite into a project that is not running yet, is in a community, and
+ * every one of its apps is passed over by defaultApp. The three steps are not
+ * locked then (a lock under a ticked Join was the inconsistency the
+ * first-session test found), so they are about the first app Discover leads
+ * with that the person did not make: the admin's featured apps in their
+ * order, then the open communities with the most members, the order the
+ * join screen offers them in. Anyone can open, look at and send feedback on
+ * a public app without joining it.
+ *
+ * `{ slug, name }`, or null when there is no such app at all, when the
+ * client's buttons go to Discover instead.
+ */
+async function fallbackApp(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT a.slug, a.name
+       FROM apps a
+       LEFT JOIN featured_apps fa ON fa.app_id = a.id
+      WHERE a.self_hosted = FALSE
+        AND a.created_by IS DISTINCT FROM $1
+        AND a.status = 'running'
+        AND a.moderation_suspended_at IS NULL
+        AND a.view_visibility = 'public'
+      ORDER BY (fa.app_id IS NOT NULL) DESC, fa.sort_order ASC NULLS LAST,
+               (SELECT COUNT(*) FROM community_members cm WHERE cm.community_id = a.community_id) DESC,
+               a.id ASC
+      LIMIT 1`,
+    [userId]
+  );
+  return rows[0] ? appView(rows[0]) : null;
+}
+
+/**
  * WHERE THE VOTE STEP GOES. Read from the Needs you feed's own population
  * (routes/workshop-overview.js owedByCommunity: the open proposals and group
  * decisions in projects the person is a member of, not their own, that they
@@ -349,11 +385,17 @@ function appView(row) {
  *   3. else nothing anywhere: the default app's Workshop, the page the hub's
  *      "since" card opens, and the visit ticks the step (markWorkshopVisit).
  *
+ * "Something waiting" is something a vote on would COUNT (`paying`): never
+ * the Homeroom bot's build of the person's own request, nor anything in a
+ * project only they are in, which the scorer's VOTE_CAST does not pay for.
+ * Otherwise the step would send a newcomer to vote on the first version of
+ * their own solo app, and the vote would tick nothing.
+ *
  * `{ kind: 'needs' | 'workshop', app, count }`; `count` is what is waiting
- * in `app` (0 for the Workshop).
+ * in `app` (0 for the Workshop), the number its Needs you tab lists.
  */
 async function voteTarget(pool, userId, app, opts = {}) {
-  const waiting = await owedByCommunity(pool, userId, opts);
+  const waiting = (await owedByCommunity(pool, userId, opts)).filter((w) => w.paying > 0);
   const here = waiting.find((w) => w.slug === app.slug);
   const there = here || waiting[0];
   if (there) return { kind: 'needs', app: appView(there), count: there.waiting };
@@ -413,7 +455,8 @@ function stepAction(step) {
 function noCard() {
   return {
     show: false, complete: false, steps: [], done: 0, total: 0, earned_points: 0,
-    unlocks: { count: 0, names: [] }, app: null, vote: null, try_seconds: TRY_APPS_MIN_SECONDS,
+    unlocks: { count: 0, names: [] }, needs_join: false, app: null, vote: null,
+    try_seconds: TRY_APPS_MIN_SECONDS,
   };
 }
 
@@ -431,7 +474,7 @@ function cardShows(u) {
 
 /**
  * The card: `{ show, complete, steps, done, total, earned_points, unlocks,
- * app, vote, try_seconds }`.
+ * needs_join, app, vote, try_seconds }`.
  *
  * `show` is false for an account the card is not for (one made before the
  * list shipped, or one that has not answered the join screen yet) and once it
@@ -448,11 +491,24 @@ function cardShows(u) {
  * `earned_points` is what the person has been paid on it, this season or an
  * earlier one, the same credits its "done" reads.
  *
+ * `needs_join` is THE ONE GATE on Try, Vote and Suggest (first-session
+ * test, 2026-10-03): true while the season's Join step (the one whose action
+ * is `join`) is not done, false when it is or when the season has none. The
+ * client locks the three on it and on nothing else, so the lock and the
+ * Join row's tick always agree. It used to lock on "no default app", which
+ * disagreed both ways: keeping Homeroom ticked showed no lock and no tick,
+ * and a person in a community of their own making saw a ticked Join over
+ * three locked rows. Neither Homeroom nor a project only you are in counts
+ * as joining (COMMUNITY_JOINED), and so neither unlocks them.
+ *
  * `app` is the default app (defaultApp), the one Try, Vote and Suggest are
- * about, or null until the person has joined one. `vote` is where the Vote
- * step goes (voteTarget), or null without an app. Both are read only while a
- * step that needs them is not done. `try_seconds` is the floor Try an app
- * counts from, so the row says the number the scorer uses.
+ * about; once Join is ticked and there is no default app, the first app
+ * Discover leads with that they did not make (fallbackApp); else null, and
+ * the client sends the three to Discover. `vote` is where the Vote step goes
+ * (voteTarget), or null without an app. Both are read only while a step that
+ * needs them is not done (and while `needs_join`, though the client draws
+ * neither then). `try_seconds` is the floor Try an app counts from, so the
+ * row says the number the scorer uses.
  *
  * `complete` is the gate's own answer (challenge-onboarding.js `finished`):
  * the tour and every challenge done, or let through on an earlier read. It is
@@ -503,10 +559,16 @@ async function gettingStarted(pool, userId, { showSelfHosted = false, isAdmin = 
       ...stepAction(s),
     });
   }
+  // The one gate on Try, Vote and Suggest: the Join step's own tick, or
+  // nothing to wait on when the season has no Join step.
+  const joinStep = steps.find((s) => s.action === 'join');
+  const joined = joinStep ? joinStep.done : true;
   // The app, and where Vote goes, only while a step that needs them is
   // still to do: a finished list reads neither.
   const pending = (action) => steps.some((s) => s.action === action && !s.done);
-  const app = pending('try') || pending('vote') || pending('suggest') ? await defaultApp(pool, userId) : null;
+  const needsApp = pending('try') || pending('vote') || pending('suggest');
+  let app = needsApp ? await defaultApp(pool, userId) : null;
+  if (needsApp && !app && joined) app = await fallbackApp(pool, userId);
   const vote = app && pending('vote') ? await voteTarget(pool, userId, app, { showSelfHosted, isAdmin }) : null;
   const unlocks = onboarding && season
     ? await gateUnlocks(pool, season.id, onboarding.ids, { limit: UNLOCK_NAMES })
@@ -519,6 +581,7 @@ async function gettingStarted(pool, userId, { showSelfHosted = false, isAdmin = 
     total: steps.length,
     earned_points: steps.reduce((sum, s) => sum + (Number(s.earned_points) || 0), 0),
     unlocks,
+    needs_join: !joined,
     app,
     vote,
     try_seconds: TRY_APPS_MIN_SECONDS,
@@ -535,12 +598,16 @@ async function gettingStarted(pool, userId, { showSelfHosted = false, isAdmin = 
  *
  * The server decides, not the button. A visit is recorded only for an
  * account the card is showing for, and only when nothing is waiting for its
- * vote right now, by the Needs you feed's own count (owedByCommunity): a
- * visit while a vote IS waiting is refused (409, `waiting`), because then the
- * step is to vote. Stored as `users.getting_started_seen.vote_workshop`, the
- * last such visit (a later one inside a new challenge window counts there);
- * not the column's old `workshop` key, which the retired card wrote on any
- * Workshop visit, whether or not a vote was waiting.
+ * vote right now that a vote would count for, by the Needs you feed's own
+ * count (owedByCommunity's `paying`, the same count voteTarget reads): a
+ * visit while such a vote IS waiting is refused (409, `waiting`), because
+ * then the step is to vote. The Homeroom bot's first version of the person's
+ * own solo app waiting for them does not hold it: voting on that pays
+ * nothing, so it is not the step. Stored as
+ * `users.getting_started_seen.vote_workshop`, the last such visit (a later
+ * one inside a new challenge window counts there); not the column's old
+ * `workshop` key, which the retired card wrote on any Workshop visit,
+ * whether or not a vote was waiting.
  */
 async function markWorkshopVisit(pool, userId, { showSelfHosted = false, isAdmin = false } = {}) {
   const { rows } = await pool.query(CARD_SQL, [userId]);
@@ -548,7 +615,7 @@ async function markWorkshopVisit(pool, userId, { showSelfHosted = false, isAdmin
     return { ok: false, status: 409, error: 'There is no Getting started card to tick.' };
   }
   const waiting = (await owedByCommunity(pool, userId, { showSelfHosted, isAdmin }))
-    .reduce((sum, w) => sum + w.waiting, 0);
+    .reduce((sum, w) => sum + w.paying, 0);
   if (waiting > 0) {
     return { ok: false, status: 409, error: 'Something is waiting for your vote.', waiting };
   }
@@ -659,6 +726,7 @@ module.exports = {
   parseJoin,
   answerJoin,
   defaultApp,
+  fallbackApp,
   voteTarget,
   stepAction,
   gettingStarted,
