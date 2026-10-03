@@ -58,6 +58,8 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // that way — an unmapped code would answer 400 for something that is really a
 // 429 or a 502, which is what a retry policy reads.
 const STATUS_BY_CODE = {
+  submission_revision_unverified: 502,
+  native_submission_reconciliation_required: 409,
   no_repository: 409,
   platform_unavailable: 503,
   github_link_unavailable: 503,

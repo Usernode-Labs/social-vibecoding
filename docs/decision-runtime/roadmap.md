@@ -42,10 +42,10 @@ remains unmerged until the original preview/check caller migration and competing
 ownership removal are complete. The [completion checklist](preview-check-completion-checklist.md)
 maps every remaining caller/mechanism to its replacement, proof and removal gate.
 Cutovers reuse the established foundation; no unrelated workflow or new framework
-is required. Manual enrolled entry points and active/promoted enrolled sync are bounded cutovers. Native manual admission is now a bounded cutover too. Unenrolled sync and the other caller rows remain open.
+is required. Manual enrolled entry points and active/promoted enrolled sync are bounded cutovers. Native manual admission and ordinary native app-repository changed-head fork submission (active/paused/promoted) are bounded cutovers too. Unenrolled sync and the other caller rows remain open.
 
 Remaining implementation: ordinary hosted/imported/promotion/headless/Docker/fleet
-admission, head invalidation, recovery/teardown, Docker resource preparation and
+admission, remaining head invalidation, recovery/teardown, Docker resource preparation and
 correlated ownership/status. Consolidation removes each replaced writer, queue,
 timer, flag or compatibility path after its caller/data gate is satisfied.
 Canonical reconciliation, failure-path tests and retained-obligation inventories
@@ -124,3 +124,11 @@ duplicate receipts survive completion. Unresolved consumers/admission yield an
 explicit waiting outcome, without a detached required kick. See the
 [native recheck contract](native-recheck-contract.md). This correction does not
 close any remaining head-writer/caller or installation gate above.
+
+
+Current bounded submission evidence: [native changed-head contract](native-changed-head-contract.md).
+It removes competing web staging/check ownership from the selected fork-update
+caller, preserving review policy and serving resources. Git-to-database acceptance
+still requires producer retry if interrupted before the transaction. The full
+caller/ownership checklist remains the merge gate; this is not pilot completion
+or enablement.

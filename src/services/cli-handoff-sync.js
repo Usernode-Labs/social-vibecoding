@@ -177,7 +177,8 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
   };
 }
 
-async function inspectSyncReview(session, repo, headSha, deps) {
+// Shared read-only review classification; native submission does not adopt CLI pins.
+async function inspectReviewedHeadMove(session, repo, headSha, deps = {}) {
   if (sameSha(session.reviewed_head_sha, headSha)) return { kind: 'same' };
   if (!session.reviewed_head_sha) return { kind: 'initialized' };
   const mirror = deps.mirror || require('./repo-mirror');
@@ -187,7 +188,7 @@ async function inspectSyncReview(session, repo, headSha, deps) {
   });
   const mainSha = await mirror.defaultBranchSha(dir);
   const measuredHead = await mirror.resolveBranch(dir, session.branch_name);
-  if (!sameSha(measuredHead, headSha)) throw new Error('Reviewed branch moved during sync inspection');
+  if (!sameSha(measuredHead, headSha)) throw new Error('Reviewed branch moved during reviewed-head inspection');
   return integration.classifyHeadMove(dir, {
     approvedHead: session.reviewed_head_sha, newHead: headSha, mainSha,
   });
@@ -207,7 +208,7 @@ async function adoptEnrolledSync({ config, pool, session, headSha, workerResult,
 
   let move = { kind: 'same' };
   if (session.status === 'promoted') {
-    try { move = await inspectSyncReview(session, repo, headSha, deps); }
+    try { move = await inspectReviewedHeadMove(session, repo, headSha, deps); }
     catch (error) {
       log.warn('cli-handoff-sync', 'Could not classify enrolled reviewed sync', {
         sessionId: session.id, err: error.message,
@@ -286,6 +287,7 @@ async function reconcileCliHandoffSync({ config, pool, session, newHead, workerR
 
 module.exports = {
   reconcileCliHandoffSync,
+  inspectReviewedHeadMove,
   _repoOf: repoOf,
   _pinsCurrent: pinsCurrent,
 };

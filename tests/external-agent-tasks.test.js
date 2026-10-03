@@ -4789,3 +4789,16 @@ test('reusing a work order moves it to the launchpad that asked', async () => {
   assert.match(move.sql, /SET origin_session_id = \$3/);
   assert.deepEqual(move.params, [71, 3, 990404]);
 });
+
+
+test('changed-head update preserves durable preparation and admission-off reconciliation in the agent response', async () => {
+  for (const preparationRequest of [
+    { status: 'durable', workId: 'durable-work', workStatus: 'queued' },
+    { status: 'blocked', code: 'native_admission_disabled', reconciliation: { owner: 'native-preview-requests' } },
+  ]) {
+    const { result } = await submitUpdateWork({}, { updateProposal: async () => ({
+      ...UPDATE_OK, body: { ...UPDATE_OK.body, preparationRequest },
+    }) });
+    assert.deepEqual(result.preparationRequest, preparationRequest);
+  }
+});

@@ -922,9 +922,9 @@
     {
       "source": "src/services/cli-preview-handoff/store.js",
       "kind": "structural-template",
-      "fingerprint": "0dbb738df7e7bce55ccd",
+      "fingerprint": "950cbf19642dd6fc3aa8",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $2::text, handoff_uploaded_sha = $2::text, handoff_local_commit_sha = NULL, handoff_upload_checked_sha = NULL, last"
+      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW(), ${freshness.invalidateHeadMoveSql('$2')}, reviewed_head_sha = CASE WHEN status = 'promoted' THEN $2::text EL"
     },
     {
       "source": "src/services/communities.js",

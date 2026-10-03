@@ -12,7 +12,7 @@ async function assertSupportedExperimentalStore(pool) {
     (SELECT count(*)::int FROM execution_work_requests WHERE workflow IN
       ('native-preview-prepare', 'native-preview-template-prepare', 'native-preview-kpack-prepare')) AS historical_work,
     (SELECT count(*)::int FROM preview_flow_decisions WHERE reducer_version <> $1) AS preview_traces,
-    (SELECT count(*)::int FROM cli_preview_decisions WHERE reducer_version NOT IN (3, 4, $2)) AS cli_traces,
+    (SELECT count(*)::int FROM cli_preview_decisions WHERE reducer_version NOT IN (3, 4, 5, $2)) AS cli_traces,
     (SELECT count(*)::int FROM proposal_review_decisions WHERE reducer_version <> $3) AS review_traces`, [previewVersion, cliVersion, reviewVersion]);
   const inventory = rows[0];
   if (Object.values(inventory).some(count => count > 0)) {

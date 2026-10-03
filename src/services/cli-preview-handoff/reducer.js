@@ -1,6 +1,6 @@
 'use strict';
 
-const REDUCER_VERSION = 5;
+const REDUCER_VERSION = 6;
 
 const { supportedSource, ordinaryNative, durableManifest } = require('./source-policy');
 
@@ -49,6 +49,59 @@ function reduce(state, action) {
       reason: 'native_manual_head_accepted',
       change: { phase: 'preparing', headSha: action.headSha, startedStatus: action.startedStatus },
       effects: [{ type: 'PrepareNativePreview', effectKey: `${action.actionId}:prepare` }],
+    };
+  }
+
+  if (action.type === 'AcceptNativeSubmissionHead') {
+    if (!ordinaryNative(session) || session.is_headless) return reject('ordinary_native_required');
+    if (session.user_id !== action.userId) return reject('session_owner_changed');
+    if (!action.admissionEnabled && !handoff) return reject('native_admission_disabled');
+    if (session.active_turn) return reject('session_busy');
+    if (session.status !== action.expectedStatus || session.branch_name !== action.branchName
+        || (session.checks_commit_sha || null) !== action.previousChecks
+        || (session.staging_runtime_name || null) !== action.previousPreviewName
+        || (session.reviewed_head_sha || null) !== action.previousReviewed
+        || Number(session.approval_epoch || 0) !== action.previousEpoch
+        || (session.check_state || null) !== action.previousCheckState
+        || (session.check_phase || null) !== action.previousCheckPhase) {
+      return reject('session_state_changed');
+    }
+    if (action.landedHeadSha !== action.headSha) return reject('submission_head_unverified');
+    const reviewed = session.status === 'promoted';
+    const keepApprovals = ['same', 'initialized', 'mechanical', 'resolved'].includes(action.moveKind);
+    const checksCarry = reviewed && action.moveKind === 'mechanical'
+      && action.previousChecks === action.previousReviewed
+      && ['passing', 'skipped'].includes(session.check_state) && !state.checksOutstanding;
+    const blockedReason = session.status === 'paused' ? 'session_paused'
+      : !action.admissionEnabled ? 'native_admission_disabled' : null;
+    return {
+      accepted: true,
+      reason: 'native_submission_head_accepted',
+      change: {
+        phase: 'preparing', headSha: action.headSha, startedStatus: 'active',
+        approvalEpoch: action.previousEpoch + (reviewed && !keepApprovals ? 1 : 0),
+        checksCarry, deferPreparation: !!blockedReason, blockedReason,
+      },
+      effects: blockedReason
+        ? [{ type: 'ReconcileNativeSubmissionPreparation', owner: 'native-preview-requests' }]
+        : [{ type: 'PrepareNativePreview', effectKey: `${action.actionId}:prepare` }],
+    };
+  }
+
+  if (action.type === 'ResumeNativeSubmissionPreparation') {
+    if (!ordinaryNative(session) || session.is_headless) return reject('ordinary_native_required');
+    if (handoff?.sync_reconciliation?.source !== 'native-submission'
+        || handoff.admission_id !== action.admissionId || handoff.head_sha !== action.headSha) {
+      return reject('submission_obligation_changed');
+    }
+    if (session.active_turn) return reject('session_busy');
+    const condition = nativeHeadCondition(preview.session, handoff.started_status, action.headSha);
+    if (condition) return reject(condition);
+    return {
+      accepted: true,
+      reason: 'native_submission_preparation_resumed',
+      change: { phase: 'preparing', resumeSync: true },
+      effects: [{ type: 'PrepareNativePreview', effectKey: `${action.admissionId}:prepare` }],
     };
   }
 
@@ -207,7 +260,7 @@ function reduce(state, action) {
 }
 
 function replayDecision(entry) {
-  if (![3, 4, REDUCER_VERSION].includes(entry.reducer_version)) {
+  if (![3, 4, 5, REDUCER_VERSION].includes(entry.reducer_version)) {
     throw new Error(`Unsupported cli-preview-handoff reducer version: ${entry.reducer_version}; use the offline historical archive`);
   }
   if (entry.reducer_version === 3 && entry.pre_state.session?.source !== 'cli_handoff') return reject('native_cli_required');

@@ -4085,6 +4085,8 @@ function registerTools(server, ctx) {
       captureRerun: z.boolean().nullable(),
       checksRequest: z.record(z.unknown()).optional()
         .describe('Durable native recheck delivery or explicit waiting/blocked outcome; includes its owner and intent/work identity when available.'),
+      preparationRequest: z.record(z.unknown()).optional()
+        .describe('Durable changed-head preparation receipt or blocked reconciliation, separate from whether checks have started.'),
       shotsState: z.string().nullable()
         .describe('Revision-scoped before & after shots state after this submission, or null when the feature is disabled or the target already existed.'),
       visibleChangesAccepted: z.boolean().nullable()
@@ -4457,11 +4459,23 @@ function registerTools(server, ctx) {
       // it — and it was being printed on one, beside a `votesCleared: 0` in
       // the same payload. `targetKind` already says which this is; the propose
       // branch below reads it for exactly this reason.
-      const buildNote = result.resumeRequired
+      let buildNote = result.resumeRequired
         ? ' It is idle, so the commit landed and no preview was built; opening it builds one.'
         : result.previewRebuilding
           ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
           : ' No preview build started for this push.';
+      if (result.preparationRequest) {
+        const delivery = result.preparationRequest;
+        if (delivery.status === 'blocked') {
+          buildNote = ` Preparation is blocked: ${delivery.code}. Its reconciliation owner is ${delivery.reconciliation.owner}; retry after that obstruction is resolved.`;
+        } else if (delivery.workStatus === 'failed') {
+          buildNote = ' The original preparation failed; use get_proposal to inspect its recovery outcome.';
+        } else if (delivery.workStatus === 'succeeded') {
+          buildNote = ' The original preparation is complete; activation and checks retain their durable continuation. Use get_proposal to follow them.';
+        } else {
+          buildNote = ' Preparation is durably queued or running. Use get_proposal to follow activation and checks.';
+        }
+      }
       const landedStep = result.targetKind === 'session'
         ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
           + `collected.${buildNote}${shotOn}`
@@ -4503,6 +4517,7 @@ function registerTools(server, ctx) {
         previewRebuilding: result.previewRebuilding === true,
         checksRerun: result.checksRerun === true,
         ...(result.checksRequest ? { checksRequest: result.checksRequest } : {}),
+        ...(result.preparationRequest ? { preparationRequest: result.preparationRequest } : {}),
         resumeRequired: result.resumeRequired === true,
         targetKind: result.targetKind || null,
         proposed,

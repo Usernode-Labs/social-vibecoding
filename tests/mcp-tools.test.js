@@ -4843,3 +4843,28 @@ test('submit_work forwards an update\'s summary and reports whether it landed', 
     gh.isEnabled = realGh; githubLink.isEnabled = realLink;
   }
 });
+
+
+test('changed-head submit_work exposes queued preparation or blocked ownership without claiming checks started', async t => {
+  t.mock.method(require('../src/services/github'), 'isEnabled', () => true);
+  t.mock.method(require('../src/services/github-link'), 'isEnabled', () => true);
+  for (const status of ['durable', 'blocked']) {
+    const preparationRequest = { status, workId: status === 'durable' ? 'preparation-work' : null,
+      workStatus: status === 'durable' ? 'queued' : 'blocked',
+      ...(status === 'blocked' ? { code: 'native_admission_disabled',
+        reconciliation: { owner: 'native-preview-requests' } } : {}) };
+    const { handlers, restore } = connector(() => ({
+      updated: true, proposalId: 4158, appSlug: 'recipe-box', prNumber: null,
+      votesCleared: 0, targetKind: 'session', preparationRequest,
+    }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool: {
+      async query() { return { rows: [{ app_slug: 'recipe-box' }] }; },
+    } });
+    try {
+      const result = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
+      assert.deepEqual(result.structuredContent.preparationRequest, preparationRequest);
+      assert.match(result.structuredContent.nextStep, status === 'durable'
+        ? /durably queued or running/ : /blocked: native_admission_disabled.*native-preview-requests/);
+      assert.doesNotMatch(result.structuredContent.nextStep, /rebuilding now|checks.*right now/);
+    } finally { restore(); }
+  }
+});

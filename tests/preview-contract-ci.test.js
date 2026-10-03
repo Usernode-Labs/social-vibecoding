@@ -33,6 +33,7 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
     'tests/recoverable-preview-runtime.test.js',
     'tests/cli-preview-handoff-postgres.test.js',
     'tests/native-preview-manual-postgres.test.js',
+    'tests/native-preview-submission-postgres.test.js',
     'tests/cli-preview-checks.test.js',
     'tests/cli-check-settlement-postgres.test.js',
     'tests/check-retirement.test.js',

@@ -212,3 +212,13 @@ that same failure. No unrelated product or launcher change was made.
 Full preview/check migration remains open. Legacy/global timers and locks are not
 removed by this source/caller cutover; installation/RBAC and production compatibility
 remain separate verification. Logs are named in the local implementation ledger.
+
+
+Changed-head cutover review, 3 October 2026: fetched canonical main explicitly
+observed at `ad6085df6efd4ff88f345eddacfdda56780a3e38`. The work branch still
+contains the recorded `da6ecb00880cab9a1749a6256992fb3d1706d9be` integration;
+this review does not claim the entire newer main is merged. Relevant comparison
+of proposal-update, reviewed-head/summary/shots policies and source-head adapters
+found the newer `applyProposedTitle` export, adopted here. Existing source, review,
+GitHub-link/attribution/ancestry/lease and approval-classification policies remain.
+Broader canonical reconciliation remains open on the full migration checklist.

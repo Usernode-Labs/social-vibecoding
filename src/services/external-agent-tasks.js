@@ -2937,6 +2937,7 @@ async function submitUpdate(deps, params, proposalId) {
     votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
     checksRerun: result.checksRerun === true,
     ...(result.checksRequest ? { checksRequest: result.checksRequest } : {}),
+    ...(result.preparationRequest ? { preparationRequest: result.preparationRequest } : {}),
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT
     // start a staging build for it — the caller has to be told, or the

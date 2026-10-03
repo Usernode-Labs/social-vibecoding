@@ -69,18 +69,22 @@ function createCliPreviewHandoff(pool) {
 
       const sync = action.type === 'AcceptCliSyncHead';
       const manual = action.type === 'AcceptNativeManualHead';
-      if (manual || sync || action.type === 'AcceptCliPreviewHead') {
-        if (sync) {
+      const submission = action.type === 'AcceptNativeSubmissionHead';
+      if (manual || sync || submission || action.type === 'AcceptCliPreviewHead') {
+        if (sync || submission) {
+          if (sync) {
+            await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
+              handoff_uploaded_sha = $2::text, handoff_local_commit_sha = NULL,
+              handoff_upload_checked_sha = NULL WHERE id = $1`, [action.sessionId, action.headSha]);
+          }
           const freshness = require('../summary-freshness');
-          await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
-            handoff_uploaded_sha = $2::text, handoff_local_commit_sha = NULL,
-            handoff_upload_checked_sha = NULL, last_activity_at = NOW(),
+          await client.query(`UPDATE chat_sessions SET last_activity_at = NOW(),
             ${freshness.invalidateHeadMoveSql('$2')},
             reviewed_head_sha = CASE WHEN status = 'promoted' THEN $2::text ELSE reviewed_head_sha END,
             approval_epoch = $3, stale_notified_at = NULL WHERE id = $1`,
           [action.sessionId, action.headSha, decision.change.approvalEpoch]);
-          // Use the existing shots policy with this client, never a nested
-          // transaction that could commit independently of head/work admission.
+          // Same client and aggregate boundary: approval, summary and shots
+          // cannot commit independently of the accepted head and required work.
           await require('../shots-state').markStaleForHeadWithClient(client, action.sessionId, action.headSha);
         } else if (manual) {
           await client.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [action.sessionId]);
@@ -91,23 +95,32 @@ function createCliPreviewHandoff(pool) {
         }
         // Preserve the serving preview while the candidate prepares.
         const phase = decision.change.deferPreparation ? 'reconciling' : 'building';
-        const pending = await require('../visuals').setChecksPending(
-          client, action.sessionId, action.headSha, phase, manual ? 'manual-recheck' : sync ? 'sync-main' : 'commit-push',
-        );
-        if (!pending) throw new Error('Accepted CLI head could not admit required checks');
-        if (decision.change.deferPreparation) {
-          await client.query(`UPDATE chat_sessions SET check_phase = 'reconciling',
-            check_error_detail = 'Sync revision accepted; preparation is blocked while admission is disabled.',
-            checks_progress = $2::jsonb WHERE id = $1`, [action.sessionId, JSON.stringify({
-            owner: 'cli-preview-handoff', reason: 'sync_admission_disabled', headSha: action.headSha,
-          })]);
+        if (decision.change.checksCarry) {
+          // Mechanical changes retain the existing green verdict/graduation;
+          // the new candidate still needs preparation and authorized activation.
+          await client.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1',
+            [action.sessionId, action.headSha]);
+        } else {
+          const pending = await require('../visuals').setChecksPending(
+            client, action.sessionId, action.headSha, phase,
+            manual ? 'manual-recheck' : sync ? 'sync-main' : 'commit-push',
+          );
+          if (!pending) throw new Error('Accepted head could not admit required checks');
         }
         const reconciliation = decision.change.deferPreparation ? {
-          owner: 'cli-preview-handoff', reason: 'sync_admission_disabled',
+          owner: submission ? 'native-preview-requests' : 'cli-preview-handoff',
+          reason: submission ? decision.change.blockedReason : 'sync_admission_disabled',
+          ...(submission ? { source: 'native-submission', checksCarry: decision.change.checksCarry } : {}),
           headSha: action.headSha, admissionId: action.actionId,
         } : null;
-        await client.query(`INSERT INTO cli_preview_handoffs (session_id, head_sha, started_status, admission_id, phase)
-          VALUES ($1,$2,$3,$4,'preparing') ON CONFLICT (session_id) DO UPDATE
+        if (reconciliation && !decision.change.checksCarry) {
+          await client.query(`UPDATE chat_sessions SET check_phase = 'reconciling',
+            check_error_detail = 'Revision accepted; preparation is waiting for its reconciliation owner.',
+            checks_progress = $2::jsonb WHERE id = $1`, [action.sessionId, JSON.stringify(reconciliation)]);
+        }
+        await client.query(`INSERT INTO cli_preview_handoffs
+          (session_id, head_sha, started_status, admission_id, phase, sync_reconciliation, sync_reconcile_at)
+          VALUES ($1,$2,$3,$4,'preparing',$5::jsonb,CASE WHEN $5::jsonb IS NULL THEN NULL ELSE NOW() END) ON CONFLICT (session_id) DO UPDATE
           SET head_sha = EXCLUDED.head_sha, started_status = EXCLUDED.started_status,
             admission_id = EXCLUDED.admission_id, phase = 'preparing', checks_recovery = NULL,
             sync_reconciliation = $5::jsonb, sync_reconcile_at = CASE WHEN $5::jsonb IS NULL THEN NULL ELSE NOW() END,
@@ -123,9 +136,12 @@ function createCliPreviewHandoff(pool) {
       if (decision.change.resumeSync) {
         await client.query(`UPDATE cli_preview_handoffs SET sync_reconciliation = NULL,
           sync_reconcile_at = NULL WHERE session_id = $1`, [action.sessionId]);
-        const pending = await require('../visuals').setChecksPending(client, action.sessionId, action.headSha, 'building', 'sync-main');
-        if (!pending) throw new Error('Sync reconciliation could not admit required checks');
-        await client.query('UPDATE chat_sessions SET check_error_detail = NULL WHERE id = $1', [action.sessionId]);
+        if (!state.handoff.sync_reconciliation.checksCarry) {
+          const pending = await require('../visuals').setChecksPending(client, action.sessionId, action.headSha,
+            'building', ordinaryNative(state.session) ? 'commit-push' : 'sync-main');
+          if (!pending) throw new Error('Head reconciliation could not admit required checks');
+          await client.query('UPDATE chat_sessions SET check_error_detail = NULL WHERE id = $1', [action.sessionId]);
+        }
       }
       if (decision.change.recovery) {
         const recovery = decision.change.recovery;

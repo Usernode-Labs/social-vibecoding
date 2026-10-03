@@ -22,6 +22,7 @@ const SUITES = [
   'tests/cli-preview-handoff-postgres.test.js',
   'tests/native-preview-manual-postgres.test.js',
   'tests/native-preview-recheck-postgres.test.js',
+  'tests/native-preview-submission-postgres.test.js',
   'tests/native-preview-request-client.test.js',
   'tests/cli-handoff-sync.test.js',
   'tests/sync-progress.test.js',

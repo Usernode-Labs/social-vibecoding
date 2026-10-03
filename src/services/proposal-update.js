@@ -426,6 +426,8 @@ async function updateProposalFromForkBranch(deps, params) {
         // path does: re-running the checks against corrected capture routes
         // is the same operation the "Re-run checks" button performs.
         recovery: deps.recovery,
+        nativeWork: deps.nativeWork,
+        inspectSubmissionReview: deps.inspectSubmissionReview,
         // Carried through so the session tails' three real-work modules stay
         // injectable from the caller's deps — sessionParts() below fills in
         // the live modules for every key nobody overrode.
@@ -1001,14 +1003,20 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
 // paths } — `changed` false when nothing was supplied OR when what was
 // supplied is what the row already said, which is what stops a duplicate
 // resubmit from kicking a pointless capture run.
+function testingMetadataChanges(session, testing) {
+  return {
+    pathsChanged: !!testing?.testingPaths && !samePaths(session.testing_paths, testing.testingPaths),
+    stepsChanged: !!testing?.testingMd && String(session.testing_md || '') !== testing.testingMd,
+  };
+}
+
 async function applyTestingMetadata({ pool, session, testing, strict = false }) {
   const unchangedResult = (paths) => ({
     changed: false, pathsChanged: false, stepsChanged: false, paths: paths || null,
   });
   if (!testing) return unchangedResult(null);
 
-  const pathsChanged = !!testing.testingPaths && !samePaths(session.testing_paths, testing.testingPaths);
-  const stepsChanged = !!testing.testingMd && String(session.testing_md || '') !== testing.testingMd;
+  const { pathsChanged, stepsChanged } = testingMetadataChanges(session, testing);
   if (!pathsChanged && !stepsChanged) return unchangedResult(testing.testingPaths);
 
   const sets = [];
@@ -1449,6 +1457,21 @@ function defaultBusyCheck(session) {
 // branch in the app's own repository that only the platform can write, so
 // the author's commits are copied onto it with the platform's credential and
 // under a lease.
+async function persistNativeSubmissionDetails(ctx, client, headSha) {
+  const testing = await applyTestingMetadata({
+    pool: client,
+    session: { ...ctx.session },
+    testing: ctx.testing,
+    strict: true,
+  });
+  if (ctx.session.status === 'active' || ctx.session.status === 'paused') {
+    await recordChangesReadyCard({
+      pool: client, session: ctx.session, sessionId: ctx.sessionId, headSha, strict: true,
+    });
+  }
+  return testing;
+}
+
 async function advanceAppRepoBranch(ctx) {
   const {
     pool, config, gh, head, votes, prImportSync, githubPublic, prMetadata, username, session,
@@ -1503,6 +1526,9 @@ async function advanceAppRepoBranch(ctx) {
   // branch best-effort, and a session whose creation failed has a pull request
   // and possibly a tally pinned to it), so it keeps the answer it has always
   // had rather than being quietly re-created underneath a proposal.
+  const nativeRequests = require('./native-preview-requests');
+  const durableSubmission = typeof pool.connect === 'function' && !session.is_headless
+    && await nativeRequests.ownsManualRequests(pool, config, session);
   let liveHead;
   let firstLanding = false;
   try {
@@ -1522,9 +1548,7 @@ async function advanceAppRepoBranch(ctx) {
       return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
     }
     liveHead = String(liveHead).trim().toLowerCase();
-    if (expectedHeadSha && expectedHeadSha !== liveHead) {
-      return movedError(liveHead);
-    }
+    if (!durableSubmission && expectedHeadSha && expectedHeadSha !== liveHead) return movedError(liveHead);
   } else {
     // `expectedHeadSha` names the commit the caller believes this proposal is
     // at. There is no such commit, so there is nothing for it to disagree
@@ -1542,12 +1566,46 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!verified.ok) return renameHeadFailure(verified, branch);
 
+  let replayLanded = false;
+  if (expectedHeadSha && liveHead && expectedHeadSha !== liveHead) {
+    // A response can be lost after the lease push or after DB acceptance.
+    // Only the freshly verified same source head may reconcile that mutation.
+    if (durableSubmission && verified.headSha === liveHead) {
+      replayLanded = session.checks_commit_sha === expectedHeadSha;
+      if (!replayLanded && session.checks_commit_sha === liveHead) {
+        const { rows } = await pool.query(`SELECT action_id FROM cli_preview_decisions
+          WHERE session_id = $1 AND action->>'type' = 'AcceptNativeSubmissionHead'
+            AND action->>'headSha' = $2 AND action->>'previousChecks' = $3
+            AND decision->>'accepted' = 'true' LIMIT 1`,
+        [sessionId, liveHead, expectedHeadSha]);
+        replayLanded = rows.length > 0;
+      }
+    }
+    if (!replayLanded) return movedError(liveHead);
+  }
+  const sameBranchHead = !firstLanding && verified.headSha === liveHead;
+  let committedRetry = false;
+  const metadataChanges = testingMetadataChanges(session, ctx.testing);
+  const testingMatches = !metadataChanges.pathsChanged && !metadataChanges.stepsChanged;
+  if (durableSubmission && sameBranchHead && !ctx.recheck && testingMatches) {
+    // Headerless retries of a changed-head submission must not manufacture a
+    // same-head recheck. A subsequent explicit/metadata recheck keeps its own
+    // accepted intent and continues through resubmitUnchanged instead.
+    const { rows } = await pool.query(`SELECT action->>'type' AS type FROM cli_preview_decisions
+      WHERE session_id = $1 AND action->>'headSha' = $2 AND decision->>'accepted' = 'true'
+        AND action->>'type' IN ('AcceptNativeSubmissionHead', 'RequestNativeRecheck')
+      ORDER BY id DESC LIMIT 1`, [sessionId, liveHead]);
+    committedRetry = rows[0]?.type === 'AcceptNativeSubmissionHead';
+  }
+  const recoverSubmission = durableSubmission && sameBranchHead
+    && (replayLanded || committedRetry || session.checks_commit_sha !== liveHead);
+
   if (!firstLanding) {
     // Nothing to push — but a resubmit may still be correcting the capture
     // routes, which is the one thing that used to have no way through (#1199).
-    if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
+    if (sameBranchHead && !recoverSubmission) return resubmitUnchanged(ctx, liveHead, 'update_branch');
 
-    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
+    const ancestry = sameBranchHead ? null : await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
     if (ancestry) return ancestry;
   }
 
@@ -1567,18 +1625,20 @@ async function advanceAppRepoBranch(ctx) {
   // the same gate in front of it; `mirrorForkBranch` is not a second
   // implementation of anything, it is the one the mirror rung already uses,
   // pointed at the name this row recorded instead of one it mints.
-  const pushed = firstLanding
-    ? await head.mirrorForkBranch({
-      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch,
-    })
-    : await head.pushForkBranchToAppBranch({
+  let pushed = { ok: true };
+  if (firstLanding) {
+    pushed = await head.mirrorForkBranch({
+      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin, targetBranch,
+    });
+  } else if (!sameBranchHead) {
+    pushed = await head.pushForkBranchToAppBranch({
       githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
       targetBranch, expectedRemoteSha: liveHead, sessionId,
     });
+  }
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
-  if (session.source !== 'imported') {
+  if (!durableSubmission && session.source !== 'imported') {
     // The push has moved this proposal's code. Keep the previous summary out
     // of every reader even if the later PR metadata or preview work fails.
     await summaryFreshness.invalidate(pool, sessionId);
@@ -1587,10 +1647,51 @@ async function advanceAppRepoBranch(ctx) {
 
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
-  const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  let admission = null;
+  let move = { kind: 'same' };
+  let testingApplied;
+  if (durableSubmission) {
+    // Git is external to PostgreSQL. Verify the landed exact head before the
+    // aggregate transaction can accept it and create its required work.
+    let landedHeadSha;
+    try {
+      landedHeadSha = await gh.getBranchSha(owner, repo, targetBranch);
+      if (!SHA_RE.test(String(landedHeadSha || ''))) throw new Error('Landed head unavailable');
+      if (landedHeadSha !== verified.headSha) return movedError(landedHeadSha);
+      if (session.status === 'promoted') {
+        const inspect = ctx.inspectSubmissionReview || require('./cli-handoff-sync').inspectReviewedHeadMove;
+        move = await inspect(session, { owner, repo }, verified.headSha, {});
+      }
+    } catch (error) {
+      log.warn('proposal-update', 'Pushed revision inspection needs reconciliation', {
+        sessionId, headSha: verified.headSha, err: error.message,
+      });
+      return fail('submission_revision_unverified', 'The push landed, but its revision could not be verified for preparation. Retry this submission.', {
+        retryable: true, headSha: verified.headSha, reconciliation: { owner: 'native-preview-requests' },
+      });
+    }
+    const work = ctx.nativeWork || nativeRequests.createNativePreviewWork(pool, config);
+    admission = await work.admitSubmission({
+      session, headSha: verified.headSha, landedHeadSha, moveKind: move.kind,
+      async persistDetails(client) {
+        testingApplied = await persistNativeSubmissionDetails(ctx, client, verified.headSha);
+      },
+    });
+    if (!admission.accepted) {
+      return fail('native_submission_reconciliation_required', 'The pushed revision needs reconciliation before preparation can be accepted.', {
+        reason: admission.reason, retryable: true, headSha: verified.headSha,
+        reconciliation: { owner: 'native-preview-requests' },
+      });
+    }
+    // A committed admission replay must not write metadata outside its receipt.
+    testingApplied ||= { changed: false, paths: session.testing_paths || null };
+    Object.assign(session, await reloadSession(pool, sessionId));
+  } else {
+    testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  }
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
-    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
+    visibleChanges: ctx.visibleChanges, headChanged: !durableSubmission && liveHead !== verified.headSha,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1660,6 +1761,36 @@ async function advanceAppRepoBranch(ctx) {
     ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
+
+  if (admission) {
+    // No selected web builder, direct preview reset or detached check handoff.
+    // Required work and continuation now belong to the existing durable owner.
+    if (!admission.replayed && promoted && move.kind !== 'same') {
+      await votes.announceNativeHeadMove({
+        pool, session, liveHead: verified.headSha, move,
+        keepsApprovals: ['initialized', 'mechanical', 'resolved'].includes(move.kind),
+        checksWaiting: !!admission.blocked,
+      }).catch(error => log.warn('proposal-update', 'Native submission notification failed', {
+        sessionId, err: error.message,
+      }));
+    }
+    const clearsApprovals = promoted && !['same', 'initialized', 'mechanical', 'resolved'].includes(move.kind);
+    return {
+      ...landed,
+      votesCleared: !admission.replayed && clearsApprovals ? votesCleared : 0,
+      votesClearing: !admission.replayed && clearsApprovals ? 'now' : 'none',
+      checksRerun: !admission.blocked && !admission.checksCarry,
+      previewRebuilding: !admission.blocked,
+      preparationQueued: !admission.blocked,
+      ...(session.status === 'paused' ? { resumeRequired: true } : {}),
+      preparationRequest: {
+        status: admission.blocked ? 'blocked' : 'durable', replayed: !!admission.replayed,
+        requestId: admission.requestId,
+        workId: admission.work?.id || null, workStatus: admission.work?.status || null,
+        ...(admission.blocked ? { code: admission.work.code, reconciliation: admission.work.reconciliation } : {}),
+      },
+    };
+  }
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
   //
@@ -1981,7 +2112,7 @@ async function settlePausedSession({ pool, session, sessionId, headSha, parts })
 // neither — leaving its owner with no way to put the change up for a vote at
 // all (session 3401). Best-effort: the push already landed, so a failed
 // insert is logged, never fatal.
-async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
+async function recordChangesReadyCard({ pool, session, sessionId, headSha, strict = false }) {
   const sha8 = SHA_RE.test(String(headSha || '')) ? String(headSha).slice(0, 8) : null;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -1996,9 +2127,12 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
         prNumber: session.pr_number || null,
         prUrl: session.pr_url || null,
       })]
-  ).catch((err) => log.warn('proposal-update', 'changes-ready card insert failed (non-fatal)', {
-    sessionId, err: err.message,
-  }));
+  ).catch((err) => {
+    if (strict) throw err;
+    log.warn('proposal-update', 'changes-ready card insert failed (non-fatal)', {
+      sessionId, err: err.message,
+    });
+  });
 }
 
 // ── The imported pull request ──────────────────────────────────────────
@@ -2260,6 +2394,7 @@ function unchanged(session, headSha, via) {
 }
 
 module.exports = {
+  applyProposedTitle,
   branchHomeOf,
   authorCanPush,
   headRepoOwnerOf,

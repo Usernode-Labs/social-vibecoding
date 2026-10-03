@@ -6,7 +6,7 @@ const { createCliPreviewHandoff } = require('./store');
 const { ordinaryNative, nativeAction } = require('./source-policy');
 const { checksSettled } = require('./reducer');
 const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
-const { createPreviewWork } = require('../preview-flow/work');
+const { createPreviewWork, PREPARE_RUNTIME } = require('../preview-flow/work');
 
 const CONTINUE = 'native-cli-preview-continuation';
 
@@ -24,8 +24,8 @@ function selectedManual(config, session) {
 }
 
 async function enrolled(pool, sessionId) {
-  const { rows } = await pool.query('SELECT session_id, flow_id FROM cli_preview_handoffs WHERE session_id = $1', [sessionId]);
-  return rows.some(row => Number(row.session_id) === Number(sessionId) && !!row.flow_id);
+  const { rows } = await pool.query('SELECT session_id, flow_id, sync_reconciliation FROM cli_preview_handoffs WHERE session_id = $1', [sessionId]);
+  return rows.some(row => Number(row.session_id) === Number(sessionId) && (!!row.flow_id || !!row.sync_reconciliation));
 }
 
 function createNativePreviewWork(pool, config, {
@@ -259,9 +259,86 @@ function createNativePreviewWork(pool, config, {
 
   function syncBlocked(state) {
     return {
-      status: 'blocked', code: 'sync_admission_disabled',
+      status: 'blocked', code: state.sync_reconciliation.reason,
       reconciliation: state.sync_reconciliation,
     };
+  }
+
+  async function admitSubmission({ session, headSha, landedHeadSha, moveKind, persistDetails = async () => {} }) {
+    if (landedHeadSha !== headSha) return { accepted: false, reason: 'submission_head_unverified' };
+    if (selectedManual(config, session) && !require('../preview-lifecycle').enabled(config)) {
+      throw new Error('Native submission requires the checks lifecycle');
+    }
+    return runtime.transact(async transaction => {
+      const current = await transaction.withSession(session.id, async (client, row) => ({
+        session: row,
+        handoff: (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [session.id])).rows[0],
+      }));
+      const state = current.handoff;
+      // Replay before inspecting mutable admission switches or old snapshots.
+      // The producer freshly verifies source attribution and the landed branch.
+      if (state?.head_sha === headSha && current.session.checks_commit_sha === headSha
+          && current.session.user_id === session.user_id && ordinaryNative(current.session)
+          && current.session.branch_name === session.branch_name
+          && ['active', 'paused', 'promoted'].includes(current.session.status)
+          && (current.session.status !== 'promoted' || current.session.reviewed_head_sha === headSha)) {
+        let work = state.sync_reconciliation ? await resumeSync(transaction, state)
+          : await readWork(transaction, session.id, state.preparation_work_id);
+        const original = await transaction.withSession(session.id, async client => {
+          return (await client.query(`SELECT action_id, decision FROM cli_preview_decisions
+            WHERE session_id = $1 AND action->>'type' = 'AcceptNativeSubmissionHead'
+              AND action->>'headSha' = $2 AND decision->>'accepted' = 'true'
+            ORDER BY id DESC LIMIT 1`, [session.id, headSha])).rows[0];
+        });
+        // A later same-head manual repair has its own intent. It cannot replace
+        // the original source submission's receipt, including completed retries.
+        if (original && work?.status !== 'blocked') {
+          work = await transaction.withSession(session.id, async client => {
+            return (await client.query(`SELECT * FROM execution_work_requests
+              WHERE session_id = $1 AND caused_by = $2 AND workflow = $3`,
+            [session.id, original.action_id, PREPARE_RUNTIME])).rows[0];
+          });
+          if (!work) throw new Error('Accepted native submission has no required preparation receipt');
+        }
+        const receipt = original || await transaction.withSession(session.id, async client => {
+          return (await client.query('SELECT decision FROM cli_preview_receipts WHERE session_id = $1 AND action_id = $2',
+            [session.id, state.admission_id])).rows[0];
+        });
+        return {
+          accepted: true, replayed: true, work, blocked: work?.status === 'blocked',
+          requestId: original?.action_id || state.admission_id,
+          checksCarry: receipt?.decision.change.checksCarry === true,
+          approvalEpoch: Number(current.session.approval_epoch || 0),
+        };
+      }
+      const action = {
+        type: 'AcceptNativeSubmissionHead', actionId: randomUUID(), sessionId: session.id,
+        userId: session.user_id, headSha, landedHeadSha, moveKind,
+        expectedStatus: session.status, branchName: session.branch_name,
+        previousChecks: session.checks_commit_sha || null,
+        previousPreviewName: session.staging_runtime_name || null,
+        previousReviewed: session.reviewed_head_sha || null,
+        previousEpoch: Number(session.approval_epoch || 0),
+        previousCheckState: session.check_state || null,
+        previousCheckPhase: session.check_phase || null,
+        admissionEnabled: selectedManual(config, session),
+      };
+      const accepted = await owner.applyInTransaction(transaction, action);
+      if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
+      await transaction.withSession(session.id, persistDetails);
+      const work = accepted.decision.change.deferPreparation
+        ? syncBlocked(accepted.current.handoff)
+        : (await prepareAccepted(transaction, action)).work;
+      return { accepted: true, work, blocked: work?.status === 'blocked', requestId: action.actionId,
+        checksCarry: accepted.decision.change.checksCarry,
+        approvalEpoch: accepted.decision.change.approvalEpoch };
+    }).catch(error => {
+      // A preparation guard is ordinary waiting. The shared runtime already
+      // rolled back acceptance and its writes; transport/operation errors still
+      // propagate, including an uncertain COMMIT reply.
+      if (error.code !== 'CLI_PREVIEW_ADMISSION_REJECTED') throw error;
+      return { accepted: false, reason: error.message };
+    });
   }
 
   async function admitSync({ session, headSha, workerResult, workerSha, moveKind }) {
@@ -310,10 +387,17 @@ function createNativePreviewWork(pool, config, {
   }
 
   async function resumeSync(transaction, state) {
-    if (!selected(config, { source: 'cli_handoff' })) return syncBlocked(state);
-    assertAdmissionConfig();
+    const native = state.sync_reconciliation.source === 'native-submission';
+    if (native) {
+      const session = await transaction.withSession(state.session_id, async (_client, row) => row);
+      if (!selectedManual(config, session)) return syncBlocked(state);
+      if (!require('../preview-lifecycle').enabled(config)) throw new Error('Native submission requires the checks lifecycle');
+    } else {
+      if (!selected(config, { source: 'cli_handoff' })) return syncBlocked(state);
+      assertAdmissionConfig();
+    }
     const accepted = await owner.applyInTransaction(transaction, {
-      type: 'ResumeCliSyncPreparation', actionId: randomUUID(),
+      type: native ? 'ResumeNativeSubmissionPreparation' : 'ResumeCliSyncPreparation', actionId: randomUUID(),
       sessionId: state.session_id, headSha: state.head_sha, admissionId: state.admission_id,
     });
     if (!accepted.decision.accepted) {
@@ -490,8 +574,9 @@ function createNativePreviewWork(pool, config, {
       const state = await transaction.withSession(sessionId, async client => {
         return (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0];
       });
-      if (!state?.flow_id) return null;
+      if (!state) return null;
       if (state.sync_reconciliation) return resumeSync(transaction, state);
+      if (!state.flow_id) return null;
       const activeId = state.continuation_work_id || state.preparation_work_id;
       const active = await readWork(transaction, sessionId, activeId);
       const session = await transaction.withSession(sessionId, async (_client, row) => row);
@@ -551,6 +636,7 @@ function createNativePreviewWork(pool, config, {
 
   return {
     admit,
+    admitSubmission,
     admitSync,
     admitManual,
     manualReceipt,
