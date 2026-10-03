@@ -42,6 +42,17 @@ import { improveStore } from '../improve/improve-store.js';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 
+/**
+ * The line under the preview's bar. A project that is just yours goes live
+ * when you vote it in; anywhere else members try the change before they
+ * vote. Either way the preview's data is its own.
+ */
+export function previewBannerText(solo: boolean): string {
+  return solo
+    ? "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over."
+    : "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.";
+}
+
 export function StagingOverlay(): ReactNode {
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -237,11 +248,16 @@ export function StagingOverlay(): ReactNode {
         </button>
       </div>
       {/*
-          Explains why this change isn't live yet — a common point of
-          confusion the first time someone previews their own PR.
+          Explains why this change isn't live yet, a common point of
+          confusion the first time someone previews their own PR, and that
+          the preview keeps its own copy of the app's data: it runs on a
+          clone of the database, so what you add here never reaches the live
+          app. It does not say "only you can see this": other members open
+          previews too, to try a change before they vote. On a project that is
+          just yours (`solo`, from stagingBridge.setAudience) it says so.
       */}
       <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
-        Private preview. Only you can see this until the app's users vote your change in.
+        {previewBannerText(state.solo)}
       </div>
       <div className="relative flex-1">
         {/*

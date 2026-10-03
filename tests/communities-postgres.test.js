@@ -286,6 +286,18 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         'a private app\'s community is as invisible as the app');
       assert.equal((await call('POST', `/api/apps/${hidden.slug}/membership`, { joined: true })).status, 404,
         'and cannot be joined from outside');
+
+      // The app's own record says who it is for as well, in the list's
+      // words: the preview banner and the vote picker read it off
+      // AppView.appData, which is this payload.
+      assert.equal((await call('GET', `/api/apps/${a.slug}`)).body.app.audience, 'open');
+      as = owner;
+      await collaborate(hidden.id, owner.id);
+      assert.equal((await call('GET', `/api/apps/${hidden.slug}`)).body.app.audience, 'solo',
+        'a private project with one person in it is just theirs');
+      await collaborate(hidden.id, viewer.id, 'invited');
+      assert.equal((await call('GET', `/api/apps/${hidden.slug}`)).body.app.audience, 'invited',
+        'and stops being so the moment someone is invited');
     } finally {
       await done();
     }

@@ -78,3 +78,40 @@ test('the sheet sends its line with the vote, so castVote does not ask again', (
   assert.match(WORKSHOP, /\(k === 'y' \|\| k === 'Y'\) && sheet === 'vote'\) \{ setVoteSide\('yes'\); return; \}/);
   assert.match(WORKSHOP, /\(k === 'n' \|\| k === 'N'\) && sheet === 'vote'\) \{ setVoteSide\('no'\); return; \}/);
 });
+
+// #22: on a project that is just yours, the Yes line is a note: "for the
+// group" spoke to a group a solo project does not have. The form reads who
+// the row's project is for from the hub's shared community read
+// (community-card.tsx useCommunity), handed in here as that import so the
+// answer can be set. The No side is unchanged, its line included.
+test('#22: on a solo project the Yes line is a note, asked of the row\'s own project; No is unchanged', () => {
+  const real = loadTsx('frontend/src/features/dev-board/workshop/community-card.tsx');
+  const asked = [];
+  let audience = 'solo';
+  const { NeedsVoteForm: SoloForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx', {
+    stubs: {
+      './community-card': {
+        ...real,
+        useCommunity: (slug) => { asked.push(slug); return { audience }; },
+      },
+    },
+  });
+  const draw = (over) => renderToHtml(createElement(SoloForm, {
+    row: reelRows([item])[0], slug: 'open-project', side: 'yes', line: '',
+    onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+    ...(over || {}),
+  }));
+
+  const yes = draw();
+  assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(yes, /for the group/);
+  assert.deepEqual(asked.slice(-1), ['demo-app'], 'the row\'s project, not the page\'s');
+
+  const no = draw({ side: 'no' });
+  assert.match(no, /What’s not working for you\? One line is plenty\./);
+  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'No still needs its line');
+
+  audience = 'invited';
+  assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');
+  assert.match(WORKSHOP, /<NeedsVoteForm\s+row=\{row\}\s+slug=\{slug\}/, 'the sheet hands the form the page\'s project for rows without their own');
+});

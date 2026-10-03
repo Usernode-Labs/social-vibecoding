@@ -215,7 +215,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 16 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 18 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
@@ -225,8 +225,9 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // independently reviewable, and 900017 in #1251 — the untouched row
     // mock proposal 9000013 links to, so "an issue with an open proposal
     // is still on the board" is reviewable without any other work state
-    // muddying it).
-    assert.strictEqual(body.issues.length, 22);
+    // muddying it, and 900018 for the request the Homeroom bot is building,
+    // which carries a synthetic `bot` and nothing else).
+    assert.strictEqual(body.issues.length, 23);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -261,11 +262,101 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     assert.strictEqual(draft.sessionId, 900016);
 
     // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 900006, 900014, 1, 2, 3, 4, 5]) {
+    for (const n of [900001, 900002, 900004, 900006, 900014, 900018, 1, 2, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
     }
   } finally {
     server.close();
+  }
+});
+
+// ── #17: the Homeroom bot's work on a request ───────────────────────────
+//
+// `bot` ({ what, since }) is read with homeroom-bot-progress.js's
+// projectsBusy queries (botWorkByIssue), against PostgreSQL in
+// tests/request-bot-work-postgres.test.js. Here: the wiring, the staging
+// mock, and that the list never fails over it.
+
+test('#17: each request carries what the Homeroom bot is doing on it, from the projectsBusy reads', async () => {
+  const asked = [];
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/FROM homeroom_bot_queue q/.test(s) && /'reading' AS what/.test(s) && /'building' AS what/.test(s)) {
+      asked.push(params);
+      return {
+        rows: [
+          { app_id: 1, issue_number: 2, since: '2026-10-03T10:00:00Z', what: 'reading' },
+          { app_id: 1, issue_number: 4, since: '2026-10-03T09:40:00Z', what: 'building' },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const byNumber = new Map((await res.json()).issues.map((i) => [i.number, i]));
+    assert.deepStrictEqual(byNumber.get(2).bot, { what: 'reading', since: '2026-10-03T10:00:00Z' });
+    assert.deepStrictEqual(byNumber.get(4).bot, { what: 'building', since: '2026-10-03T09:40:00Z' });
+    for (const n of [1, 3, 5]) assert.strictEqual(byNumber.get(n).bot, null, `#${n}: the bot is not on it`);
+    // Never in_progress: the bot is not a person to claim it from.
+    assert.strictEqual(byNumber.get(4).in_progress, null);
+    assert.strictEqual(asked.length, 1, 'one read for the whole list');
+    assert.deepStrictEqual(asked[0][0], [1], 'for this app alone');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#17: a failed read of the bot\'s work leaves the list whole, with no `bot` anywhere', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/'building' AS what/.test(String(sql))) throw new Error('boom');
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.length, 5);
+    assert.ok(body.issues.every((i) => i.bot === null));
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#17: staging gives mock 900018, and only it, a synthetic bot build; production never does', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    const byNumber = new Map((await res.json()).issues.map((i) => [i.number, i]));
+    const bot = byNumber.get(900018).bot;
+    assert.strictEqual(bot.what, 'building');
+    assert.ok(Date.parse(bot.since) < Date.now(), 'started a while ago');
+    assert.strictEqual(byNumber.get(900018).in_progress, null, 'and nothing else marks it');
+    assert.strictEqual(byNumber.get(900018).headless, null);
+    for (const [n, issue] of byNumber) {
+      if (n !== 900018) assert.strictEqual(issue.bot, null, `#${n} has no bot work`);
+    }
+    // Opened by its address, the same.
+    const one = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900018?demo=1`);
+    assert.strictEqual((await one.json()).issue.bot.what, 'building');
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const port = prod.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    assert.ok((await res.json()).issues.every((i) => i.bot === null), 'production synthesizes nothing');
+  } finally {
+    prod.close();
   }
 });
 

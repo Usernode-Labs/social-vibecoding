@@ -6264,6 +6264,7 @@ module.exports = {
   describeStop,
   relaySpend,
   STOP_SETTLE_MS,
+  ABANDONED_LIVE_WINDOW_DAYS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
   TRIPWIRE_VERDICTS,

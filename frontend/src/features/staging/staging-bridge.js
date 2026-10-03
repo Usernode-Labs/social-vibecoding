@@ -78,6 +78,14 @@ export const stagingBridge = {
   },
 
   /**
+   * Who the previewed app is for (`apps.audience`: 'open' | 'invited' |
+   * 'solo'). Only words the banner; never touches the iframe.
+   */
+  setAudience(audience) {
+    stagingStore.set({ solo: audience === 'solo' });
+  },
+
+  /**
    * #816: an EXPLICIT '' clears a line; `undefined` leaves it alone.
    * #3413: the retry label is reset on every call, so only a caller that
    * names it ("Retry preview") gets anything but "Retry sign-in".

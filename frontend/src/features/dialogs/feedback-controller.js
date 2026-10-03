@@ -1727,7 +1727,7 @@ export function init() {
     // The header's #feedback-btn used to be wired here. THE UI OVERHAUL
     // retired it: the dialog's entry point is the Improve panel's "Give
     // feedback" row now (features/improve/improve-controller.js's
-    // giveFeedback(), which opens it with `fromDev: true` so the panel's own
+    // giveFeedback(), which opens it with `target: 'app'` so the panel's own
     // app is preselected as the target). `App.openFeedbackModal` is unchanged
     // and still published below, so every other caller — the Dev "+" menu's
     // "File an issue", App._applyFeedbackShot, the rescued-draft notice — is

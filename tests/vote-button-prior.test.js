@@ -119,3 +119,34 @@ test('the live card\'s band carries the kudos slot the thanks pill lands in; not
   const head = AppView._proposalCardModel(proposal({ my_vote: null }), { noNav: true });
   assert.equal((head.actions || []).filter((a) => a.kudos != null).length, 0, 'the detail head lists its own');
 });
+
+// #22: the Yes spec also says when the project is just the viewer's
+// (`audience` 'solo', from the app's own record, AppView.appData), so the
+// picker's optional Yes line is a note rather than "a line for the group".
+// The governance pair carries it the same way. The No side carries nothing.
+test('#22: on a solo project the Yes spec is marked solo, for proposals and group decisions alike', () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience: 'solo' };
+  const [yes, no] = AppView._cardVoteButtonSpecs(proposal({ my_vote: null }));
+  assert.equal(yes.solo, true);
+  assert.ok(!('solo' in no), 'the No side is worded the same either way');
+  assert.equal(yes.prior, undefined, 'and nothing else changes');
+
+  for (const audience of ['invited', 'open', undefined]) {
+    AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience };
+    const [groupYes] = AppView._cardVoteButtonSpecs(proposal({ my_vote: null }));
+    assert.ok(!('solo' in groupYes), `${audience}: a group, or nothing said, keeps "for the group"`);
+  }
+
+  AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience: 'solo' };
+  AppView._govProposals = [];
+  const gov = AppView._govCardModel({
+    id: 31, kind: 'rename', title: 'Rename the app', status: 'open', payload: {},
+    up_count: 0, down_count: 0, my_vote: null, created_at: '2026-06-01T00:00:00Z', username: 'evan',
+  });
+  const govYes = (gov.actions || []).find((a) => a.key === 'yes');
+  assert.ok(govYes, 'the group decision offers its vote');
+  assert.equal(govYes.solo, true);
+  assert.ok(!('solo' in (gov.actions || []).find((a) => a.key === 'no')));
+  delete AppView.appData;
+});

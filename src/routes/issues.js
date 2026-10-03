@@ -123,6 +123,7 @@ const {
 // #2431: which proposal closed an issue, or is working on it. One query for
 // the whole list, so the board pays for it once and not per card.
 const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
+const { botWorkByIssue } = require('../services/homeroom-bot-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -131,6 +132,20 @@ const MAX_ISSUE_TITLE_LENGTH = 200;
 // issues may deliberately have no description, but an accidental novel must
 // not ride through the app's JSON limit or make the topic unusable.
 const MAX_ISSUE_BODY_LENGTH = 10000;
+
+// What the Homeroom bot is reading or building among an app's requests, by
+// issue number, for each row's `bot` field ({ what, since }, or null). The
+// bot's own sessions never count as `in_progress` (synthetic authors are
+// left out below), so this is the only way a request it is building says
+// so. Best effort: a list is not worth failing over it.
+async function botWorkFor(pool, appId) {
+  try {
+    return await botWorkByIssue(pool, appId);
+  } catch (err) {
+    log.warn('issues', 'Failed to read the Homeroom bot\'s work', { message: err.message });
+    return new Map();
+  }
+}
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
 // Env-var change proposals (kind='secret_change') are in-app governance —
@@ -318,7 +333,22 @@ function stagingMockIssues(repoUrl) {
       + 'is already up for a vote. It must appear on the kanban board (In '
       + 'progress) as well as in the list view — the proposal card in In '
       + 'review is not the only place it exists.', 8),
+    // The request the Homeroom bot is building. The bot does not run in a
+    // preview, so the list route gives this row a synthetic `bot` state and
+    // nothing else: its page says the bot is building it, its main button is
+    // the disabled "Homeroom bot is building…", and it offers no Claim.
+    mk(900018, '[Mock] The Homeroom bot is building this request',
+      'Staging-only mock issue for previewing a request the Homeroom bot is '
+      + 'building. Nobody has claimed it and nobody needs to: the bot is on '
+      + 'it, so the page says so instead of offering Claim or Start work.', 2),
   ];
+}
+
+// Mock 900018's synthetic `bot` state: building for the last twenty minutes.
+// Shared by the list and the single-issue route, so its page reads the same
+// opened from the board or by its address.
+function stagingMockBotWork() {
+  return { what: 'building', since: new Date(Date.now() - 20 * 60 * 1000).toISOString() };
 }
 
 // Staging-only mock GOVERNANCE proposals (DB-issue shaped) for the
@@ -1915,6 +1945,7 @@ function issueRoutes(config) {
       const addressedBy = await resolveIssueProposalRefs(
         pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
       );
+      const botByNumber = await botWorkFor(pool, app.id);
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
@@ -1937,6 +1968,10 @@ function issueRoutes(config) {
             claimsByNumber.get(issue.number),
             req.user.id
           ),
+          // The Homeroom bot reading or building this request right now
+          // ({ what, since }), or null. Its own field, like `headless`: the
+          // bot is never `in_progress`.
+          bot: botByNumber.get(issue.number) || null,
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
@@ -2115,6 +2150,11 @@ function issueRoutes(config) {
           const m = mockInProgress.get(issue.number);
           if (m && !issue.in_progress) issue.in_progress = m;
         }
+        // The Homeroom bot building a request: 900018, which nothing else
+        // marks, and only where no real bot work claimed the number.
+        for (const issue of issues) {
+          if (issue.number === 900018 && !issue.bot) issue.bot = stagingMockBotWork();
+        }
       }
 
       // Community-voted priority + assigned-person summary per issue (the
@@ -2227,7 +2267,9 @@ function issueRoutes(config) {
   // per-viewer work fields (headless run, in-progress, own session) are left
   // empty, because a closed issue's page offers no work on it. `addressed_by`
   // (#2431) is the exception the closed page needs most: the change that
-  // closed it is a record, not an offer of work.
+  // closed it is a record, not an offer of work. `bot` is the other: on an
+  // open issue it says the Homeroom bot is building it, which is what keeps
+  // the page from offering a claim the bot would then step back for.
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues/:number', async (req, res) => {
     try {
@@ -2302,6 +2344,14 @@ function issueRoutes(config) {
       const addressedBy = await resolveIssueProposalRefs(
         pool, app.id, [number], req.user.id
       );
+      // The Homeroom bot's work, as the list carries it, for an OPEN issue:
+      // a request it is building is not one to claim, opened from wherever.
+      // A closed issue has nothing being built on it.
+      let bot = null;
+      if (issue.state !== 'closed') {
+        bot = (await botWorkFor(pool, app.id)).get(number) || null;
+        if (!bot && mock && number === 900018) bot = stagingMockBotWork();
+      }
 
       return res.json({
         issue: {
@@ -2315,6 +2365,7 @@ function issueRoutes(config) {
             || ghLogin,
           headless: null,
           in_progress: null,
+          bot,
           myPrSessionId: null,
           addressed_by: addressedBy.get(number) || null,
           chatCount: (chat && chat.cnt) || 0,

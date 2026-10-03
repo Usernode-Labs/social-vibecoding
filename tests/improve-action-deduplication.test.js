@@ -167,11 +167,13 @@ function menuHarness(touch) {
     // Field-by-field: the options object is the vm realm's.
     App: {
       openFeedbackModal: (opts) => {
-        assert.equal(opts?.fromDev, true, 'the open app is preselected as the target');
+        assert.equal(opts?.fromDev, true, 'the dev-context mode');
+        // #21: `target: 'app'` is what preselects the open app since #2707.
+        assert.equal(opts?.target, 'app', 'the open app is preselected as the target');
         // QA 2026-09-24: and the dialog is told what it was asked for, so it
         // is headed "Ask for a change" rather than "Send feedback".
         assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
-        assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
+        assert.deepEqual(Object.keys(opts), ['fromDev', 'target', 'intent']);
         calls.push('issue');
       },
     },
@@ -282,8 +284,10 @@ test('Ask for a change is a real button[data-plus] row that leads the writeable 
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
   // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
-  // row's own words ("Ask for a change") rather than "Send feedback".
-  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
+  // row's own words ("Ask for a change") rather than "Send feedback". #21:
+  // and with `target: 'app'`, the one thing that preselects the open app
+  // since #2707; `fromDev` alone opened the dialog asking which one.
+  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, target: 'app', intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {
@@ -311,7 +315,7 @@ function improveHarness(currentApp = 'demo') {
     console, Promise,
     App: {
       currentApp,
-      openFeedbackModal: (options) => calls.push(['feedback', options?.fromDev]),
+      openFeedbackModal: (options) => calls.push(['feedback', options?.fromDev, options?.target]),
       switchTab: async (...args) => calls.push(['switch', ...args]),
       navigateToApp: async (...args) => {
         calls.push(['navigate', ...args]);
@@ -355,7 +359,16 @@ function improveHarness(currentApp = 'demo') {
 test('Give feedback still opens the shared dialog for the current app', () => {
   const { Improve, calls } = improveHarness();
   Improve.giveFeedback();
-  assert.deepEqual(calls, [['close'], ['feedback', true]]);
+  // #21: `target: 'app'` preselects the app the change is for. Since #2707
+  // `fromDev` alone opens the dialog asking which one, which is what "Ask
+  // for a change" from inside an app did.
+  assert.deepEqual(calls, [['close'], ['feedback', true, 'app']]);
+});
+
+test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {
+  const { Improve, calls } = improveHarness('other');
+  Improve.giveFeedback();
+  assert.deepEqual(calls, [['close'], ['feedback', undefined, undefined]]);
 });
 
 // #2770 sent New change straight to the app's classic unsent-change screen

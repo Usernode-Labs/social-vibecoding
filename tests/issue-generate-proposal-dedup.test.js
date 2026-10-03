@@ -130,6 +130,27 @@ test('every other outcome also yields exactly one primary', () => {
   assert.ok(hasAction(fresh, 'chooseIssueWork', 5));
 });
 
+// #17: the Homeroom bot building the request is the same shape as a run in
+// flight: one primary, disabled, and nothing that would start the work a
+// second time beside it.
+test('the Homeroom bot building the request: one disabled primary, and no Start work anywhere', () => {
+  const AppView = makeAppView();
+  const bot = { what: 'building', since: '2026-10-03T10:00:00Z' };
+  for (const [surface, opts] of [['board', undefined], ['head', { noNav: true }]]) {
+    const model = AppView._issueCardModel({ ...issue(null), bot }, opts);
+    assert.equal(primaryCount(model), 1, `${surface}: one primary`);
+    assert.match(cardHtml(model), /disabled[^>]*>Homeroom bot is building…</, `${surface}: and it waits`);
+    assert.ok(!hasAction(model, 'chooseIssueWork'), `${surface}: no Start work`);
+    assert.ok(!menuLabels(AppView, model).some((l) => /^(Start more work|Generate proposal)$/.test(l)),
+      `${surface}: none in ⋯ either`);
+  }
+  // Even beside a finished auto-solve run, whose primary would offer one.
+  const model = AppView._issueCardModel({ ...issue({ status: 'ready', outcome: 'spec', sessionId: 90 }), bot });
+  assert.equal(primaryCount(model), 1);
+  assert.ok(!hasAction(model, 'startFromAutoSession'), 'the bot is building it already');
+  assert.ok(!menuLabels(AppView, model).includes('Start more work'), 'nor in ⋯');
+});
+
 // ── Where "Answer & regenerate" goes ──────────────────────────────────
 //
 // A headless run does not post its questions to the issue — it drafts a
