@@ -4515,6 +4515,114 @@ test('#2136 — submit_work answers name the proposal by its pull request first'
   }
 });
 
+// A share refused for an over-long description came back as
+// "import_failed: invalid_request": the route answers
+// `{ error: '<code>', message: '<sentence>' }`, platformError read `error`
+// first, and the sentence that named the field and the limit was dropped.
+test('a refusal shaped { error: code, message } reports the sentence and keeps the code', () => {
+  const err = tools.platformError({
+    ok: false, status: 400,
+    body: { error: 'invalid_request', message: 'description must be at most 4000 characters' },
+  }, 'share_failed');
+  assert.equal(err.structuredContent.code, 'share_failed');
+  assert.equal(err.structuredContent.message, 'description must be at most 4000 characters');
+  assert.equal(err.structuredContent.platformCode, 'invalid_request', 'the route\'s code is not lost');
+  assert.match(err.content[0].text, /^share_failed: description must be at most 4000 characters$/);
+
+  // A sentence in `error` alone is still the sentence, with no code invented from it.
+  const plain = tools.platformError({ ok: false, status: 409, body: { error: 'That PR is already imported.' } }, 'import_failed');
+  assert.equal(plain.structuredContent.message, 'That PR is already imported.');
+  assert.equal(plain.structuredContent.platformCode, undefined);
+  // A code equal to the connector's own is not repeated.
+  const same = tools.platformError({ ok: false, status: 400, body: { error: 'import_failed', message: 'x' } }, 'import_failed');
+  assert.equal(same.structuredContent.platformCode, undefined);
+  // The 429 cap refusal reads its sentence too, not its code.
+  const cap = tools.platformError({
+    ok: false, status: 429, body: { error: 'at_capacity', message: 'You have 3 active sessions.', retryable: true },
+  });
+  assert.equal(cap.structuredContent.code, 'at_capacity');
+  assert.equal(cap.structuredContent.message, 'You have 3 active sessions.');
+});
+
+test('submit_work names a failed share as a share, in the route\'s own words', async () => {
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  svc.submitWork = async () => ({
+    ok: false, code: 'share_failed', message: 'description must be at most 4000 characters', status: 400,
+    platformResult: { ok: false, status: 400, body: { error: 'invalid_request', message: 'description must be at most 4000 characters' } },
+  });
+  const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const res = await c.handlers.get('submit_work')({ taskId: 88, branch: 'my-branch', share: true });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'share_failed', 'not import_failed: nothing was imported');
+    assert.match(res.structuredContent.message, /at most 4000 characters/);
+    assert.equal(res.structuredContent.platformCode, 'invalid_request');
+  } finally {
+    c.restore();
+    svc.submitWork = realSubmit;
+  }
+});
+
+test('submit_work refuses an over-long description on a share or an update before anything is written', async () => {
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  const reached = [];
+  svc.submitWork = async (_deps, params) => {
+    reached.push(params);
+    return { ok: true, shared: !!params.share, proposalId: 5, sessionId: 5, prNumber: null, prUrl: null, appSlug: 'recipe-box' };
+  };
+  const long = 'x'.repeat(4001);
+  const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    for (const args of [
+      { taskId: 88, branch: 'my-branch', share: true, description: long },
+      { proposalId: 4223, branch: 'my-fix', description: long },
+    ]) {
+      const res = await c.handlers.get('submit_work')(args);
+      assert.equal(res.isError, true);
+      assert.equal(res.structuredContent.code, 'description_too_long');
+      assert.equal(res.structuredContent.limitBytes, 4000);
+      assert.equal(res.structuredContent.actualBytes, 4001);
+      assert.match(res.structuredContent.message, /Nothing was written/);
+    }
+    // Counted as the routes count, in UTF-8 bytes: 1,400 dashes are 4,200.
+    const dashes = await c.handlers.get('submit_work')({ taskId: 88, branch: 'my-branch', share: true, description: '\u2014'.repeat(1400) });
+    assert.equal(dashes.structuredContent.code, 'description_too_long');
+    assert.equal(dashes.structuredContent.actualBytes, 4200);
+    assert.equal(reached.length, 0, 'refused before the service, so nothing was pushed or created');
+
+    // At the limit it goes through, and a TESTING block lifted out of the
+    // description does not count against it.
+    const fits = 'y'.repeat(4000);
+    const ok = await c.handlers.get('submit_work')({
+      taskId: 88, branch: 'my-branch', share: true,
+      description: `${fits}\n\n==== TESTING ====\nPATHS: /\n1. Open it.\n==== END TESTING ====`,
+    });
+    assert.ok(!ok.isError, JSON.stringify(ok.structuredContent));
+    assert.equal(reached.length, 1);
+    assert.equal(reached[0].body.trim().length, 4000);
+
+    // A NEW proposal is not refused: its pull request body is cut there
+    // instead, as it always was.
+    const create = await c.handlers.get('submit_work')({ taskId: 88, branch: 'my-branch', description: long });
+    assert.ok(!create.isError, JSON.stringify(create.structuredContent));
+  } finally {
+    c.restore();
+    svc.submitWork = realSubmit;
+  }
+});
+
+test('submit_work states the description limit where an agent reads it', () => {
+  const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const spec = c.specs.get('submit_work');
+    const describe = spec.inputSchema.description.description;
+    assert.match(describe, /At most 4000 UTF-8 bytes/);
+    assert.match(describe, /refused before anything is written/);
+  } finally { c.restore(); }
+});
+
 // ── Demo mode ──────────────────────────────────────────────────────────
 //
 // Six tools, one property: they replay the caller's token at

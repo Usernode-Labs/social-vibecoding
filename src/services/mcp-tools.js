@@ -97,6 +97,11 @@ const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
 const MAX_REQUEST_BODY_CHARS = 65536;   // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
+// submit_work's `description`: what share-in-progress and update-from-fork
+// accept, in UTF-8 BYTES (routes/proposal-handoff.js boundedText), and where
+// the create path cuts the pull request body, in characters
+// (external-agent-tasks.js prBodyFor).
+const MAX_PROPOSAL_DESCRIPTION_BYTES = 4000;
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -304,6 +309,24 @@ async function callPlatform(baseUrl, accessToken, method, path, body) {
   return { ok: resp.ok, status: resp.status, body: parsed };
 }
 
+// A route's refusal in its own words. Routes answer in two shapes:
+// `{ error: '<sentence>' }`, and `{ error: '<code>', message: '<sentence>' }`
+// (every body-validation refusal is the second). Reading `error` first took
+// the CODE for the sentence in the second shape, so an over-long share
+// description came back as "import_failed: invalid_request", which names no
+// field and no limit. The sentence wins wherever there is one; a code-shaped
+// `error` beside it is reported as `platformCode`, so nothing the route said
+// is lost.
+const PLATFORM_CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+function platformWords(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const code = text(b.error) && PLATFORM_CODE_RE.test(b.error.trim()) ? b.error.trim()
+    : (text(b.code) && PLATFORM_CODE_RE.test(b.code.trim()) ? b.code.trim() : null);
+  return { message: text(b.message) || text(b.error), code };
+}
+
 // Map a platform failure onto the connector's structured error shape,
 // passing the platform's own wording through so the assistant repeats what
 // the browser would have shown.
@@ -311,8 +334,8 @@ function platformError(result, fallbackCode = 'platform_error') {
   if (result.networkError) {
     return toolError('platform_unavailable', 'Homeroom could not be reached. Try again shortly.', { retryable: true });
   }
-  const message = (result.body && (result.body.error || result.body.message))
-    || `Homeroom returned HTTP ${result.status}.`;
+  const words = platformWords(result.body);
+  const message = words.message || `Homeroom returned HTTP ${result.status}.`;
   if (result.status === 401) return toolError('not_connected', 'This connector is no longer authorized. Reconnect Homeroom in your chat product settings.');
   // A MEMBERSHIP REFUSAL IS NOT A SCOPE PROBLEM. Taking part in a project is
   // for its community's members (services/communities.js), and the route
@@ -332,7 +355,11 @@ function platformError(result, fallbackCode = 'platform_error') {
     const code = result.body && result.body.code === 'budget_exceeded' ? 'budget_exceeded' : 'at_capacity';
     return toolError(code, message, { retryable: true });
   }
-  return toolError(fallbackCode, message);
+  // The route's own code rides beside the connector's, so a caller can tell
+  // `invalid_request` (fix the call) from `base_mismatch` (rebase) without
+  // parsing the sentence.
+  return toolError(fallbackCode, message,
+    words.code && words.code !== fallbackCode ? { platformCode: words.code } : {});
 }
 
 function requireSlug(slug) {
@@ -3999,7 +4026,8 @@ function registerTools(server, ctx) {
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
-      description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`.'),
+      description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`. '
+        + `At most ${MAX_PROPOSAL_DESCRIPTION_BYTES} UTF-8 bytes (that many plain ASCII characters; a dash, arrow or accented letter counts 2 to 3): a share or an update (shape 4) longer than that is refused before anything is written, and a new proposal\u2019s pull request body is cut at ${MAX_PROPOSAL_DESCRIPTION_BYTES} characters.`),
       summary: z.string().optional()
         .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (shape 4, including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
       testingPaths: z.array(z.string()).optional()
@@ -4176,6 +4204,25 @@ function registerTools(server, ctx) {
     // capture, so anything written after it would land too late to steer the
     // screenshots. One wiring point, and the route re-validates.
     const testing = shapeTestingNotes({ testingPaths, testingSteps, description });
+    // Measured here, on the text that is actually sent (a TESTING block is
+    // already lifted out), because the two routes behind a share and an update
+    // refuse a longer one. They refused it as a bare `invalid_request` after
+    // the work was pushed and the loopback made; this names the field, the
+    // limit and the size before anything is written. In BYTES, as the routes
+    // count: a description heavy with dashes passes a character count and is
+    // still refused. The create path cuts the pull request body instead of
+    // refusing, so it is left as it was.
+    if ((updating || share === true) && testing.description) {
+      const bytes = Buffer.byteLength(testing.description.trim(), 'utf8');
+      if (bytes > MAX_PROPOSAL_DESCRIPTION_BYTES) {
+        return toolError('description_too_long',
+          `description is ${bytes} UTF-8 bytes, over the ${MAX_PROPOSAL_DESCRIPTION_BYTES}-byte limit `
+          + '(a dash, arrow or accented letter counts 2 to 3). Nothing was written. Shorten it to what a '
+          + 'reviewer needs and send the same call again: `summary` carries the plain-English half, and '
+          + 'longer notes belong in the change itself.',
+          { field: 'description', limitBytes: MAX_PROPOSAL_DESCRIPTION_BYTES, actualBytes: bytes });
+      }
+    }
     // `linkedIssues` rides along the same way (#1217): the service knows
     // which request the task was prepared for, and the import route is the
     // one write that can record it on the session row.
@@ -4251,8 +4298,10 @@ function registerTools(server, ctx) {
       // Transient import failures instead use the service result: it carries
       // the still-open PR number plus stage/field recovery context that the
       // raw loopback response cannot know about.
+      // A failed SHARE is named as one: `share_failed`, the service's own
+      // code, rather than `import_failed` for a call that imports nothing.
       if (result.platformResult && !result.retryable) {
-        return platformError(result.platformResult, 'import_failed');
+        return platformError(result.platformResult, result.code || 'import_failed');
       }
       return serviceError(result);
     }

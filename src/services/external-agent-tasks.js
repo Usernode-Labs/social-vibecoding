@@ -3252,6 +3252,12 @@ async function submitWorkLocked(deps, params) {
       ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
+      // The plain-English summary a voter reads first. Both share routes
+      // accept it and store it as the author's; until this was sent a shared
+      // card dropped it without a word, so the summary only arrived with a
+      // later update (#3344 gave the update path the same field).
+      ...(typeof params.summary === 'string' && params.summary.trim()
+        ? { summary: stripEnvelope(params.summary).trim() } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
     };
 
@@ -3320,8 +3326,15 @@ async function submitWorkLocked(deps, params) {
     // shared card reads the same as a proposal from the same agent — and it
     // is set when the card is CREATED. A reshare advances a card that already
     // carries it, so there was never anything for the update to say.
+    //
+    // The title defaults HERE, on the create call only, to the same name the
+    // vote path gives a pull request with none (prTitleFor: the task's
+    // brief). A card created without one read "<user>'s changes" until it
+    // was renamed by hand. A reshare sends no default, because one would
+    // rename a card its owner may already have named.
     const shared = await params.shareWork(slug, {
       ...payload,
+      title: payload.title || prTitleFor({ title: null, task, slug }),
       externalAgent: normalizeAgent(agent, clientName),
     });
     if (!shared || !shared.ok) {
@@ -3603,8 +3616,12 @@ async function submitWorkLocked(deps, params) {
     // caller can retry with slug + prNumber without consuming another branch
     // or pull-request number.
     if (platformOwnedHead && !retryable) await platformOwnedHead.cleanup();
+    // The sentence before the code: pr-import's validation answers
+    // `{ error: 'invalid_request', message: '<what was wrong>' }`, and
+    // reading `error` first reported only the code (the share and update
+    // branches above already read `message` first).
     const platformMessage = (imported && imported.body
-      && (imported.body.error || imported.body.message))
+      && (imported.body.message || imported.body.error))
       || 'Homeroom could not turn that pull request into a proposal.';
     return {
       ok: false,
