@@ -359,6 +359,80 @@ async function renameAgentSession(pool, { userId, id, title }) {
   return rows.length ? getAgentSession(pool, { userId, id }) : null;
 }
 
+// ── A conversation opened on a request is named after it (#3752) ──────
+//
+// A conversation takes its name from its first message (the turn route,
+// agentTurn.titleFromMessage). One opened on a request (Start work) is ABOUT
+// that request, and its first message is often a reply to the screen ("can
+// you implement this?"), so the name said nothing about the request. It is
+// named after the request instead: "#N · <title>", the name a session about
+// an issue already gets (session-title.js headlessTitle).
+//
+// The request is read the way its own page reads it (GET
+// /api/apps/:slug/github-issues/:number): GitHub first, cache-first, and in
+// staging the board's mock requests when GitHub has nothing. That read can
+// be slow, and a message never waits on it, so the turn route starts this
+// once the first message is written, and the request's name replaces the
+// message's moments later. Only after the first message: a conversation with
+// no name is one nothing was said in yet, which the lists leave out
+// (continue-model.ts). Only an automatic name is replaced: one the owner
+// chose ('manual') stays, and when the request cannot be read the first
+// message's name stays too.
+
+function parseRepoUrl(url) {
+  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+// The request's title, or null when it cannot be read.
+async function lookupRequestTitle(repoUrl, issueNumber, deps = {}) {
+  const github = deps.github || require('./github');
+  const staging = deps.staging != null ? deps.staging : process.env.USERNODE_ENV === 'staging';
+  const repo = parseRepoUrl(repoUrl);
+  if (repo && github.isEnabled()) {
+    const { issue } = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
+    if (issue && issue.title) return String(issue.title);
+  }
+  if (staging) {
+    const mocks = deps.stagingMockIssues || require('../routes/issues').stagingMockIssues;
+    const mock = mocks(repoUrl).find((i) => i.number === issueNumber);
+    if (mock) return mock.title;
+  }
+  return null;
+}
+
+// Resolves to the new name, or null when there is none to give. Never
+// rejects: a name is never worth failing a turn over.
+async function nameFromRequest(pool, { agentSessionId, userId, lookupTitle = lookupRequestTitle }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.focus_context, a.repo_url
+         FROM agent_sessions s JOIN apps a ON a.id = s.focus_app_id
+        WHERE s.id = $1 AND s.user_id = $2 AND s.title_source = 'auto'`,
+      [agentSessionId, userId]
+    );
+    if (!rows.length) return null;
+    const issueNumber = positiveInt(Number((rows[0].focus_context || {}).issueNumber));
+    if (!issueNumber) return null;
+    // At most 256 characters, the column's (and TITLE_MAX's) width.
+    const { headlessTitle } = require('./session-title');
+    const title = headlessTitle(issueNumber, await lookupTitle(rows[0].repo_url, issueNumber));
+    if (!title) return null;
+    const { rows: named } = await pool.query(
+      `UPDATE agent_sessions SET title = $1
+        WHERE id = $2 AND user_id = $3 AND title_source = 'auto'
+        RETURNING id`,
+      [title, agentSessionId, userId]
+    );
+    return named.length ? title : null;
+  } catch (err) {
+    log.warn('agent-sessions', 'Could not name the conversation after its request', {
+      agentSessionId, err: err.message,
+    });
+    return null;
+  }
+}
+
 // Archiving parks the active change and hides the session. It never
 // withdraws a proposal: a change up for a vote keeps its vote, and every
 // change stays reachable from its own page.
@@ -1059,6 +1133,8 @@ module.exports = {
   listAgentSessions,
   getAgentSession,
   renameAgentSession,
+  lookupRequestTitle,
+  nameFromRequest,
   archiveAgentSession,
   unarchiveAgentSession,
   listMessages,
