@@ -13,7 +13,11 @@ function createCliPreviewHandoff(pool) {
     parseAction,
     reduce,
     async load(client, session, { sessionId, lock }) {
-      const handoff = (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0] || null;
+      const handoffRow = (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0];
+      // Scheduling time is executor metadata, not a reducer input (or a Date
+      // object in a JSON decision trace).
+      const handoff = handoffRow ? Object.fromEntries(Object.entries(handoffRow)
+        .filter(([key]) => key !== 'sync_reconcile_at')) : null;
       // Same aggregate transaction: no independently locked domain snapshots.
       const previewState = await readState(client, session, sessionId);
       const { rows: obligations } = await client.query(`SELECT
@@ -38,6 +42,7 @@ function createCliPreviewHandoff(pool) {
         'id', 'app_id', 'user_id', 'source', 'status', 'active_turn', 'handoff_uploaded_sha',
         'handoff_head_sha', 'handoff_upload_checked_sha', 'checks_commit_sha',
         'staging_commit_sha', 'staging_runtime_name', 'reviewed_head_sha', 'check_state', 'check_phase',
+        'branch_name', 'approval_epoch', 'handoff_local_commit_sha',
       ].map(key => [key, session[key] ?? null])) : null;
       return {
         session: lifecycleSession,
@@ -51,24 +56,63 @@ function createCliPreviewHandoff(pool) {
     facts: () => ({}),
     actionConflict: () => new Error('CLI preview action ID reused with different input'),
     async persist(client, { action, decision }) {
-      if (action.type === 'AcceptCliPreviewHead') {
-        await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
-          handoff_local_commit_sha = CASE WHEN handoff_uploaded_sha = $2::text THEN handoff_local_commit_sha ELSE NULL END,
-          handoff_upload_checked_sha = NULL, last_activity_at = NOW() WHERE id = $1`, [action.sessionId, action.headSha]);
+      const sync = action.type === 'AcceptCliSyncHead';
+      if (sync || action.type === 'AcceptCliPreviewHead') {
+        if (sync) {
+          const freshness = require('../summary-freshness');
+          await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
+            handoff_uploaded_sha = $2::text, handoff_local_commit_sha = NULL,
+            handoff_upload_checked_sha = NULL, last_activity_at = NOW(),
+            ${freshness.invalidateHeadMoveSql('$2')},
+            reviewed_head_sha = CASE WHEN status = 'promoted' THEN $2::text ELSE reviewed_head_sha END,
+            approval_epoch = $3, stale_notified_at = NULL WHERE id = $1`,
+          [action.sessionId, action.headSha, decision.change.approvalEpoch]);
+          // Use the existing shots policy with this client, never a nested
+          // transaction that could commit independently of head/work admission.
+          await require('../shots-state').markStaleForHeadWithClient(client, action.sessionId, action.headSha);
+        } else {
+          await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
+            handoff_local_commit_sha = CASE WHEN handoff_uploaded_sha = $2::text THEN handoff_local_commit_sha ELSE NULL END,
+            handoff_upload_checked_sha = NULL, last_activity_at = NOW() WHERE id = $1`, [action.sessionId, action.headSha]);
+        }
         // Preserve the serving preview while the candidate prepares.
-        const pending = await require('../visuals').setChecksPending(client, action.sessionId, action.headSha, 'building', 'commit-push');
+        const phase = decision.change.deferPreparation ? 'reconciling' : 'building';
+        const pending = await require('../visuals').setChecksPending(
+          client, action.sessionId, action.headSha, phase, sync ? 'sync-main' : 'commit-push',
+        );
         if (!pending) throw new Error('Accepted CLI head could not admit required checks');
+        if (decision.change.deferPreparation) {
+          await client.query(`UPDATE chat_sessions SET check_phase = 'reconciling',
+            check_error_detail = 'Sync revision accepted; preparation is blocked while admission is disabled.',
+            checks_progress = $2::jsonb WHERE id = $1`, [action.sessionId, JSON.stringify({
+            owner: 'cli-preview-handoff', reason: 'sync_admission_disabled', headSha: action.headSha,
+          })]);
+        }
+        const reconciliation = decision.change.deferPreparation ? {
+          owner: 'cli-preview-handoff', reason: 'sync_admission_disabled',
+          headSha: action.headSha, admissionId: action.actionId,
+        } : null;
         await client.query(`INSERT INTO cli_preview_handoffs (session_id, head_sha, started_status, admission_id, phase)
           VALUES ($1,$2,$3,$4,'preparing') ON CONFLICT (session_id) DO UPDATE
           SET head_sha = EXCLUDED.head_sha, started_status = EXCLUDED.started_status,
-            admission_id = EXCLUDED.admission_id, phase = 'preparing', flow_id = NULL, checks_recovery = NULL,
+            admission_id = EXCLUDED.admission_id, phase = 'preparing', checks_recovery = NULL,
+            sync_reconciliation = $5::jsonb, sync_reconcile_at = CASE WHEN $5::jsonb IS NULL THEN NULL ELSE NOW() END,
+            flow_id = CASE WHEN $5::jsonb IS NULL THEN NULL ELSE cli_preview_handoffs.flow_id END,
             preparation_work_id = NULL, continuation_work_id = NULL`, [
-          action.sessionId, action.headSha, action.startedStatus, action.actionId,
+          action.sessionId, action.headSha, decision.change.startedStatus, action.actionId,
+          reconciliation ? JSON.stringify(reconciliation) : null,
         ]);
         return;
       }
       await client.query('UPDATE cli_preview_handoffs SET phase = $2 WHERE session_id = $1',
         [action.sessionId, decision.change.phase]);
+      if (decision.change.resumeSync) {
+        await client.query(`UPDATE cli_preview_handoffs SET sync_reconciliation = NULL,
+          sync_reconcile_at = NULL WHERE session_id = $1`, [action.sessionId]);
+        const pending = await require('../visuals').setChecksPending(client, action.sessionId, action.headSha, 'building', 'sync-main');
+        if (!pending) throw new Error('Sync reconciliation could not admit required checks');
+        await client.query('UPDATE chat_sessions SET check_error_detail = NULL WHERE id = $1', [action.sessionId]);
+      }
       if (decision.change.recovery) {
         const recovery = decision.change.recovery;
         // A missing manifest must retain a conservative run locator across

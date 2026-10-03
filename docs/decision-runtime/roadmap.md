@@ -1,9 +1,10 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. The internal pilot review and strict unit-source correction
+3 October 2026. The internal pilot review and strict unit-source correction
 (`ed13ea6fa`) are reconciled with explicitly pinned canonical main
 `74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer discussion/scheduling,
 issue-comment identity and shots-worker retirement behavior are preserved.
+Canonical `da6ecb00880cab9a1749a6256992fb3d1706d9be` was fetched and inspected for the sync cutover; its newer prompt-rendering changes still require integration.
 The native CLI Kubernetes/kpack cohort remains **default-off**. Progress means
 guarantees demonstrated **and competing ownership removed**, not growing checkpoint
 numbers. No production compatibility, installation or rollout is claimed.
@@ -20,6 +21,7 @@ numbers. No production compatibility, installation or rollout is claimed.
 | Ordinary repeated use | **Complete locally at `511e84e35`:** five revisions on one session, overlapping checks/supersession/restarts, four predecessors' active dependencies released, fifth serving and legacy sentinel protected. Original Jobs do not compete; unresolved creators remain discoverable. |
 | New admission and retention consolidation | One complete preparation format; four capability flags/config shim and three partial handlers removed. Fresh experimental stores only. Twelve historical reducer copies/live dispatch removed after independently verified replay archive. Legacy protections remain. |
 | Manual enrolled requests | Real HTTP/disposable PostgreSQL proves durable join/guarded repair/forced recheck, rollback and lost-response recovery. Web pending/build/publication/capture ownership is excluded for enrollment. Ordinary native manual admission remains open. Unused chat-file Docker builder/parser removed. |
+| Enrolled Sync with main | Trusted worker revision acceptance and complete preparation admission commit together. Serving pointers, approval epoch policy, summary freshness and shots invalidation are preserved. Disabled admission retains explicit reconciliation; duplicate/lost replies and supersession use the same durable owner. Unenrolled writers/tails remain. |
 | Verified unit requirement | Enrolled inspection requires a verified exact commit/root tree; present packages also require a matching blob and valid metadata. Inaccessible/unverified source keeps reconciliation ownership; legacy nullable-source skipping and explicit disable/deferral policy remain. Helper tests substitute Octokit transport only. |
 | Canonical/focused verification | Explicit pin integrated with newer approval/recovery behavior preserved. Writer inventory, focused PostgreSQL/SQL and disposable checks/retirement proof pass. Actual packaged default web CMD, standalone worker and migration run non-root. GitHub CI/Linux installation is not proved locally. |
 | HTTPS/identity boundary | Real TLS, shipped forward-auth/session exchange, private assets and original-Job restart recovery proved for an explicitly authorized account. Ordinary private-project screenshot permission is assessed separately without a fixture grant. |
@@ -38,7 +40,7 @@ remains unmerged until the original preview/check caller migration and competing
 ownership removal are complete. The [completion checklist](preview-check-completion-checklist.md)
 maps every remaining caller/mechanism to its replacement, proof and removal gate.
 Cutovers reuse the established foundation; no unrelated workflow or new framework
-is required. Manual enrolled entry points are the first bounded cutover.
+is required. Manual enrolled entry points and active/promoted enrolled sync are bounded cutovers. Unenrolled sync and the other caller rows remain open.
 
 Remaining implementation: ordinary native/hosted/imported/promotion/manual/fleet
 admission, head invalidation, recovery/teardown, Docker resource preparation and

@@ -177,7 +177,75 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
   };
 }
 
-async function reconcileCliHandoffSync({ config, pool, session, newHead }, deps = {}) {
+async function inspectSyncReview(session, repo, headSha, deps) {
+  if (sameSha(session.reviewed_head_sha, headSha)) return { kind: 'same' };
+  if (!session.reviewed_head_sha) return { kind: 'initialized' };
+  const mirror = deps.mirror || require('./repo-mirror');
+  const integration = deps.integration || require('./integration');
+  const dir = await mirror.ensureMirror(repo.owner, repo.repo, {
+    refs: [session.reviewed_head_sha, session.checks_commit_sha].filter(Boolean), fresh: true,
+  });
+  const mainSha = await mirror.defaultBranchSha(dir);
+  const measuredHead = await mirror.resolveBranch(dir, session.branch_name);
+  if (!sameSha(measuredHead, headSha)) throw new Error('Reviewed branch moved during sync inspection');
+  return integration.classifyHeadMove(dir, {
+    approvedHead: session.reviewed_head_sha, newHead: headSha, mainSha,
+  });
+}
+
+async function adoptEnrolledSync({ config, pool, session, headSha, workerResult, repo, handoff, deps }) {
+  const outcome = workerResult?.syncResult;
+  const pushed = ['clean', 'resolved'].includes(outcome) && workerResult.pushOk
+    && sameSha(workerResult.sha, headSha);
+  const unchanged = outcome === 'already_synced'
+    && (!workerResult.sha || sameSha(workerResult.sha, headSha));
+  if (!pushed && !unchanged) return { ok: false, reason: 'sync_revision_unverified', headSha };
+  if (session.handoff_local_commit_sha
+      && !sameSha(session.handoff_uploaded_sha, session.handoff_head_sha)) {
+    return { ok: false, reason: 'local_upload_awaiting_submission', headSha };
+  }
+
+  let move = { kind: 'same' };
+  if (session.status === 'promoted') {
+    try { move = await inspectSyncReview(session, repo, headSha, deps); }
+    catch (error) {
+      log.warn('cli-handoff-sync', 'Could not classify enrolled reviewed sync', {
+        sessionId: session.id, err: error.message,
+      });
+      return { ok: false, reason: 'review_revision_unverified', headSha };
+    }
+  }
+  const work = deps.work || handoff.createCliHandoffWork(pool, config);
+  const accepted = await work.admitSync({
+    session, headSha, workerResult: outcome,
+    workerSha: workerResult.sha ? String(workerResult.sha).toLowerCase() : null,
+    moveKind: move.kind,
+  });
+  if (!accepted.accepted) return { ok: false, reason: accepted.reason, headSha };
+
+  // Notifications are optional. No detached promise owns required preparation.
+  if (!accepted.replayed && session.status === 'promoted' && move.kind !== 'same') {
+    const votes = deps.votes || require('../routes/votes');
+    await votes.announceNativeHeadMove({
+      pool, session, liveHead: headSha, move,
+      keepsApprovals: ['initialized', 'mechanical', 'resolved'].includes(move.kind),
+      checksWaiting: !!accepted.blocked,
+    }).catch(error => log.warn('cli-handoff-sync', 'Sync notification failed', {
+      sessionId: session.id, err: error.message,
+    }));
+  }
+  return {
+    ok: true, applied: !accepted.replayed, unchanged: !!accepted.replayed,
+    headSha, durable: true, checksStarted: false,
+    preparationQueued: !accepted.blocked, workId: accepted.work?.id || null,
+    ...(accepted.blocked ? {
+      reconciliation: accepted.work.reconciliation, blocked: true, reason: accepted.work.code,
+    } : {}),
+    ...(session.status === 'promoted' ? { approvalEpoch: accepted.approvalEpoch, moveKind: move.kind } : {}),
+  };
+}
+
+async function reconcileCliHandoffSync({ config, pool, session, newHead, workerResult }, deps = {}) {
   if (session?.source !== 'cli_handoff') {
     return { ok: true, applied: false, reason: 'not_cli_handoff' };
   }
@@ -202,6 +270,10 @@ async function reconcileCliHandoffSync({ config, pool, session, newHead }, deps 
   const headSha = String(newHead || liveHead || '').toLowerCase();
   if (!SHA_RE.test(headSha) || !sameSha(liveHead, headSha)) {
     return { ok: false, reason: 'branch_moved', headSha: liveHead || null };
+  }
+  const handoff = deps.handoff || require('./cli-preview-handoff/work');
+  if (await handoff.enrolled(pool, session.id)) {
+    return adoptEnrolledSync({ config, pool, session, headSha, workerResult, repo, handoff, deps });
   }
   if (pinsCurrent(session, headSha)) {
     return { ok: true, applied: false, unchanged: true, headSha };

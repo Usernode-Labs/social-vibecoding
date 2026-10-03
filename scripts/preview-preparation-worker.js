@@ -4,7 +4,6 @@
 // Dedicated supervised process; never imported or started by the web server.
 const { createExecutionService } = require('../src/services/execution/service');
 const { createReviewWork } = require('../src/services/proposal-review/work');
-const { createPreviewWork } = require('../src/services/preview-flow/work');
 const { createCliHandoffWork } = require('../src/services/cli-preview-handoff/work');
 
 async function runWorker({
@@ -28,12 +27,15 @@ async function runWorker({
   const discoveryPool = createDiscoveryPool(config.databaseUrl, discoveryOptions);
   const handoff = createCliHandoffWork(pool, config, { previewOptions });
   const preview = handoff.preview;
-  const discovery = createPreviewWork(discoveryPool, config);
+  const discovery = createCliHandoffWork(discoveryPool, config);
   const review = createReviewWork(pool, config, { store: preview.store });
   const execution = createExecutionService({
     store: preview.store,
     handlers: { ...handoff.handlers, ...review.handlers },
-    discover: () => discovery.census(),
+    async discover() {
+      await discovery.preview.census();
+      await discovery.reconcileSyncs();
+    },
     pollMs,
     discoveryMs: censusMs,
     onError,

@@ -1,6 +1,6 @@
 # Contained CLI retirement inventory
 
-2 October 2026. The cohort remains default-off. Progress is demonstrated
+3 October 2026. The cohort remains default-off. Progress is demonstrated
 ownership replacement and removed code, not added checkpoint numbers.
 See the [roadmap](roadmap.md), [support decision](experimental-retention-decision.md)
 and [packaged proof](packaged-cli-entrypoints-contract.md). The [completion checklist](preview-check-completion-checklist.md) defines the
@@ -14,6 +14,8 @@ is reconciled; its shots-worker hold/retirement and other caller protections rem
 
 | Mechanism | Current status / replacement | Removal gate |
 | --- | --- | --- |
+| Enrolled active/promoted CLI Sync with main writer and detached staging/recheck tail | **Replaced:** trusted sync acceptance, review policy persistence and required preparation share the aggregate transaction. Serving pointers are preserved. Existing candidate/continuation owns activation/checks. | Disposable PostgreSQL sync integration, rollback/lost reply, duplicate, admission-off obligation and newer-head/supersession guards. Unenrolled sync keeps two explicitly scoped writer exceptions until its cutover. |
+| Disabled-admission sync reconciliation | Current required obligation in the handoff row; existing bounded discovery and handoff recovery consume it. No new work kind, executor or flag. | Supersession/closed lifecycle cannot authorize old publication. Admission enabled admits the stored exact-head preparation once; old admitted work recovers with the flag off. Retain this obligation while the experimental admission split exists. |
 | Manual enrolled deploy/ensure/recheck web owners | **Removed for persisted enrollment:** no route-local pending reset, mutable branch resolution, web builder, pointer publication or detached capture/recheck. Existing action/continuation owns requests and repair. | Real HTTP/disposable PostgreSQL proof; ordinary native/Docker manual admission still requires cutover. Legacy SQL allowlist remains unchanged because unenrolled paths still use it. |
 | Dead chat-file Docker builder/parser and unused identity/Caddy imports | **Deleted 120 lines plus two imports.** No callers or exports; existing source-generation guards remain green. | Complete; no replacement executor or compatibility branch. |
 | Four preparation capability flags and CLI config shim | **Removed** at `2bf702dbd`. Sole new admission is complete Kubernetes/kpack preparation. | Complete; retain default-off admission/worker switches. |

@@ -11,6 +11,8 @@ const bootstrap = `
   const { generateKeyPairSync } = require('node:crypto');
   const mode = process.argv[1];
   const events = [];
+  let cleanupDiscoveries = 0;
+  let syncDiscoveries = 0;
   function stub(path, exports) {
     const id = require.resolve(path);
     require.cache[id] = { id, filename: id, loaded: true, exports };
@@ -43,7 +45,10 @@ const bootstrap = `
     },
   });
   stub('./src/services/cli-preview-handoff/work', {
-    createCliHandoffWork() { return { preview: { store: {} }, handlers: {} }; },
+    createCliHandoffWork() { return {
+      preview: { store: {}, async census() { cleanupDiscoveries++; } },
+      handlers: {}, async reconcileSyncs() { syncDiscoveries++; },
+    }; },
   });
   stub('./src/services/preview-flow/work', {
     createPreviewWork() { return { async census() {} }; },
@@ -52,10 +57,11 @@ const bootstrap = `
     createReviewWork() { return { handlers: {} }; },
   });
   stub('./src/services/execution/service', {
-    createExecutionService() {
+    createExecutionService({ discover }) {
       events.push('execution');
       assert.equal(github.getInitializationStatus(), mode === 'ready' ? 'ready' : 'unavailable');
-      return { async stop() { events.push('execution-stop'); } };
+      const discovered = discover();
+      return { async stop() { await discovered; events.push('execution-stop'); } };
     },
   });
   const config = {};
@@ -77,6 +83,8 @@ const bootstrap = `
       await worker.stop();
       assert.deepEqual(events, ['github', 'llm', 'discovery-pool', 'execution', 'execution-stop', 'pool-stop']);
       assert.equal(github.isEnabled(), mode === 'ready');
+      assert.equal(cleanupDiscoveries, 1);
+      assert.equal(syncDiscoveries, 1);
     }
   })().catch(error => { console.error(error); process.exitCode = 1; });
 `;

@@ -65,6 +65,10 @@ function createCliHandoffWork(pool, config, {
       return (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [session.id])).rows[0];
     });
     if (state?.head_sha === headSha) {
+      if (state.sync_reconciliation) {
+        const work = await resumeSync(transaction, state);
+        return { accepted: true, replayed: true, work };
+      }
       const activeId = state.continuation_work_id || state.preparation_work_id;
       const active = await readWork(transaction, session.id, activeId);
       // A running/busy/uncertain operation remains its owner's responsibility.
@@ -88,23 +92,112 @@ function createCliHandoffWork(pool, config, {
     };
     const accepted = await owner.applyInTransaction(transaction, action);
     if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
+    const preparation = await prepareAccepted(transaction, action);
+    await transaction.withSession(session.id, persistDetails);
+    return { accepted: true, work: preparation.work };
+  }
+
+  async function prepareAccepted(transaction, { actionId, sessionId, headSha, startedStatus = 'active' }) {
     const preparation = await preview.requestInTransaction(transaction, {
       type: 'RequestCandidatePreview',
-      actionId: action.actionId,
-      sessionId: session.id,
+      actionId,
+      sessionId,
       headSha,
-      startedStatus: action.startedStatus,
+      startedStatus,
     });
-    // Head acceptance must not survive a rejected preparation admission.
+    // The head and its required work cannot commit separately.
     if (!preparation.decision.accepted) {
       throw Object.assign(new Error(preparation.decision.reason), { code: 'CLI_PREVIEW_ADMISSION_REJECTED' });
     }
-    await transaction.withSession(session.id, async client => {
-      await client.query(`UPDATE cli_preview_handoffs SET flow_id = $2, preparation_work_id = $3
-        WHERE session_id = $1`, [session.id, preparation.decision.flow.id, preparation.work.id]);
-      await persistDetails(client);
+    await transaction.withSession(sessionId, client => client.query(
+      'UPDATE cli_preview_handoffs SET flow_id = $2, preparation_work_id = $3 WHERE session_id = $1',
+      [sessionId, preparation.decision.flow.id, preparation.work.id],
+    ));
+    return preparation;
+  }
+
+  function syncBlocked(state) {
+    return {
+      status: 'blocked', code: 'sync_admission_disabled',
+      reconciliation: state.sync_reconciliation,
+    };
+  }
+
+  async function admitSync({ session, headSha, workerResult, workerSha, moveKind }) {
+    const admissionEnabled = selected(config, session);
+    if (admissionEnabled) assertAdmissionConfig();
+    return runtime.transact(async transaction => {
+      const current = await transaction.withSession(session.id, async (client, row) => ({
+        session: row,
+        handoff: (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [session.id])).rows[0],
+      }));
+      const enrolledHead = current.handoff;
+      if (enrolledHead?.head_sha === headSha && current.session?.handoff_head_sha === headSha
+          && current.session.checks_commit_sha === headSha
+          && ['active', 'promoted'].includes(current.session.status)
+          && (current.session.status !== 'promoted' || current.session.reviewed_head_sha === headSha)) {
+        const work = enrolledHead.sync_reconciliation
+          ? await resumeSync(transaction, enrolledHead)
+          : await readWork(transaction, session.id, enrolledHead.preparation_work_id);
+        return {
+          accepted: true, replayed: true, work, blocked: work?.status === 'blocked',
+          approvalEpoch: Number(current.session.approval_epoch || 0),
+        };
+      }
+      const action = {
+        type: 'AcceptCliSyncHead', actionId: randomUUID(), sessionId: session.id, headSha,
+        expectedStatus: session.status,
+        branchName: session.branch_name,
+        previousHead: session.handoff_head_sha || null,
+        previousUploaded: session.handoff_uploaded_sha || null,
+        previousChecks: session.checks_commit_sha || null,
+        previousLocalCommit: session.handoff_local_commit_sha || null,
+        previousUploadChecked: session.handoff_upload_checked_sha || null,
+        previousPreviewName: session.staging_runtime_name || null,
+        previousReviewed: session.reviewed_head_sha || null,
+        previousEpoch: Number(session.approval_epoch || 0),
+        workerResult, workerSha, admissionEnabled, moveKind,
+      };
+      const accepted = await owner.applyInTransaction(transaction, action);
+      if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
+      if (accepted.decision.change.deferPreparation) {
+        return { accepted: true, blocked: true, work: syncBlocked(accepted.current.handoff) };
+      }
+      const preparation = await prepareAccepted(transaction, action);
+      return { accepted: true, work: preparation.work, approvalEpoch: accepted.decision.change.approvalEpoch };
     });
-    return { accepted: true, work: preparation.work };
+  }
+
+  async function resumeSync(transaction, state) {
+    if (!selected(config, { source: 'cli_handoff' })) return syncBlocked(state);
+    assertAdmissionConfig();
+    const accepted = await owner.applyInTransaction(transaction, {
+      type: 'ResumeCliSyncPreparation', actionId: randomUUID(),
+      sessionId: state.session_id, headSha: state.head_sha, admissionId: state.admission_id,
+    });
+    if (!accepted.decision.accepted) {
+      return { status: 'blocked', code: accepted.decision.reason, reconciliation: state.sync_reconciliation };
+    }
+    const preparation = await prepareAccepted(transaction, {
+      actionId: state.admission_id, sessionId: state.session_id,
+      headSha: state.head_sha, startedStatus: state.started_status,
+    });
+    return preparation.work;
+  }
+
+  async function reconcileSyncs(limit = 25) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid sync reconciliation batch size');
+    // Discovery runs on the existing bounded discovery pool. Rotate before
+    // taking aggregate locks so busy/rejected obligations remain retryable.
+    const { rows } = await pool.query(`WITH selected AS (
+      SELECT session_id FROM cli_preview_handoffs WHERE sync_reconciliation IS NOT NULL
+      ORDER BY sync_reconcile_at, session_id LIMIT $1 FOR UPDATE SKIP LOCKED
+    ) UPDATE cli_preview_handoffs h SET sync_reconcile_at = clock_timestamp()
+      FROM selected s WHERE h.session_id = s.session_id RETURNING h.session_id`, [limit]);
+    for (const row of rows) {
+      try { await recover(row.session_id); }
+      catch { /* Rolled back by the shared runtime; the obligation remains. */ }
+    }
   }
 
   async function enqueueContinuation(transaction, identity, causedBy, effectKey, force = false) {
@@ -254,6 +347,7 @@ function createCliHandoffWork(pool, config, {
         return (await client.query('SELECT * FROM cli_preview_handoffs WHERE session_id = $1', [sessionId])).rows[0];
       });
       if (!state?.flow_id) return null;
+      if (state.sync_reconciliation) return resumeSync(transaction, state);
       const activeId = state.continuation_work_id || state.preparation_work_id;
       const active = await readWork(transaction, sessionId, activeId);
       if (['queued', 'running', 'blocked'].includes(active.status)) return active;
@@ -302,7 +396,9 @@ function createCliHandoffWork(pool, config, {
 
   return {
     admit,
+    admitSync,
     recover,
+    reconcileSyncs,
     owner,
     preview,
     store,

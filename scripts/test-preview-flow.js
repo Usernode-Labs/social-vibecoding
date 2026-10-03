@@ -20,6 +20,8 @@ const SUITES = [
   'tests/recoverable-preview-build.test.js',
   'tests/recoverable-preview-runtime.test.js',
   'tests/cli-preview-handoff-postgres.test.js',
+  'tests/cli-handoff-sync.test.js',
+  'tests/sync-progress.test.js',
   'tests/headless-staging.test.js',
   'tests/generated-dockerfile-user.test.js',
   'tests/key-separation-env.test.js',

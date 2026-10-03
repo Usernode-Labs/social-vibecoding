@@ -423,6 +423,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         pool,
         session,
         newHead: result.sha || null,
+        workerResult: { syncResult, sha: result.sha || null, pushOk: !!result.pushOk },
       });
       if (!managedRevision.ok) {
         const err = new Error(
@@ -430,6 +431,12 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         );
         err.code = 'SYNC_REVISION_NOT_ADOPTED';
         throw err;
+      }
+      if (managedRevision.durable) {
+        syncMeta.syncMain.managedRevision = managedRevision;
+        if (managedRevision.blocked) {
+          message += ' Preview preparation is waiting for reconciliation.';
+        }
       }
     }
 

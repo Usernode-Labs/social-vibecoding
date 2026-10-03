@@ -957,3 +957,304 @@ test('manual enrolled requests cannot substitute a fresh head for an unconfirmed
   assert.equal((await f.session()).checks_commit_sha, null);
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), 1);
 });
+
+// Real sync-to-handoff integration. Git facts, preparation resources, activation
+// I/O and checks are substituted; admission, policy persistence and work are real.
+async function syncFixture(t, { promoted = false, moveKind = 'mechanical' } = {}) {
+  const f = await fixture(t);
+  await f.pool.query(`ALTER TABLE chat_sessions ADD COLUMN pr_summary_input_version INTEGER DEFAULT 0,
+    ADD COLUMN pr_summary_md TEXT, ADD COLUMN pr_summary_previous_md TEXT,
+    ADD COLUMN pr_summary_stale BOOLEAN DEFAULT FALSE, ADD COLUMN pr_summary_source TEXT,
+    ADD COLUMN pr_summary_source_head_sha TEXT, ADD COLUMN shots_state TEXT,
+    ADD COLUMN shots_run_id TEXT, ADD COLUMN shots_detail JSONB, ADD COLUMN shots_updated_at TIMESTAMPTZ;
+    CREATE TABLE users (id INTEGER PRIMARY KEY)`);
+  const schema = require('node:fs').readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
+  await f.pool.query(schema.match(/CREATE TABLE IF NOT EXISTS shot_runs \([\s\S]*?\n\);/)[0]);
+  const work = f.make();
+  const original = await work.admit({ session: await f.session(), headSha: HEAD });
+  await f.pool.query(`UPDATE chat_sessions SET status = $1, reviewed_head_sha = $2,
+    approval_epoch = 7, pr_summary_md = 'Existing explanation', shots_state = 'reviewing',
+    shots_run_id = $3, shots_detail = $4 WHERE id = 1`, [
+    promoted ? 'promoted' : 'active', promoted ? HEAD : null,
+    '1'.repeat(32), JSON.stringify({ headSha: HEAD, required: true }),
+  ]);
+  await f.pool.query(`INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state)
+    VALUES ($1,1,$2,$2,'{}','reviewing')`, ['1'.repeat(32), HEAD]);
+  const snapshot = async () => ({ ...(await f.session()), repo_url: 'https://github.com/example/demo', app_slug: 'demo' });
+  const deps = {
+    work,
+    github: { async getBranchSha() { return NEXT; } },
+    mirror: {
+      async ensureMirror() { return '/injected/git-mirror'; },
+      async defaultBranchSha() { return 'c'.repeat(40); },
+      async resolveBranch() { return NEXT; },
+    },
+    integration: { async classifyHeadMove() { return { kind: moveKind }; } },
+    votes: { async announceNativeHeadMove() {} },
+    pipeline: { beginHandoffPipeline() { throw new Error('Legacy staging tail forbidden'); } },
+    prImportSync: { rerunChecksForNewHead() { throw new Error('Legacy promoted tail forbidden'); } },
+  };
+  const reconcile = (session, overrides = {}, selectedDeps = deps) => require('../src/services/cli-handoff-sync')
+    .reconcileCliHandoffSync({
+      config: f.config, pool: f.pool, session, newHead: NEXT,
+      workerResult: { syncResult: 'clean', pushOk: true, sha: NEXT }, ...overrides,
+    }, selectedDeps);
+  return { ...f, original, work, deps, snapshot, reconcile };
+}
+
+for (const promoted of [false, true]) {
+  test(`enrolled sync atomically admits ${promoted ? 'promoted' : 'active'} revision and durable continuation`,
+    { skip: !postgresEnabled }, async t => {
+      const f = await syncFixture(t, { promoted });
+      const session = await f.snapshot();
+      const serving = Object.fromEntries(Object.entries(session).filter(([key]) => key.startsWith('staging_')));
+      const results = await Promise.all(Array.from({ length: 6 }, () => f.reconcile(session)));
+      assert.ok(results.every(result => result.ok));
+      assert.equal(new Set(results.map(result => result.workId)).size, 1);
+      assert.equal(results.filter(result => result.applied).length, 1);
+      const current = await f.session();
+      assert.equal(current.handoff_head_sha, NEXT);
+      assert.equal(current.checks_commit_sha, NEXT);
+      assert.equal(current.approval_epoch, 7, 'Mechanical sync preserves approvals');
+      assert.equal(current.pr_summary_stale, true);
+      assert.equal(current.pr_summary_previous_md, 'Existing explanation');
+      assert.equal((await f.pool.query('SELECT state FROM shot_runs')).rows[0].state, 'cancelled');
+      for (const [key, value] of Object.entries(serving)) assert.equal(current[key], value);
+      assert.equal(Number((await f.pool.query(`SELECT COUNT(*) FROM execution_work_requests
+        WHERE workflow = $1 AND input->'identity'->>'headSha' = $2`, [PREPARE_RUNTIME, NEXT])).rows[0].count), 1);
+      const restart = f.make();
+      const preparation = await restart.recover(1);
+      assert.equal(preparation.id, results[0].workId);
+      // Claim only the accepted revision; old queued work must not publish.
+      await f.pool.query("UPDATE execution_work_requests SET status = 'succeeded' WHERE id = $1", [f.original.work.id]);
+      await candidate(f, restart, { work: preparation });
+      const continuation = await f.make().recover(1);
+      assert.equal(continuation.workflow, CONTINUE);
+      await tick(f.make());
+      assert.equal((await f.session()).check_state, 'passing');
+      assert.equal((await f.session()).staging_commit_sha, NEXT);
+      assert.equal((await f.make().recover(1)).status, 'succeeded');
+      const { replayDecision } = require('../src/services/cli-preview-handoff/reducer');
+      for (const entry of await restart.owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+    });
+}
+
+for (const promoted of [false, true]) {
+  test(`enrolled ${promoted ? 'promoted' : 'active'} sync rolls back partial writes and adopts a lost commit reply`,
+    { skip: !postgresEnabled }, async t => {
+      const f = await syncFixture(t, { promoted, moveKind: 'authored' });
+      const before = await f.snapshot();
+      const request = f.work.preview.requestInTransaction;
+      f.work.preview.requestInTransaction = async (...args) => {
+        await request(...args);
+        throw new Error('Injected interruption after preparation write');
+      };
+      await assert.rejects(f.reconcile(before), /Injected interruption/);
+      assert.deepEqual(await f.snapshot(), before);
+      assert.equal((await f.pool.query('SELECT state FROM shot_runs')).rows[0].state, 'reviewing');
+      assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), 1);
+      f.work.preview.requestInTransaction = request;
+
+      let lost = false;
+      const losingPool = {
+        query: (...args) => f.pool.query(...args),
+        async connect() {
+          const client = await f.pool.connect();
+          return {
+            async query(...args) {
+              const result = await client.query(...args);
+              if (!lost && args[0] === 'COMMIT') {
+                lost = true;
+                throw new Error('Injected lost COMMIT reply');
+              }
+              return result;
+            },
+            release: () => client.release(),
+          };
+        },
+      };
+      const losing = createCliHandoffWork(losingPool, f.config);
+      await assert.rejects(f.reconcile(before, {}, { ...f.deps, work: losing }), /lost COMMIT/);
+      const replay = await f.reconcile(before);
+      assert.equal(replay.ok, true);
+      assert.equal(replay.applied, false);
+      assert.equal((await f.session()).approval_epoch, promoted ? 8 : 7, 'Only promoted authored changes retire approvals');
+      assert.equal((await f.session()).pr_summary_input_version, 1);
+      assert.equal(Number((await f.pool.query(`SELECT COUNT(*) FROM execution_work_requests
+        WHERE workflow = $1 AND input->'identity'->>'headSha' = $2`, [PREPARE_RUNTIME, NEXT])).rows[0].count), 1);
+      assert.equal((await f.make().recover(1)).id, replay.workId);
+    });
+}
+
+test('disabled enrolled sync persists an explicit obligation; recovery admits once after enabling',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t);
+    const session = await f.snapshot();
+    const offConfig = { ...f.config, nativeCliPreviewHandoffEnabled: false };
+    const off = createCliHandoffWork(f.pool, offConfig);
+    const result = await f.reconcile(session, { config: offConfig }, { ...f.deps, work: off });
+    assert.equal(result.ok, true);
+    assert.equal(result.blocked, true);
+    assert.equal(result.checksStarted, false);
+    assert.equal(result.preparationQueued, false);
+    assert.equal(result.reconciliation.owner, 'cli-preview-handoff');
+    assert.equal((await f.session()).check_phase, 'reconciling');
+    assert.equal((await f.session()).staging_url, session.staging_url);
+    assert.equal((await off.recover(1)).status, 'blocked');
+    assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests')).rows[0].count), 1);
+    await Promise.all([f.make().reconcileSyncs(), f.make().recover(1), f.reconcile(await f.snapshot())]);
+    assert.equal(Number((await f.pool.query(`SELECT COUNT(*) FROM execution_work_requests
+      WHERE workflow = $1 AND input->'identity'->>'headSha' = $2`, [PREPARE_RUNTIME, NEXT])).rows[0].count), 1);
+    assert.equal((await f.pool.query('SELECT sync_reconciliation FROM cli_preview_handoffs')).rows[0].sync_reconciliation, null);
+    assert.equal((await f.session()).check_phase, 'building');
+    assert.equal((await off.recover(1)).status, 'queued', 'Previously admitted work recovers with admission disabled');
+    const { replayDecision } = require('../src/services/cli-preview-handoff/reducer');
+    for (const entry of await f.work.owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+  });
+
+test('enrolled sync rejects pending local upload and stale acceptance after a newer head',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t);
+    const old = await f.snapshot();
+    await f.pool.query(`UPDATE chat_sessions SET handoff_uploaded_sha = $1,
+      handoff_local_commit_sha = $1, handoff_upload_checked_sha = $2 WHERE id = 1`, [NEXT, HEAD]);
+    const local = await f.reconcile(await f.snapshot(), {
+      workerResult: { syncResult: 'already_synced', pushOk: false, sha: NEXT },
+    });
+    assert.equal(local.reason, 'local_upload_awaiting_submission');
+    assert.equal((await f.session()).handoff_head_sha, HEAD);
+    // A separate explicit local submission may accept a successor. An older
+    // sync, even after a successful branch read, cannot regress it.
+    const newer = 'd'.repeat(40);
+    await f.pool.query('UPDATE chat_sessions SET handoff_uploaded_sha = $1 WHERE id = 1', [newer]);
+    let branchRead;
+    const readStarted = new Promise(resolve => { branchRead = resolve; });
+    let finishRead;
+    const delayedRead = new Promise(resolve => { finishRead = resolve; });
+    const pendingSync = f.reconcile(old, {}, {
+      ...f.deps,
+      github: { async getBranchSha() { branchRead(); return delayedRead; } },
+    });
+    await readStarted;
+    const successor = await f.work.admit({ session: await f.session(), headSha: newer });
+    finishRead(NEXT);
+    const stale = await pendingSync;
+    assert.equal(stale.ok, false);
+    assert.equal(stale.reason, 'session_state_changed');
+    assert.equal((await f.session()).checks_commit_sha, newer);
+    assert.equal((await f.make().recover(1)).id, successor.work.id);
+    assert.equal(await require('../src/services/visuals').storeChecks(f.pool, 1, NEXT, { state: 'passing', results: [] }), false);
+    assert.equal(Number((await f.pool.query(`SELECT COUNT(*) FROM execution_work_requests
+      WHERE workflow = $1 AND input->'identity'->>'headSha' = $2`, [PREPARE_RUNTIME, NEXT])).rows[0].count), 0);
+  });
+
+test('enrolled sync preserves author summary for the exact new head and rejects missing worker provenance',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t, { promoted: true, moveKind: 'resolved' });
+    await f.pool.query(`UPDATE chat_sessions SET pr_summary_source = 'author',
+      pr_summary_source_head_sha = $1, pr_summary_stale = FALSE WHERE id = 1`, [NEXT]);
+    const session = await f.snapshot();
+    const untrusted = await f.reconcile(session, { workerResult: undefined });
+    assert.equal(untrusted.reason, 'sync_revision_unverified');
+    assert.equal((await f.session()).handoff_head_sha, HEAD);
+    const accepted = await f.reconcile(session);
+    assert.equal(accepted.ok, true);
+    assert.equal((await f.session()).approval_epoch, 7);
+    assert.equal((await f.session()).pr_summary_stale, false);
+    assert.equal((await f.session()).pr_summary_input_version, 0);
+  });
+
+test('supersession after synced candidate completion cannot activate or settle obsolete checks',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t);
+    const accepted = await f.reconcile(await f.snapshot());
+    await f.pool.query("UPDATE execution_work_requests SET status = 'succeeded' WHERE id = $1", [f.original.work.id]);
+    const preparation = await f.work.store.read(accepted.workId);
+    await candidate(f, f.work, { work: preparation });
+    const obsoleteContinuation = await f.make().recover(1);
+    const successorHead = 'e'.repeat(40);
+    await f.pool.query('UPDATE chat_sessions SET handoff_uploaded_sha = $1 WHERE id = 1', [successorHead]);
+    const successor = await f.work.admit({ session: await f.session(), headSha: successorHead });
+    await tick(f.make());
+    assert.equal(f.creates(), 0);
+    assert.equal((await f.session()).staging_runtime_name, 'serving');
+    assert.equal((await f.work.store.read(obsoleteContinuation.id)).status, 'succeeded');
+    assert.equal(await require('../src/services/visuals').storeChecks(f.pool, 1, NEXT, { state: 'passing', results: [] }), false);
+    await candidate(f, f.work, successor);
+    await tick(f.make());
+    assert.equal((await f.session()).staging_commit_sha, successorHead);
+    assert.equal((await f.session()).check_state, 'passing');
+    assert.equal(f.creates(), 1);
+  });
+
+test('actual sync-main worker result reaches durable admission without the legacy staging tail',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t);
+    await f.pool.query(`ALTER TABLE chat_sessions ADD COLUMN behind_main INTEGER DEFAULT 0,
+      ADD COLUMN merge_conflict_state TEXT, ADD COLUMN conflict_files JSONB,
+      ADD COLUMN conflict_checked_at TIMESTAMPTZ`);
+    const worker = require('../src/services/worker');
+    for (const name of ['ensureWorkerImage', 'ensureWorker', 'clearPendingStop']) t.mock.method(worker, name, async () => {});
+    t.mock.method(worker, 'execInWorker', async (_id, options) => {
+      assert.equal(options.mode, 'sync');
+      return { syncResult: 'clean', pushOk: true, sha: NEXT, exitCode: 0, behind: 0 };
+    });
+    const limits = require('../src/services/limits');
+    t.mock.method(limits, 'checkSystemBudget', async () => ({}));
+    t.mock.method(limits, 'recordSystemSpend', async () => {});
+    t.mock.method(require('../src/services/github'), 'getBranchSha', f.deps.github.getBranchSha);
+    t.mock.method(require('../src/services/cli-preview-handoff/work'), 'createCliHandoffWork', () => f.work);
+    t.mock.method(require('../src/services/handoff-pipeline'), 'beginHandoffPipeline', () => {
+      throw new Error('Detached tail forbidden for enrollment');
+    });
+    const result = await require('../src/services/sync-main').runSyncMain(f.config, f.pool, 1, {
+      sessionRow: await f.snapshot(),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.managedRevision.durable, true);
+    assert.equal(result.managedRevision.checksStarted, false);
+    assert.equal((await f.make().recover(1)).id, result.managedRevision.workId);
+    assert.equal((await f.session()).checks_commit_sha, NEXT);
+    t.mock.method(worker, 'execInWorker', async () => ({ syncResult: 'already_synced', sha: null, pushOk: false }));
+    const retry = await require('../src/services/sync-main').runSyncMain(f.config, f.pool, 1, {
+      sessionRow: await f.snapshot(),
+    });
+    assert.equal(retry.managedRevision.workId, result.managedRevision.workId);
+    assert.equal(retry.managedRevision.applied, false);
+  });
+
+test('sync reconciliation discovery rotates a locked aggregate and retries it after unrelated admission',
+  { skip: !postgresEnabled }, async t => {
+    const f = await syncFixture(t);
+    const second = (await f.pool.query(`INSERT INTO chat_sessions (id, handoff_uploaded_sha, checks_commit_sha)
+      VALUES (2,$1,$1) RETURNING *`, [HEAD])).rows[0];
+    await f.work.admit({ session: second, headSha: HEAD });
+    const offConfig = { ...f.config, nativeCliPreviewHandoffEnabled: false };
+    const off = createCliHandoffWork(f.pool, offConfig);
+    const secondSnapshot = { ...(await f.pool.query('SELECT * FROM chat_sessions WHERE id = 2')).rows[0],
+      repo_url: 'https://github.com/example/demo' };
+    await f.reconcile(await f.snapshot(), { config: offConfig }, { ...f.deps, work: off });
+    await f.reconcile(secondSnapshot, { config: offConfig }, { ...f.deps, work: off });
+
+    const discoveryPool = require('../src/services/execution/discovery-pool').createDiscoveryPool(f.url, {
+      lockTimeoutMs: 20, statementTimeoutMs: 1000,
+    });
+    const discovery = createCliHandoffWork(discoveryPool, f.config);
+    const blocker = await f.pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT id FROM chat_sessions WHERE id = 1 FOR UPDATE');
+      await discovery.reconcileSyncs(1);
+      await discovery.reconcileSyncs(1);
+      assert.ok((await f.pool.query('SELECT sync_reconciliation FROM cli_preview_handoffs WHERE session_id = 1')).rows[0].sync_reconciliation);
+      assert.equal((await f.work.recover(2)).status, 'queued', 'Later obligation progresses before the first aggregate unlocks');
+      assert.equal((await discoveryPool.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name = 'bounded-work-discovery' AND state LIKE 'idle in transaction%'")).rows[0].count, 0);
+      await blocker.query('ROLLBACK');
+      await discovery.reconcileSyncs(1);
+      assert.equal((await f.work.recover(1)).status, 'queued', 'Timed-out obligation remains retryable');
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+      await discoveryPool.end();
+    }
+  });

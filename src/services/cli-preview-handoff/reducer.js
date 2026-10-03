@@ -17,6 +17,60 @@ function reduce(state, action) {
   const { session, handoff, preview } = state;
   if (!session || session.source !== 'cli_handoff') return reject('native_cli_required');
 
+  if (action.type === 'AcceptCliSyncHead') {
+    if (!handoff?.flow_id) return reject('cli_enrollment_required');
+    if (session.active_turn) return reject('session_busy');
+    if (session.status !== action.expectedStatus || session.branch_name !== action.branchName
+        || (session.handoff_head_sha || null) !== action.previousHead
+        || (session.handoff_uploaded_sha || null) !== action.previousUploaded
+        || (session.checks_commit_sha || null) !== action.previousChecks
+        || (session.handoff_local_commit_sha || null) !== action.previousLocalCommit
+        || (session.handoff_upload_checked_sha || null) !== action.previousUploadChecked
+        || (session.staging_runtime_name || null) !== action.previousPreviewName
+        || (session.reviewed_head_sha || null) !== action.previousReviewed
+        || Number(session.approval_epoch || 0) !== action.previousEpoch) {
+      return reject('session_state_changed');
+    }
+    if ((action.workerSha && action.workerSha !== action.headSha)
+        || (action.workerResult !== 'already_synced' && !action.workerSha)) {
+      return reject('sync_revision_unverified');
+    }
+    if (action.previousUploaded !== action.previousHead && action.previousLocalCommit) {
+      return reject('local_upload_awaiting_submission');
+    }
+    const keepApprovals = action.moveKind === 'mechanical' || action.moveKind === 'resolved'
+      || action.moveKind === 'same' || action.moveKind === 'initialized';
+    return {
+      accepted: true,
+      reason: 'cli_sync_head_accepted',
+      change: {
+        phase: 'preparing', headSha: action.headSha, startedStatus: 'active',
+        approvalEpoch: action.previousEpoch
+          + (session.status === 'promoted' && !keepApprovals ? 1 : 0),
+        deferPreparation: !action.admissionEnabled,
+      },
+      effects: action.admissionEnabled
+        ? [{ type: 'PrepareCliPreview', effectKey: `${action.actionId}:prepare` }]
+        : [{ type: 'ReconcileCliSyncPreparation', owner: 'cli-preview-handoff' }],
+    };
+  }
+
+  if (action.type === 'ResumeCliSyncPreparation') {
+    if (!handoff?.sync_reconciliation || handoff.admission_id !== action.admissionId
+        || handoff.head_sha !== action.headSha || session.handoff_head_sha !== action.headSha) {
+      return reject('sync_obligation_changed');
+    }
+    if (session.active_turn) return reject('session_busy');
+    const condition = nativeHeadCondition(preview.session, handoff.started_status, action.headSha);
+    if (condition) return reject(condition);
+    return {
+      accepted: true,
+      reason: 'cli_sync_preparation_resumed',
+      change: { phase: 'preparing', resumeSync: true },
+      effects: [{ type: 'PrepareCliPreview', effectKey: `${action.admissionId}:prepare` }],
+    };
+  }
+
   if (action.type === 'AcceptCliPreviewHead') {
     if (session.user_id !== action.userId) return reject('session_owner_changed');
     if (session.active_turn) return reject('session_busy');

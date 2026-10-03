@@ -48,6 +48,7 @@ function activeHarness({ updateRows = null, pendingError = null } = {}) {
     },
   };
   const deps = {
+    handoff: { async enrolled() { return false; } },
     github: { async getBranchSha() { return NEW; } },
     visuals: {
       async setChecksPending(...args) {
@@ -162,6 +163,7 @@ test('promoted pins are not current until the reviewed revision is current too',
   const result = await reconcileCliHandoffSync({
     config: {}, pool, session: current, newHead: NEW,
   }, {
+    handoff: { async enrolled() { return false; } },
     github: { async getBranchSha() { return NEW; } },
     votes: {
       async reconcileNativeReviewedHead() {
@@ -193,6 +195,7 @@ test('promoted CLI handoff preserves reconciliation epoch and rebuilds with sync
   const result = await reconcileCliHandoffSync({
     config: {}, pool, session, newHead: NEW,
   }, {
+    handoff: { async enrolled() { return false; } },
     github: { async getBranchSha() { return NEW; } },
     votes: {
       async reconcileNativeReviewedHead(args) {

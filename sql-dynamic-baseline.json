@@ -920,6 +920,13 @@
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
     {
+      "source": "src/services/cli-preview-handoff/store.js",
+      "kind": "structural-template",
+      "fingerprint": "0dbb738df7e7bce55ccd",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $2::text, handoff_uploaded_sha = $2::text, handoff_local_commit_sha = NULL, handoff_upload_checked_sha = NULL, last"
+    },
+    {
       "source": "src/services/communities.js",
       "kind": "structural-template",
       "fingerprint": "5c0f6f71276d5c1f5622",

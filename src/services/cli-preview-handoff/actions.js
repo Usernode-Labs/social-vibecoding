@@ -19,6 +19,29 @@ const blockedReasons = z.enum([
 const identity = { ...envelope, flowId: z.string().uuid() };
 const schema = z.discriminatedUnion('type', [
   z.object({
+    type: z.literal('AcceptCliSyncHead'),
+    ...envelope,
+    expectedStatus: z.enum(['active', 'promoted']),
+    branchName: z.string().min(1),
+    previousHead: envelope.headSha.nullable(),
+    previousUploaded: envelope.headSha.nullable(),
+    previousChecks: envelope.headSha.nullable(),
+    previousLocalCommit: envelope.headSha.nullable(),
+    previousUploadChecked: envelope.headSha.nullable(),
+    previousPreviewName: z.string().nullable(),
+    previousReviewed: envelope.headSha.nullable(),
+    previousEpoch: z.number().int().nonnegative(),
+    workerResult: z.enum(['clean', 'resolved', 'already_synced']),
+    workerSha: envelope.headSha.nullable(),
+    admissionEnabled: z.boolean(),
+    moveKind: z.enum(['same', 'initialized', 'mechanical', 'resolved', 'authored', 'unknown']),
+  }).strict(),
+  z.object({
+    type: z.literal('ResumeCliSyncPreparation'),
+    ...envelope,
+    admissionId: z.string().uuid(),
+  }).strict(),
+  z.object({
     type: z.literal('AcceptCliPreviewHead'),
     ...envelope,
     userId: z.number().int().positive(),

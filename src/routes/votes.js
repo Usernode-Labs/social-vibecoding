@@ -1738,32 +1738,7 @@ async function reconcileNativeReviewedHead({
   }
 
   if (notify || clearedVotes) {
-    try {
-      const { pushVoteUpdate } = require('../services/ws');
-      pushVoteUpdate({
-        sessionId: session.id,
-        appSlug: session.app_slug || null,
-        merged: false,
-        headMoved: true,
-        ...(keepsApprovals ? { votesKept: true } : {}),
-      });
-    } catch (_) { /* ws failures are non-fatal */ }
-
-    const label = session.pr_title
-      ? `PR #${session.pr_number}: ${session.pr_title}`
-      : `PR #${session.pr_number}`;
-    const message = move.kind === 'mechanical'
-      ? `${label} was brought up to date with main. Nothing in the proposal changed, so its votes still stand.`
-      : move.kind === 'resolved'
-        ? `${label} was brought up to date with main and ${move.conflictPaths?.length || 'its'} conflicting file${move.conflictPaths?.length === 1 ? '' : 's'} were resolved automatically. The votes still stand; its checks are re-running against the merged code and it will merge on its own once they pass.`
-        : move.kind === 'unknown'
-          ? `${label} moved to a commit the platform could not verify (${move.reason}). Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
-          : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
-    await sendSystemMessage(
-      pool, session.app_id, message, 'system',
-      { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead },
-      { type: 'session', ref: session.id }
-    ).catch(() => {});
+    await announceNativeHeadMove({ pool, session, liveHead, move, keepsApprovals });
   }
 
   log.info('votes', 'Proposal revision reconciled', {
@@ -1781,6 +1756,38 @@ async function reconcileNativeReviewedHead({
     votesKept: keepsApprovals,
     checksDeferred: needsChecks && deferChecks,
   };
+}
+
+async function announceNativeHeadMove({ pool, session, liveHead, move, keepsApprovals, checksWaiting = false }) {
+  try {
+    const { pushVoteUpdate } = require('../services/ws');
+    pushVoteUpdate({
+      sessionId: session.id,
+      appSlug: session.app_slug || null,
+      merged: false,
+      headMoved: true,
+      ...(keepsApprovals ? { votesKept: true } : {}),
+    });
+  } catch (_) { /* ws failures are non-fatal */ }
+
+  const label = session.pr_title
+    ? `PR #${session.pr_number}: ${session.pr_title}`
+    : `PR #${session.pr_number}`;
+  const resolvedChecks = checksWaiting
+    ? 'preparation is waiting for reconciliation before checks can run.'
+    : 'its checks are re-running against the merged code and it will merge on its own once they pass.';
+  const message = move.kind === 'mechanical'
+    ? `${label} was brought up to date with main. Nothing in the proposal changed, so its votes still stand.`
+    : move.kind === 'resolved'
+      ? `${label} was brought up to date with main and ${move.conflictPaths?.length || 'its'} conflicting file${move.conflictPaths?.length === 1 ? '' : 's'} were resolved automatically. The votes still stand; ${resolvedChecks}`
+      : move.kind === 'unknown'
+        ? `${label} moved to a commit the platform could not verify (${move.reason}). Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
+        : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
+  await sendSystemMessage(
+    pool, session.app_id, message, 'system',
+    { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead },
+    { type: 'session', ref: session.id }
+  ).catch(() => {});
 }
 
 /**
@@ -7209,6 +7216,7 @@ module.exports = {
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
+  announceNativeHeadMove,
   reconcilePromotedSweepHead,
   reviewedHeadForSession,
   voteMatchesApprovalEpoch,

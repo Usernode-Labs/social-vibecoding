@@ -662,71 +662,74 @@ async function heartbeatRun(pool, runId, phase, progress = null) {
 
 async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer revision of this proposal replaced these shots.') {
   if (!validSha(headSha)) throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
-  return withTransaction(pool, async (client) => {
-    const selected = await client.query(
-      `SELECT shots_state, shots_run_id, shots_detail
-         FROM chat_sessions WHERE id = $1 FOR UPDATE`,
-      [sessionId]
-    );
-    const session = selected.rows[0];
-    if (!session) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
-    const result = await client.query(
-      `UPDATE shot_runs
-          SET state = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'cancelled'
-                ELSE 'stale'
-              END,
-              failure_code = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'superseded'
-                ELSE failure_code
-              END,
-              failure_reason = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN $3
-                ELSE failure_reason
-              END,
-              completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
-        WHERE session_id = $1 AND head_sha <> $2
-          AND state NOT IN ('stale','cancelled')
-       RETURNING id`,
-      [sessionId, headSha, clip(reason, 2000)]
-    );
-    const previous = session.shots_detail && typeof session.shots_detail === 'object'
-      ? session.shots_detail : {};
-    const intent = previous.intent && typeof previous.intent === 'object' ? previous.intent : null;
-    const revisionChanged = previous.headSha && previous.headSha !== headSha;
-    if (result.rowCount || revisionChanged) {
-      let detail;
-      let nextState = 'planned';
-      if (intent) {
-        // Keep the already-validated declaration while dropping every
-        // run-derived field. The next exact revision needs new shots, but the
-        // author should not have to restate the change after every push.
-        detail = pendingDetail(intent, { headSha, reason });
-        nextState = intent.impact === 'none' && detail.required === false
-          ? 'not_required' : 'planned';
-      } else {
-        detail = {
-          version: 1,
-          required: true,
-          headSha,
-          reason: clip(reason, 1000),
-        };
-      }
-      await client.query(
-        `UPDATE chat_sessions
-            SET shots_state = $2,
-                shots_run_id = NULL,
-                shots_detail = $3::jsonb,
-                shots_updated_at = NOW()
-          WHERE id = $1`,
-        [sessionId, nextState, JSON.stringify(detail)]
-      );
+  return withTransaction(pool, client => markStaleForHeadWithClient(client, sessionId, headSha, reason));
+}
+
+async function markStaleForHeadWithClient(client, sessionId, headSha, reason = 'A newer revision of this proposal replaced these shots.') {
+  if (!validSha(headSha)) throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
+  const selected = await client.query(
+    `SELECT shots_state, shots_run_id, shots_detail
+       FROM chat_sessions WHERE id = $1 FOR UPDATE`,
+    [sessionId]
+  );
+  const session = selected.rows[0];
+  if (!session) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
+  const result = await client.query(
+    `UPDATE shot_runs
+        SET state = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'cancelled'
+              ELSE 'stale'
+            END,
+            failure_code = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'superseded'
+              ELSE failure_code
+            END,
+            failure_reason = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN $3
+              ELSE failure_reason
+            END,
+            completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
+      WHERE session_id = $1 AND head_sha <> $2
+        AND state NOT IN ('stale','cancelled')
+     RETURNING id`,
+    [sessionId, headSha, clip(reason, 2000)]
+  );
+  const previous = session.shots_detail && typeof session.shots_detail === 'object'
+    ? session.shots_detail : {};
+  const intent = previous.intent && typeof previous.intent === 'object' ? previous.intent : null;
+  const revisionChanged = previous.headSha && previous.headSha !== headSha;
+  if (result.rowCount || revisionChanged) {
+    let detail;
+    let nextState = 'planned';
+    if (intent) {
+      // Keep the already-validated declaration while dropping every
+      // run-derived field. The next exact revision needs new shots, but the
+      // author should not have to restate the change after every push.
+      detail = pendingDetail(intent, { headSha, reason });
+      nextState = intent.impact === 'none' && detail.required === false
+        ? 'not_required' : 'planned';
+    } else {
+      detail = {
+        version: 1,
+        required: true,
+        headSha,
+        reason: clip(reason, 1000),
+      };
     }
-    return result.rowCount || 0;
-  });
+    await client.query(
+      `UPDATE chat_sessions
+          SET shots_state = $2,
+              shots_run_id = NULL,
+              shots_detail = $3::jsonb,
+              shots_updated_at = NOW()
+        WHERE id = $1`,
+      [sessionId, nextState, JSON.stringify(detail)]
+    );
+  }
+  return result.rowCount || 0;
 }
 
 async function overrideRun(pool, runId, { userId, reason }) {
@@ -1010,6 +1013,7 @@ module.exports = {
   transitionRun,
   heartbeatRun,
   markStaleForHead,
+  markStaleForHeadWithClient,
   overrideRun,
   getRun,
   rerunSameHead,

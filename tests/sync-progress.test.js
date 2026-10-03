@@ -314,6 +314,7 @@ test('CLI handoff: clean and already-synced outcomes reconcile the managed revis
       const result = await subject.runSyncMain({}, syncPool(), 7, { sessionRow: session });
       assert.equal(reconcileCalls.length, 1, syncResult);
       assert.equal(reconcileCalls[0].newHead, sha);
+      assert.deepEqual(reconcileCalls[0].workerResult, { syncResult, sha, pushOk: true });
       assert.equal(result.managedRevision.ok, true);
     } finally {
       restore();
@@ -682,5 +683,25 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
     syncMainSvc.getSyncState = realGetSyncState;
     worker.isInFlight = realIsInFlight;
     server.close();
+  }
+});
+
+
+test('CLI sync reports disabled-admission reconciliation without claiming checks started', async () => {
+  const { subject, restore } = loadSyncMain({
+    execImpl: async () => ({ syncResult: 'clean', sha: 'a'.repeat(40), pushOk: true, exitCode: 0 }),
+    reconcileImpl: async () => ({
+      ok: true, durable: true, blocked: true, checksStarted: false,
+      reconciliation: { owner: 'cli-preview-handoff', reason: 'sync_admission_disabled' },
+    }),
+  });
+  try {
+    const result = await subject.runSyncMain({}, syncPool(), 7, {
+      sessionRow: sessionRow({ source: 'cli_handoff', status: 'active' }),
+    });
+    assert.match(result.message, /waiting for reconciliation/);
+    assert.equal(result.managedRevision.checksStarted, false);
+  } finally {
+    restore();
   }
 });

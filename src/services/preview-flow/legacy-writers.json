@@ -72,8 +72,8 @@
       "staging_url",
       "staging_container_id"
     ],
-    "reason": "Native active/promoted head adoption clears pointers before its preparation pipeline.",
-    "migration": "Compose flow invalidation with guarded head adoption in one transaction."
+    "reason": "Unenrolled active head adoption still clears pointers. Persisted CLI enrollment bypasses this writer and detached tail.",
+    "migration": "Migrate remaining unenrolled sync callers; enrolled sync now composes head acceptance and durable preparation atomically."
   },
   {
     "source": "src/services/cli-handoff-sync.js",
@@ -83,8 +83,8 @@
       "staging_url",
       "staging_container_id"
     ],
-    "reason": "Native active/promoted head adoption clears pointers before its preparation pipeline.",
-    "migration": "Compose flow invalidation with guarded head adoption in one transaction."
+    "reason": "Unenrolled promoted head adoption still clears pointers. Persisted CLI enrollment bypasses this writer and detached recheck.",
+    "migration": "Migrate remaining unenrolled sync callers; enrolled sync now composes reviewed head acceptance and durable preparation atomically."
   },
   {
     "source": "src/services/fleet-maintenance.js",
