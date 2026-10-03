@@ -185,11 +185,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       async close() { platformClosed += 1; },
     };
   }
+  // #3772: what a turn that could not answer asked to run again later, kept
+  // here rather than on a timer.
+  const scheduled = [];
   async function turn(text, chat, extra = {}) {
     const message = await say(text, extra.input || {});
     return mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: { chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, ...(extra.deps || {}) },
+      deps: {
+        chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, schedule: (work, ms) => scheduled.push({ work, ms }),
+        ...(extra.deps || {}),
+      },
     });
   }
   async function read(sent) {
@@ -252,11 +258,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(by.get('note-board#5').proposal.yesVotes, 0);
     assert.equal(by.get('note-board#5').proposal.checks, 'passed');
     assert.equal(by.get('note-board#5').proposal.link, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
-    assert.equal(by.get('note-board#6').status, 'step 1 of 6: waiting in the queue (number 1) to be read');
+    // #3771: what it waits for, in words: here nothing is ahead of it.
+    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line to be read');
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
-    assert.deepEqual(work.allowance, { usedThisWeek: '$0.10', weeklyAllowance: '$50.00', left: '$49.90' });
+    // #3772: said only when asked, or when little is left.
+    assert.deepEqual(work.allowance, { usedThisWeek: '$0.10', weeklyAllowance: '$50.00', left: '$49.90', low: false });
     assert.equal(work.botIsOn, true);
 
     // #3685: the pipeline as it runs. A request leaves the queue once it has
@@ -435,8 +443,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(seen[0].messages[0].content, /call progress first/);
     assert.match(seen[0].messages[0].content, /For the whole list of their requests, call my_work/);
     assert.ok(seen[0].messages.some((m) => m.role === 'user' && /what are you working on/.test(m.content)));
-    assert.ok(seen[0].messages.some((m) => m.role === 'assistant' && /^\[about Seed swap request #4, question open\]/.test(m.content)),
-      'the bot\'s own messages carry what they were about');
+    // #3769: the bot's own news is marked as the platform's, and nothing in
+    // its history opens with the "[about …]" label it used to copy.
+    assert.ok(seen[0].messages.some((m) => m.role === 'assistant'
+      && m.content.startsWith(`${mayor.AUTOMATIC_LABEL}\n`) && /Seed swap/.test(m.content)),
+      'the bot\'s own news reads as Homeroom\'s');
+    assert.ok(!seen[0].messages.some((m) => typeof m.content === 'string' && /^\[about /.test(m.content)));
     const { rows: [row] } = await pool.query(
       'SELECT rounds, tools, input_tokens, output_tokens, cost_usd::float8 AS cost, error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1',
     );
@@ -497,8 +509,18 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [queued] } = await pool.query('SELECT priority FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, n]);
     assert.equal(queued.priority, 0, 'a project the bot acts on looks at it next');
     assert.ok(systemMessages.some((m) => m.thread?.ref === n), 'its thread opens with where it came from');
+    // #3767: the answer to File it is the request's card, which follows it
+    // from here, under the key the bot will start it from: no "Filed:"
+    // message with a card, then a second card when the work starts.
     const ackMsg = await read(ack);
-    assert.match(ackMsg.content, /^Filed: \*\*Note board\*\* request #41: Add a search box\. I'll look at it now/);
+    assert.equal(ackMsg.content, '**Note board** · request #41: Add a search box\n\nFiled. This card follows it from here.');
+    assert.equal(ackMsg.metadata.homeroomBot.kind, 'activity');
+    assert.equal(ackMsg.metadata.homeroomBot.issueNumber, 41);
+    const { rows: [q41] } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 41', [notes.id]);
+    const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [ack.messageId]);
+    assert.equal(keyed.idempotency_key, `hrbot-activity-${q41.id}`);
+    const { rows: [recorded] } = await pool.query('SELECT kind FROM homeroom_bot_dm_messages WHERE message_id = $1', [ack.messageId]);
+    assert.equal(recorded.kind, 'activity', 'a reply to it is about the request, as to its other news');
     const offerAfter = await read(offered);
     assert.equal(offerAfter.metadata.homeroomBot.status, 'answered');
     assert.equal(offerAfter.metadata.homeroomBot.answer, 'File it');
@@ -568,13 +590,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(offered)).reply.id, ask.id);
     const tap = await say('File it', { reply_to_id: offered.messageId });
     const ack = await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} }));
-    assert.equal(ack.reply.id, tap.id);
+    // #3767: what answers the tap is the request's card, and it quotes where
+    // the request started, as all its news does.
+    assert.equal(ack.metadata.homeroomBot.kind, 'activity');
+    assert.equal(ack.reply.id, ask.id);
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
 
     // Its news later on, from the bot's work on it, quotes where it started.
+    // #3767: while its card is the newest thing about it, "I'm building
+    // this now" is the card's to show, and is not sent again; the post is
+    // told it reached her, so it does not tag her instead.
     const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
-    assert.equal((await read(building)).reply.id, ask.id);
+    assert.equal(building.card, true);
+    assert.equal(building.messageId, ack.id);
+    assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
       settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username }, app: notes, issueNumber: n, bot,
     });
@@ -638,7 +668,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     });
     // Her answer to its question (passed on above) put it first in the queue.
     assert.equal(by.get('seed-swap#4').stage, 'queued');
-    assert.match(by.get('seed-swap#4').doing, /^waiting in the queue \(number 1\) to be read$/);
+    // #3771: what it waits for, in words: Seed swap builds #3 first.
+    assert.equal(by.get('seed-swap#4').doing, 'waiting its turn: Seed swap is building request #3 first (one request per project at a time)');
+    assert.deepEqual(
+      { reason: by.get('seed-swap#4').waitingFor.reason, number: by.get('seed-swap#4').waitingFor.number },
+      { reason: 'project_busy', number: 3 },
+    );
     assert.equal(by.get('seed-swap#4').busyNow, false);
     assert.equal(by.get('note-board#5').waitingOn, 'the group');
     assert.equal(by.get('note-board#5').proposal.votesNeeded > 0, true, 'and how many votes it needs');
@@ -859,7 +894,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(plain.tools.map((tool) => tool.function.name), ['reply'], 'no lookups this time');
     assert.equal(plain.toolChoice, 'auto');
     assert.equal(plain.maxOutputTokens, mayor.RETRY_OUTPUT_TOKENS);
-    assert.match(plain.messages[0].content, /\n\nTHIS ANSWER\nYour lookups could not be finished for this message/);
+    assert.match(plain.messages[0].content, /\n\nTHIS ANSWER\nThis time your only tool is reply/);
+    // #3772: no request of the turn narrows the providers it may go to.
+    assert.ok(seen.every((r) => r.parallelToolCalls === null), 'parallel_tool_calls is never sent');
+    assert.ok(seen.every((r) => r.timeoutMs === mayor.REQUEST_TIMEOUT_MS));
     assert.ok(plain.messages.length <= 9, 'the newest messages only');
     assert.deepEqual(plain.messages.at(-1), { role: 'user', content: EVAN }, 'her message last, as words');
     assert.equal(new Set(seen.map((r) => r.sessionId)).size, seen.length, 'every request on its own route');
@@ -983,14 +1021,20 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const nokey = await turn('hi', counting, { deps: { apiKey: null } });
     assert.equal((await read(nokey)).content, mayor.KEY_TEXT);
     assert.equal(called, 0);
-    // #3733: "Try again in a minute" only once every attempt and the plain
-    // answer have failed too.
+    // #3733: said only once every attempt and the plain answer have failed
+    // too. #3772: and then it is not "try again": the turn is asked again
+    // on its own, and answers the same message when the provider is back.
     let tries = 0;
+    scheduled.length = 0;
     const failing = await turn('hi', async () => { tries += 1; const e = new Error('provider down'); e.code = 'network'; throw e; });
-    assert.equal((await read(failing)).content, mayor.BROKEN_TEXT);
+    const told = await read(failing);
+    assert.equal(told.content, mayor.DEFERRED_TEXT);
+    assert.doesNotMatch(told.content, /try again/i);
     assert.equal(tries, mayor.MAX_ATTEMPTS + 1, 'every attempt of the round, then one plain request');
     const { rows: [row] } = await pool.query('SELECT error, failures, fallback FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
-    assert.deepEqual(row, { error: 'network', failures: ['r1:network', 'r1:network', 'r1:network', 'plain:network'], fallback: 'broken' });
+    assert.deepEqual(row, { error: 'network', failures: ['r1:network', 'r1:network', 'r1:network', 'plain:network'], fallback: 'deferred' });
+    assert.equal(scheduled.length, 1, 'one later try');
+    assert.equal(scheduled[0].ms, mayor.DEFER_DELAYS_MS[0]);
     // A 403 is how OpenRouter also refuses a flagged message: not a key an
     // admin must fix.
     const flagged = await turn('hi', async () => { throw Object.assign(new Error('HTTP 403'), { code: 'authentication', status: 403 }); });
@@ -1003,6 +1047,48 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(busy)).content, mayor.BUSY_TEXT);
     assert.equal(called, 0);
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE cost_usd IS NULL AND model IS NULL');
+  });
+
+  await t.test('#3772: a message no provider could answer is answered later, on its own, quoting it', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    scheduled.length = 0;
+    let down = true;
+    const flaky = async (req) => {
+      if (down) throw Object.assign(new Error('Global Chat model request failed (HTTP 429)'), { code: 'rate_limited', status: 429, retryAfterMs: 2000 });
+      return scripted([[['reply', { text: 'Pin notes is up for a vote.' }]]])(req);
+    };
+    const first = await turn('is pin notes up yet?', flaky);
+    const firstMsg = await read(first);
+    assert.equal(firstMsg.content, mayor.DEFERRED_TEXT);
+    assert.equal(scheduled.length, 1);
+    // The provider is back: the later try answers that same message.
+    down = false;
+    const later = await read(await scheduled[0].work());
+    assert.equal(later.content, 'Pin notes is up for a vote.');
+    assert.equal(later.reply.id, firstMsg.reply.id, 'it quotes the message it answers');
+    const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [later.id]);
+    assert.match(keyed.idempotency_key, /^hrbot-mayor-\d+-d1$/);
+
+    // Still down on every try: the last one says so, once, and stops.
+    scheduled.length = 0;
+    down = true;
+    const again = await turn('and dark mode?', flaky);
+    assert.equal((await read(again)).content, mayor.DEFERRED_TEXT);
+    for (let i = 0; i < mayor.DEFER_DELAYS_MS.length; i += 1) {
+      const step = scheduled.shift();
+      assert.equal(step.ms, mayor.DEFER_DELAYS_MS[i]);
+      const out = await step.work();
+      if (i < mayor.DEFER_DELAYS_MS.length - 1) assert.equal(out, null, 'a later try says nothing until it can answer');
+      else assert.equal((await read(out)).content, mayor.DEFERRED_GAVE_UP_TEXT);
+    }
+    assert.equal(scheduled.length, 0);
+
+    // Written to since: that message's own turn answers, and this one is not asked again.
+    scheduled.length = 0;
+    await turn('one more?', flaky);
+    await say('never mind');
+    assert.equal(await scheduled[0].work(), null);
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
   });
 
   await t.test('her turns run one after another, never side by side', async () => {
@@ -1217,5 +1303,158 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // One change per turn.
     const once = { bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], revised: true };
     assert.match((await mayor.reviseProposal(pool, once, { proposal: proposal.id, change: 'Drop the pins.' })).error, /^One change per turn\.$/);
+  });
+
+  // ── #3772, #3768, #3771: the DM of 3 October ──
+
+  await t.test('#3772: "file it" typed under a draft files it as the tap does; with no draft it files nothing', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const offered = await turn('can you add note colours to note board?', scripted([
+      [['offer_request', { project: 'note-board', title: 'Note colours', details: 'Let each note have a colour.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]));
+    // A plain "yes" decides it only while the draft is the newest message.
+    const typed = await say('file it');
+    const out = await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: typed, deps: {} });
+    assert.ok(out?.sent?.messageId, 'decided');
+    assert.equal(created.length, before + 1, 'filed once');
+    const card = await read(out.sent);
+    assert.equal(card.metadata.homeroomBot.kind, 'activity');
+    assert.match(card.content, /Note colours\n\nFiled\. This card follows it from here\.$/);
+    assert.equal((await read(offered)).metadata.homeroomBot.status, 'answered');
+
+    // Nothing waiting now: a typed "file it" is said to the model as such.
+    const none = await say('file it');
+    assert.deepEqual(
+      await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: none, deps: {} }),
+      { decisionWithoutOffer: true },
+    );
+    const seen = [];
+    await mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message: none,
+      deps: {
+        chat: scripted([[['reply', { text: 'There is nothing waiting to file. What would you like filed?' }]]], seen),
+        apiKey: 'sk-test', openMcp, sleep: async () => {}, decisionWithoutOffer: true,
+      },
+    });
+    assert.ok(seen[0].messages.some((m) => m.role === 'system' && m.content === mayor.NO_OFFER_NOTE));
+    assert.equal(created.length, before + 1, 'nothing more filed');
+
+    // A draft that is not the newest message: "yes" is the model's to read.
+    const second = await turn('and a pin colour?', scripted([
+      [['offer_request', { project: 'note-board', title: 'Pin colour', details: 'Pins in colour.' }]],
+      [['reply', { text: 'File this one?' }]],
+    ]));
+    await turn('hello', scripted([[['reply', { text: 'Hi!' }]]]));
+    const yes = await say('yes');
+    assert.equal(await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: yes, deps: {} }), null);
+    // Its own words still decide it.
+    const words = await say('Not now');
+    const declined = await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: words, deps: {} });
+    assert.equal((await read(declined.sent)).content, 'OK, I won\'t file it.');
+    assert.equal((await read(second)).metadata.homeroomBot.answer, 'Not now');
+  });
+
+  await t.test('#3772: a reply that claims what nothing did is asked about, then cut', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    // The 3 October reply, then put right on the second pass.
+    const seen = [];
+    const fixed = await turn('file it', scripted([
+      [['reply', { text: '[about Note board request #99] Filed: **Note board** request #99: Note colours. I\'ll look at it now.' }]],
+      (req) => {
+        const note = req.messages.at(-1).content;
+        assert.match(note, /^\[Homeroom check, not from them: your reply says a request was filed;/);
+        assert.match(note, /it names request #99, which no project of theirs has/);
+        return [['reply', { text: 'Nothing was filed yet. Want me to draft it for you to file?' }]];
+      },
+    ], seen));
+    assert.equal((await read(fixed)).content, 'Nothing was filed yet. Want me to draft it for you to file?');
+    assert.equal(seen.length, 2);
+    assert.equal(created.length, before, 'and nothing was filed');
+    const { rows: [row] } = await pool.query('SELECT failures FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
+    assert.deepEqual(row.failures, ['claims:filed+started+unknown']);
+    // Said again: cut, and said plainly.
+    const stubborn = await turn('file it', scripted([
+      [['reply', { text: 'Filed: **Note board** request #99: Note colours.' }]],
+    ]));
+    assert.equal((await read(stubborn)).content,
+      'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
+      + '(I can\'t find request #99 on your projects.)');
+    // A true answer passes untouched, in one pass.
+    const fine = [];
+    await turn('what is #5?', scripted([[['reply', { text: 'Request #5 is Pin notes, up for a vote.' }]]], fine));
+    assert.equal(fine.length, 1);
+  });
+
+  await t.test('#3768: she can have the bot add her words to a request that exists, as hers', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    threadPosts.length = 0;
+    const chat = scripted([
+      [['comment_on_request', { project: 'note-board', number: 6, comment: 'Share by link, not by email' }]],
+      (req) => {
+        const r = lastToolResult(req, 'comment_on_request');
+        assert.equal(r.ok, true);
+        assert.match(r.next, /You look at the request again next/);
+        return [['reply', { text: 'I posted that on Note board request #6 and I\'ll look at it again next.' }]];
+      },
+    ]);
+    const sent = await turn('add to the share request that it should be by link', chat);
+    assert.equal((await read(sent)).content, 'I posted that on Note board request #6 and I\'ll look at it again next.');
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].msg.thread.ref, 6);
+    assert.equal(threadPosts[0].msg.content,
+      'add to the share request that it should be by link\n\n(Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot understood it: Share by link, not by email.)');
+    const { rows: [q] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    assert.deepEqual(q, { priority: 0, reason: 'dm_comment' });
+
+    // Not hers to post on, or no such request: nothing posted.
+    const ctx = (extra = {}) => ({ bot, user: ada, settings, deps: {}, userText: 'x y', cards: [], appIds: new Set(), messageId: sent.messageId, ...extra });
+    assert.match((await mayor.commentOnRequest(pool, ctx(), { project: 'sam-shop', number: 9, comment: 'cheaper please' })).error,
+      /^They are not a member of Sam shop/);
+    assert.match((await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 999, comment: 'a b' })).error,
+      /^Note board has no request #999\./);
+    assert.match((await mayor.commentOnRequest(pool, ctx({ commented: 'x' }), { project: 'note-board', number: 6, comment: 'a b' })).error,
+      /^One comment per turn\.$/);
+    assert.equal(threadPosts.length, 1);
+  });
+
+  await t.test('#3771: she can ask the bot to start a request now, and hears what it waits for', async () => {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    const ctx = (extra = {}) => ({ bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
+    const started = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
+    assert.equal(started.ok, true);
+    assert.equal(started.queued, 'At the front of your queue.');
+    assert.ok(started.status, 'and where it stands');
+    const { rows: [q] } = await pool.query('SELECT priority, reason, requested_by FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    assert.deepEqual(q, { priority: 0, reason: 'dm_start', requested_by: ada.id });
+    // Already built and up for a vote: changed with revise_proposal instead.
+    assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 5 })).error, /its proposal is up for the group's vote\. To change it, use revise_proposal/);
+    // Not a project it builds on.
+    assert.match((await mayor.startRequest(pool, ctx({ settings: { ...settings, liveApps: ['seed-swap'] } }), { project: 'note-board', number: 6 })).error,
+      /^You do not build on Note board/);
+    assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 999 })).error, /^Note board has no request #999\./);
+    assert.match((await mayor.startRequest(pool, ctx({ started: 'x' }), { project: 'note-board', number: 6 })).error, /^One start per turn\.$/);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+  });
+
+  await t.test('#3772: her status is her work: nothing the bot only read in the background', async () => {
+    const { rows: [side] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)
+       VALUES ('Side project', 'side-project', 'running', $1, 'public', 'public', 'https://github.com/usernode-bot/side-project')
+       RETURNING id`,
+      [ada.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, payload, created_by) VALUES ($1, 77, 'Background', 'general', '{}', $2)`,
+      [side.id, ada.id],
+    );
+    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, started_at) VALUES ($1, 77, 1, NOW())', [side.id]);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 77, 'shadow', 'person')`, [side.id]);
+    const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    assert.ok(!work.requests.some((r) => r.project === 'side-project'), 'a request only ever read in the background is not hers to hear about');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [side.id]);
   });
 });

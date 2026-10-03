@@ -5,7 +5,9 @@ import { ChatIcon, CheckIcon, ClockIcon, InfoCircleIcon, WarningTriangleIcon } f
 import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ensureBotActivity, loadBotActivity, useBotActivity, useBotActivitySync } from './bot-activity-store';
+import {
+  cardRecord, ensureBotActivity, loadBotActivity, readsAsked, useBotActivity, useBotActivitySync,
+} from './bot-activity-store';
 import { jobTitle } from './bot-shared';
 import { recordObjectOrigin } from './format';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotActivityOutcome, HomeroomBotMeta } from './types';
@@ -282,20 +284,39 @@ function useNow(active: boolean): Date {
   return now;
 }
 
-/** A message the bot drew as an activity card (see isActivityMessage), kept current by BotActivitySync. */
-export function BotActivityCard({ message }: { message: ConversationMessage }) {
-  const { cards, loaded, failed } = useBotActivity();
-  const card = cards.get(message.id) || null;
+/**
+ * A message the bot drew as an activity card (see isActivityMessage), kept
+ * current by BotActivitySync. `words` is the message's own text, as the row
+ * draws any message's: a card the reads have nothing on keeps it instead
+ * (#3770), which is what an older card is, past the newest the server
+ * answers for. Until a read that knew of the card lands, it is the card,
+ * waiting for its state, so neither the first read nor a new card's flashes
+ * the words.
+ */
+export function BotActivityCard({ message, words = null }: { message: ConversationMessage; words?: ReactNode }) {
+  const snap = useBotActivity();
+  // How many reads had been asked for when this card was drawn: one asked
+  // for after that knew of it (cardRecord).
+  const [drawnAt] = useState(readsAsked);
+  const known = cardRecord(snap, message.id, drawnAt);
+  const card = snap.cards.get(message.id) || null;
   const now = useNow(card?.state === 'working');
   useEffect(() => { ensureBotActivity(); }, []);
+  // Drawn after the last read was asked for and newer than all it answered:
+  // ask once more, unless something already has, so the card learns whether
+  // it has a state at all.
+  useEffect(() => {
+    if (known === 'pending' && snap.loaded && readsAsked() === drawnAt) void loadBotActivity();
+  }, [known, snap.loaded, drawnAt]);
   const meta = message.metadata?.homeroomBot;
   if (!meta) return null;
+  if (known === 'none' && words) return <>{words}</>;
   return (
     <BotActivityCardView
       meta={meta}
       card={card}
-      loaded={loaded}
-      failed={failed && !card}
+      loaded={known === 'none'}
+      failed={known === 'failed'}
       onRetry={() => { void loadBotActivity(); }}
       now={now}
     />

@@ -62,9 +62,10 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: seven lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: nine lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal', 'offer_request', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal',
+      'comment_on_request', 'start_request', 'offer_request', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -136,8 +137,12 @@ test('#3733: the calls a provider returned go back well formed: an id each, uniq
 });
 
 test('#3733: the plain answer is told it has no lookups, and the key\'s failure never says to try again', () => {
-  assert.match(mayor.PLAIN_NOTE, /this time your only tool is reply/);
-  assert.match(mayor.PLAIN_NOTE, /Say nothing about the state of their work that this\nconversation does not show/);
+  assert.match(mayor.PLAIN_NOTE, /This time your only tool is reply/);
+  assert.match(mayor.PLAIN_NOTE, /Say nothing about the\nstate of their work that this conversation does not show/);
+  // #3772: it can do nothing, so it never drafts, claims, or blames lookups.
+  assert.match(mayor.PLAIN_NOTE, /Never draft a request, never ask them to tap File it,\nand never say you did something/);
+  assert.match(mayor.PLAIN_NOTE, /set `later` to true/);
+  assert.doesNotMatch(mayor.PLAIN_NOTE, /lookups could not be finished|ask again in a minute/);
   assert.doesNotMatch(mayor.PLAIN_NOTE, /—/);
   assert.doesNotMatch(mayor.KEY_TEXT, /try again|in a minute/i);
   assert.match(mayor.KEY_TEXT, /An admin needs to fix that first/);
@@ -217,4 +222,118 @@ test('#3740: what is posted on the proposal is their own words, with the change 
   assert.equal(mayor.revisionText('Drop the size options!', 'drop the size options'),
     'Drop the size options!\n\n(Sent in a chat with Homeroom bot.)', 'said once when the change is their words');
   assert.doesNotMatch(mayor.revisionText('a', 'b c'), /—/);
+});
+
+// ── #3772, #3769, #3768, #3771: the DM after 3 October ──
+
+test('#3772: the DM never sends parallel_tool_calls, so every provider of its model can answer', () => {
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const askModel = src.slice(src.indexOf('async function askModel('), src.indexOf('// A history message as plainAnswer sends it'));
+  assert.match(askModel, /parallelToolCalls: null,\n\s+timeoutMs: REQUEST_TIMEOUT_MS,/);
+  // Set before the caller's own fields, so no caller can bring it back by accident.
+  assert.ok(askModel.indexOf('parallelToolCalls: null') < askModel.indexOf('...rest,\n'));
+  assert.ok(mayor.REQUEST_TIMEOUT_MS > 25_000, 'longer than Global Chat\'s: the DM\'s answers are not streamed');
+  // streamChat omits the field only for null: false is still sent.
+  const { buildRequest } = require('../src/services/global-chat/openrouter');
+  const base = { model: 'z-ai/glm-5.3-flash', reasoning: 'low', messages: [], tools: [] };
+  assert.equal('parallel_tool_calls' in buildRequest({ ...base, parallelToolCalls: null }), false);
+  assert.equal(buildRequest({ ...base, parallelToolCalls: false }).parallel_tool_calls, false);
+});
+
+test('#3772: a rate limit that says when to come back is believed, within a turn', () => {
+  const limited = (retryAfterMs) => Object.assign(new Error('429'), { code: 'rate_limited', status: 429, retryAfterMs });
+  assert.deepEqual(mayor.retryPlan(limited(12_000)), { waitMs: 12_000 });
+  assert.deepEqual(mayor.retryPlan(limited(500)), { waitMs: mayor.RATE_LIMIT_WAITS_MS[0] }, 'never less than its own wait');
+  assert.deepEqual(mayor.retryPlan(limited(600_000)), { waitMs: 20_000 }, 'and never more than a turn can wait');
+  assert.equal(mayor.retryPlan(limited(20_000), { elapsedMs: 80_000 }), null, 'nor past the turn\'s window');
+});
+
+test('#3772: a later try is promised only for a provider\'s failure, three times, and never "try again"', () => {
+  assert.deepEqual(mayor.DEFER_DELAYS_MS, [60_000, 180_000, 600_000]);
+  assert.doesNotMatch(mayor.DEFERRED_TEXT, /try again/i);
+  assert.match(mayor.DEFERRED_TEXT, /you don't need to send it again/);
+  assert.doesNotMatch(`${mayor.DEFERRED_TEXT} ${mayor.DEFERRED_GAVE_UP_TEXT}`, /—|lookups/);
+  // A process that is gone picks them up when the bot starts.
+  assert.match(read('src/services/homeroom-bot.js'), /require\('\.\/homeroom-bot-mayor'\)\.resumeDeferred\(getPool\(config\), config\)/);
+});
+
+test('#3769: a reply never opens with a bracketed note, and the history no longer teaches one', () => {
+  assert.equal(mayor.cleanReply('[about Ear Trainer request #14] Filed: x'), 'Filed: x');
+  assert.equal(mayor.cleanReply('[Homeroom posted this automatically]\nHello'), 'Hello');
+  assert.equal(mayor.cleanReply('  [about a] [re: b] Hi'), 'Hi');
+  assert.equal(mayor.cleanReply('See [the docs] first'), 'See [the docs] first', 'only a leading note');
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.doesNotMatch(src, /`\[about \$\{/, 'the label is gone from the history');
+  assert.equal(mayor.AUTOMATIC_LABEL, '[Homeroom posted this automatically]');
+  assert.match(mayor.systemPrompt({ username: 'ada' }), /Those messages start with "\[Homeroom posted this automatically\]"/);
+});
+
+test('#3772: what a typed message decides about a draft', () => {
+  for (const text of ['File it', 'file it.', 'FILE IT!', 'please file it']) assert.deepEqual(mayor.typedDecision(text), { yes: true, plain: false }, text);
+  assert.deepEqual(mayor.typedDecision('Not now'), { yes: false, plain: false });
+  for (const text of ['yes', 'Yep', 'do it', 'go ahead!', 'ok']) assert.deepEqual(mayor.typedDecision(text), { yes: true, plain: true }, text);
+  for (const text of ['no', 'nope', 'cancel']) assert.deepEqual(mayor.typedDecision(text), { yes: false, plain: true }, text);
+  for (const text of ['yes, but make it blue', 'file it on ear trainer instead', 'what is it?', '']) {
+    assert.equal(mayor.typedDecision(text), null, text);
+  }
+  assert.match(mayor.NO_OFFER_NOTE, /no draft is waiting for them, so nothing has been filed/);
+});
+
+test('#3772: the request numbers a reply names, less a proposal\'s or a pull request\'s', () => {
+  assert.deepEqual(mayor.requestNumbers('Filed #14, see request #3 and proposal #6011, PR #12, pr#13, &#39; x#9'), [14, 3]);
+  assert.deepEqual(mayor.requestNumbers('nothing here'), []);
+});
+
+test('#3772: a claim nothing backs is asked about once, then cut and said plainly', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 13 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  // The 3 October reply: a filing no tap made, of a request that does not exist.
+  assert.deepEqual(await kinds('[about Ear Trainer request #14] Filed: **Ear Trainer** request #14: Richer synth tones.'),
+    ['filed', 'unknown']);
+  assert.deepEqual(await kinds('I\'ve filed it for you.'), ['filed']);
+  assert.deepEqual(await kinds('I opened a new request for that.'), ['filed']);
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), [], 'a draft, and a request that exists');
+  assert.deepEqual(await kinds('I opened the proposal yesterday.'), [], 'its own proposal is not a filing');
+  assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.'), ['posted']);
+  assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.', { posted: 'Ear Trainer request #13' }), []);
+  assert.deepEqual(await kinds('I\'m working on it now.'), ['started']);
+  assert.deepEqual(await kinds('I\'m working on it now.', { workBusy: true }), [], 'the records say so');
+  assert.deepEqual(await kinds('I\'ve updated the proposal.'), ['revised']);
+  assert.deepEqual(await kinds('Request #13 is with the group.'), []);
+
+  const note = mayor.checkNote([{ kind: 'filed', said: 'says a request was filed' }, { kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' }]);
+  assert.match(note, /^\[Homeroom check, not from them: your reply says a request was filed; and it names request #14/);
+  assert.match(note, /offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts one/);
+  assert.match(note, /never name one that does not exist\. Then call reply again\.\]$/);
+
+  assert.equal(
+    mayor.stripClaims('Filed: **Ear Trainer** request #14: Richer synth tones. I\'ll look at it now.', [
+      { kind: 'filed' }, { kind: 'started' }, { kind: 'unknown', numbers: [14] },
+    ]),
+    'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
+      + 'I haven\'t started on it yet.\n\n(I can\'t find request #14 on your projects.)',
+  );
+  assert.equal(
+    mayor.stripClaims('Here is what I found about the size options on Ear Trainer. I\'ve updated the proposal.', [{ kind: 'revised' }]),
+    'I haven\'t changed the proposal yet.\n\nHere is what I found about the size options on Ear Trainer.',
+  );
+  assert.equal(mayor.stripClaims('Unchanged.', []), 'Unchanged.');
+});
+
+test('#3768, #3771: the DM can comment on a request and start one, and says what it can do', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /\(comment_on_request\): posted on its\n {2}public discussion under their name/);
+  assert.match(prompt, /\(start_request\): it goes to the front of your queue/);
+  assert.match(prompt, /never say you cannot do one of those things/);
+  assert.match(prompt, /Mention it only when they ask about it, or when my_work marks it low/);
+  const comment = mayor.TOOLS.find((t) => t.function.name === 'comment_on_request').function;
+  assert.deepEqual(comment.parameters.required, ['project', 'number', 'comment']);
+  const start = mayor.TOOLS.find((t) => t.function.name === 'start_request').function;
+  assert.deepEqual(start.parameters.required, ['project', 'number']);
+  assert.equal(
+    mayor.commentText('yeah add it as a comment on that issue', 'Use the Web Audio API for richer, piano-like tones'),
+    'yeah add it as a comment on that issue\n\n(Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot '
+      + 'understood it: Use the Web Audio API for richer, piano-like tones.)',
+  );
 });

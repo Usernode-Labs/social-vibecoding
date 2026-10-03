@@ -913,6 +913,21 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   overflow-wrap: anywhere;
 }
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
+/* #3770: `#N` and `PR#N` chips in a message (channels.ts decorateRefs).
+   Here no drawer opens from them as in the app chat, so a chip is a link
+   only when the message names its project (the Homeroom bot's), and then it
+   is a real one, opening that request. Any other is drawn as text: no
+   pointer, no underline under it. The issue ink is --state-ok, which in dark
+   is the chip's own emerald; in light the emerald read at 1.6:1 on the
+   sheet, and on a lighter wash the green reads at 4.5:1. */
+.messages-markdown .gc-ref-issue { color: var(--state-ok); }
+html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
+.messages-markdown a.gc-ref { text-decoration: none; }
+.messages-markdown span.gc-ref { cursor: auto; }
+@media (hover: hover) {
+  .messages-markdown a.gc-ref:hover { text-decoration: underline; }
+  .messages-markdown span.gc-ref:hover { filter: none; text-decoration: none; }
+}
 
 /* A CONTINUATION LINE (#2783): the same person again, close behind their
    last message. No avatar and no name — the time of day sits in the 36px
@@ -1350,10 +1365,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   text-align: left;
 }
 .messages-bot-answers button:hover { filter: brightness(.97); }
-.messages-bot-answers .messages-bot-other {
+.messages-bot-answers .messages-bot-other,
+.messages-bot-answers .messages-bot-secondary {
   color: var(--text-secondary);
   background: var(--dc-raised);
 }
+/* #3770: an offer's File it is the act, filled in the accent as Accept is;
+   its Not now takes the neutral fill above. */
+.messages-bot-answers .messages-bot-primary { color: var(--accent-ink); background: var(--accent); }
+.messages-bot-answers .messages-bot-primary:hover { filter: none; background: var(--accent-light); }
 .messages-bot-default {
   font-size: 11px;
   font-weight: 600;
@@ -1375,6 +1395,34 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-bot-note svg { margin-top: 1px; }
 .messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
+/* #3770: the Activity disc in the bot's DM header, which opens its activity
+   panel. Shaded while the panel is open, as a disc is under the pointer.
+   Its badge sits on the disc's shoulder: the live dot while the bot works,
+   or, in the accent, the number of requests that wait on the viewer. */
+.messages-bot-work-button { position: relative; }
+.messages-bot-work-button[aria-expanded="true"] { background: var(--messages-surface-2); }
+.messages-bot-work-badge {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.messages-bot-work-dot { top: 6px; right: 6px; }
+.messages-bot-work-count {
+  top: -3px;
+  right: -3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--messages-surface);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
 
 /* Reaction pills, the language's own: a filled neutral chip, and the one
    that is YOURS on a tinted accent ground with accent ink — a fill, not an

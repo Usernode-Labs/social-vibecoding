@@ -27,6 +27,7 @@ class GlobalChatProviderError extends Error {
     provider = null,
     generationId = null,
     timings = null,
+    retryAfterMs = null,
   } = {}) {
     super(message);
     this.name = 'GlobalChatProviderError';
@@ -36,6 +37,8 @@ class GlobalChatProviderError extends Error {
     this.provider = provider;
     this.generationId = generationId;
     this.timings = timings;
+    // A refusal's Retry-After, in milliseconds, when it sent one.
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -237,6 +240,48 @@ async function readJsonBody(body, { startedAt, state }) {
   }
 }
 
+// How much of a refused request's body is read for its provider's name.
+const MAX_ERROR_BODY_BYTES = 16 * 1024;
+// The longest Retry-After a caller is told about; anything longer is a
+// provider that will not be back within one answer.
+const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
+
+/** Pure: a Retry-After header (seconds, or an HTTP date) in milliseconds, or null. */
+function retryAfterMs(value, now = Date.now()) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return null;
+  const ms = /^\d+(\.\d+)?$/.test(text) ? Number(text) * 1000 : Date.parse(text) - now;
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(Math.round(ms), MAX_RETRY_AFTER_MS) : null;
+}
+
+/**
+ * #3772: what a refused request's answer says about who refused it. OpenRouter
+ * names the provider in `error.metadata.provider_name`; a 429 that only ever
+ * named "null" could not tell a provider's limit from a key's. Never throws:
+ * a body that cannot be read leaves the provider unknown.
+ */
+async function refusalDetails(response) {
+  const details = { provider: null, retryAfterMs: retryAfterMs(response.headers?.get?.('retry-after')) };
+  const body = response.body;
+  if (!body || typeof body[Symbol.asyncIterator] !== 'function') return details;
+  try {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of body) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += value.byteLength;
+      if (bytes > MAX_ERROR_BODY_BYTES) break;
+      chunks.push(value);
+    }
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const name = parsed?.error?.metadata?.provider_name;
+    if (typeof name === 'string' && /^[\w .-]{1,80}$/.test(name)) details.provider = name;
+  } catch {
+    // An unreadable or non-JSON body says nothing more.
+  }
+  return details;
+}
+
 function providerErrorCode(status) {
   if (status === 401 || status === 403) return 'authentication';
   if (status === 402) return 'billing';
@@ -299,6 +344,9 @@ async function streamChat({
   }
 
   if (!response.ok) {
+    // Read under the request's own clock, so a body that never ends cannot
+    // hold the caller past its timeout.
+    const refused = await refusalDetails(response);
     clearTimeout(timer);
     throw new GlobalChatProviderError(
       providerErrorCode(response.status),
@@ -306,7 +354,9 @@ async function streamChat({
       {
         status: response.status,
         dispatched: true,
+        provider: refused.provider,
         timings: timingSnapshot(startedAt, timingState),
+        retryAfterMs: refused.retryAfterMs,
       },
     );
   }
@@ -409,5 +459,6 @@ module.exports = {
   GlobalChatProviderError,
   buildRequest,
   usageFrom,
+  retryAfterMs,
   streamChat,
 };

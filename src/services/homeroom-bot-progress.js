@@ -46,6 +46,11 @@ const START_GRACE_MS = 15 * MINUTE_MS;
 const FINISHED_WITHIN_DAYS = 14;
 const MAX_FINISHED = 3;
 const MAX_REQUESTS = 25;
+// #3771: the bot's account, whose follow-ups run beside a project's other work.
+const BOT_USERNAME = 'homeroom_bot';
+// A live build older than this is not holding its project up any more (the
+// longest one, a platform build's plan and build turn, is under two hours).
+const BUSY_BUILD_HOURS = 4;
 
 const FIRST_VERSION_STEPS = Object.freeze([
   'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Run its checks', 'Group vote', 'Live',
@@ -351,6 +356,85 @@ async function queuePositions(pool, rows, settings) {
 }
 
 /**
+ * #3771: what the bot is busy with on each project where a request of the
+ * person's waits: a request it is reading now (a claimed queue row, other
+ * than a follow-up on its own proposal, which runs beside it), or one it is
+ * building (a live ready run with no proposal yet, whose queue row is gone).
+ * The bot starts one request per project at a time, so either holds the
+ * rest. By app id: [{ issueNumber, since, what }], newest first.
+ */
+async function projectsBusy(pool, rows) {
+  const appIds = [...new Set(rows.filter((r) => r.queue_id && !r.started_at).map((r) => Number(r.app_id)))];
+  if (!appIds.length) return new Map();
+  const { rows: found } = await pool.query(
+    `(SELECT q.app_id, q.issue_number, q.started_at AS since, 'reading' AS what
+        FROM homeroom_bot_queue q
+       WHERE q.app_id = ANY($1::int[]) AND q.started_at IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+            WHERE cs.app_id = q.app_id AND q.issue_number = ANY(cs.linked_issues)
+              AND cs.status = 'promoted' AND u.username = $2 AND u.is_synthetic = TRUE))
+     UNION ALL
+     (SELECT DISTINCT ON (r.app_id, r.issue_number) r.app_id, r.issue_number,
+             COALESCE(bs.created_at, r.created_at) AS since, 'building' AS what
+        FROM homeroom_bot_runs r
+        LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+       WHERE r.app_id = ANY($1::int[]) AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
+         AND r.cap_suppressed IS NULL AND r.proposal_session_id IS NULL
+         AND r.created_at > NOW() - make_interval(hours => $3)
+         AND (bs.id IS NULL OR bs.status = 'active')
+       ORDER BY r.app_id, r.issue_number, r.id DESC)`,
+    [appIds, BOT_USERNAME, BUSY_BUILD_HOURS],
+  );
+  const out = new Map();
+  for (const b of found) {
+    const list = out.get(Number(b.app_id)) || [];
+    list.push({ issueNumber: Number(b.issue_number), since: b.since, what: b.what });
+    out.set(Number(b.app_id), list);
+  }
+  for (const list of out.values()) list.sort((a, b) => new Date(b.since) - new Date(a.since));
+  return out;
+}
+
+/**
+ * Pure (#3771): what a request in the queue waits for, as the `queued`
+ * stage's words and `waitingFor`. Its project busy with another request;
+ * the most the bot does for one person at once already under way; or, with
+ * nothing in the way, its place in the queue. "Waiting in the queue
+ * (number 4)" said none of that, and "when will you pick it up?" had no
+ * answer.
+ */
+function queuedWait(row, { busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date() } = {}) {
+  const ahead = (busy.get(Number(row.app_id)) || []).find((b) => b.issueNumber !== Number(row.issue_number));
+  if (ahead) {
+    // How long the other one has run is its own; the entry's time so far is
+    // this request's wait.
+    const minutes = minutesSince(ahead.since, now);
+    const doing = ahead.what === 'building' ? 'building' : 'reading';
+    return {
+      doing: `waiting its turn: ${row.name || row.slug} is ${doing} request #${ahead.issueNumber} first (one request per project at a time)`,
+      waitingFor: {
+        reason: 'project_busy', number: ahead.issueNumber, doing, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+      },
+    };
+  }
+  if (working >= perPerson) {
+    return {
+      doing: `waiting its turn: ${plural(working, 'thing')} of theirs ${working === 1 ? 'is' : 'are'} in progress, the most at once for one person`,
+      waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
+    };
+  }
+  if (queuePosition === 1) return { doing: 'next in line to be read', waitingFor: { reason: 'queue', ahead: 0 } };
+  if (Number.isInteger(queuePosition) && queuePosition > 1) {
+    return {
+      doing: `waiting in the queue to be read, with ${plural(queuePosition - 1, 'request')} ahead of it`,
+      waitingFor: { reason: 'queue', ahead: queuePosition - 1 },
+    };
+  }
+  return {};
+}
+
+/**
  * A proposal's facts as the DM reads them: its title, where it stands, its
  * checks in words, the votes for and against and how many it needs, and its
  * link. Null when there is no such proposal.
@@ -453,6 +537,7 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
     ...(limit ? { stepTimeLimitMinutes: limit } : {}),
     ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
+    ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
     ...(proposal ? { proposal } : {}),
     links: links(domain, { slug: row.slug, number, proposal: proposal?.proposal }),
   };
@@ -494,9 +579,22 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
   }));
   const position = await queuePositions(pool, rows, settings);
   const cutoff = now.getTime() - FINISHED_WITHIN_DAYS * 24 * 60 * MINUTE_MS;
-  for (const row of rows) {
+  const staged = rows.map((row) => {
     const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
-    const state = stageOf({ ...row, queue_position: queuePosition }, { now });
+    return { row, state: stageOf({ ...row, queue_position: queuePosition }, { now }), queuePosition };
+  });
+  // #3771: what a request still in the queue waits for, in words.
+  const working = rightNow.filter((e) => e.busyNow).length
+    + staged.filter((s) => s.state && BUSY_STAGES.has(s.state.stage) && !s.state.waitingOn).length;
+  const busy = staged.some((s) => s.state?.stage === 'queued') ? await projectsBusy(pool, rows) : new Map();
+  for (const s of staged) {
+    if (s.state?.stage !== 'queued') continue;
+    s.state = {
+      ...s.state,
+      ...queuedWait(s.row, { busy, working, perPerson: Number(settings?.perPerson) || 2, queuePosition: s.queuePosition, now }),
+    };
+  }
+  for (const { row, state } of staged) {
     if (state) {
       const open = row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed';
       let proposal = null;
@@ -567,6 +665,8 @@ module.exports = {
   START_GRACE_MS,
   inFlight,
   stageOf,
+  queuedWait,
+  projectsBusy,
   outcomeOf,
   setupOf,
   stepNumber,

@@ -361,7 +361,68 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   assert.equal(isActivityMessage(message({ metadata: { homeroomBot: { ...META, kind: 'spec' } } })), false);
   assert.equal(isActivityMessage(message({ deleted: true })), false);
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,200}<BotActivityCard message=\{message\} \/>\s*\) : message\.content \? <MessageMarkdown/);
+  // #3770: handed the words a message is drawn with, for a card with nothing on record.
+  assert.match(row, /const words = message\.content\s*\? <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>\s*: null;/);
+  assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,260}<BotActivityCard message=\{message\} words=\{words\} \/>\s*\) : words\}/);
+});
+
+// ── #3770: an older card keeps its words ──
+
+/** What a landed read returned: a card on each of `ids`. The third read asked for. */
+const landedWith = (ids, extra = {}) => ({
+  cards: new Map(ids.map((id) => [id, done('proposed', { messageId: id })])), loaded: true, failed: false, landed: 3, ...extra,
+});
+
+test('what the reads say of a card: its state, nothing from a read that knew of it, or not yet', () => {
+  const { cardRecord } = loadTsx(STORE);
+  assert.equal(cardRecord({ cards: new Map(), loaded: false, failed: false, landed: 0 }, 31, 0), 'pending', 'before the first read lands');
+  assert.equal(cardRecord({ cards: new Map(), loaded: false, failed: true, landed: 0 }, 31, 0), 'failed');
+  assert.equal(cardRecord(landedWith([40, 41]), 41, 3), 'record');
+  assert.equal(cardRecord(landedWith([40, 41]), 31, 3), 'none', 'older than a card the server answered for: past its newest');
+  assert.equal(cardRecord(landedWith([40, 41], { failed: true }), 31, 3), 'none', 'a failed refresh does not bring it back');
+  assert.equal(cardRecord(landedWith([40, 41]), 45, 3), 'pending',
+    'newer than every card the last read answered for: the bot has just sent it, and its news is being read');
+  assert.equal(cardRecord(landedWith([40, 41], { failed: true }), 45, 3), 'failed');
+  assert.equal(cardRecord(landedWith([40, 41]), 45, 2), 'none', 'a read asked for after it was drawn had nothing for it');
+  assert.equal(cardRecord(landedWith([]), 45, 3), 'pending');
+  assert.equal(cardRecord(landedWith([]), 45, 2), 'none');
+});
+
+test('an older card the server keeps no state for draws its message\'s words; one not read yet stays the card', () => {
+  const { cardRecord } = loadTsx(STORE);
+  let snapshot = null;
+  let drawnAt = 3;
+  const { BotActivityCard } = loadTsx(CARD, {
+    stubs: {
+      './bot-activity-store': {
+        cardRecord,
+        readsAsked: () => drawnAt,
+        useBotActivity: () => snapshot,
+        ensureBotActivity() {},
+        loadBotActivity() {},
+        useBotActivitySync() {},
+      },
+    },
+  });
+  const draw = (snap, { at = 3, content = 'I’m looking at **Ear Trainer #12** now.' } = {}) => {
+    snapshot = snap;
+    drawnAt = at;
+    const message = { id: 31, sender: { id: 1, username: 'homeroom_bot', bot: true }, content, metadata: { homeroomBot: META } };
+    // The row hands the card the words it draws any message with (message-row.tsx).
+    const words = content ? createElement('div', { className: 'messages-markdown' }, content) : null;
+    return renderToHtml(createElement(BotActivityCard, { message, words }));
+  };
+  assert.equal(draw(landedWith([40])), '<div class="messages-markdown">I’m looking at **Ear Trainer #12** now.</div>',
+    'the words, and no "No progress to show"');
+  const loading = draw({ cards: new Map(), loaded: false, failed: false, landed: 0 }, { at: 0 });
+  assert.match(loading, /data-bot-activity="pending"/, 'the first read in flight: the card, waiting');
+  assert.doesNotMatch(loading, /messages-markdown|No progress/);
+  const fresh = draw(landedWith([30]));
+  assert.match(fresh, /data-bot-activity="pending"/, 'just sent, newer than the last read: still the card');
+  assert.doesNotMatch(fresh, /messages-markdown|No progress/);
+  assert.match(draw(landedWith([31])), /data-bot-activity="done" data-bot-activity-outcome="proposed"/, 'one on record is the card');
+  assert.match(draw(landedWith([40]), { content: '' }), /No progress to show for this one\./, 'with no words to keep, it says so');
+  assert.match(draw(landedWith([30], { failed: true })), /Couldn’t load how far along this is\./);
 });
 
 test('only the bot\'s DM keeps the cards current, beside its tray', () => {
@@ -508,4 +569,22 @@ test('only the newest read lands, a failed one keeps what was read, and a card d
   assert.equal(store.getBotActivity().cards.get(31).outcome, 'question', 'what was read before stays');
   store.ensureBotActivity();
   assert.equal(reads.length, 3, 'already read: nothing more to ensure');
+});
+
+test('#3770: what was read says which read it was, so a card knows whether one was asked for after it was drawn', async (t) => {
+  const { store } = loadStore(t, {
+    responses: [[{ messageId: 40, state: 'done', outcome: 'live', links: {} }], () => Promise.reject(new Error('offline'))],
+  });
+  assert.deepEqual([store.readsAsked(), store.getBotActivity().landed], [0, 0]);
+  await store.loadBotActivity();
+  assert.deepEqual([store.readsAsked(), store.getBotActivity().landed], [1, 1]);
+  await store.loadBotActivity();
+  assert.deepEqual([store.readsAsked(), store.getBotActivity().landed, store.getBotActivity().failed], [2, 1, true],
+    'a failed read leaves the one that landed');
+});
+
+test('#3767: a request filed in the DM gets its card at once, and the card says it was filed', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Use MIDI', firstVersion: false };
+  assert.equal(activity.cardText(ctx, dmSvc, { filed: true }), '**Ear Trainer** · request #13: Use MIDI\n\nFiled. This card follows it from here.');
+  assert.match(activity.cardText(ctx, dmSvc), /I'm working on this now\. This card updates as I go\.$/);
 });
