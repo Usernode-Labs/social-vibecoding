@@ -1,5 +1,7 @@
 'use strict';
 
+const { durableManifest } = require('./cli-preview-handoff/source-policy');
+
 // Settle checks runs whose launching process died.
 //
 // A platform rollout replaces every platform Pod, and every merge to the
@@ -143,7 +145,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
   const manifest = row.manifest || {};
 
   function missingUnitCompanion(jobs) {
-    if (!manifest.durableCli || !manifest.launched) return null;
+    if (!durableManifest(manifest) || !manifest.launched) return null;
     const decision = manifest.unitSuite;
     if (decision?.version === 1 && decision.state === 'not-required') return null;
     if (!jobs.unitSuite) return 'unit-suite creation unconfirmed';
@@ -167,7 +169,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
   }
 
   const retireConsumers = async () => {
-    if (manifest.durableCli) {
+    if (durableManifest(manifest)) {
       const retired = await require('./check-retirement').retire(config, pool, sessionId, runId);
       if (!retired.complete) {
         const error = new Error(retired.why);
@@ -201,13 +203,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
   const settleLifecycle = async (outcome) => {
     if (!lifecycle.enabled(config)) return;
     const settlement = lifecycle.settleAdopted(config, operation || { sessionId, runId }, outcome);
-    if (retireJobs || manifest.durableCli) await settlement;
+    if (retireJobs || durableManifest(manifest)) await settlement;
     else await settlement.catch(() => {});
   };
   const moot = async (why) => {
     log.info('check-harvest', 'Orphaned run is moot — retiring its resources', { ...base, why });
     await retireConsumers();
-    const currentSession = manifest.durableCli ? await loadSession(pool, sessionId) : null;
+    const currentSession = durableManifest(manifest) ? await loadSession(pool, sessionId) : null;
     const alreadySettled = currentSession && LIVE_STATUSES.has(currentSession.status)
       && currentSession.checks_commit_sha === commitSha
       && (['passing', 'failing', 'error', 'skipped'].includes(currentSession.check_state)
@@ -241,9 +243,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url,
       runtime_name: session.app_runtime_name, runtime_kind: session.app_runtime_kind,
     };
-    if (manifest.durableCli && manifest.reconstruction) return await blocked('manifest_missing', 'launch specification unavailable');
+    if (durableManifest(manifest) && manifest.reconstruction) return await blocked('manifest_missing', 'launch specification unavailable');
     if (!manifest.launched) {
-      if (manifest.durableCli) return await blocked('launch_manifest_incomplete', 'launch manifest incomplete');
+      if (durableManifest(manifest)) return await blocked('launch_manifest_incomplete', 'launch manifest incomplete');
       return await redrive(session, 'process died before the Jobs were created');
     }
 
@@ -253,7 +255,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     if (lifecycle.enabled(config)) {
       operation = await lifecycle.adopt(config, { sessionId, runId, revision: commitSha });
       if (!operation) return await moot('lifecycle names another run');
-      operation.durableChecks = !!manifest.durableCli;
+      operation.durableChecks = !!durableManifest(manifest);
       operation.signal.addEventListener('abort', () => {
         if (!controller.signal.aborted) controller.abort(operation.signal.reason);
       }, { once: true });
@@ -268,7 +270,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       // The launch manifest precedes external creation. For the enrolled
       // contract, absence cannot close that submission or authorize a second
       // run. Keep the locator so a delayed Job can still be harvested.
-      if (manifest.durableCli) return await blocked('capture_creation_unconfirmed', 'capture creation unconfirmed');
+      if (durableManifest(manifest)) return await blocked('capture_creation_unconfirmed', 'capture creation unconfirmed');
       return await redrive(session, 'capture Job not found');
     }
     const missingUnit = missingUnitCompanion(jobs);
@@ -316,7 +318,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       progress.close();
     }
     if (controller.signal.aborted) return await moot('superseded while collecting');
-    if (manifest.durableCli) {
+    if (durableManifest(manifest)) {
       const { collectedUncertainty } = require('./cli-preview-handoff/checks-outcome');
       const uncertainty = collectedUncertainty('capture', capture) || collectedUncertainty('unit', unit);
       if (uncertainty) return await blocked(uncertainty, uncertainty.replaceAll('_', ' '));
@@ -445,7 +447,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     log.warn('check-harvest', 'Harvest failed (non-fatal); the stale sweep keeps the row', { ...base, err: err.message });
     // An inspection or settlement exception does not establish an enrolled
     // external outcome. Keep that run adoptable on the next reconciliation.
-    if (operation && !manifest.durableCli) {
+    if (operation && !durableManifest(manifest)) {
       await lifecycle.settleAdopted(config, operation, { error: err }).catch(() => {});
     }
     return { outcome: 'failed', err: err.message, ...base };

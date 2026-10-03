@@ -1816,7 +1816,8 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
 // managed branch directly while an older capture is running. Pin both to the
 // recorded/build SHA so changed-file detection and dapp.json test discovery
 // describe the same code as the staging container and terminal verdict.
-function sessionGitRef(session, commitHash) {
+function sessionGitRef(session, commitHash, { pinned = false } = {}) {
+  if (pinned) return commitHash || null;
   if (session && session.source === 'imported') {
     return session.imported_pr_head_sha || commitHash || null;
   }
@@ -1950,6 +1951,13 @@ function startShotsIfIdle(config, pool, sessionId, commitHash) {
 }
 
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
+  const durablePool = require('../db/pool').getPool(config);
+  const enrolled = (await durablePool.query('SELECT flow_id, head_sha FROM cli_preview_handoffs WHERE session_id = $1', [session.id])).rows[0];
+  const requestedFlows = [opts.previewFlowId, opts.cliFlowId].filter(Boolean);
+  if (enrolled?.flow_id && (!opts.recoverExisting || !requestedFlows.length
+      || requestedFlows.some(flowId => flowId !== enrolled.flow_id) || commitHash !== enrolled.head_sha)) {
+    throw Object.assign(new Error('Enrolled capture belongs to its durable continuation'), { code: 'NATIVE_PREVIEW_DURABLE_OWNER' });
+  }
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
     try {
@@ -2188,7 +2196,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         runId, sessionId: session.id, commitSha: commitHash || null,
         manifest: {
           launched: false,
-          durableCli: !!opts.recoverExisting,
+          ...(opts.previewFlowId ? { durableNative: !!opts.recoverExisting, previewFlowId: opts.previewFlowId }
+            : { durableCli: !!opts.recoverExisting }),
           ...(opts.cliFlowId ? { cliFlowId: opts.cliFlowId } : {}),
           trigger: trigger || null,
           debugRunId,
@@ -2205,7 +2214,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // even when the changed-file heuristic would call the diff backend-only.
     let uiAffecting = true;
     let changedFiles = null;
-    const gitRef = sessionGitRef(session, commitHash);
+    const gitRef = sessionGitRef(session, commitHash, { pinned: !!opts.recoverExisting });
     if (github.isEnabled() && repoOwner && repoName && gitRef) {
       try {
         changedFiles = await github.listChangedFiles(
@@ -2631,7 +2640,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         runId, sessionId: session.id, commitSha: commitHash || null,
         manifest: {
           launched: true,
-          durableCli: !!opts.recoverExisting,
+          ...(opts.previewFlowId ? { durableNative: !!opts.recoverExisting, previewFlowId: opts.previewFlowId }
+            : { durableCli: !!opts.recoverExisting }),
           ...(opts.cliFlowId ? { cliFlowId: opts.cliFlowId } : {}),
           ...(unitRequirement ? { unitSuite: unitRequirement } : {}),
           trigger: trigger || null,

@@ -98,9 +98,10 @@ function publishableStatus(row, expectedStatus, headSha) {
 
 async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
   const handoff = require('./cli-preview-handoff/work');
-  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+  if (await handoff.enrolled(pool, session.id)) {
     const work = await handoff.createCliHandoffWork(pool, config).recover(session.id);
-    return { durable: true, workId: work?.id };
+    return { durable: true, workId: work?.id,
+      ...(work?.status === 'blocked' ? { blocked: true, reason: work.code, reconciliation: work.reconciliation } : {}) };
   }
   // Explicit paused submissions are allowed; a later lifecycle change still
   // cancels this run's right to publish (see publishableStatus). Never resume

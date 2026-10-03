@@ -451,3 +451,31 @@ test('atomic settlement preserves stale-history pruning without resetting anothe
   assert.equal(state.history.find(row => row.check_key === otherKey).pass_count, 4);
   assert.equal(state.history.find(row => row.check_key === ROW.checkKey).pass_count, 3);
 });
+
+test('ordinary native settlement uses the same atomic history and durable gate without CLI head fields', { skip: !enabled }, async t => {
+  const f = await fixture(t);
+  const input = await f.admit();
+  await f.pool.query(`UPDATE chat_sessions SET source = NULL, handoff_head_sha = NULL,
+    handoff_uploaded_sha = NULL, status = 'promoted', reviewed_head_sha = $1 WHERE id = 1`, [HEAD]);
+  const flowId = (await f.pool.query('SELECT flow_id FROM cli_preview_handoffs WHERE session_id = 1')).rows[0].flow_id;
+  await f.pool.query('UPDATE check_runs SET manifest = $2 WHERE run_id = $1',
+    [input.runId, JSON.stringify({ durableNative: true, previewFlowId: flowId, launched: true })]);
+  let calls = 0;
+  const owner = createChecksSettlement(f.pool, {}, {
+    github: { isEnabled: () => true },
+    merge: async () => { calls++; },
+  });
+  const settled = await owner.settle(input);
+  assert.equal(settled.decision.accepted, true);
+  assert.equal((await owner.settle({ ...input, result: { state: 'error', results: [] } })).replayed, true);
+  assert.equal((await f.pool.query('SELECT check_state, handoff_head_sha FROM chat_sessions WHERE id = 1')).rows[0].check_state, 'passing');
+  assert.equal((await f.pool.query('SELECT * FROM app_check_history')).rows[0].pass_count, 3);
+  const store = createExecutionStore(f.pool);
+  const [attempt] = await store.claim(randomUUID(), [GATE], 1);
+  const delivered = await owner.handlers[GATE].run({ attempt });
+  assert.equal(delivered.code, 'gate_delivered');
+  await store.settle(attempt, delivered);
+  assert.equal(calls, 1);
+  const actions = (await f.pool.query('SELECT action FROM cli_check_settlement_decisions ORDER BY id')).rows;
+  assert.deepEqual(actions.map(row => row.action.type), ['SettleNativeChecks', 'DeliverNativeCheckGate']);
+});

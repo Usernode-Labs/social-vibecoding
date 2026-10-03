@@ -1,5 +1,7 @@
 'use strict';
 
+const { durableManifest, manifestFlowId } = require('./cli-preview-handoff/source-policy');
+
 const checkRuns = require('./check-runs');
 const kubernetes = require('./kubernetes');
 
@@ -9,7 +11,8 @@ async function retire(config, pool, sessionId, runId) {
   const row = await checkRuns.read(pool, runId, sessionId);
   if (!row) throw new Error('Checks retirement requires its recovery manifest');
   const manifest = row.manifest;
-  if (!manifest.durableCli) throw new Error('Durable retirement requires enrolled checks');
+  manifestFlowId(manifest); // Reject conflicting identity before destructive I/O.
+  if (!durableManifest(manifest)) throw new Error('Durable retirement requires enrolled checks');
 
   let journal = manifest.retirement || null;
   const captureRequired = manifest.launched && !(manifest.shotsOnly && !manifest.media);

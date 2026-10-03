@@ -1,5 +1,7 @@
 'use strict';
 
+const { nativeAction, manifestFlowId } = require('./source-policy');
+
 const { randomUUID } = require('node:crypto');
 const { createSessionDecisionRuntime } = require('../decision-runtime');
 const { createExecutionStore } = require('../execution/store');
@@ -56,7 +58,7 @@ function createChecksSettlement(pool, config, {
     facts: () => ({}),
     actionConflict: () => new Error('Checks settlement action identity reused with different input'),
     async persist(client, { state, action }) {
-      if (action.type !== 'SettleCliChecks') return;
+      if (!['SettleCliChecks', 'SettleNativeChecks'].includes(action.type)) return;
       const visuals = require('../visuals');
       const deferred = action.result.state === 'deferred';
       const stored = deferred
@@ -79,7 +81,7 @@ function createChecksSettlement(pool, config, {
       saveReceipt: (client, values) => client.query(`INSERT INTO cli_check_settlement_receipts
         (session_id, action_id, action_hash, decision, run_id)
         VALUES ($1,$2,$3,$4, CASE WHEN ($4::jsonb->>'accepted')::boolean
-          AND $4::jsonb->>'reason' = 'cli_checks_settled'
+          AND $4::jsonb->>'reason' IN ('cli_checks_settled', 'native_checks_settled')
           THEN ($4::jsonb#>>'{identity,runId}')::uuid END)`, values),
       saveTrace: (client, values) => client.query(`INSERT INTO cli_check_settlement_decisions
         (session_id, action_id, reducer_version, pre_state, action, facts, decision)
@@ -105,7 +107,7 @@ function createChecksSettlement(pool, config, {
     sessionId, runId, headSha, result, history = [], errorDetail = null,
     actionId = randomUUID(), observedOwner = require('../check-runs').selfOwner(),
   }) {
-    return transaction.withSession(sessionId, async client => {
+    return transaction.withSession(sessionId, async (client, session) => {
       const receipt = await findSettlement(client, sessionId, runId);
       const handoff = (await client.query('SELECT flow_id FROM cli_preview_handoffs WHERE session_id = $1',
         [sessionId])).rows[0];
@@ -123,12 +125,12 @@ function createChecksSettlement(pool, config, {
       }
       if (!handoff?.flow_id) throw new Error('Checks settlement requires persisted CLI enrollment');
       const action = {
-        type: 'SettleCliChecks',
+        type: nativeAction(session, 'SettleCliChecks'),
         actionId,
         sessionId,
         runId,
         headSha,
-        flowId: manifest?.cliFlowId || handoff.flow_id,
+        flowId: manifestFlowId(manifest) || handoff.flow_id,
         result,
         errorDetail,
         observedOwner,
@@ -157,8 +159,10 @@ function createChecksSettlement(pool, config, {
   }
 
   async function runGate({ attempt }) {
+    const source = (await pool.query('SELECT source FROM chat_sessions WHERE id = $1', [attempt.session_id])).rows[0];
+    if (!source) return { outcome: 'succeeded', code: 'session_missing' };
     const permission = await runtime.apply(machine, {
-      type: 'DeliverCliCheckGate',
+      type: nativeAction(source, 'DeliverCliCheckGate'),
       actionId: attempt.claim_id,
       ...attempt.input,
     });

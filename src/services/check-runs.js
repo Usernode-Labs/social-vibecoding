@@ -1,3 +1,5 @@
+const { durableManifest, manifestFlowId } = require('./cli-preview-handoff/source-policy');
+
 // Durable manifests for checks runs whose containers are in flight.
 //
 // A checks run is a process-local affair: visuals.captureForSession creates
@@ -50,7 +52,7 @@ function selfOwner() {
 async function record(pool, { runId, sessionId, commitSha, manifest }) {
   if (!pool || !runId || !sessionId) return false;
   try {
-    if (manifest?.durableCli && manifest.cliFlowId) {
+    if (durableManifest(manifest) && manifestFlowId(manifest)) {
       // Consumer reservation and manifest admission are one database statement.
       // A missing preview rolls back the INSERT rather than losing a consumer.
       const consumer = { runId, headSha: commitSha, retirement: null };
@@ -68,7 +70,7 @@ async function record(pool, { runId, sessionId, commitSha, manifest }) {
           jsonb_set(consumer_releases, ARRAY[$1::text], $7::jsonb)
           WHERE flow_id IN (SELECT flow_id FROM resource) AND EXISTS (SELECT 1 FROM recorded)
           RETURNING flow_id`,
-      [runId, sessionId, commitSha, selfOwner(), JSON.stringify(manifest), manifest.cliFlowId, JSON.stringify(consumer)]);
+      [runId, sessionId, commitSha, selfOwner(), JSON.stringify(manifest), manifestFlowId(manifest), JSON.stringify(consumer)]);
       if (rows.length !== 1) throw new Error('Enrolled checks require their unreleased preview resource');
       return true;
     }
@@ -125,7 +127,7 @@ async function recordRetirement(pool, runId, sessionId, previous, retirement) {
 // removed. This receipt cannot authorize cleanup by itself: pending manifests,
 // continuation ownership and both serving bindings are checked independently.
 async function recordPreviewRelease(pool, row, retirement, requirements) {
-  const flowId = row.manifest.cliFlowId;
+  const flowId = manifestFlowId(row.manifest);
   if (!flowId) return; // Historical/legacy manifests have no enrolled preview.
   const release = { runId: row.run_id, headSha: row.commit_sha, requirements, retirement };
   const { rowCount } = await pool.query(`UPDATE preview_flow_resources r

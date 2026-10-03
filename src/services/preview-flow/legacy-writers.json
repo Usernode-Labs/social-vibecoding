@@ -50,8 +50,8 @@
       "staging_url",
       "staging_container_id"
     ],
-    "reason": "Manual deploy and resumed/live hosted-turn tails still publish legacy build results.",
-    "migration": "Migrate each adapter and preserve its manual/hosted admission policy."
+    "reason": "Unenrolled/default-off, Docker and headless manual deploy plus resumed/live hosted-turn tails still publish legacy build results. Enrolled native manual and CLI routes return before this writer.",
+    "migration": "Keep the explicit enrolled builder fence; finish hosted/headless, Docker and other caller policies before removing the four remaining statements."
   },
   {
     "source": "src/routes/votes.js",

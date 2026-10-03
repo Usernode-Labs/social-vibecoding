@@ -87,6 +87,10 @@ function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {} },
   };
+  const requests = require('./lib/render-tsx').loadTsx('frontend/src/lib/preview-request.ts');
+  sandbox.UsernodeReact ||= {};
+  sandbox.UsernodeReact.postPreviewRequest = (id, kind) => requests.postPreviewRequest(id, kind,
+    (url, options) => sandbox.fetch(url, options));
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

@@ -11533,3 +11533,16 @@ COMMENT ON TABLE cli_check_settlement_decisions IS 'staging:private';
 -- every fork reads as. app-creator scaffolds from it, so a Retry after a
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
+
+-- Stable manual intent receipts survive work completion and resource retirement.
+-- CLI-named owner tables remain the same aggregate's persistence mapping.
+CREATE TABLE IF NOT EXISTS native_preview_manual_requests (
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  request_id UUID NOT NULL,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('deploy', 'ensure', 'recheck')),
+  head_sha TEXT NOT NULL CHECK (head_sha ~ '^[a-f0-9]{40}$'),
+  work_id UUID NOT NULL REFERENCES execution_work_requests(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, request_id)
+);

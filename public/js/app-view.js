@@ -14834,10 +14834,7 @@ const AppView = {
     AppView._recheckInFlight.add(sessionId);
     if (btn) { btn.disabled = true; btn.textContent = 'Re-running…'; }
     try {
-      const resp = await fetch(`/api/sessions/${sessionId}/recheck`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const resp = await window.UsernodeReact.postPreviewRequest(sessionId, 'recheck');
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         PlatformUI.toast(data.error || `Re-run failed (HTTP ${resp.status}).`);
@@ -21263,7 +21260,8 @@ const AppView = {
       const endpoint = readOnly
         ? `/api/sessions/${sessionId}/preview-status`
         : `/api/sessions/${sessionId}/ensure-staging`;
-      const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
+      const res = readOnly ? await fetch(endpoint)
+        : await window.UsernodeReact.postPreviewRequest(sessionId, 'ensure-staging');
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
         AppView._finishStagingTelemetry(telemetryAttempt, 'failure', {

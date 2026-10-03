@@ -91,6 +91,9 @@ async function readState(client, sessionRow, sessionId, { lock = false, resource
   const enrollment = (await client.query(`SELECT admission_id, head_sha FROM cli_preview_handoffs
     WHERE session_id = $1`, [sessionId])).rows[0];
   if (enrollment?.admission_id) state.cliAdmission = { actionId: enrollment.admission_id, headSha: enrollment.head_sha };
+  if (enrollment?.admission_id && require('../cli-preview-handoff/source-policy').ordinaryNative(sessionRow)) {
+    state.session.manualPreview = true;
+  }
   if (resourceRow?.published_at && resourceRow.preparation_owner === 'bounded') {
     // Capture evidence, not permission. The reducer checks immutable enrollment,
     // terminal continuations and consumers. Lock ordering remains session first.

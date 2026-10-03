@@ -570,7 +570,7 @@ async function rerunChecksForNewHead({
   config, pool, session, newHead, trigger = 'pr-import',
 }) {
   const handoff = require('./cli-preview-handoff/work');
-  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+  if (await handoff.enrolled(pool, session.id)) {
     // A managed upload waits for proposal_submit_build to admit its new head.
     // Import/head observers must never race the enrolled preparation owner.
     await handoff.createCliHandoffWork(pool, config).recover(session.id);

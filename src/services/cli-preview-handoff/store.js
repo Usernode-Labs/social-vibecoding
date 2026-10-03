@@ -3,6 +3,7 @@
 const { createSessionDecisionRuntime } = require('../decision-runtime');
 const { readState } = require('../preview-flow/store');
 const { parseAction } = require('./actions');
+const { ordinaryNative } = require('./source-policy');
 const { reduce, REDUCER_VERSION } = require('./reducer');
 
 function createCliPreviewHandoff(pool) {
@@ -45,7 +46,7 @@ function createCliPreviewHandoff(pool) {
         'branch_name', 'approval_epoch', 'handoff_local_commit_sha',
       ].map(key => [key, session[key] ?? null])) : null;
       return {
-        session: lifecycleSession,
+        session: ordinaryNative(session) ? { ...lifecycleSession, is_headless: session.is_headless, shared_at: session.shared_at ? String(session.shared_at) : null } : lifecycleSession,
         handoff,
         preview: previewState,
         checksOutstanding: obligations[0].outstanding,
@@ -55,9 +56,12 @@ function createCliPreviewHandoff(pool) {
     },
     facts: () => ({}),
     actionConflict: () => new Error('CLI preview action ID reused with different input'),
-    async persist(client, { action, decision }) {
+    async persist(client, { state, action, decision }) {
+      if (decision.change.authorizationOnly) return;
+
       const sync = action.type === 'AcceptCliSyncHead';
-      if (sync || action.type === 'AcceptCliPreviewHead') {
+      const manual = action.type === 'AcceptNativeManualHead';
+      if (manual || sync || action.type === 'AcceptCliPreviewHead') {
         if (sync) {
           const freshness = require('../summary-freshness');
           await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
@@ -70,6 +74,8 @@ function createCliPreviewHandoff(pool) {
           // Use the existing shots policy with this client, never a nested
           // transaction that could commit independently of head/work admission.
           await require('../shots-state').markStaleForHeadWithClient(client, action.sessionId, action.headSha);
+        } else if (manual) {
+          await client.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [action.sessionId]);
         } else {
           await client.query(`UPDATE chat_sessions SET handoff_head_sha = $2::text,
             handoff_local_commit_sha = CASE WHEN handoff_uploaded_sha = $2::text THEN handoff_local_commit_sha ELSE NULL END,
@@ -78,7 +84,7 @@ function createCliPreviewHandoff(pool) {
         // Preserve the serving preview while the candidate prepares.
         const phase = decision.change.deferPreparation ? 'reconciling' : 'building';
         const pending = await require('../visuals').setChecksPending(
-          client, action.sessionId, action.headSha, phase, sync ? 'sync-main' : 'commit-push',
+          client, action.sessionId, action.headSha, phase, manual ? 'manual-recheck' : sync ? 'sync-main' : 'commit-push',
         );
         if (!pending) throw new Error('Accepted CLI head could not admit required checks');
         if (decision.change.deferPreparation) {
@@ -118,7 +124,7 @@ function createCliPreviewHandoff(pool) {
         // A missing manifest must retain a conservative run locator across
         // supersession. Reconstructed metadata never grants creation or grading.
         const fallback = {
-          durableCli: true,
+          ...(ordinaryNative(state.session) ? { durableNative: true, previewFlowId: action.flowId } : { durableCli: true, cliFlowId: action.flowId }),
           launched: true,
           reconstruction: 'unknown-launch',
           recovery,

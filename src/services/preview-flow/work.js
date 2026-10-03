@@ -31,7 +31,7 @@ function createPreviewWork(pool, config, {
   }
 
   async function requestInTransaction(transaction, action) {
-    if (config.nativeCliPreviewHandoffEnabled !== true) {
+    if (config.nativeCliPreviewHandoffEnabled !== true && config.nativeManualPreviewEnabled !== true) {
       throw new Error('Durable native preview admission is experimentally disabled');
     }
     if (action.type !== 'RequestCandidatePreview') throw new Error('Native candidate request required');
@@ -46,8 +46,11 @@ function createPreviewWork(pool, config, {
     return transaction.withSession(action.sessionId, async client => {
       const session = (await client.query('SELECT * FROM chat_sessions WHERE id = $1', [action.sessionId])).rows[0];
       const app = (await client.query('SELECT * FROM apps WHERE id = $1', [session.app_id])).rows[0];
-      if (session.source !== 'cli_handoff' || !app?.repo_url) {
-        throw new Error('This experiment accepts native CLI handoff preparation only');
+      if (!require('../cli-preview-handoff/source-policy').supportedSource(session) || !app?.repo_url) {
+        throw new Error('This experiment accepts explicit native preparation only');
+      }
+      if (require('../cli-preview-handoff/source-policy').ordinaryNative(session) && !admission.current.cliAdmission) {
+        throw new Error('Ordinary native preparation requires an accepted manual head');
       }
       const flow = admission.decision.flow;
       const intent = {

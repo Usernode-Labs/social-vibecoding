@@ -3,6 +3,7 @@
 const { randomUUID } = require('node:crypto');
 const { createSessionDecisionRuntime } = require('../decision-runtime');
 const { createCliPreviewHandoff } = require('./store');
+const { ordinaryNative, nativeAction } = require('./source-policy');
 const { checksSettled } = require('./reducer');
 const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
 const { createPreviewWork } = require('../preview-flow/work');
@@ -16,12 +17,18 @@ function selected(config, session) {
     && config.kubernetes?.buildEngine === 'kpack';
 }
 
+function selectedManual(config, session) {
+  return config.nativeManualPreviewEnabled === true && ordinaryNative(session)
+    && !session.is_headless && config.appRuntime === 'kubernetes'
+    && config.kubernetes?.buildEngine === 'kpack';
+}
+
 async function enrolled(pool, sessionId) {
   const { rows } = await pool.query('SELECT session_id, flow_id FROM cli_preview_handoffs WHERE session_id = $1', [sessionId]);
   return rows.some(row => Number(row.session_id) === Number(sessionId) && !!row.flow_id);
 }
 
-function createCliHandoffWork(pool, config, {
+function createNativePreviewWork(pool, config, {
   previewOptions = {},
   owner = createCliPreviewHandoff(pool),
   activate = require('../preview-flow/activation').underBuildLock,
@@ -95,6 +102,70 @@ function createCliHandoffWork(pool, config, {
     const preparation = await prepareAccepted(transaction, action);
     await transaction.withSession(session.id, persistDetails);
     return { accepted: true, work: preparation.work };
+  }
+
+  async function manualReceipt({ sessionId, requestId, userId, kind }) {
+    const receipt = (await pool.query(`SELECT * FROM native_preview_manual_requests
+      WHERE session_id = $1 AND request_id = $2`, [sessionId, requestId])).rows[0];
+    if (!receipt) return null;
+    if (receipt.user_id !== userId || receipt.kind !== kind) {
+      return { accepted: false, reason: 'manual_request_identity_conflict' };
+    }
+    return { accepted: true, replayed: true, headSha: receipt.head_sha, work: await store.read(receipt.work_id) };
+  }
+
+  async function admitManual({ session, headSha, requestId, userId, canAdminWrite = false, kind, repair = false }) {
+    return runtime.transact(async transaction => {
+      // The receipt and authority share the same aggregate boundary as head/work.
+      const previous = await transaction.withSession(session.id, async client => {
+        return (await client.query(`SELECT * FROM native_preview_manual_requests
+          WHERE session_id = $1 AND request_id = $2`, [session.id, requestId])).rows[0];
+      });
+      if (previous) {
+        if (previous.user_id !== userId || previous.kind !== kind) {
+          return { accepted: false, reason: 'manual_request_identity_conflict' };
+        }
+        return { accepted: true, replayed: true, headSha: previous.head_sha,
+          work: await readWork(transaction, session.id, previous.work_id) };
+      }
+
+      const request = {
+        type: 'AuthorizeNativeManualRequest', actionId: randomUUID(), sessionId: session.id,
+        headSha, userId, canAdminWrite, kind, expectedStatus: session.status,
+        branchName: session.branch_name, previousChecks: session.checks_commit_sha || null,
+        previousPreviewName: session.staging_runtime_name || null,
+        startedStatus: session.status === 'paused' ? 'paused' : 'active',
+      };
+      const permission = await owner.applyInTransaction(transaction, request);
+      if (!permission.decision.accepted) return { accepted: false, reason: permission.decision.reason };
+      const state = permission.current;
+      const sameHead = state.handoff?.head_sha === headSha;
+      let work = sameHead ? await readWork(transaction, session.id,
+        state.handoff.continuation_work_id || state.handoff.preparation_work_id) : null;
+      const outstanding = work && ['queued', 'running', 'blocked'].includes(work.status);
+      const needsPreparation = !sameHead || (!outstanding && (repair || state.preview.flow?.state !== 'ready'));
+
+      if (needsPreparation) {
+        if (!selectedManual(config, session)) return { accepted: false, reason: 'native_admission_disabled' };
+        if (!require('../preview-lifecycle').enabled(config)) throw new Error('Native manual admission requires the checks lifecycle');
+        const action = { ...request, type: 'AcceptNativeManualHead', actionId: randomUUID() };
+        const accepted = await owner.applyInTransaction(transaction, action);
+        if (!accepted.decision.accepted) return { accepted: false, reason: accepted.decision.reason };
+        work = (await prepareAccepted(transaction, action)).work;
+      } else if (kind === 'recheck' && !outstanding) {
+        const identity = { sessionId: session.id, flowId: state.handoff.flow_id, headSha };
+        const checks = await owner.applyInTransaction(transaction, {
+          type: 'RequestNativePreviewChecks', actionId: requestId, ...identity, force: true,
+        });
+        if (!checks.decision.accepted) return { accepted: false, reason: checks.decision.reason };
+        work = await enqueueContinuation(transaction, identity, requestId, checks.decision.effects[0].effectKey, true);
+      }
+      if (!work) throw new Error('Authorized native request has no durable work');
+      await transaction.withSession(session.id, client => client.query(`INSERT INTO native_preview_manual_requests
+        (session_id, request_id, user_id, kind, head_sha, work_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [session.id, requestId, userId, kind, headSha, work.id]));
+      return { accepted: true, headSha, work };
+    });
   }
 
   async function prepareAccepted(transaction, { actionId, sessionId, headSha, startedStatus = 'active' }) {
@@ -231,8 +302,9 @@ function createCliHandoffWork(pool, config, {
     });
     // Older admitted work and other experimental callers retain their contract.
     if (enrolledHead?.flow_id !== identity.flowId) return;
+    const session = await transaction.withSession(attempt.session_id, async (_client, row) => row);
     const available = await owner.applyInTransaction(transaction, {
-      type: 'CliCandidateAvailable',
+      type: nativeAction(session, 'CliCandidateAvailable'),
       actionId: preparedActionId,
       sessionId: attempt.session_id,
       flowId: identity.flowId,
@@ -280,7 +352,7 @@ function createCliHandoffWork(pool, config, {
     if (!current(state, input)) return { outcome: 'succeeded', code: 'handoff_obsolete' };
 
     const permission = await owner.apply({
-      type: 'RequestCliPreviewChecks',
+      type: nativeAction(state.session, 'RequestCliPreviewChecks'),
       actionId: input.checksActionId,
       sessionId: attempt.session_id,
       flowId: input.flowId,
@@ -299,7 +371,7 @@ function createCliHandoffWork(pool, config, {
       const result = { ...receipt, hostname: new URL(receipt.stagingUrl).hostname };
       const session = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [attempt.session_id])).rows[0];
       await warm(session, result.hostname, result.stagingUrl).catch(error => {
-        require('../logger').warn('cli-preview-handoff', 'Preview edge warm failed (non-fatal)', {
+        require('../logger').warn('native-preview', 'Preview edge warm failed (non-fatal)', {
           sessionId: attempt.session_id, err: error.message,
         });
       });
@@ -308,7 +380,7 @@ function createCliHandoffWork(pool, config, {
         trigger: input.force ? 'manual' : 'commit-push',
         force: input.force,
         recoverExisting: true,
-        cliFlowId: input.flowId,
+        ...(ordinaryNative(session) ? { previewFlowId: input.flowId } : { cliFlowId: input.flowId }),
       });
     }
     state = await owner.read(attempt.session_id);
@@ -325,8 +397,9 @@ function createCliHandoffWork(pool, config, {
 
   async function commitContinuation(transaction, attempt, proposed) {
     if (!proposed.result?.checksObserved) return proposed;
+    const session = await transaction.withSession(attempt.session_id, async (_client, row) => row);
     const result = await owner.applyInTransaction(transaction, {
-      type: 'CliPreviewChecksObserved',
+      type: nativeAction(session, 'CliPreviewChecksObserved'),
       actionId: attempt.input.observedActionId,
       sessionId: attempt.session_id,
       flowId: attempt.input.flowId,
@@ -350,7 +423,14 @@ function createCliHandoffWork(pool, config, {
       if (state.sync_reconciliation) return resumeSync(transaction, state);
       const activeId = state.continuation_work_id || state.preparation_work_id;
       const active = await readWork(transaction, sessionId, activeId);
-      if (['queued', 'running', 'blocked'].includes(active.status)) return active;
+      const session = await transaction.withSession(sessionId, async (_client, row) => row);
+      if (ordinaryNative(session) && session.checks_commit_sha !== state.head_sha) {
+        // The mismatch is persisted by the head writer and remains visible.
+        // Even outstanding work for the old head cannot represent the new one.
+        return { status: 'blocked', code: 'native_head_admission_required',
+          reconciliation: { owner: 'native-preview-requests', headSha: session.checks_commit_sha } };
+      }
+      if (['queued', 'running', 'blocked'].includes(active.status) || ordinaryNative(session)) return active;
       const failedPreparation = !state.continuation_work_id && active.result?.prepared === false;
       if (repair || (force && failedPreparation)) {
         // Recovery does not expand admission after the local switch is off.
@@ -397,6 +477,8 @@ function createCliHandoffWork(pool, config, {
   return {
     admit,
     admitSync,
+    admitManual,
+    manualReceipt,
     recover,
     reconcileSyncs,
     owner,
@@ -410,4 +492,6 @@ function createCliHandoffWork(pool, config, {
   };
 }
 
-module.exports = { selected, enrolled, createCliHandoffWork, CONTINUE };
+// Retained CLI callers and persisted workflow names share this implementation.
+module.exports = { selected, selectedManual, enrolled, createNativePreviewWork,
+  createCliHandoffWork: createNativePreviewWork, CONTINUE };

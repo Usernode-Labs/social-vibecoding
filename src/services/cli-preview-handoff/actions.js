@@ -19,6 +19,18 @@ const blockedReasons = z.enum([
 const identity = { ...envelope, flowId: z.string().uuid() };
 const schema = z.discriminatedUnion('type', [
   z.object({
+    type: z.enum(['AcceptNativeManualHead', 'AuthorizeNativeManualRequest']),
+    ...envelope,
+    userId: z.number().int().positive(),
+    canAdminWrite: z.boolean(),
+    kind: z.enum(['deploy', 'ensure', 'recheck']),
+    expectedStatus: z.string().min(1).max(32),
+    branchName: z.string().min(1),
+    previousChecks: envelope.headSha.nullable(),
+    previousPreviewName: z.string().nullable(),
+    startedStatus: z.enum(['active', 'paused']),
+  }).strict(),
+  z.object({
     type: z.literal('AcceptCliSyncHead'),
     ...envelope,
     expectedStatus: z.enum(['active', 'promoted']),
@@ -52,11 +64,11 @@ const schema = z.discriminatedUnion('type', [
     previousChecks: envelope.headSha.nullable(),
     uploadCheckedSha: envelope.headSha.nullable(),
   }).strict(),
-  z.object({ type: z.literal('CliCandidateAvailable'), ...identity }).strict(),
-  z.object({ type: z.literal('RequestCliPreviewChecks'), ...identity, force: z.boolean() }).strict(),
-  z.object({ type: z.literal('CliPreviewChecksObserved'), ...identity }).strict(),
+  z.object({ type: z.enum(['CliCandidateAvailable', 'NativeCandidateAvailable']), ...identity }).strict(),
+  z.object({ type: z.enum(['RequestCliPreviewChecks', 'RequestNativePreviewChecks']), ...identity, force: z.boolean() }).strict(),
+  z.object({ type: z.enum(['CliPreviewChecksObserved', 'NativePreviewChecksObserved']), ...identity }).strict(),
   z.object({
-    type: z.literal('CliChecksOutcomeBlocked'),
+    type: z.enum(['CliChecksOutcomeBlocked', 'NativeChecksOutcomeBlocked']),
     ...identity,
     runId: z.string().uuid(),
     reason: blockedReasons,

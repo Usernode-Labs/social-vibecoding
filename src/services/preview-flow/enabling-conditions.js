@@ -2,11 +2,14 @@
 
 const { isPreparationRequest, isResourceAction } = require('./actions');
 
-// Initial policy: native proposal handoff. Imported/manual/fleet policies must
-// be added deliberately when their adapters move here. No permissive default.
+// Ordinary manual and CLI admission have separate source policies; both use
+// the same exact-head publication guard. Imported/fleet policies stay excluded.
 function publishableStatus(session, startedStatus, headSha) {
-  return !!session && (session.status === startedStatus
-    || (session.status === 'promoted' && session.reviewedHeadSha === headSha));
+  if (!session) return false;
+  if (session.status === startedStatus) return true;
+  const reviewed = session.status === 'promoted' || (session.status === 'merging'
+    && session.manualPreview === true);
+  return reviewed && session.reviewedHeadSha === headSha;
 }
 
 function nativeHeadCondition(session, startedStatus, headSha) {

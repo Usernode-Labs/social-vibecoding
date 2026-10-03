@@ -1,4 +1,4 @@
-# Contained CLI retirement inventory
+# Preview/check migration retirement inventory
 
 3 October 2026. The cohort remains default-off. Progress is demonstrated
 ownership replacement and removed code, not added checkpoint numbers.
@@ -16,11 +16,11 @@ is reconciled; its shots-worker hold/retirement and other caller protections rem
 | --- | --- | --- |
 | Enrolled active/promoted CLI Sync with main writer and detached staging/recheck tail | **Replaced:** trusted sync acceptance, review policy persistence and required preparation share the aggregate transaction. Serving pointers are preserved. Existing candidate/continuation owns activation/checks. | Disposable PostgreSQL sync integration, rollback/lost reply, duplicate, admission-off obligation and newer-head/supersession guards. Unenrolled sync keeps two explicitly scoped writer exceptions until its cutover. |
 | Disabled-admission sync reconciliation | Current required obligation in the handoff row; existing bounded discovery and handoff recovery consume it. No new work kind, executor or flag. | Supersession/closed lifecycle cannot authorize old publication. Admission enabled admits the stored exact-head preparation once; old admitted work recovers with the flag off. Retain this obligation while the experimental admission split exists. |
-| Manual enrolled deploy/ensure/recheck web owners | **Removed for persisted enrollment:** no route-local pending reset, mutable branch resolution, web builder, pointer publication or detached capture/recheck. Existing action/continuation owns requests and repair. | Real HTTP/disposable PostgreSQL proof; ordinary native/Docker manual admission still requires cutover. Legacy SQL allowlist remains unchanged because unenrolled paths still use it. |
+| Manual enrolled deploy/ensure/recheck web owners | **Removed for persisted enrollment:** no route-local pending reset, mutable branch resolution, web builder, pointer publication or detached capture/recheck. Existing action/continuation owns requests and repair. | Real HTTP/disposable PostgreSQL proof; Ordinary non-headless native Kubernetes/kpack manual requests now share these owners through explicit native actions and UUID receipts. Docker/headless and unenrolled/default-off callers still require cutover. Legacy SQL allowlist remains unchanged because unenrolled paths still use it. |
 | Dead chat-file Docker builder/parser and unused identity/Caddy imports | **Deleted 120 lines plus two imports.** No callers or exports; existing source-generation guards remain green. | Complete; no replacement executor or compatibility branch. |
 | Four preparation capability flags and CLI config shim | **Removed** at `2bf702dbd`. Sole new admission is complete Kubernetes/kpack preparation. | Complete; retain default-off admission/worker switches. |
 | Three partial preparation work kinds, selection flags, one-shot observation/start branches and unused completion flags | **Removed** after fresh-only decision and verified archive. Named clone/Build/runtime operations own preparation. | Complete locally; unsupported startup fails visibly, preserving records. |
-| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/CLI v3/review v2 policies and replay remain. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
+| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/native-admission v4/review v2 policies and replay remain. Admission v3 replay is retained for work/traces admitted under accepted `8ed150abf`; the same CLI decisions are replayed without a copied reducer. Removal needs that supported-store/trace inventory or export, not a permanent checkpoint obligation. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
 | Historical-format test admission/worker helpers; exclusive staging `preparedClone`/`onRuntimeStarting` | **Removed.** Relevant failures are ported to current complete admission and named operations. Original sources remain archive provenance. | Complete. Synchronous `onClonePrepared` is still required and retained. |
 | Enrolled synchronous preparation, alternate rebuild/restart owners, detached checks continuation | **Replaced** by atomic admission and durable candidate-to-continuation work. | Complete for this cohort; preserve unenrolled callers and ownership exclusions. |
 | Enrolled best-effort verdict/history and detached required merge/bot kicks | **Replaced** by atomic settlement and deduplicated gate delivery. Standalone initializes dependencies explicitly. | Complete locally; GitHub/bot calls remain substituted evidence. Optional artifacts have separate owners. |
@@ -46,7 +46,7 @@ Sources: [current preparation](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),
 [legacy writers](../../src/services/preview-flow/legacy-writers.json).
 
-Canonical main `74276a2fb7002da251e1b3975ae22b81dbc765e3` is integrated.
+Pinned canonical main `da6ecb00880cab9a1749a6256992fb3d1706d9be` is integrated at local merge `ab2f0411234eab1dec154b446c1189ac220dc52b`.
 Five-revision predecessor release is complete at accepted `511e84e35` for the
 contained cohort. Original preview/check migration and removal of other owners
 remain mandatory before merging this branch; installation is a separate gate.
@@ -95,3 +95,21 @@ requirements for this slice. Shots own separate paired runtimes and databases
 (`shots-environment.js`) and can reuse the immutable preview image; this slice
 therefore makes no image/artifact deletion claim. Global Build retention selects
 another owner label and does not collect these experimental Builds.
+
+## Ordinary native manual cutover
+
+Removed ownership for enrollment: route-local/process-set deduplication, pool-level
+pending/reset writers, synchronous/detached web preparation, direct preview-pointer
+publication, detached required capture/recheck and competing rebuild/recovery tails.
+These branches remain physically present for named legacy callers. No global lock,
+timer or legacy adapter was deleted, and the projection inventory still has 16
+statements. Alternate staging and capture services now fence all enrolled sessions,
+not only CLI source; manifests, consumer release and settlement use the same owners.
+
+Added only the separately default-off native cohort admission switch and stable
+manual-request receipt mapping. No new execution kind, executor, preparation adapter,
+continuation, settlement or cleanup owner. Historical CLI storage/work names remain
+explicit retained identifiers. A head mismatch from an unmigrated writer exposes
+reconciliation under native admission; hosted/promotion head acceptance is still open.
+Client request identity persists through unknown replies (session storage when
+available, in-memory otherwise); a complete definitive response permits a new intent.

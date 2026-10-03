@@ -1,10 +1,12 @@
 # Lifecycle migration: current roadmap
 
-3 October 2026. The internal pilot review and strict unit-source correction
-(`ed13ea6fa`) are reconciled with explicitly pinned canonical main
-`74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer discussion/scheduling,
-issue-comment identity and shots-worker retirement behavior are preserved.
-Canonical `da6ecb00880cab9a1749a6256992fb3d1706d9be` was fetched and inspected for the sync cutover; its newer prompt-rendering changes still require integration.
+3 October 2026. The accepted sync revision `8ed150abf` is reconciled with
+explicitly pinned canonical main `da6ecb00880cab9a1749a6256992fb3d1706d9be`
+at local merge `ab2f0411234eab1dec154b446c1189ac220dc52b`. Its newer bot
+recovery/activity, agent prompt/capability, UI and connector behavior is preserved.
+Ordinary native Kubernetes/kpack manual requests now reuse the established owner,
+with separate native authority and stable manual-intent receipts. Their admission
+switch (`PREVIEW_NATIVE_MANUAL_ENABLED`) is separately default-off.
 The native CLI Kubernetes/kpack cohort remains **default-off**. Progress means
 guarantees demonstrated **and competing ownership removed**, not growing checkpoint
 numbers. No production compatibility, installation or rollout is claimed.
@@ -20,7 +22,7 @@ numbers. No production compatibility, installation or rollout is claimed.
 | Atomic gating settlement | Accepted run/revision receipt, verdict, app-wide history/graduation and required follow-ups commit together. Recovery neither recounts history nor overwrites committed verdicts with errors. Worker dependencies initialize explicitly; unavailable GitHub retains retry ownership. Policy calls are substituted evidence. |
 | Ordinary repeated use | **Complete locally at `511e84e35`:** five revisions on one session, overlapping checks/supersession/restarts, four predecessors' active dependencies released, fifth serving and legacy sentinel protected. Original Jobs do not compete; unresolved creators remain discoverable. |
 | New admission and retention consolidation | One complete preparation format; four capability flags/config shim and three partial handlers removed. Fresh experimental stores only. Twelve historical reducer copies/live dispatch removed after independently verified replay archive. Legacy protections remain. |
-| Manual enrolled requests | Real HTTP/disposable PostgreSQL proves durable join/guarded repair/forced recheck, rollback and lost-response recovery. Web pending/build/publication/capture ownership is excluded for enrollment. Ordinary native manual admission remains open. Unused chat-file Docker builder/parser removed. |
+| Manual enrolled requests | Real HTTP/disposable PostgreSQL proves durable join/guarded repair/forced recheck, rollback and lost-response recovery. Web pending/build/publication/capture ownership is excluded for enrollment. Ordinary non-headless native Kubernetes/kpack deploy/ensure/recheck now have explicit source/actor/review guards, atomic work and completed-request retry receipts. Docker, headless and unenrolled/default-off callers retain legacy behavior. Unused chat-file Docker builder/parser removed. |
 | Enrolled Sync with main | Trusted worker revision acceptance and complete preparation admission commit together. Serving pointers, approval epoch policy, summary freshness and shots invalidation are preserved. Disabled admission retains explicit reconciliation; duplicate/lost replies and supersession use the same durable owner. Unenrolled writers/tails remain. |
 | Verified unit requirement | Enrolled inspection requires a verified exact commit/root tree; present packages also require a matching blob and valid metadata. Inaccessible/unverified source keeps reconciliation ownership; legacy nullable-source skipping and explicit disable/deferral policy remain. Helper tests substitute Octokit transport only. |
 | Canonical/focused verification | Explicit pin integrated with newer approval/recovery behavior preserved. Writer inventory, focused PostgreSQL/SQL and disposable checks/retirement proof pass. Actual packaged default web CMD, standalone worker and migration run non-root. GitHub CI/Linux installation is not proved locally. |
@@ -40,9 +42,9 @@ remains unmerged until the original preview/check caller migration and competing
 ownership removal are complete. The [completion checklist](preview-check-completion-checklist.md)
 maps every remaining caller/mechanism to its replacement, proof and removal gate.
 Cutovers reuse the established foundation; no unrelated workflow or new framework
-is required. Manual enrolled entry points and active/promoted enrolled sync are bounded cutovers. Unenrolled sync and the other caller rows remain open.
+is required. Manual enrolled entry points and active/promoted enrolled sync are bounded cutovers. Native manual admission is now a bounded cutover too. Unenrolled sync and the other caller rows remain open.
 
-Remaining implementation: ordinary native/hosted/imported/promotion/manual/fleet
+Remaining implementation: ordinary hosted/imported/promotion/headless/Docker/fleet
 admission, head invalidation, recovery/teardown, Docker resource preparation and
 correlated ownership/status. Consolidation removes each replaced writer, queue,
 timer, flag or compatibility path after its caller/data gate is satisfied.
@@ -98,3 +100,19 @@ Broader turn/merge/release refactors follow this migration rather than extending
 acceptance criteria. The [retirement inventory](migration-retirement-inventory.md)
 records exactly what is gone and what remains. The original preview/check caller migration continues; no unrelated workflow or
 framework expansion is authorized.
+
+## Native manual verification and remaining boundary
+
+See the [native manual contract](native-manual-preview-contract.md). Native sessions
+retain `source NULL/native` and never acquire CLI upload/head pins. Existing complete
+preparation, conditional activation, continuation, atomic settlement/gates, manifest
+harvest and retirement are shared. The `cli_*` table/work identifiers are retained
+wire/storage names; ordinary manifests use `durableNative` and `previewFlowId`.
+Manual request receipts survive completion and attempt retirement.
+
+Hosted/promotion/fleet/Docker/imported head writers are not migrated by this slice.
+A mismatched persisted head reports `native_head_admission_required`, owned by native
+admission; a recovery tail cannot claim the old work is the new head's work. Finish
+those caller rows before enablement: this containment is not their automatic head
+admission. Global legacy timers/locks and 16 projection statements remain required
+for other callers. No rollout or production installation proof is implied.

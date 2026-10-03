@@ -175,3 +175,40 @@ HTTPS/repeated-use proofs retain their original revisions and explicit injection
 No legacy production safeguard, timer, lock, compatibility handler or resource
 owner is removed by this reconciliation. Default-off containment remains; no push,
 production access or deployment.
+
+## Ordinary native manual cutover: pinned canonical reconciliation
+
+3 October 2026. Accepted `8ed150abf` merged explicitly recorded canonical
+`da6ecb00880cab9a1749a6256992fb3d1706d9be` at local merge
+`ab2f0411234eab1dec154b446c1189ac220dc52b`, without conflicts. Keep canonical
+bot holds/activity/triage recovery, image-capability-specific prompt rendering,
+agent/UI/connector behavior and schema/SQL additions. No fetch of an unpinned tip,
+push, rollout, deployment or production mutation is part of this checkpoint.
+
+The [native manual contract](native-manual-preview-contract.md) adds source-specific
+admission to the same owners. Serving publication and checks remain worker-owned;
+ordinary sessions keep native source/head fields. Defaults stay off.
+
+Verification on the integrated branch: focused **1,130 passed**, no skips/failures;
+final native/retained-CLI/settlement/ownership/client regressions **80 passed**;
+corrected affected browser/source/bot suites **109 passed**. Final reconciliation/manifest-conflict/retirement/harvest and retained-CLI boundary run: **135 passed**, zero failures/skips. PostgreSQL is a new,
+ownership-verified disposable fixture; preparation/activation/check services and
+external retirement facts are injected in these new route/SQL tests. Earlier
+actual-resource proofs are unchanged and were not rerun or expanded here.
+SQL: **3,292 unique statements / 4,202 static variants** validated. Projection
+inventory: **16** recorded legacy statements, no new unowned publisher. The
+independently archived 153 historical replay cases remain part of focused coverage.
+
+The mapped run selected **1,168 / 1,468 suites** and reported 16,636 passing,
+29 failing, 21 opt-in skips. Introduced failures (missing bridge in browser harnesses,
+a strict source-path assertion and a fake overlapping-reply counter) were corrected
+and their affected suites rerun successfully. The bot-DM event-order assertion failed
+under mapped load, then passed on both integrated and pinned canonical standalone
+runs; preserve that timing limitation rather than claim a clean mapped aggregate.
+The canonical macOS launcher failure remains: occupied front port expects exit 2,
+gets 0. Exact pinned canonical checkout independently ran 31 tests, 30 passing and
+that same failure. No unrelated product or launcher change was made.
+
+Full preview/check migration remains open. Legacy/global timers and locks are not
+removed by this source/caller cutover; installation/RBAC and production compatibility
+remain separate verification. Logs are named in the local implementation ledger.

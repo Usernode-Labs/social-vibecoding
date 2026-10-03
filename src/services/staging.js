@@ -127,11 +127,11 @@ function previewDisplayState(row) {
 
 async function buildAndDeployStaging(config, session, app, commitHash, options = {}) {
   // Every alternate caller is fenced, even after admission is switched off.
-  if (session.source === 'cli_handoff' && await require('./cli-preview-handoff/work').enrolled(
+  if (await require('./cli-preview-handoff/work').enrolled(
     require('../db/pool').getPool(config), session.id,
   )) {
-    throw Object.assign(new Error('Enrolled CLI preview is owned by the durable worker'), {
-      code: 'CLI_PREVIEW_DURABLE_OWNER',
+    throw Object.assign(new Error('Enrolled preview is owned by the durable worker'), {
+      code: session.source === 'cli_handoff' ? 'CLI_PREVIEW_DURABLE_OWNER' : 'NATIVE_PREVIEW_DURABLE_OWNER',
     });
   }
   const lifecycle = require('./preview-lifecycle');

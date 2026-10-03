@@ -1,3 +1,4 @@
+import { postPreviewRequest } from '../../lib/preview-request';
 // Agent sessions (#2779, docs/agent-sessions.md): the HTTP surface the
 // conversation screen reads and writes. Every route is owner-scoped on the
 // server (src/routes/agent-sessions.js); nothing here decides access.
@@ -636,7 +637,7 @@ export async function renameChange(changeId: number, title: string): Promise<voi
  * its staging_ready or staging_failed reaches the conversation.
  */
 export async function ensureChangeStaging(changeId: number): Promise<{ status: string; url?: string | null; reason?: string | null }> {
-  return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), 'Could not rebuild the preview.');
+  return json(await postPreviewRequest(changeId, 'ensure-staging', request), 'Could not rebuild the preview.');
 }
 
 export async function getSpecVersion(changeId: number, version: number): Promise<string> {

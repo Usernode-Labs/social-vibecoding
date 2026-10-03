@@ -1,5 +1,7 @@
 'use strict';
 
+const { supportedSource, durableManifest } = require('./source-policy');
+
 const { z } = require('zod');
 
 const identity = {
@@ -11,7 +13,7 @@ const identity = {
 };
 const schema = z.discriminatedUnion('type', [
   z.object({
-    type: z.literal('SettleCliChecks'),
+    type: z.enum(['SettleCliChecks', 'SettleNativeChecks']),
     ...identity,
     observedOwner: z.string().min(1).max(255),
     result: z.object({
@@ -28,7 +30,7 @@ const schema = z.discriminatedUnion('type', [
     }).strict()),
   }).strict(),
   z.object({
-    type: z.literal('DeliverCliCheckGate'),
+    type: z.enum(['DeliverCliCheckGate', 'DeliverNativeCheckGate']),
     ...identity,
     gate: z.enum(['merge', 'bot']),
   }).strict(),
@@ -40,9 +42,10 @@ function reject(reason) {
 
 function reduce(state, action) {
   const { session, handoff, operation, manifest, preview, settlement } = state;
-  if (!session || session.source !== 'cli_handoff' || !handoff?.flow_id) return reject('enrolled_cli_required');
+  if (!supportedSource(session) || !handoff?.flow_id) return reject('enrolled_cli_required');
+  if ((session.source === 'cli_handoff') !== action.type.includes('Cli')) return reject('action_source_mismatch');
   if (handoff.flow_id !== action.flowId || handoff.head_sha !== action.headSha
-      || session.handoff_head_sha !== action.headSha || session.checks_commit_sha !== action.headSha
+      || (session.source === 'cli_handoff' && session.handoff_head_sha !== action.headSha) || session.checks_commit_sha !== action.headSha
       || session.staging_commit_sha !== action.headSha) return reject('checks_superseded');
   if (!['active', 'paused', 'promoted', 'merging'].includes(session.status)) return reject('session_closed');
   if (['promoted', 'merging'].includes(session.status) && session.reviewed_head_sha !== action.headSha) {
@@ -52,7 +55,7 @@ function reduce(state, action) {
       || preview.observed?.flowId !== action.flowId
       || preview.observed?.receipt?.runtimeName !== session.staging_runtime_name) return reject('activation_unconfirmed');
 
-  if (action.type === 'DeliverCliCheckGate') {
+  if (['DeliverCliCheckGate', 'DeliverNativeCheckGate'].includes(action.type)) {
     if (session.status !== 'promoted') return reject('gate_not_in_review');
     if (!settlement?.accepted || settlement.result.state !== session.check_state
         || operation?.run_id !== action.runId) return reject('settlement_changed');
@@ -65,8 +68,9 @@ function reduce(state, action) {
       || operation.state !== 'running') return reject('checks_run_changed');
   if (session.check_state !== 'pending' || session.check_phase === 'deferred') return reject('checks_already_settled');
   if (manifest && manifest.owner !== action.observedOwner) return reject('checks_owner_changed');
-  if (manifest?.manifest?.cliFlowId && manifest.manifest.cliFlowId !== action.flowId) return reject('checks_flow_changed');
-  if (manifest && (manifest.commit_sha !== action.headSha || !manifest.manifest?.durableCli)) {
+  const flowIds = [manifest?.manifest?.previewFlowId, manifest?.manifest?.cliFlowId].filter(Boolean);
+  if (flowIds.some(flowId => flowId !== action.flowId)) return reject('checks_flow_changed');
+  if (manifest && (manifest.commit_sha !== action.headSha || !durableManifest(manifest.manifest))) {
     return reject('checks_manifest_changed');
   }
   if (action.result.state !== 'error' && (!manifest?.manifest?.launched || manifest.manifest.reconstruction)) {
@@ -79,7 +83,7 @@ function reduce(state, action) {
 
   return {
     accepted: true,
-    reason: 'cli_checks_settled',
+    reason: session.source === 'cli_handoff' ? 'cli_checks_settled' : 'native_checks_settled',
     identity: { runId: action.runId, headSha: action.headSha, flowId: action.flowId },
     result: action.result,
     effects: gate ? [{

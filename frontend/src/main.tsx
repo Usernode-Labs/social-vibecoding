@@ -65,6 +65,7 @@ import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installPreviewRequests } from './lib/preview-request';
 import { installJoinRequired } from './lib/join-required';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
@@ -169,6 +170,7 @@ bootStep('initOffline', initOffline);
 // Before hydration, so no island's first write can slip past it: a write
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
+bootStep('installPreviewRequests', () => installPreviewRequests());
 bootStep('installJoinRequired', () => installJoinRequired());
 
 // document.body is the hydration container, not a wrapper <div>, because the

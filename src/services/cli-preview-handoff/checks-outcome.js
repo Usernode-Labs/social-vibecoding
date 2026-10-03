@@ -1,5 +1,6 @@
 'use strict';
 
+const { nativeAction } = require('./source-policy');
 const { randomUUID } = require('node:crypto');
 const { createCliPreviewHandoff } = require('./store');
 
@@ -22,7 +23,7 @@ async function blockOutcome(pool, { sessionId, runId, headSha, reason, observedO
   }
 
   const result = await owner.apply({
-    type: 'CliChecksOutcomeBlocked', actionId: randomUUID(), sessionId,
+    type: nativeAction(state.session, 'CliChecksOutcomeBlocked'), actionId: randomUUID(), sessionId,
     flowId: handoff.flow_id, headSha, runId, reason,
     observedOwner: observedOwner || null,
   });

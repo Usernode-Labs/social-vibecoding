@@ -1,3 +1,4 @@
+import { postPreviewRequest } from '../../lib/preview-request';
 'use strict';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -153,7 +154,7 @@ const ROW_LINK = 'text-xs text-violet-700 dark:text-violet-400 hover:text-violet
 // POST one session recheck; resolves when the server accepted it (including
 // the "already running" coalesce response).
 async function postRecheck(sessionId: number | string): Promise<void> {
-  const res = await fetch(`/api/sessions/${sessionId}/recheck`, { method: 'POST' });
+  const res = await postPreviewRequest(sessionId, 'recheck');
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `HTTP ${res.status}`);

@@ -6042,6 +6042,85 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     return /^[a-f0-9]{40}$/.test(session.checks_commit_sha || '');
   }
 
+  async function nativeManualRequest(req, res, session, kind, { repair = false } = {}) {
+    const native = require('../services/native-preview-requests');
+    if (!await native.ownsManualRequests(pool, config, session)) return false;
+    const requestId = req.get('Idempotency-Key');
+    if (!require('zod').z.string().uuid().safeParse(requestId).success) {
+      res.status(400).json({ error: 'manual_request_id_required' });
+      return true;
+    }
+    const workOwner = native.createNativePreviewWork(pool, config);
+    const request = { sessionId: session.id, requestId, userId: req.user.id, kind };
+    // A lost reply can be retried after completion or supersession. Never
+    // rediscover a moving branch before returning this intent's stored result.
+    let admitted = await workOwner.manualReceipt(request);
+    if (!admitted) {
+      let headSha = null;
+      if (kind !== 'deploy') {
+        headSha = ['promoted', 'merging'].includes(session.status)
+          ? session.reviewed_head_sha : session.checks_commit_sha;
+      }
+      if (!/^[a-f0-9]{40}$/.test(headSha || '')) {
+        const [, owner, repo] = session.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (!owner || !repo || !github.isEnabled()) {
+          res.status(409).json({ error: 'native_revision_unverified' });
+          return true;
+        }
+        try {
+          const octokit = await github.getInstallationOctokit(owner);
+          const { data } = await octokit.request('GET /repos/{owner}/{repo}/git/ref/{+ref}',
+            { owner, repo, ref: `heads/${session.branch_name}` });
+          headSha = data.object.sha;
+        } catch {
+          res.status(503).json({ error: 'native_revision_unavailable' });
+          return true;
+        }
+        if (!/^[a-f0-9]{40}$/.test(headSha || '')) {
+          res.status(409).json({ error: 'native_revision_unverified' });
+          return true;
+        }
+      }
+      try {
+        admitted = await workOwner.admitManual({
+          session, headSha, requestId, userId: req.user.id,
+          canAdminWrite: !!req.user.canAdminWrite, kind, repair,
+        });
+      } catch (error) {
+        if (error.code !== 'CLI_PREVIEW_ADMISSION_REJECTED') throw error;
+        // The composition rolled back head/pending/work together. An existing
+        // activation or resource obligation is waiting, not a failed build.
+        res.status(409).json({ error: 'native_preparation_waiting', reason: error.message });
+        return true;
+      }
+    }
+    if (!admitted.accepted) {
+      res.status(409).json({ error: admitted.reason });
+      return true;
+    }
+    const work = admitted.work;
+    const pending = ['queued', 'running'].includes(work.status);
+    if (kind === 'ensure' && !pending && work.status === 'succeeded') {
+      const inspected = session.checks_commit_sha === admitted.headSha
+        ? await inspectPreview(session) : { status: 'unavailable', reason: 'superseded' };
+      res.json({ ...(inspected.status === 'missing' ? { status: 'unavailable', reason: 'missing' } : inspected),
+        workId: work.id, replayed: !!admitted.replayed });
+      return true;
+    }
+    let status = work.status === 'blocked' ? 'blocked' : 'complete';
+    if (pending) {
+      if (kind === 'deploy') status = 'deploying';
+      else if (kind === 'ensure') status = 'rebuilding';
+      else status = 'running';
+    }
+    res.json({
+      ...(kind === 'deploy' ? { ok: true } : {}),
+      status,
+      workId: work.id, headSha: admitted.headSha, replayed: !!admitted.replayed,
+    });
+    return true;
+  }
+
   // Deploy staging for a session
   router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
@@ -6056,6 +6135,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
+      if (await nativeManualRequest(req, res, session, 'deploy', { repair: true })) return;
       const app = { id: session.app_id_val, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
       // Persisted enrollment owns the exact head and all required follow-ups.
@@ -6278,12 +6358,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      const nativeRequests = require('../services/native-preview-requests');
+      if (await nativeRequests.ownsManualRequests(pool, config, session)) {
+        const requestId = req.get('Idempotency-Key');
+        if (require('zod').z.string().uuid().safeParse(requestId).success) {
+          const prior = await nativeRequests.createNativePreviewWork(pool, config).manualReceipt({
+            sessionId, requestId, userId: req.user.id, kind: 'ensure',
+          });
+          if (prior) {
+            await nativeManualRequest(req, res, session, 'ensure');
+            return;
+          }
+        }
+      }
+
       // A missing/stale runtime rebuilds. A present but unhealthy one is
       // reported honestly and left alone: one failed bounded probe is not a
       // reason to churn the app or its database, but it is a reason not to
       // navigate the reviewer to stale/current/error content.
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
       if (inspected.status !== 'missing') return res.json(inspected);
+      if (await nativeManualRequest(req, res, session, 'ensure', { repair: true })) return;
 
       const durableHandoff = require('../services/cli-preview-handoff/work');
       if (session.source === 'cli_handoff' && await durableHandoff.enrolled(pool, sessionId)) {
@@ -6397,6 +6492,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (process.env.USERNODE_ENV === 'staging') {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
+
+      if (await nativeManualRequest(req, res, session, 'recheck')) return;
 
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {

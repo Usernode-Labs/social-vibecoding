@@ -288,7 +288,7 @@ const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 // without anyone needing to reload.
 async function rebuildSessionStaging({ config, pool, session, reason }) {
   const handoff = require('./cli-preview-handoff/work');
-  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+  if (await handoff.enrolled(pool, session.id)) {
     await handoff.createCliHandoffWork(pool, config).recover(session.id, { repair: true, expectedRuntimeName: session.staging_runtime_name || null });
     return 'durable';
   }
@@ -852,7 +852,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // 'skipped'); a genuine build failure propagates to the caller.
 async function recheckSessionChecks({ config, pool, session, reason }) {
   const handoff = require('./cli-preview-handoff/work');
-  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+  if (await handoff.enrolled(pool, session.id)) {
     await handoff.createCliHandoffWork(pool, config).recover(session.id, {
       force: FORCED_RECHECK_REASONS.has(reason) || session.check_state === 'error',
     });

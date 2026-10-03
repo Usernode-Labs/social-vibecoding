@@ -293,7 +293,7 @@ test('both capture-time GitHub reads go through the resolved ref', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8'
   );
-  assert.match(src, /const gitRef = sessionGitRef\(session, commitHash\);/);
+  assert.match(src, /const gitRef = sessionGitRef\(session, commitHash, \{ pinned: !!opts\.recoverExisting \}\);/);
   assert.match(src, /`main\.\.\.\$\{gitRef\}`/, 'the changed-file compare uses it');
   assert.match(src, /resolveDeclaredTests\(repoOwner, repoName, gitRef\)/,
     'and so does the dapp.json read — a fork import must run its OWN declared tests');

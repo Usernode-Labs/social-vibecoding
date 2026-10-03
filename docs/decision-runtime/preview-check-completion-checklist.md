@@ -1,9 +1,7 @@
 # Preview/check migration completion checklist
 
-3 October 2026 · integrated canonical pin `74276a2fb7002da251e1b3975ae22b81dbc765e3`.
-Latest inspected canonical revision `da6ecb00880cab9a1749a6256992fb3d1706d9be`
-is newer; its relevant diff leaves sync policy unchanged. Integrating that revision
-remains a separate open gate.
+3 October 2026 · integrated canonical pin
+`da6ecb00880cab9a1749a6256992fb3d1706d9be` (local merge `ab2f0411234eab1dec154b446c1189ac220dc52b`).
 The CLI pilot is an **internal proof, not the merge deliverable**. This branch stays
 unmerged while the original preview/check migration is completed. Admission stays
 off; no push, deployment or production access is authorized.
@@ -18,8 +16,8 @@ is not a completion criterion.
 
 | Remaining caller / current owner | Replacement | Verification and removal criterion |
 | --- | --- | --- |
-| [Native external handoff](../../src/routes/proposal-handoff.js), [local Dev agent handoff](../../src/services/handoff-pipeline.js), [CLI head sync](../../src/services/cli-handoff-sync.js) | Atomic exact-head acceptance + existing preparation/continuation work, with each caller's authorization and lifecycle policy | CLI path proved internally. **Enrolled active/promoted sync now admits trusted worker revisions atomically, preserving serving pointers; disabled admission retains a reconciliation obligation.** Finish ordinary native sessions and unenrolled head adoption. Retry/lost reply and paused/promoted guards; remove submission-tail/process-pipeline ownership and pointer-clearing writers after all consumers migrate. |
-| [Manual deploy, ensure, recheck](../../src/routes/sessions.js) | Durable admission or join/guarded repair of existing work; forced checks remain an action | Owner/admin/member and headless policies unchanged. Concurrent clicks, web loss, blocked outcome, supersession, admission-off recovery. Remove detached builders/check kicks and process sets for migrated callers. **Enrolled deploy/ensure/recheck cutover implemented and tested.** Ordinary native manual admission remains open. |
+| [Native external handoff](../../src/routes/proposal-handoff.js), [local Dev agent handoff](../../src/services/handoff-pipeline.js), [CLI head sync](../../src/services/cli-handoff-sync.js) | Atomic exact-head acceptance + existing preparation/continuation work, with each caller's authorization and lifecycle policy | CLI path proved internally. **Enrolled active/promoted sync now admits trusted worker revisions atomically, preserving serving pointers; disabled admission retains a reconciliation obligation.** Finish ordinary hosted/native submission tails and unenrolled head adoption; native manual requests have their own source policy. Retry/lost reply and paused/promoted guards; remove submission-tail/process-pipeline ownership and pointer-clearing writers after all consumers migrate. |
+| [Manual deploy, ensure, recheck](../../src/routes/sessions.js) | Durable admission or join/guarded repair of existing work; forced checks remain an action | Owner/admin/member and headless policies unchanged. Concurrent clicks, web loss, blocked outcome, supersession, admission-off recovery. Remove detached builders/check kicks and process sets for migrated callers. **Enrolled deploy/ensure/recheck cutover implemented and tested.** **Ordinary non-headless native Kubernetes/kpack manual deploy/ensure/recheck are now cut over, separately default-off.** Actor/source/review guards and a session/UUID receipt make admission atomic and retries stable after completion. Recovery joins with admission off; native fields are preserved. Web builders/publication/pending/detached kicks and process sets are excluded for this cohort. Docker/headless and unenrolled legacy behavior remains. |
 | [Hosted interactive/headless/resumed tails](../../src/routes/sessions.js), [boot-recovered tail](../../server.js) | Accepted worker result atomically schedules exact-head preparation; checks continue outside web/worker-chat process | All four completion paths, headless clone behavior, restart after push, overlapping turns and cancellation. Remove direct result publication, synchronous staging tail and detached capture in each path. |
 | [Promotion and vote rechecks](../../src/routes/votes.js) | Reviewed-head action joins/requests durable work; required gate delivery retains existing merge/bot policy | Promotion during preparation/checks; missing preview; stale reviewed head; restart before follow-up. Remove post-response builder/recheck ownership and direct publication/pending writes, without changing graduation/voting policy. |
 | [Imported PR initial build and changed head](../../src/services/pr-import-sync.js), imported revision checks in [votes](../../src/routes/votes.js) | Explicit imported-head policy and exact repository/revision specification using same execution machinery | Fork-only SHA, mirror changes, closed PR, duplicate poll, stale completion/cleanup; never write the contributor's branch. Remove both import publishers and old-result teardown once retained resources reconcile. |
@@ -64,3 +62,14 @@ fixture grants. Completing migration does not authorize enablement.
 optional artifact GC and generic execution framework expansion. Existing governance,
 merge and infrastructure services keep their policy and external duties; required
 preview/check handoffs to them must be durable.
+
+Native manual [contract/evidence](native-manual-preview-contract.md) is a bounded
+caller cutover. It does not close hosted, promotion, imported, fleet, Docker,
+teardown or head-invalidation rows. Unmigrated head changes expose explicit
+`native_head_admission_required` reconciliation rather than competing preparation.
+
+Final manual caller consolidation must also apply the completed-intent receipt
+protocol to retained CLI/manual compatibility callers. Their older headerless
+join/repair semantics are preserved here; native UUID proof does not silently
+claim idempotence for every legacy request. This is a bounded implementation item,
+not a new executor or workflow.

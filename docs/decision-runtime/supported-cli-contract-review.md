@@ -2,8 +2,10 @@
 
 Reviewed through the frozen review and strict unit-source correction `ed13ea6fa`,
 reconciled with explicitly pinned canonical
-`74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer bot discussion/scheduling,
-issue-comment identities and shots-worker retirement are retained. The
+`da6ecb00880cab9a1749a6256992fb3d1706d9be`. Newer bot recovery/activity,
+agent capability/prompt, UI and connector behavior is retained. The ordinary
+native manual cutover has its own [contract](native-manual-preview-contract.md);
+it reuses these owners and does not change this document's actual-resource evidence. The
 [integration record](canonical-integration.md) identifies current verification;
 the actual-resource proofs below retain their own revisions and substitutions.
 Admission remains default-off. This assessment does not authorize installation,
@@ -121,7 +123,7 @@ The [offline archive](../../archives/experimental-replay-c01dc0687/README.md) pr
 exact reducers/dependencies, original golden sources and exported test traces.
 Its 153 cases replay without npm, a checkout, credentials or a database. They are
 test exports, not production exports. Current live reducer versions are preview
-**11**, CLI **3**, review **2**, settlement **1**. Work contract versions and
+**11**, native/CLI admission **4** (accepted v3 work/trace replay retained), review **2**, settlement **1**. Work contract versions and
 operation-spec versions are separate axes. Exact preview v10 policy is already
 archived; a development checkpoint does not automatically earn a live compatibility
 branch. Existing action retry shapes, unmarked legacy manifests and unknown old
