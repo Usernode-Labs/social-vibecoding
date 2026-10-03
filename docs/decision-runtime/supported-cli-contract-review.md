@@ -1,10 +1,11 @@
 # Bounded CLI support assessment
 
-Reviewed through accepted `cd0d708a37afb59b6b684adaca13e5d349971df9` and its
-explicit canonical integration at `d9cf30cd73a0810be72b199f8b2a194f8c56b793`.
-Read-only canonical fetch on 2 October returned
-`74276a2fb7002da251e1b3975ae22b81dbc765e3`; the relevant capture, identity,
-preview and CLI owners are unchanged. Newer unrelated main changes were not merged.
+Reviewed through the frozen review and strict unit-source correction `ed13ea6fa`,
+reconciled with explicitly pinned canonical
+`74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer bot discussion/scheduling,
+issue-comment identities and shots-worker retirement are retained. The
+[integration record](canonical-integration.md) identifies current verification;
+the actual-resource proofs below retain their own revisions and substitutions.
 Admission remains default-off. This assessment does not authorize installation,
 caller expansion, rollout, production access, push or deployment.
 

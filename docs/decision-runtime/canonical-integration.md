@@ -122,10 +122,56 @@ its own actual evidence and substitutions. The fixture driver now exposes
 interruption. New test isolation coverage joins focused CI; actual-resource
 execution remains explicit and local. GitHub CI was not run or authorized.
 
-No production timer, lock, handler, compatibility branch or replay support is
-removed. Unknown-check-outcome and atomic settlement/dependency initialization
-corrections are already accepted; the earlier “remaining work” paragraph above
-is historical. Current remaining gates are the roadmap's named supported-store/
-export decision, boundary compatibility and eventual bounded removals. Public
-TLS/private identity, least-privilege worker RBAC, installation supervision and
-production builder compatibility remain unproved.
+No production timer, lock, handler or compatibility branch was removed by that
+reconciliation. Its remaining-work statements are historical: subsequent accepted
+work completes retention/archive removal, settlement, packaged entry points and
+disposable TLS/identity/repeated-use proofs. Least-privilege installation,
+supervision and production builder compatibility remain separate verification
+gates. See the [current roadmap](roadmap.md).
+
+
+## Reconciliation after strict unit-source inspection
+
+On 2 October 2026, source correction `ed13ea6fa128a11a61cd8fa67b3e8e47ea2cc4da`
+is followed by local merge `6cab97bb7c882b0767872707bb6be52a7df22970`, containing
+explicit canonical pin `74276a2fb7002da251e1b3975ae22b81dbc765e3`. No textual
+conflict. This is the reviewed pin, not an automatically advancing branch tip.
+
+Canonical issue-comment IDs, bot discussion/tray/scheduling/typing behavior and
+shots-worker hold/retirement are preserved. The latter remains the canonical
+in-process optional-shots contract; it is not a new cross-process durability
+claim. Pilot GitHub dependency initialization, required bot-delivery error
+propagation, persisted operation identities/specifications, CLI exclusions,
+conditional activation and consumer/late-creation retirement protections remain.
+The dynamic SQL inventory merges and validates without a blanket baseline refresh.
+No new work format, reducer, workflow or caller is introduced.
+
+Verified on this reconciled code:
+
+- Actual GitHub/unit-helper regressions: **59 passed** with Octokit transport
+  substituted, covering inaccessible 404 versus genuine absence and unverifiable
+  source/metadata. No actual GitHub access is claimed.
+- Focused runner: **1,030 passed**, no failures/skips, against physically verified
+  disposable PostgreSQL. Includes atomicity, recovery, fair scheduling, checks,
+  settlement and retirement regressions.
+- SQL: **3,268 unique statements / 4,171 static variants** validated; writer audit
+  retains **16** explicitly recorded legacy statements; archived replay **153** pass.
+- Affected mapping after `npm run ensure:shell`: **16,737 passed / one failure /
+  13 fixture/platform skips**. Generated shell outputs are ignored and uncommitted.
+  Its only failure is pinned main's unchanged occupied-front-port test on macOS:
+  the test holder inherits the IPv4 preload, its spawned launcher does not and
+  can bind IPv6 separately. All **12** launcher cases pass when the child inherits
+  the same test-only loopback preload. No product change or hidden skip.
+- First broad invocation also had two stale-shell assertions and a canonical DM
+  typing-order failure. Regeneration resolves the shell assertions; all **19** DM
+  cases pass alone and the post-generation broad run passes that case. DM and
+  launcher owners/tests are byte-identical to pinned main. Record the intermittent
+  ordering and platform test limitations rather than expanding the pilot.
+
+Counts overlap. Normal GitHub/Linux CI remains required; local checks do not claim
+it has run. The ownership-verified disposable database was retired after testing.
+No new actual Kubernetes fixture was provisioned: accepted packaged/preparation/
+HTTPS/repeated-use proofs retain their original revisions and explicit injections.
+No legacy production safeguard, timer, lock, compatibility handler or resource
+owner is removed by this reconciliation. Default-off containment remains; no push,
+production access or deployment.

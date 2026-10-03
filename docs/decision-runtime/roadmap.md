@@ -1,9 +1,9 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. Accepted checkpoint `511e84e35`; canonical main
-`d9cf30cd73a0810be72b199f8b2a194f8c56b793` integrated at `6730b0913`.
-Read-only freshness check returned `74276a2fb7002da251e1b3975ae22b81dbc765e3`;
-relevant identity/capture/preview/CLI owners are unchanged. No automatic main merge.
+2 October 2026. The frozen pilot review and strict unit-source correction
+(`ed13ea6fa`) are reconciled with explicitly pinned canonical main
+`74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer discussion/scheduling,
+issue-comment identity and shots-worker retirement behavior are preserved.
 The native CLI Kubernetes/kpack cohort remains **default-off**. Progress means
 guarantees demonstrated **and competing ownership removed**, not growing checkpoint
 numbers. No production compatibility, installation or rollout is claimed.
@@ -19,6 +19,7 @@ numbers. No production compatibility, installation or rollout is claimed.
 | Atomic gating settlement | Accepted run/revision receipt, verdict, app-wide history/graduation and required follow-ups commit together. Recovery neither recounts history nor overwrites committed verdicts with errors. Worker dependencies initialize explicitly; unavailable GitHub retains retry ownership. Policy calls are substituted evidence. |
 | Ordinary repeated use | **Complete locally at `511e84e35`:** five revisions on one session, overlapping checks/supersession/restarts, four predecessors' active dependencies released, fifth serving and legacy sentinel protected. Original Jobs do not compete; unresolved creators remain discoverable. |
 | New admission and retention consolidation | One complete preparation format; four capability flags/config shim and three partial handlers removed. Fresh experimental stores only. Twelve historical reducer copies/live dispatch removed after independently verified replay archive. Legacy protections remain. |
+| Verified unit requirement | Enrolled inspection requires a verified exact commit/root tree; present packages also require a matching blob and valid metadata. Inaccessible/unverified source keeps reconciliation ownership; legacy nullable-source skipping and explicit disable/deferral policy remain. Helper tests substitute Octokit transport only. |
 | Canonical/focused verification | Explicit pin integrated with newer approval/recovery behavior preserved. Writer inventory, focused PostgreSQL/SQL and disposable checks/retirement proof pass. Actual packaged default web CMD, standalone worker and migration run non-root. GitHub CI/Linux installation is not proved locally. |
 | HTTPS/identity boundary | Real TLS, shipped forward-auth/session exchange, private assets and original-Job restart recovery proved for an explicitly authorized account. Ordinary private-project screenshot permission is assessed separately without a fixture grant. |
 

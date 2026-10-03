@@ -1,8 +1,8 @@
 # Final review of the default-off CLI pilot
 
-2 October 2026. Feature scope is frozen. Review starts at accepted
-`cd0d708a37afb59b6b684adaca13e5d349971df9`, against the explicitly integrated
-canonical pin `d9cf30cd73a0810be72b199f8b2a194f8c56b793`.
+2 October 2026. Feature scope is frozen. The accepted review is followed by
+strict unit-source correction `ed13ea6fa` and reconciliation with explicitly
+pinned canonical `74276a2fb7002da251e1b3975ae22b81dbc765e3`.
 No rollout, caller migration, framework expansion, production access, push or
 deployment is authorized by this review.
 
@@ -47,7 +47,7 @@ Sources: [decision runtime](../../src/services/decision-runtime/index.js),
 
 | Classification | Finding | Disposition |
 | --- | --- | --- |
-| **Introduced regression — fixed** | New unit-suite requirement inspection classified unavailable GitHub or missing source identity as `not-required`, despite having no evidence that a suite was absent. This could omit an expected result in the enrolled path. | Inspection now throws before dispatch. Existing lifecycle handling keeps the provisional run and explicitly blocks it for reconciliation; restart cannot launch replacement Jobs or publish a verdict. Intentional deferral/feature disable and legacy best-effort skipping remain. No admitted manifest is rewritten. |
+| **Introduced regression — fixed** | New unit-suite requirement inspection classified unavailable/unverified source as `not-required`. The legacy helper's `null` includes inaccessible-source 404 and non-inline responses, so it cannot establish absence. | Enrolled inspection verifies the exact commit and complete root tree. A present package must match its blob SHA/bytes and contain valid metadata before deciding whether a test script is absent. Lookup/verification errors throw before dispatch; existing lifecycle handling retains the provisional run and reconciliation owner. Restart cannot launch replacement Jobs or publish a verdict. Intentional deferral/disable, placeholder-script policy and legacy nullable skipping remain. No admitted manifest is rewritten. |
 | **Pre-existing product gap — separate follow-up** | The shipped non-admin screenshot identity lacks ordinary private-project membership; a valid app JWT does not grant it. | Preserve denial and document unavailable optional private screenshots. No permission change, fixture grant or admin substitution. Required assertions/unit verdicts remain separate. |
 | **Pre-existing product/legacy gap** | Global harvest's oldest-50 scan and other legacy timers do not share the bounded worker's scheduling guarantees. Legacy/direct SQL writers still exist. | Retain safeguards and the explicit writer inventory. The enrolled continuation has its own targeted recovery; this pilot does not promise fairness or action-only authority for every platform path. |
 | **Installation prerequisites** | Supervised standalone worker, migrations, clone privileges, namespace/RBAC, identity keys, trusted public HTTPS/assets, reachable registry/kpack and matching Job images/configuration. | Verify before enabling. Disposable cluster-admin/local TLS routing is evidence of behavior, not proof of a supported installation. |
@@ -55,9 +55,11 @@ Sources: [decision runtime](../../src/services/decision-runtime/index.js),
 
 No other introduced blocking regression was found in this review. That is a
 bounded review conclusion, not proof against every possible external failure.
-The unit correction is covered by failing-before/passing-after tests and real
-PostgreSQL lifecycle/manifest recovery. GitHub availability and dispatch are
-injected in that regression; it is not another actual Kubernetes integration proof.
+The unit correction is covered through the actual GitHub and unit helpers with
+only Octokit responses substituted, including inaccessible-source 404, genuine
+file absence, unreadable listed files and invalid source/metadata. Real PostgreSQL
+lifecycle/manifest recovery also passes. GitHub availability and dispatch are
+injected there; neither test establishes actual GitHub or Kubernetes integration.
 
 ## Three different gates
 
@@ -112,7 +114,7 @@ historical live reducer copies/dispatch were removed. Shared native handoff's ol
 resource obligations consumed under the resource guard.
 
 No global legacy timer, lock, production compatibility branch or cleanup executor
-was removed. This final review adds no owner: it fixes one admission inspection
+was removed. This final review adds no owner: it fixes enrolled source inspection
 and consolidates readiness documentation. See the
 [retirement inventory](migration-retirement-inventory.md) for exact removal gates.
 
@@ -126,7 +128,7 @@ No successful clone/Build/runtime observation was substituted in their preparati
 proofs; fixture transport, metadata, fault injection and GitHub policy substitutions
 remain explicit in their contracts.
 
-| Current local verification | Result |
+| Earlier frozen-review verification (before this source correction/reconciliation) | Result |
 | --- | --- |
 | Owned disposable PostgreSQL focused runner, after correction | 1,011 passed; zero failures/skips. Includes the new provisional-unit recovery regression. |
 | Mapped correction/doc adapter suites | 2,293 passed; four explicit actual-resource opt-in skips; zero failures. |
@@ -135,15 +137,30 @@ remain explicit in their contracts.
 | SQL/schema on the owned disposable database | 3,256 unique statements / 4,159 static variants validated. |
 | Writer inventory / independent historical archive | 16 recorded legacy statements; 153 offline replay cases pass. |
 
-Counts overlap; they are not a combined test total. The mapped skips are not
-integration evidence. The disposable database is ownership-verified before test
-mutations and teardown; no actual Kubernetes fixture was provisioned in this review.
+Counts overlap; they are not a combined test total. Skips are not integration
+evidence. No actual Kubernetes fixture was provisioned in this review.
 
-Read-only fetched main is `74276a2fb7002da251e1b3975ae22b81dbc765e3`.
-Compared with the review pin, the capture/identity/preview owners are unchanged;
-GitHub issue-comment IDs and bot discussion/scheduling behavior have newer changes.
-Their policy-delivery entry points are unchanged. A read-only three-tree merge
-preview reports no textual conflict; shared changes include `github.js`,
-`homeroom-bot.js` and the SQL dynamic inventory. This is not an integration or CI
-proof. If the PR targets that newer main, preserve its behavior, refresh the SQL
-inventory and rerun affected tests on the actual reconciled revision before merging.
+Current correction/reconciliation is `ed13ea6fa` followed by local merge
+`6cab97bb7c882b0767872707bb6be52a7df22970`, containing exact canonical
+`74276a2fb7002da251e1b3975ae22b81dbc765e3`. Newer issue-comment identity,
+bot discussion/scheduling/typing and shots-worker hold/retirement behavior remain;
+pilot dependency initialization and required-policy error propagation survive the
+merge. No admission, work, reducer or external resource identity changes.
+
+| Reconciled local verification | Result |
+| --- | --- |
+| Actual-helper/unit/CI regressions | 59 passed; substituted Octokit transport, no real GitHub call. |
+| Owned disposable PostgreSQL focused runner | 1,030 passed; zero failures/skips. |
+| Affected mapping, after regenerating ignored shell outputs | 16,737 passed; 13 explicit fixture/platform skips; one unchanged canonical macOS launcher test fails. |
+| Canonical launcher with inherited test loopback preload | All 12 passed. Normal invocation's holder uses IPv4 while its child launcher can bind IPv6 on macOS; the test and launcher are identical to pinned main. No product change. |
+| Canonical DM suite alone / mapped rerun | All 19 passed alone; the earlier broad-run typing-order failure did not recur. Relevant code/test are identical to pinned main. |
+| SQL/schema on owned disposable database | 3,268 unique statements / 4,171 static variants validated. |
+| Writer inventory / independent archive | 16 recorded legacy statements; 153 offline replay cases pass. |
+
+The first broad run also used stale generated shell outputs; `npm run ensure:shell`
+regenerated them, and the rerun resolves those failures. Generated outputs are
+ignored and uncommitted. Local verification is not a claim that GitHub/Linux CI
+passes: the canonical launcher limitation remains visible. Database ownership is
+verified before mutations and teardown. Accepted actual-resource proofs retain
+their named producing revisions, fixture metadata and injections; they were not
+rerun on this helper correction. No production access, push or deployment.

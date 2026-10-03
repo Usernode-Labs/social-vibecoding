@@ -6,9 +6,11 @@ See the [roadmap](roadmap.md), [support decision](experimental-retention-decisio
 and [packaged proof](packaged-cli-entrypoints-contract.md). The
 [frozen final review](final-pilot-review.md) distinguishes default-off merge,
 installation/enablement and further-caller migration. Private screenshots are a
-separate product follow-up. The final correction removes only an unjustified
-`source_unavailable` unit exemption for new enrolled inspection; it adds no work
-kind, executor, flag or cleanup owner. Legacy unavailable-source skipping remains.
+separate product follow-up. The final correction replaces unjustified unavailable
+or unverified source exemptions with exact-commit/root-tree and blob inspection;
+it adds no work kind, executor, flag or cleanup owner. Legacy nullable-source
+skipping remains. Canonical main `74276a2fb7002da251e1b3975ae22b81dbc765e3`
+is reconciled; its shots-worker hold/retirement and other caller protections remain.
 
 | Mechanism | Current status / replacement | Removal gate |
 | --- | --- | --- |
