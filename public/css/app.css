@@ -10868,6 +10868,25 @@ html.un-kb .un-modal {
   padding-top: calc(0.5rem + var(--platform-safe-top));
 }
 
+/* THE STATUS-BAR BAND, UNTIL THE APP TAKES A TONE (#26). Inside the Homeroom
+   app the status bar's clock and battery are drawn from the app's theme,
+   which is the shell's appearance: dark glyphs on the light shell, which
+   nobody could read on this bar's near-black. An app build that takes
+   `setStatusBarTone` is told the ground here is dark and draws light glyphs
+   (public/js/native-chrome.js); the first tone it accepts puts
+   .native-status-bar-tone on <html>, and this rule stands down. Until then
+   the band under the status bar is painted in the shell's own ground, the
+   colour those glyphs were picked for. The two grounds are the head's
+   critical <style> values (frontend/src/head.html): keep them in step.
+   Only in the app (.in-native-webview): a browser's or an installed web
+   app's status bar is not drawn from this theme. */
+html.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+  background-image: linear-gradient(#f4f2e4 var(--platform-safe-top), transparent var(--platform-safe-top));
+}
+html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+  background-image: linear-gradient(#0b0d1b var(--platform-safe-top), transparent var(--platform-safe-top));
+}
+
 /* ── A session's preview sits UNDER that session's own bars ───────────
    The Streamlined Concept board's APP PREVIEW frame keeps the header and
    the session strip on screen and puts the preview below them, which is

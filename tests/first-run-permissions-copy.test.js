@@ -103,11 +103,18 @@ async function showFirstRunSheet(permissions) {
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  if (permissions.platform === 'ios') {
+    // The first-run trigger presents nothing on iOS any more (#12, D10).
+    // The sheet's iOS variant is still what ?shot=notif-permissions draws
+    // (public/js/app.js), through the same entry point used here.
+    assert.equal(sheets.length, 0, 'session setup presents nothing on iOS');
+    sandbox.NativeChrome.presentPermissionsSheet({ perms: permissions, isAndroid: false });
+  }
   assert.equal(sheets.length, 1, 'the first-run sheet was shown once');
   return allText(sheets[0].contentEl);
 }
 
-test('iOS first-run sheet asks for notifications, not alarms or blocks', async () => {
+test('the iOS sheet asks for notifications, not alarms or blocks', async () => {
   const text = await showFirstRunSheet({
     platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null,
   });

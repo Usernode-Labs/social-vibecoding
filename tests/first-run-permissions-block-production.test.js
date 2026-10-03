@@ -145,19 +145,23 @@ test('decideFirstRunSheet: Android with block production presents', () => {
     needsAlarm: true, needsBattery: true, blockProduction: true }), 'present');
 });
 
-test('decideFirstRunSheet: nothing to ask is done on both platforms', () => {
+test('decideFirstRunSheet: nothing to ask is done on Android', () => {
   const h = boot({ permissions: ANDROID_GRANTED });
   const decide = h.NativeChrome.decideFirstRunSheet;
   assert.equal(decide({ isAndroid: true, needsAlarm: false, needsBattery: false,
     blockProduction: false }), 'done');
-  assert.equal(decide({ isAndroid: false, needsAlarm: false, needsBattery: false }),
-    'done');
 });
 
-test('decideFirstRunSheet: iOS never waits for block production', () => {
+test('decideFirstRunSheet: iOS is skipped, never presented or deferred (#12)', () => {
+  // The iOS sheet was the notification prompt alone, and decision D10 moved
+  // that ask to the create dialog (NativeChrome.askForPing). Skipped, not
+  // "done": no marker is written for a sheet iOS no longer has.
   const h = boot({ permissions: IOS_UNGRANTED, kitPlatform: 'ios' });
-  assert.equal(h.NativeChrome.decideFirstRunSheet({ isAndroid: false,
-    needsAlarm: true, needsBattery: false, blockProduction: false }), 'present');
+  const decide = h.NativeChrome.decideFirstRunSheet;
+  assert.equal(decide({ isAndroid: false,
+    needsAlarm: true, needsBattery: false, blockProduction: false }), 'skip');
+  assert.equal(decide({ isAndroid: false, needsAlarm: false, needsBattery: false }),
+    'skip');
 });
 
 // ── The trigger ────────────────────────────────────────────────────────
@@ -226,13 +230,15 @@ test('Android: a deferred sheet is offered once block production is requested', 
     'the deferral left the shared run and the marker free for a later offer');
 });
 
-test('iOS is unchanged: notification sheet with no block-production read', async () => {
+test('iOS presents nothing at session setup, and consults nothing (#12)', async () => {
   const h = boot({ permissions: IOS_UNGRANTED, kitPlatform: 'ios',
     bp: { bp_requested: false, bp_released: false },
     socialPushState: { permissionStatus: 'notDetermined' } });
   await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.sheets.length, 1, 'iOS still offers the notification prompt');
+  assert.equal(h.sheets.length, 0,
+    'the iOS notification ask moved to the create dialog (D10)');
   assert.equal(h.fetches.length, 0, 'iOS never consults the producer queue');
+  assert.equal(h.marked(), false, 'and nothing is recorded');
 });
 
 // ── The re-offer hook ──────────────────────────────────────────────────

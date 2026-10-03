@@ -163,7 +163,10 @@
       // terms ask to the NEXT launch whenever the "Set up your device"
       // sheet won this one — which on mobile meant "after an app restart",
       // days later or never. Wait the sheet run out, then its dismissal,
-      // then a ghost-click window, and ask in the SAME session.
+      // then a ghost-click window, and ask in the SAME session. That sheet
+      // is Android's alone now: on iOS the run presents nothing (#12, D10;
+      // the notification ask moved to the create dialog), so the terms ask
+      // follows at once.
       if (native && window.NativeChrome) {
         try {
           if (typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
