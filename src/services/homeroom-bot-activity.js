@@ -87,9 +87,14 @@ function proposalHref(slug, sessionId) {
 
 // ── Starting a card ──
 
-/** Pure: a card's words, for whatever does not draw the card itself. */
-function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm) {
+/**
+ * Pure: a card's words, for whatever does not draw the card itself. A card
+ * started by filing the request (#3767) says it was filed, not that the
+ * work began: it may wait in the queue first, and the card says so.
+ */
+function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { filed = false } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
+  if (filed) return `${line}\n\nFiled. This card follows it from here.`;
   return `${line}\n\nI'm working on ${firstVersion ? 'the first version' : 'this'} now. `
     + 'This card updates as I go.';
 }
@@ -97,11 +102,13 @@ function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm) {
 /**
  * The bot started a piece of work on one of `requester`'s requests: their
  * card, in their DM with it, when they are somebody it talks to there.
- * `jobKey` is the queue row the work was claimed from. Never throws: a card
- * that could not be sent costs the work nothing. Resolves what sendDm did,
- * or null.
+ * `jobKey` is the queue row the work was claimed from. #3767: a request
+ * filed from the DM gets its card when it is filed (`filed`), under the key
+ * the work will start from, so the start finds it already sent. Never
+ * throws: a card that could not be sent costs the work nothing. Resolves
+ * what sendDm did, or null.
  */
-async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, deps = {} }) {
+async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, filed = false, deps = {} }) {
   try {
     const n = Number(issueNumber);
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
@@ -117,7 +124,7 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const sent = await dm.sendDm(pool, {
       bot,
       userId: requester.userId,
-      content: cardText(context, dm),
+      content: cardText(context, dm, { filed }),
       metadata: {
         kind: KIND,
         appSlug: app.slug,
@@ -140,7 +147,7 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
        ON CONFLICT (message_id) DO NOTHING`,
       [sent.messageId, requester.userId, sent.conversationId, app.id, n, KIND],
     );
-    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId });
+    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed });
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {

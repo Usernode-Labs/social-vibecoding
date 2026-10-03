@@ -461,3 +461,32 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   assert.match(activity, /author\.is_synthetic IS NOT TRUE/, 'the bot\'s own reply there does not re-queue it');
 });
 
+
+test('#3767: a revision that changed what the proposal does names it again, and builds with the design guidance', () => {
+  const prompt = followup.followUpPrompt({
+    seed: 'SEED', replies: [{ author: 'ada', where: 'proposal', createdAt: '2026-10-03T10:00:00Z', body: 'drop the size options' }],
+    canRevise: true, design: 'DESIGN BLOCK',
+  });
+  assert.match(prompt, /give it a new `title` that says what it does now/);
+  assert.match(prompt, /"title": "for revise only, when what the proposal does changed: its new short title"/);
+  assert.ok(prompt.indexOf('DESIGN BLOCK') > prompt.indexOf('"person"'), 'the guidance follows the choices');
+  assert.ok(prompt.indexOf('DESIGN BLOCK') < prompt.indexOf('END YOUR REPLY'), 'and comes before the format');
+  // No revision allowed: no design guidance to follow.
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'SEED', replies: [], canRevise: false, design: 'DESIGN BLOCK' }), /DESIGN BLOCK/);
+
+  const fence = (obj) => `done\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's', title: '  Each lesson   runs its full list ' })).title,
+    'Each lesson runs its full list');
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's' })).title, undefined, 'the old name stays');
+  assert.equal(followup.parseFollowUp(fence({ action: 'answer', reply: 'ok', title: 'Not a revision' })).title, undefined);
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', title: 'x' })).title, undefined, 'too short to be a name');
+
+  const live = require('../src/services/homeroom-bot-live');
+  const design = live.revisionDesignText({ readsImages: true });
+  assert.match(design, /^IF YOUR CHANGE TOUCHES WHAT PEOPLE SEE/);
+  assert.match(design, /that visual check is EXPECTED, not optional/);
+  assert.match(design, /take screenshots \(`browser_take_screenshot`\)/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /if \(moved && parsed\?\.title\) await renameRevised\(/, 'renamed only when the revision landed');
+  assert.match(src, /require\('\.\/proposal-update'\)\.applyProposedTitle\(\{/, 'through the seam a person\'s revision uses');
+});

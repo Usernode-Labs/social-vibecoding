@@ -1189,6 +1189,22 @@ function browserLines({ readsImages = false } = {}) {
   ];
 }
 
+/**
+ * #3767: what a revision of the bot's own proposal is told about design, as
+ * its build was (#3748): the UI design guidance and the browser check. A
+ * revision changes what people see as often as a build does, and was given
+ * neither. Pure apart from the guidance file.
+ */
+function revisionDesignText({ readsImages = false } = {}) {
+  return [
+    'IF YOUR CHANGE TOUCHES WHAT PEOPLE SEE, build it with the UI design guidance every coding agent here uses,',
+    'and look at it before you finish:',
+    '',
+    getDesignGuidance({ readsImages }),
+    ...browserLines({ readsImages }),
+  ].join('\n');
+}
+
 // #3737: an app's look, decided once and written down. A first version's
 // spec decides it; its build records it where every later build reads the
 // app's own instructions, the "App-specific conventions" section of its
@@ -1741,6 +1757,7 @@ module.exports = {
   buildDescription,
   buildPrompt,
   buildSeesImages,
+  revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
   PLATFORM_TEST_NOTE,
   screenshotNote,

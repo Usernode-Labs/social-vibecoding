@@ -1533,3 +1533,28 @@ test('runTriage on an app not in the live list stays silent', async () => {
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.equal(insert.params[3], 'shadow');
 });
+
+test('#3772: on a project of one, the person who asked decides what the group would', async () => {
+  assert.equal(bot.deciderNote(null), null);
+  assert.equal(bot.deciderNote({ requester: 'evan', members: 3, requesterDecides: false }), null, 'a group keeps the rule');
+  const note = bot.deciderNote({ requester: 'evan', members: 1, requesterDecides: true });
+  assert.match(note, /^==== WHO DECIDES ON THIS PROJECT ====/);
+  assert.match(note, /@evan asked for this, and is the only member of this project/);
+  assert.match(note, /is a `question` to them, not `person`/);
+  assert.match(note, /the choice that needs no approval \(for example the browser's built-in way\) first/);
+  assert.match(note, /auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`/);
+  const prompt = bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, decider: { requester: 'evan', members: 1, requesterDecides: true } });
+  assert.ok(prompt.indexOf('WHO DECIDES') > prompt.indexOf('SEED') && prompt.indexOf('WHO DECIDES') < prompt.indexOf('PLATFORM REFERENCE'));
+  assert.doesNotMatch(bot.triagePromptFor({ seed: 'SEED', issueNumber: 13 }), /WHO DECIDES/, 'unchanged without it, as the benchmark replays');
+
+  const pool = (row) => ({ query: async () => ({ rows: row ? [row] : [] }) });
+  const evan = { userId: 1, username: 'evan' };
+  assert.deepEqual(await bot.whoDecides(pool({ created_by: 1, members: 1, member: true }), { id: 5 }, evan),
+    { requester: 'evan', members: 1, requesterDecides: true });
+  assert.equal((await bot.whoDecides(pool({ created_by: 1, members: 2, member: true }), { id: 5 }, evan)).requesterDecides, false);
+  assert.equal((await bot.whoDecides(pool({ created_by: 9, members: 1, member: false }), { id: 5 }, evan)).requesterDecides, false,
+    'somebody else\'s project of one');
+  assert.equal((await bot.whoDecides(pool({ created_by: 1, members: 0, member: false }), { id: 5 }, evan)).requesterDecides, true,
+    'a project in no community: its creator');
+  assert.equal(await bot.whoDecides(pool(null), { id: 5 }, evan), null);
+});

@@ -1331,12 +1331,60 @@ function triageClosing(issueNumber) {
  * (prompts.runtimeReadsImages); a prompt rebuilt without it is the text-only
  * one every triage ran before it existed.
  */
-function triagePromptFor({ seed, issueNumber, firstVersion = false, readsImages = false }) {
+function triagePromptFor({ seed, issueNumber, firstVersion = false, readsImages = false, decider = null }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     firstVersion ? FIRST_VERSION_NOTE : null,
+    deciderNote(decider),
     triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * #3772: who decides on this project, when that changes the verdict. The
+ * ready rules send every new dependency, service or design choice to "a
+ * person", and the bot then left it "for the group". On a project with one
+ * member, the person who asked IS the group: Ear Trainer #13 (sounds from a
+ * MIDI instrument) was left for a group of one, who was told someone in the
+ * group would have to take it up. There, a decision they can make is a
+ * question to them with choices to tap, and their answer decides it. A
+ * project with more people keeps the rule as it was. Pure; null says
+ * nothing.
+ */
+function deciderNote(decider) {
+  if (!decider?.requesterDecides) return null;
+  return [
+    '==== WHO DECIDES ON THIS PROJECT ====',
+    '',
+    `@${decider.requester} asked for this, and is the only member of this project: the decisions its group would make are theirs.`,
+    '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
+    '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
+    '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+  ].join('\n');
+}
+
+/**
+ * #3772: whether the person a request is for decides on its project alone:
+ * they are its only member (or, on a project not in a community, its
+ * creator). { requester, members, requesterDecides }, or null.
+ */
+async function whoDecides(pool, app, requester) {
+  if (!app?.id || !requester?.userId) return null;
+  const { rows } = await pool.query(
+    `SELECT a.created_by,
+            (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members,
+            EXISTS (SELECT 1 FROM community_members m
+                     WHERE m.community_id = a.community_id AND m.user_id = $2) AS member
+       FROM apps a WHERE a.id = $1`,
+    [app.id, requester.userId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const members = Number(row.members) || 0;
+  const alone = members === 0
+    ? Number(row.created_by) === Number(requester.userId)
+    : members === 1 && row.member === true;
+  return { requester: requester.username, members, requesterDecides: alone };
 }
 
 /**
@@ -1935,7 +1983,15 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const promptInput = { seed, issueNumber, firstVersion: !!requester?.firstVersion };
+  // #3772: on a project of one, the person who asked decides what the group
+  // would. Only on a project the bot acts on, where it says its verdict.
+  const decider = liveMode && requester
+    ? await whoDecides(pool, app, requester).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read who decides on a project', { app: app.slug, err: err.message });
+      return null;
+    })
+    : null;
+  const promptInput = { seed, issueNumber, firstVersion: !!requester?.firstVersion, decider };
   // The prompt as it stands before the turn resolves its model. The one sent
   // is rendered at dispatch, for what that model can see, and replaces this
   // in the snapshot (below).
@@ -1952,7 +2008,10 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         issueNumber, issue, comments, threadMessages: thread?.messages || [], botLogin: botUsername,
       }),
     },
-    extra: { model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null },
+    extra: {
+      model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null,
+      ...(decider?.requesterDecides ? { decider } : {}),
+    },
   };
 
   let session;
@@ -3517,8 +3576,13 @@ async function runFollowUp(pool, config, {
   // #3703: the spec whose card leads the proposal's discussion, which is
   // what a reply there is usually about.
   const spec = await proposalSpec(pool, session.id);
+  // #3767: a revision gets the design guidance and the browser check its
+  // build had (#3748), read for what the turn's model can see.
+  const design = canRevise
+    ? live.revisionDesignText({ readsImages: await live.buildSeesImages({ pool, config, userId: bot.id, model }) })
+    : '';
   const prompt = followup.followUpPrompt({
-    seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise,
+    seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design,
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -3628,6 +3692,10 @@ async function runFollowUp(pool, config, {
   const action = moved ? 'revise' : parsed.action;
   const reply = parsed?.reply || 'It changed the proposal to follow the latest replies.';
   if (moved) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
+  // #3767: and its name, when the revision changed what it does. Ear Trainer's
+  // size options were taken out and its proposal was still called "Lead size
+  // options with the number of sounds" when it merged.
+  if (moved && parsed?.title) await renameRevised({ pool, github, repo, session, title: parsed.title, app });
 
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
@@ -3670,6 +3738,26 @@ async function runFollowUp(pool, config, {
   }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
   if (!moved) await requeueChecks();
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
+}
+
+/**
+ * #3767: give the bot's own proposal the name its revision chose, through
+ * the seam a person's own revision uses (proposal-update.js
+ * applyProposedTitle): the panel's name, and the pull request's on GitHub.
+ * Never throws.
+ */
+async function renameRevised({ pool, github, repo, session, title, app }) {
+  try {
+    const { rows } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [session.id]);
+    const fresh = rows[0];
+    if (!fresh) return;
+    const out = await require('./proposal-update').applyProposedTitle({
+      pool, gh: github, session: fresh, owner: repo.owner, repo: repo.repo, title, viewerLogin: null,
+    });
+    if (out.changed) log.info('homeroom-bot', 'Renamed its proposal after a revision', { app: app.slug, sessionId: session.id });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not rename its proposal after a revision', { app: app.slug, sessionId: session.id, err: err.message });
+  }
 }
 
 /**
@@ -4737,6 +4825,13 @@ function start(config) {
   // The build lane, on its own timer: a build never holds up a triage pass.
   buildLaneOn = true;
   scheduleBuilds(config, FIRST_PASS_DELAY_MS);
+  // #3772: the DM answers a process that is gone had promised to ask again.
+  const resume = setTimeout(() => {
+    if (stopped) return;
+    const { getPool } = require('../db/pool');
+    require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config);
+  }, FIRST_PASS_DELAY_MS);
+  if (typeof resume.unref === 'function') resume.unref();
 }
 
 /**
@@ -5465,6 +5560,8 @@ module.exports = {
   KEY_MODELS,
   MODEL_ID_RE,
   triagePromptFor,
+  deciderNote,
+  whoDecides,
   headShaOf,
   INFRA_ERRORS,
   isLiveLaneSaturated,

@@ -381,6 +381,8 @@ function triagePrompt(snapshot, seed, readsImages = false) {
   const bot = require('../homeroom-bot');
   return bot.triagePromptFor({
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
+    // #3772: who decided on the project when the original look ran.
+    decider: snapshot.extra?.decider || null,
   });
 }
 

@@ -366,6 +366,17 @@ test('a question in the DM draws its answers, the default marked, and says an an
   assert.match(offered, /<span>File it<\/span><\/button>/);
   assert.match(offered, /<span>Not now<\/span>/);
   assert.doesNotMatch(offered, /suggested|Something else|public discussion/);
+  // #3770: File it is the act, filled in the accent, and Not now the neutral
+  // fill beside it. Not `.messages-bot-other`, which the declared check
+  // (homeroom-bot-dm-question) reads as a Something else.
+  assert.match(offered, /<button type="button" class="messages-bot-primary" data-bot-answer="default"><span>File it<\/span><\/button><button type="button" class="messages-bot-secondary" data-bot-answer="other"><span>Not now<\/span><\/button><\/div>/);
+  assert.match(html, /<button type="button" data-bot-answer="default"><span>Newest first<\/span>/);
+  assert.doesNotMatch(html, /messages-bot-primary|messages-bot-secondary/, 'a question\'s answers keep one look: none of them is the act');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-bot-answers \.messages-bot-primary \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
+  assert.match(css, /\.messages-bot-answers \.messages-bot-other,\s*\.messages-bot-answers \.messages-bot-secondary \{\s*color: var\(--text-secondary\);\s*background: var\(--dc-raised\);/);
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-question');
+  assert.match(check.expectSelector, /\[aria-label\^="File this"\] > button:last-child:not\(\.messages-bot-other\)/);
   const chose = { ...offer, metadata: { homeroomBot: { ...offer.metadata.homeroomBot, status: 'answered', answer: 'File it' } } };
   assert.match(renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 })), /You chose: File it/);
 });
@@ -540,4 +551,15 @@ test('a message from somebody on the list is answered while the bot types; anybo
     deps: { bot, mayor, ws },
   });
   assert.deepEqual(typing(), [true, false], 'the bot does not type to somebody it does not answer');
+});
+
+test('#3772: "needs a person" says what to do about it, and a card already showing it is not repeated', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Use MIDI' };
+  const text = dm.dmText('person', { reason: 'It needs a new dependency.' }, ctx);
+  assert.match(text, /This needs a person to decide, so I haven't built it: It needs a new dependency\./);
+  assert.match(text, /If you decide to go ahead \(or the group does\), reply to this message and say so, and I'll look at it again\.$/);
+  assert.match(dm.dmText('followup_person', { reason: 'x' }, ctx), /so I've left it for the group: x$/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
+  assert.match(src, /objects: cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
 });

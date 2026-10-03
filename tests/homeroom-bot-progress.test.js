@@ -164,3 +164,21 @@ test('the records, said in plain words when the model could not answer', () => {
     'I\'m not working on anything for you right now. Most recently, Seed swap request #3: approved and live.');
   assert.doesNotMatch(text, /—/, 'no em dash in what the bot says');
 });
+
+test('#3771: a request in the queue says what it waits for', () => {
+  const row = { app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer' };
+  const now = new Date('2026-10-03T12:40:00Z');
+  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
+  assert.deepEqual(progress.queuedWait(row, { busy, now }), {
+    doing: 'waiting its turn: Ear Trainer is building request #12 first (one request per project at a time)',
+    waitingFor: { reason: 'project_busy', number: 12, doing: 'building', minutesSoFar: 14 },
+  });
+  // Its own row being read is not something it waits for.
+  const self = new Map([[7, [{ issueNumber: 14, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line to be read');
+  assert.deepEqual(progress.queuedWait(row, { working: 2, perPerson: 2 }).waitingFor, { reason: 'person_limit', inProgress: 2, most: 2 });
+  assert.equal(progress.queuedWait(row, { working: 2, perPerson: 2 }).doing,
+    'waiting its turn: 2 things of theirs are in progress, the most at once for one person');
+  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting in the queue to be read, with 3 requests ahead of it');
+  assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
+});
