@@ -13,6 +13,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -32,6 +33,7 @@ import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
+import { useStickToBottom } from './stick-to-bottom';
 import {
   agentThreadAddress,
   closeThread,
@@ -1590,6 +1592,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Its settled pin puts back the pan iOS makes on the tap, which otherwise
   // left the composer (lifted by `platform-kb-column`) above the screen.
   useComposerKeyboard(scroller);
+  // #3757: whether the reader is at the newest line, from where they last
+  // scrolled, so a tall reply or a card that grows after it is drawn keeps
+  // them there (./stick-to-bottom.ts).
+  const pinned = useStickToBottom(scroller, !snap.nextAfter);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1601,12 +1607,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
-    previousLast.current = null; initialScroll.current = null;
+    previousLast.current = null; initialScroll.current = null; pinned.current = true;
   }, [conversationId]);
 
-  useEffect(() => {
+  // A layout effect, so the scroll lands before the new rows are painted and
+  // `pinned` is read before any scroll event can report the grown content.
+  useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
@@ -1618,6 +1626,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       if (row) {
         shownFocus.current = focusId;
         previousLast.current = last;
+        pinned.current = false;
         requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
@@ -1626,9 +1635,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     }
     if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
     // The viewer's own send always lands in view, wherever they had scrolled.
+    // Anything else follows only a reader who was at the bottom BEFORE it
+    // arrived (#3757): measured now, after the draw, a reply taller than the
+    // allowance read as the reader having scrolled up.
     const sentNow = !!lastMessage?.pending && last !== previousLast.current;
-    if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
-      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    if (previousLast.current === null || sentNow || pinned.current) {
+      // The foot of a linked window (#2387) is not the present: nothing
+      // follows it there. A send from one goes to the present (store.send).
+      pinned.current = sentNow || !snap.nextAfter;
+      el.scrollTop = el.scrollHeight;
     }
     previousLast.current = last;
   }, [snap.messages, focusId, snap.nextAfter]);
@@ -1776,7 +1791,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         {snap.nextAfter ? (
           <div className="messages-newer">
             <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
-            <button type="button" className="messages-load-older" onClick={() => jumpToPresent()}>Jump to present</button>
+            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>Jump to present</button>
           </div>
         ) : null}
       </div>
