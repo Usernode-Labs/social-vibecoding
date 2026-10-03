@@ -131,8 +131,10 @@ test('the strip pins at the header\'s foot, whichever element scrolls the page',
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(wide, 'the wide-screen block exists');
   const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
-  // The dev frame's scroller: the header's foot overlaps its top by 7px.
-  assert.match(decls, /\n  #dev-workshop \{ --ws-pin-top: 7px; \}/);
+  // The dev frame's scroller: the header's foot, MEASURED (#3726), so an
+  // in-flow strip between the header and the frame cannot pull the band off
+  // it; 7px is the fallback for the frame before the first measurement.
+  assert.match(decls, /\n  #dev-workshop \{ --ws-pin-top: var\(--dev-ws-head-foot, 7px\); \}/);
   // The document: the header's own height, as #browse-search-bar measures it.
   assert.match(decls, /html\[data-browser-scroller="dev-forum-scroll"\] #dev-workshop \{\s*--ws-pin-top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\)\);\s*\}/);
   assert.match(CSS, /html\[data-browser-scroller="browse-screen"\] #browse-search-bar \{\s*top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\)\);/,
@@ -143,8 +145,51 @@ test('the strip pins at the header\'s foot, whichever element scrolls the page',
   assert.doesNotMatch(rail[1], /\btop: 0;/);
   assert.match(decls, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws-tabs\.dev-ws-band \{ top: calc\(var\(--ws-pin-top, 0px\) - 15px\); \}\s*\}/);
   assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);
-  // A phone is untouched: its band keeps its own offset (#3522).
-  const phone = /@media \(max-width: 699\.98px\) \{\s*#dev-workshop \{ --ws-band-top: -10px; \}([\s\S]*?)\n\}/.exec(CSS);
+  // A phone keeps its own offset (#3522), now measured from the same foot.
+  const phone = /@media \(max-width: 699\.98px\) \{\s*(?:\/\*[\s\S]*?\*\/\s*)*#dev-workshop \{ --ws-band-top: calc\(var\(--dev-ws-head-foot, 7px\) - 17px\); \}([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(phone, 'the phone block is where it was');
   assert.doesNotMatch(phone[0], /--ws-pin-top/);
+});
+
+test('#3726: the band pins to the header\'s MEASURED foot, so in-flow chrome cannot open a gap', () => {
+  // THE BUG. "Community hub tabs can still separate from header sometimes in
+  // some kinds of scrolling down." Every sticky offset on the page is an
+  // offset from the scrollport top, and the header's foot was a literal 7px
+  // below it — true only while nothing sits between the header and the frame.
+  // The "View as non-admin" reminder (and any strip that is not fixed) is
+  // in-flow chrome there: it moved #dev-forum-scroll's top down while the
+  // header stayed, so the band rested below the foot and a gap opened over
+  // the cards. Measured at 1280px with a 40px strip: a 33px gap.
+  //
+  // The fix measures the foot in the scrollport's own frame and publishes it
+  // as a custom property; app.css's offsets consume it, keeping their
+  // literals as the fallback and their own arithmetic for the document-scroll
+  // case (where the property is absent).
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  // The measured foot is what the pin offset reads, and the strip, band and
+  // head all derive from it, so they cannot disagree.
+  assert.match(decls, /#dev-workshop \{ --ws-pin-top: var\(--dev-ws-head-foot, 7px\); \}/);
+  assert.match(decls, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws-tabs\.dev-ws-band \{ top: calc\(var\(--ws-pin-top, 0px\) - 15px\); \}\s*\}/);
+  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);
+  // The hook measures it: the first scrolling ancestor's top, from the
+  // header's own bottom (NEGATIVE when the frame starts below the header).
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body, /const foot = headerFoot\(host\);/);
+  assert.match(body, /Math\.round\(foot\)/);
+  assert.match(body, /cssHost\.style\.setProperty\(HEAD_FOOT_PROP/);
+  assert.match(body, /cssHost\.style\.removeProperty\(HEAD_FOOT_PROP\)/, 'dropped where the document scrolls, so the CSS fallback takes over');
+  // It asks the live layout which box scrolls, not the shell: the nearest
+  // scrolling ancestor in the dev frame is #dev-forum-scroll.
+  assert.match(WORKSHOP, /function headerFoot\(host: HTMLElement\): number \| null \{/);
+  assert.match(WORKSHOP, /header\.getBoundingClientRect\(\)\.bottom - n\.getBoundingClientRect\(\)\.top/);
+  assert.match(WORKSHOP, /const oy = getComputedStyle\(n\)\.overflowY;/);
+  assert.match(WORKSHOP, /const HEAD_FOOT_PROP = '--dev-ws-head-foot';/);
+  // And it is written on #dev-workshop, where app.css declares the offsets: a
+  // custom property inherits DOWN, so a value on `.dev-ws` would resolve to
+  // the fallback instead.
+  assert.match(WORKSHOP, /function offsetHost\(host: HTMLElement\): HTMLElement \{/);
+  assert.match(WORKSHOP, /host\.closest\('#dev-workshop'\)/);
 });
