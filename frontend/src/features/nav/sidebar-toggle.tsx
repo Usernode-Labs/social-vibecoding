@@ -61,7 +61,7 @@ import { SidebarIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { navStore } from './nav-store.js';
-import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
+import { clearPeekTimer, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 
 // THE SAME DISC the back slot beside it wears — ../header/platform-header.tsx
 // hoists its own for the same reason: a class string that spans lines ships
@@ -113,8 +113,8 @@ export function SidebarToggle() {
         clearPeekTimer();
         navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
       }}
-      onMouseEnter={railOpen ? undefined : enterPeek}
-      onMouseLeave={peek ? leavePeek : undefined}
+      onPointerEnter={railOpen ? undefined : enterPeekByMouse}
+      onPointerLeave={peek ? leavePeekByMouse : undefined}
     >
       <SidebarIcon className="w-5 h-5" />
     </button>

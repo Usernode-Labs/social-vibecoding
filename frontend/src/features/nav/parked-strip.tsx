@@ -101,7 +101,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
-import { enterPeek, leavePeek } from './rail-peek';
+import { enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { noteResumeOrigin } from './resume-motion';
 
 type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
@@ -209,8 +209,8 @@ export function ParkedStrip() {
       ref={ref}
       id="platform-parked"
       className="platform-parked hidden"
-      onMouseEnter={peek ? enterPeek : undefined}
-      onMouseLeave={peek ? leavePeek : undefined}
+      onPointerEnter={peek ? enterPeekByMouse : undefined}
+      onPointerLeave={peek ? leavePeekByMouse : undefined}
     >
       {shown && record ? (
         <>
