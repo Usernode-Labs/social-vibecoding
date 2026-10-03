@@ -249,19 +249,24 @@ export function init() {
     const hideSent = () => {
       sentSection?.classList.add('hidden');
     };
+    // The first-request moment's two ways on write their address before the
+    // dialog closes too, for the reason openMine does above (#3683).
     firstBoard?.addEventListener('click', () => {
       const moment = firstFeedback;
       if (!moment || firstBoard.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
-      closeFeedback();
       location.hash = `#app/${encodeURIComponent(moment.appSlug)}/board`;
+      closeFeedback();
     });
     firstFix?.addEventListener('click', async () => {
       const moment = firstFeedback;
       if (!moment || firstFix.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
       firstFix.disabled = true;
-      closeFeedback();
       try {
-        await App.navigateToApp(moment.appSlug, 'dev', moment.issueNumber, 'issues');
+        // navigateToApp writes the address before its first await, so the
+        // dialog closes after that and before the wait.
+        const opening = App.navigateToApp(moment.appSlug, 'dev', moment.issueNumber, 'issues');
+        closeFeedback();
+        await opening;
         if (App.currentApp === moment.appSlug && AppView.appData?.slug === moment.appSlug
             && Number(moment.userId) === Number(App.user?.id)) {
           await AppView.createPrForIssue(moment.issueNumber);

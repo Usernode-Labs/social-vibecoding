@@ -1331,11 +1331,16 @@ export function CreateAppDialog() {
             progress={progress}
             openLabel={botChat ? 'Open my chat with Homeroom bot' : 'Open project'}
             onOpenApp={() => {
+              // Both destinations write an address right after the close,
+              // so the close must not spend its back-press record: a queued
+              // history.back() lands after that address and undoes it, and
+              // the button did nothing (#3683).
+              //
               // #3624: the Homeroom bot is building this one, and its DM is
               // where it asks and tells.
               if (botChat) {
                 const chat = botChat;
-                dialog.close();
+                dialog.closeForNavigation();
                 openMessages(chat);
                 return;
               }
@@ -1343,12 +1348,15 @@ export function CreateAppDialog() {
               // opens on who it is for), not the running app. That is where
               // the first change is started.
               const slug = created.slug;
-              dialog.close();
+              dialog.closeForNavigation();
               (window.App?.navigateToApp as ((s: string, v: string) => void) | undefined)?.(slug, 'dev');
             }}
             onSetSecrets={() => {
               const slug = created.slug;
-              dialog.close();
+              // The secrets dialog pushes its own back-button record as it
+              // opens, and a plain close's queued history.back() would land
+              // on that record and close it again (#3683).
+              dialog.closeForNavigation();
               // Published by features/app-secrets — a bare global read is
               // what broke the last cross-surface jump, so guard it and
               // leave the tile's own "fix secrets" path as the fallback.

@@ -254,7 +254,7 @@ function loadImprove(initial) {
   // then writes into — one store, reached two ways, as in the bundle.
   runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
-    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref, topicBackLabel };',
+    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref, topicBackLabel, topicWorkshopHref };',
   });
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
@@ -282,6 +282,7 @@ function loadImprove(initial) {
     boardHref: sandbox.__improveStore.boardHref,
     topicBackHref: sandbox.__improveStore.topicBackHref,
     topicBackLabel: sandbox.__improveStore.topicBackLabel,
+    topicWorkshopHref: sandbox.__improveStore.topicWorkshopHref,
   };
 }
 
@@ -495,9 +496,66 @@ test('a card opened from a Messages conversation goes back to it (#3103)', () =>
   assert.equal(Improve._nextTopicOrigin, null, 'only a hash is accepted');
 });
 
+test('a card opened from Messages also offers its Workshop (#3691)', () => {
+  // #3103 sent the card's one chip back to the conversation, and left the
+  // project the card belongs to with no way in from its page. The second
+  // chip is the board the first would have named from the Workshop.
+  const { Improve, store, topicBackHref, topicWorkshopHref } = loadImprove({ slug: 'demo-app' });
+  const workshop = () => topicWorkshopHref(store.state);
+  Improve.setTab('dev', 'forum');
+  Improve.enterTopicFrom('#messages/42');
+  Improve.setTab('dev', 'topic');
+  assert.equal(topicBackHref(store.state), '#messages/42', 'back is still the conversation');
+  assert.equal(workshop(), '#app/demo-app/workshop', 'and the Workshop is offered beside it');
+  store.set({ boardView: 'kanban' });
+  assert.equal(workshop(), '#app/demo-app/board', 'in the layout the board was last in');
+  store.set({ boardView: 'workshop' });
+
+  Improve.setTab('dev', 'forum');
+  Improve.setTab('dev', 'topic');
+  assert.equal(workshop(), null,
+    'opened from the Workshop, the one chip already goes there: no second one');
+  Improve.enterTopicFrom('#messages/app/demo-app');
+  Improve.setTab('dev', 'topic');
+  assert.equal(workshop(), '#app/demo-app/workshop', "from the app's own channel too");
+  Improve.setTab('dev', 'sessions');
+  assert.equal(workshop(), null, 'never off a topic');
+  Improve.setTab('app');
+  assert.equal(workshop(), null, 'nor on the running app');
+});
+
+test('the topic page draws both chips, Messages first, styled alike (#3691)', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { renderToStaticMarkup } = require(require.resolve('react-dom/server',
+    { paths: [path.join(__dirname, '..', 'frontend')] }));
+  const React = require(require.resolve('react', { paths: [path.join(__dirname, '..', 'frontend')] }));
+  let route;
+  const { TopicBack } = loadTsx('frontend/src/features/dev-board/topic/topic-back.tsx', {
+    stubs: { '../../../lib/use-store-state': { useStoreState: () => route } },
+  });
+  const draw = (state) => {
+    route = { slug: 'demo-app', tab: 'dev', subTab: 'topic', boardView: 'workshop', topicOrigin: null, ...state };
+    return renderToStaticMarkup(React.createElement(TopicBack));
+  };
+  const chip = (href, label) => `<a class="dev-topic-back un-touch-target" href="${href}" aria-label="Back to ${label}">`;
+
+  const fromMessages = draw({ topicOrigin: '#messages/42' });
+  assert.ok(fromMessages.startsWith(`<div class="dev-topic-backs">${chip('#messages/42', 'Messages')}`),
+    'the way back comes first, as the one chip did');
+  assert.ok(fromMessages.includes(`</a>${chip('#app/demo-app/workshop', 'Workshop')}`),
+    "and the Workshop follows it in the same pill, the chip a Workshop-opened card wears");
+  assert.equal(fromMessages.match(/class="dev-topic-back /g).length, 2);
+
+  const fromWorkshop = draw({});
+  assert.ok(fromWorkshop.startsWith(chip('#app/demo-app/workshop', 'Workshop')),
+    'opened from the Workshop, the page is unchanged: one chip, first in .dev-topic');
+  assert.ok(!fromWorkshop.includes('dev-topic-backs'), 'with no row around it');
+  assert.equal(draw({ subTab: 'sessions' }), '', 'and off a topic, nothing');
+});
+
 test('the shared card and the router wire the Messages origin (#3103)', () => {
   const FORMAT = read('frontend/src/features/messages/format.tsx');
-  assert.match(FORMAT, /className="messages-object-card"[^>]*onClick=\{\(event\) => recordObjectOrigin\(event, object\.href as string\)\}/,
+  assert.match(FORMAT, /className="messages-object-card"[^>]*onClick=\{\(event\) => recordObjectOrigin\(event, object\.href as string(?:, inboxOnly)?\)\}/,
     'the card anchor records its origin on click, keeping its class and href');
   const fn = FORMAT.slice(FORMAT.indexOf('export function recordObjectOrigin('),
     FORMAT.indexOf('export function ObjectCard('));

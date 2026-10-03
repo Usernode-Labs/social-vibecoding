@@ -127,6 +127,7 @@ function fakeNode(label, extra = {}) {
       add: (...names) => names.forEach((n) => classes.add(n)),
       remove: (...names) => names.forEach((n) => classes.delete(n)),
       contains: (name) => classes.has(name),
+      toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
     },
     get firstElementChild() {
       return node.childNodes.find((child) => !child.isComment) || null;
@@ -179,7 +180,7 @@ function fakeKit() {
 
 const GLOBALS = ['window', 'document', 'MutationObserver', 'PlatformUI'];
 
-function mountDialog(t, { kit = null } = {}) {
+function mountDialog(t, { kit = null, win = null } = {}) {
   const saved = GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
   t.after(() => {
     for (const [name, descriptor] of saved) {
@@ -189,7 +190,7 @@ function mountDialog(t, { kit = null } = {}) {
   });
   // Present before the bundle evaluates: back-stack.ts creates the shell's
   // one stack at module load, and only when there is a window to hang it on.
-  globalThis.window = {
+  globalThis.window = win || {
     history: { state: null, pushState(state) { this.state = state; }, back() {} },
     addEventListener() {},
   };
@@ -330,4 +331,328 @@ test('an ordinary kit dismissal still closes the dialog and runs its teardown', 
   assert.ok(root.classList.contains('hidden'));
   assert.deepEqual(lifecycle, ['onOpen', 'onClose']);
   assert.equal(backClaims(), 0, 'the claim is handed back');
+});
+
+// ── #3683: a close on the way somewhere ──────────────────────────────────
+//
+// "Open my chat with Homeroom bot" closes the create dialog and writes
+// #messages/<id> in the same click. A plain close hands its back-press claim
+// back by spending the record it pushed with history.back(), which a browser
+// QUEUES — so the traversal landed after the new address and took the viewer
+// straight back to where they were: the button did nothing. The navigating
+// close spends that record a task later, and only if nothing moved.
+
+/** A window whose address the test moves, and which logs every back(). */
+function historyWindow(start) {
+  const backs = [];
+  const win = {
+    location: { href: start },
+    history: {
+      state: null,
+      pushState(state) { this.state = state; },
+      back() { backs.push(win.location.href); },
+    },
+    addEventListener() {},
+  };
+  return { win, backs };
+}
+
+test('#3683: a plain close spends its record at once, ahead of the address the caller writes', async (t) => {
+  // The bug, pinned so the reason for closeForNavigation stays visible: the
+  // back() is asked for while the page is still on the old address, and the
+  // browser runs it after the navigation below — undoing it.
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { controller } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+
+  controller().close();
+  assert.deepEqual(backs, ['https://homeroom.test/'], 'history.back() is already queued');
+  win.location.href = 'https://homeroom.test/#messages/42';
+  await settle();
+});
+
+test('#3683: closeForNavigation leaves the history alone when the caller navigates', async (t) => {
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { root, lifecycle, controller, backClaims } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+  assert.equal(backClaims(), 1);
+
+  controller().closeForNavigation();
+  // openMessages(chat), in the same click: it writes the hash.
+  win.location.href = 'https://homeroom.test/#messages/42';
+  await settle();
+  assert.deepEqual(backs, [], 'no history.back() is left to undo the navigation');
+  assert.equal(backClaims(), 0, 'the claim is handed back all the same');
+  assert.ok(root.classList.contains('hidden'), 'the dialog is closed');
+  assert.deepEqual(lifecycle, ['onOpen', 'onClose'], 'with its ordinary teardown');
+});
+
+test('#3683: closeForNavigation still spends the record when nothing moved', async (t) => {
+  // A destination that did not navigate after all (the side panel took the
+  // conversation, or a guarded global was missing): the record must not
+  // linger, or the next back press does nothing.
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { controller, backClaims } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+
+  controller().closeForNavigation();
+  assert.deepEqual(backs, [], 'not spent in the same task');
+  await settle();
+  assert.deepEqual(backs, ['https://homeroom.test/'], 'spent a task later, from on top of it');
+  assert.equal(backClaims(), 0);
+});
+
+test('#3683: closeForNavigation is published with the controller', async (t) => {
+  const { controller } = mountDialog(t);
+  assert.equal(typeof controller().closeForNavigation, 'function');
+});
+
+// ── #3683, the fork dialog: the same race behind its own buttons ──────────
+//
+// The fork dialog ends on the progress card the create dialog uses, and each
+// way out of it closed with a plain close and then wrote history in the same
+// task: "Open app" the fork's address, "Set secrets" the record the secrets
+// dialog pushes as it opens, and a reply with no slug the Home address. Each
+// close queued a history.back() ahead of that write. These run the dialog
+// itself, with its useDialog and the back stack as they ship, through a JSX
+// runtime that hands back plain objects so a test can press its buttons.
+
+const jsxRuntime = {
+  Fragment: 'Fragment',
+  jsx: (type, props, key) => ({ type, props, key }),
+  jsxs: (type, props, key) => ({ type, props, key }),
+};
+
+/** Every element in a tree of those objects, depth first. */
+function* elementsOf(node) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) yield* elementsOf(child);
+    return;
+  }
+  yield node;
+  yield* elementsOf(node.props?.children);
+}
+
+/** Set a global for one test, and put back whatever was there. */
+function stubGlobal(t, name, value) {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, name);
+  t.after(() => {
+    if (saved) Object.defineProperty(globalThis, name, saved);
+    else delete globalThis[name];
+  });
+  globalThis[name] = value;
+}
+
+function mountForkDialog(t, { reply }) {
+  const { win, backs } = historyWindow('https://homeroom.test/app/source-app/dev');
+  const went = [];
+  win.App = {
+    openAppTab(slug, tab) {
+      went.push(['openAppTab', slug, tab]);
+      win.location.href = `https://homeroom.test/app/${slug}`;
+    },
+    navigateHome() {
+      went.push(['navigateHome']);
+      win.location.href = 'https://homeroom.test/';
+    },
+  };
+  // mountDialog for the globals and their restore; its probe dialog is
+  // separate from the fork dialog mounted below, and stays closed.
+  mountDialog(t, { win });
+  stubGlobal(t, 'fetch', async () => ({ ok: true, json: async () => reply }));
+
+  function CreateProgress() {}
+  const fake = createFakeReact();
+  const { ForkAppDialog } = loadTsx('frontend/src/features/dialogs/fork-app.tsx', {
+    stubs: {
+      // The shell primitives call forwardRef at module load; nothing renders
+      // them here, so the render function itself stands in.
+      react: { ...fake.React, forwardRef: (render) => render },
+      'react/jsx-runtime': jsxRuntime,
+      './create-progress': { CreateProgress },
+      './app-allowance': { AppAllowance() {}, useAppAllowance: () => ({ blocked: false }) },
+      './app-allowance-store.js': { invalidateAppAllowance: async () => {} },
+      '../../lib/use-store-state': { useStoreState: (store) => store.get() },
+      './creation-progress-store.js': {
+        creationProgressStore: { get: () => ({ status: 'creating' }), subscribe: () => () => {} },
+        outcomeOf: () => 'ready',
+        fetchCreationProgress() {},
+        publishAppStatus() {},
+        stopWatchingCreation() {},
+        watchCreation() {},
+      },
+    },
+  });
+
+  const root = fakeNode('root');
+  root.appendChild(fakeNode('backdrop', { isBackdrop: true })).appendChild(fakeNode('card'));
+  root.classList.add('hidden');
+  let tree = null;
+  fake.mount(() => {
+    tree = ForkAppDialog();
+    for (const el of elementsOf(tree)) {
+      const ref = el.props?.ref;
+      if (!ref || typeof ref !== 'object' || ref.current) continue;
+      if (el.props.id === 'fork-modal') ref.current = root;
+      else if (el.props.id === 'fork-input') ref.current = { value: 'My fork', focus() {}, select() {} };
+      else ref.current = fakeNode(el.props.id || 'node');
+    }
+  });
+  t.after(() => fake.unmount());
+
+  const find = (match) => {
+    for (const el of elementsOf(tree)) if (match(el)) return el;
+    return null;
+  };
+  return {
+    win,
+    backs,
+    went,
+    root,
+    open: () => win.UsernodeReact.dialogs.fork.open({ slug: 'source-app', name: 'Source app' }),
+    backClaims: () => win.UsernodeBackStack.size,
+    async submit() {
+      await find((el) => el.props?.id === 'fork-form').props.onSubmit({ preventDefault() {} });
+      await settle();
+    },
+    progressCard: () => find((el) => el.type === CreateProgress),
+  };
+}
+
+test('#3683: the fork dialog’s Open app is not undone by its own close', async (t) => {
+  const h = mountForkDialog(t, { reply: { app: { slug: 'my-fork', name: 'My fork' } } });
+  h.open();
+  await settle();
+  assert.equal(h.backClaims(), 1, 'the open fork dialog claims the back button');
+  await h.submit();
+  const card = h.progressCard();
+  assert.ok(card, 'the fork in flight is reported on the progress card');
+
+  card.props.onOpenApp();
+  assert.deepEqual(h.went, [['openAppTab', 'my-fork', 'app']]);
+  await settle();
+  assert.deepEqual(h.backs, [], 'no history.back() is left to undo the fork’s address');
+  assert.equal(h.backClaims(), 0, 'the claim is handed back all the same');
+  assert.ok(h.root.classList.contains('hidden'), 'the dialog is closed');
+});
+
+test('#3683: the fork dialog’s Set secrets does not close the secrets dialog it opens', async (t) => {
+  const h = mountForkDialog(t, { reply: { app: { slug: 'my-fork', name: 'My fork' } } });
+  let secrets = null;
+  // The secrets island's open, as far as history goes: it claims the back
+  // button, which pushes a record of its own on top of the fork dialog's.
+  h.win.Secrets = {
+    open(slug) {
+      secrets = slug;
+      h.win.UsernodeBackStack.push(() => { secrets = null; });
+    },
+  };
+  h.open();
+  await settle();
+  await h.submit();
+
+  h.progressCard().props.onSetSecrets();
+  // Whatever back() the close queued, the browser runs once the secrets
+  // dialog's record is on: one traversal each, read by the shell's listener.
+  for (let queued = h.backs.length; queued > 0; queued -= 1) h.win.UsernodeBackStack.handlePopstate();
+  await settle();
+  assert.equal(secrets, 'my-fork', 'the secrets dialog is still open');
+  assert.deepEqual(h.backs, [], 'nothing was spent from under it');
+  assert.equal(h.backClaims(), 1, 'and its claim on the back button is the only one');
+});
+
+test('#3683: a fork reply with no slug goes Home without undoing it', async (t) => {
+  const h = mountForkDialog(t, { reply: { app: {} } });
+  h.open();
+  await settle();
+  await h.submit();
+  assert.deepEqual(h.went, [['navigateHome']]);
+  assert.equal(h.progressCard(), null, 'nothing to follow, so no progress card');
+  await settle();
+  assert.deepEqual(h.backs, [], 'no history.back() is left to undo Home');
+  assert.equal(h.backClaims(), 0);
+  assert.ok(h.root.classList.contains('hidden'));
+});
+
+// ── #3683, the legacy controllers: members and app secrets ─────────────────
+//
+// Two more dialogs are driven from `public/js`-era controllers, and each had
+// a way out that closed and then moved the address in the same task: leaving
+// an app from the members dialog (Home), and the secrets dialog's "View
+// proposal" link (its href). These run each controller as it ships against
+// the real hook, with the probe dialog standing in for the island under the
+// name the controller looks up.
+
+/** A button or link whose listeners the test can fire, and wait on. */
+function clickable(dataset = {}) {
+  const listeners = [];
+  return {
+    dataset,
+    disabled: false,
+    addEventListener: (type, fn) => listeners.push(fn),
+    click: () => Promise.all(listeners.map((fn) => fn({}))),
+  };
+}
+
+/** `document.getElementById` answering for one list, whose query is fixed. */
+function listHost(id, selector, items) {
+  const list = { innerHTML: '', querySelectorAll: (sel) => (sel === selector ? items : []) };
+  globalThis.document.getElementById = (asked) => (asked === id ? list : null);
+}
+
+test('#3683: leaving an app from the members dialog is not undone by its close', async (t) => {
+  const { win, backs } = historyWindow('https://homeroom.test/app/team-app/dev');
+  const { root, controller, backClaims } = mountDialog(t, { win });
+  stubGlobal(t, 'fetch', async () => ({ ok: true, json: async () => ({}) }));
+  const went = [];
+  win.App = {
+    user: { id: 7 },
+    navigateHome() {
+      went.push('navigateHome');
+      win.location.href = 'https://homeroom.test/';
+    },
+  };
+  win.AppView = { appData: { slug: 'team-app', can_manage: false } };
+  const leave = clickable({ removeUser: '7' });
+  listHost('members-list', '[data-remove-user]', [leave]);
+  loadTsx('frontend/src/features/dialogs/members-controller.js').init();
+  win.UsernodeReact.dialogs.members = controller();
+  controller().open();
+  await settle();
+
+  win.AppView._renderCollaborators([{ userId: 7, username: 'me', status: 'active' }]);
+  await leave.click();
+  assert.deepEqual(went, ['navigateHome'], 'leaving goes Home');
+  await settle();
+  assert.deepEqual(backs, [], 'no history.back() is left to put the viewer back on the app');
+  assert.equal(backClaims(), 0, 'the claim is handed back all the same');
+  assert.ok(root.classList.contains('hidden'), 'the dialog is closed');
+});
+
+test('#3683: the secrets dialog’s View proposal link is not undone by its close', async (t) => {
+  const { win, backs } = historyWindow('https://homeroom.test/app/my-app/dev');
+  const { root, controller, backClaims } = mountDialog(t, { win });
+  stubGlobal(t, 'App', { user: {} });
+  const link = clickable();
+  listHost('app-secrets-list', '[data-action="view-proposal"]', [link]);
+  const { Secrets } = loadTsx('frontend/src/features/dialogs/app-secrets-controller.js');
+  // Only the wiring is under test, not the rows' or the form's markup.
+  Secrets.renderRow = () => '';
+  Secrets.renderDeclareSection = () => {};
+  win.UsernodeReact.dialogs.appSecrets = controller();
+  controller().open();
+  await settle();
+
+  Secrets.render({ scope: 'app', manifestKnown: true, secrets: [{ key: 'API_KEY' }] });
+  await link.click();
+  // …and then the link's default action, after its listeners: the href.
+  win.location.href = 'https://homeroom.test/app/my-app/dev#/app/my-app';
+  await settle();
+  assert.deepEqual(backs, [], 'no history.back() is left to undo the link');
+  assert.equal(backClaims(), 0, 'the claim is handed back all the same');
+  assert.ok(root.classList.contains('hidden'), 'the dialog is closed');
 });

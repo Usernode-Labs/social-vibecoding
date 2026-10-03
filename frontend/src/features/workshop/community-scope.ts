@@ -3,10 +3,11 @@
  *
  * ── What the tab is ────────────────────────────────────────────────────
  *
- * The fourth tab is the community you are in: its tile in a square ring, its
- * short name, and how many votes it is waiting on you for. With none chosen it
- * is All communities, a dark tile in the same ring labelled Communities, and
- * its page is the list of every community you are in.
+ * The fourth tab is the community you are in: its tile in a square ring and
+ * how many votes it is waiting on you for, under the word Communities, which
+ * it keeps wherever it is (#3709). With none chosen it is All communities, a
+ * dark tile in the same ring, and its page is the list of every community you
+ * are in.
  *
  * WHICH ONE is the router's answer, not a second memory: the tab already
  * reopens the project page you left (App._noteWorkshopView keeps it in
@@ -293,15 +294,6 @@ export function loadCommunities(force = false): Promise<void> {
 export function warmCommunities(delayMs = 1500): () => void {
   const timer = window.setTimeout(() => { void loadCommunities(); }, delayMs);
   return () => window.clearTimeout(timer);
-}
-
-/** The short name a tab label has room for: the name, cut at a word. */
-export function shortName(name: string, max = 12): string {
-  const n = String(name || '').trim();
-  if (n.length <= max) return n;
-  const cut = n.slice(0, max + 1);
-  const at = cut.lastIndexOf(' ');
-  return (at >= 4 ? cut.slice(0, at) : n.slice(0, max)).trim();
 }
 
 /**

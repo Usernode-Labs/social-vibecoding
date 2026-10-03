@@ -158,7 +158,7 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
     for (const label of ['Pledge kudos', 'Claim this issue', 'Propose to close', 'Start more work']) {
       assert.ok(!menuLabels.includes(label), `no "${label}" menu row (noNav=${noNav})`);
     }
-    assert.ok(menuLabels.includes('Share to Messages'), 'sharing it still works');
+    assert.ok(menuLabels.includes('Share to…'), 'sharing it still works');
     assert.deepEqual([...card.badges.map((b) => b.label)], ['Closed'], 'says Closed, and nothing to vote on');
     assert.equal(card.title.edit, undefined, 'no title edit on a closed issue');
   }

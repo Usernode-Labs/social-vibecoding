@@ -128,8 +128,9 @@ export const TOUR_STEPS: readonly TourStep[] = [
   {
     // The Communities tab: the bottom bar on a phone, the rail from 768px
     // up. Its key and id are still `workshop` (../../nav/tab-bar.tsx); the
-    // words on it are Communities, or the community it is scoped to, which is
-    // why the copy says "here" rather than repeating a label.
+    // word on it is Communities wherever it is (#3709), and its glyph is the
+    // community it is on, which is why the copy says "here" rather than
+    // describing what the tab shows.
     id: 'communities',
     title: 'Communities',
     body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',

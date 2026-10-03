@@ -3406,47 +3406,67 @@ function useStripInsets(
  * pill sits on the page beside the ear, and a band there would swallow the
  * ear's shape.
  *
- * Pinned means the tab body has started to slide up under the strip: at rest
- * the body starts one column gap below it, and it only comes closer once the
+ * Pinned means what follows the strip has started to slide up under it: the
+ * tab body, or on All items the back bar above it (#3651). At rest that
+ * starts one column gap below the strip, and it only comes closer once the
  * strip has stuck and the page keeps scrolling. Measured, rather than read off
  * a scrollTop, because which element scrolls depends on the shell (the dev
  * frame's own scroller, or the document on a touch browser); a capturing
  * listener on the document hears a scroll from either.
  *
- * The attribute is written straight onto the host, like useStripInsets's
- * properties: it changes on scroll, and a React state for it would re-render
- * the whole Workshop, board included, on the frame the strip sticks.
+ * #3651: AND WHETHER THE PANE HEAD IS. On All items the head pins too, under
+ * the strip, and pinned it squares its top corners (app.css), whose curves
+ * otherwise leave a notch against the strip's flat foot. That is a second
+ * answer, not the first one again: the band goes up behind the strip as soon
+ * as the back bar slides under it, while the head is still on its way up, a
+ * rounded pane top. The head has stuck once it has left the top of its pane
+ * (sticky holds it, the pane goes on), which is `data-ws-head-pinned`.
+ *
+ * AT EVERY WIDTH (#3651). It ran from 700px only, where the strip was the
+ * one thing that pinned; a phone's band pins as well now (#3522), with the
+ * head under it. The band behind the strip is the wide layout's, and app.css
+ * draws it from 700px alone, so on a phone `data-ws-pinned` is read by
+ * nothing and the head's corners are what this is for.
+ *
+ * The attributes are written straight onto the host, like useStripInsets's
+ * properties: they change on scroll, and a React state for them would
+ * re-render the whole Workshop, board included, on the frame the strip sticks.
  *
  * #3583: NOT PINNED WHILE THE PAGE IS NOT DRAWN. A door pressed from another
  * screen (the Communities tab, Messages) switches this page's tab while
  * #app-view is still hidden, and the effect re-measured then: a hidden page
  * has no box, every edge reads 0, and `0 < 0 + 10` said pinned. The page
  * then came into view at its top with no scroll to correct it, and its band
- * stood behind the tabs at rest. A strip with no height is not pinned; and
- * the host is watched for size, which is how the page coming back into view
- * — a box again — is heard when no scroll comes with it.
+ * stood behind the tabs at rest. A strip with no height is not pinned (nor is
+ * a head whose pane reads 0 like it); and the host is watched for size, which
+ * is how the page coming back into view — a box again — is heard when no
+ * scroll comes with it.
  */
 function usePinnedStrip(
   bar: HTMLElement | null,
   hostRef: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean,
   tab: string,
 ): void {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
-    if (!enabled || !bar || typeof document === 'undefined') {
+    if (!bar || typeof document === 'undefined') {
       host.removeAttribute('data-ws-pinned');
+      host.removeAttribute('data-ws-head-pinned');
       return undefined;
     }
     let frame = 0;
     const check = () => {
       frame = 0;
-      const body = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody');
-      if (!body) return;
+      const below = bar.nextElementSibling;
+      if (!below) return;
       const strip = bar.getBoundingClientRect();
-      const pinned = strip.height > 0 && body.getBoundingClientRect().top < strip.bottom + WS_GAP_PX - 0.5;
+      const pinned = strip.height > 0 && below.getBoundingClientRect().top < strip.bottom + WS_GAP_PX - 0.5;
       if (pinned !== host.hasAttribute('data-ws-pinned')) host.toggleAttribute('data-ws-pinned', pinned);
+      const pane = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody > [data-ws-pane]');
+      const head = pane && pane.querySelector<HTMLElement>(':scope > .dev-ws-pane-head');
+      const headPinned = !!pane && !!head && pane.getBoundingClientRect().top < head.getBoundingClientRect().top - 0.5;
+      if (headPinned !== host.hasAttribute('data-ws-head-pinned')) host.toggleAttribute('data-ws-head-pinned', headPinned);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(check);
@@ -3462,8 +3482,9 @@ function usePinnedStrip(
       seen?.disconnect();
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
+      host.removeAttribute('data-ws-head-pinned');
     };
-  }, [bar, hostRef, enabled, tab]);
+  }, [bar, hostRef, tab]);
 }
 
 export function DevWorkshop(): ReactNode {
@@ -3620,13 +3641,14 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
-  // Where the strip is sticky at all (700px up): the pane head pins under
-  // it, at an offset only a measurement knows (`useStripInsets`), and
-  // app.css draws a band behind it while it is pinned (`usePinnedStrip`,
-  // QA 2026-09-24 Q7).
+  // From 700px the pane head pins under the strip at an offset only a
+  // measurement knows (`useStripInsets`), and app.css draws a band behind
+  // the strip while it is pinned (QA 2026-09-24 Q7). Whether it is pinned,
+  // and whether the head is, is asked at every width (`usePinnedStrip`):
+  // a phone's band and head pin too (#3522), at offsets app.css knows.
   const stripSticks = useMediaFlag(WIDE_QUERY);
   useStripInsets(bar, hostRef, stripSticks);
-  usePinnedStrip(bar, hostRef, stripSticks, tab);
+  usePinnedStrip(bar, hostRef, tab);
   // NO PULL HOOK HERE ANY MORE (pull-to-refresh under the tabs, evan,
   // 2026-10-01). #3514's usePullGap read the kit's transform off
   // #dev-forum-scroll and published it as `--ptr-gap` on <html>, so app.css
@@ -3765,10 +3787,16 @@ export function DevWorkshop(): ReactNode {
      The four tabs in the community's colour (ProjectBand), leading the
      markup so focus order and reading order agree; the Workshop tab stays
      lit over All items. All items is a page of the Workshop, so under the
-     band it leads with its way back there. The bar the pinned pane head and
-     its band are measured against (`setBar`) is that back bar on All items,
-     where the pane is, and the band everywhere else; both keep the strip's
-     box (`.dev-ws-tabs` > `.dev-ws-tabtrack`). */
+     band it leads with its way back there. Both keep the strip's box
+     (`.dev-ws-tabs` > `.dev-ws-tabtrack`).
+
+     THE BAND IS THE BAR, ON EVERY PAGE (#3651). It is what pins, and what
+     the pinned pane head and its band are measured against (`setBar`). The
+     back bar was that bar on All items, and so pinned as well, in the very
+     place the band does: scrolled a little, its title rode up across the
+     tabs, and further down its band hid them. It scrolls away under the
+     band now, as it always did on a phone; the lit Workshop tab is the way
+     back from anywhere down the list. */
   const band = (
     <ProjectBand
       tab={tab}
@@ -3776,11 +3804,11 @@ export function DevWorkshop(): ReactNode {
       // #2915: not while All items is up, where the search box says so.
       filtered={!!v.meta.filtered && tab !== 'all'}
       onTab={openTab}
-      barRef={tab === 'all' ? undefined : setBar}
+      barRef={setBar}
     />
   );
   const pageBar = tab === 'all' ? (
-    <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
+    <div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
       <div className="dev-ws-tabtrack">
         <PageBack
           label="Workshop"
@@ -4220,11 +4248,12 @@ export function DevWorkshop(): ReactNode {
               above the scroller, two strips away from the list they narrow.
               (So did the "+", which is not a narrowing control: it adds to
               the board and manages the app, so it is the hub's ⋯ now.) They
-              belong WITH the list — and with the back bar, because
+              belong WITH the list — and with the grouping, because
               "which grouping" and "narrowed to what" are one question asked
-              twice. Both pin together: filtering a long list is exactly what
-              you are doing when you are scrolled down, and a bar that
-              scrolled away would leave no way back.
+              twice. The head pins, under the project's tabs (#3651: not
+              under the back bar, which scrolls away): filtering a long list
+              is exactly what you are doing when you are scrolled down, and a
+              bar that scrolled away would leave no way back.
 
               THE TABS LEAD, and the order is the argument: they decide what
               the search is searching. With the search above them the control

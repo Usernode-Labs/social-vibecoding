@@ -159,7 +159,9 @@ async function hydrateOne(pool, user, ref) {
     const normalized = {
       type: ref.object_type,
       appId: ref.app_id,
-      appSlug: null,
+      // A message's stored card names its app by id; a link names it by slug
+      // (#3660 `hydrateLink`). Either way the viewer's access is checked.
+      appSlug: ref.app_id ? null : (ref.app_slug || null),
       objectRef: ref.object_ref,
       objectVersion: ref.object_version,
     };
@@ -286,15 +288,101 @@ async function hydrateForMessages(pool, user, messageIds) {
       ORDER BY message_id, position, id`,
     [ids]
   );
+  // One read per distinct card on the page, not one per message carrying it
+  // (#3705, #3706). The Homeroom bot puts a request's card under every
+  // message about that request, and an issue card is a live GitHub read
+  // whenever the issue is not in the open-issues cache (a closed one never
+  // is), so a page of its DM asked GitHub the same question again and again,
+  // one after another. That page was slow enough for the service worker to
+  // answer a realtime re-read with its stale copy. A card depends only on
+  // its reference and the viewer, so one answer serves every message.
+  const cards = new Map();
   for (const ref of rows) {
-    const card = await hydrateOne(pool, user, ref);
+    const key = [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
+    if (!cards.has(key)) cards.set(key, await hydrateOne(pool, user, ref));
     if (!out.has(ref.message_id)) out.set(ref.message_id, []);
-    out.get(ref.message_id).push(card);
+    out.get(ref.message_id).push({ ...cards.get(key) });
   }
   return out;
 }
 
+// ── #3660: a Homeroom link in a message, as the card it names ─────────
+//
+// A message that links to one of Homeroom's own pages draws that page as a
+// card under it, in a DM and in an app's discussion alike. The client reads
+// the page out of the address (frontend/src/features/messages/
+// homeroom-links.ts) and sends only that — a type, an app slug and a number
+// — never the link, and nothing is fetched from anywhere but this database
+// (and, for a request, the same public GitHub read the issue card already
+// makes). Nothing is stored: each reader asks, and each answer is THEIR
+// view of the page, through the rules a shared card is hydrated under —
+// the app's view rule, then the item's own. A page the reader cannot see,
+// or that does not exist, is the same unavailable answer, so the two cannot
+// be told apart.
+//
+// Two of the pages are not items a person can share: a community's hub
+// (the app's project page) and its discussion (the app's channel). Both are
+// exactly as visible as the app.
+const LINK_TYPES = new Set(['app', 'hub', 'discussion', 'issue', 'proposal', 'governance']);
+// The router's slug grammar for a clean app path (public/js/app.js
+// App._appRouteFromPath), which is the same one homeroom-links.ts reads.
+const LINK_SLUG = /^[a-z0-9][a-z0-9-]{0,254}$/;
+const MAX_LINK_CARDS = 10;
+
+function normalizeLink(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const type = typeof raw.type === 'string' ? raw.type : '';
+  if (!LINK_TYPES.has(type)) return null;
+  const slug = raw.app_slug ?? raw.appSlug;
+  if (typeof slug !== 'string' || !LINK_SLUG.test(slug)) return null;
+  let ref = null;
+  if (type === 'issue') ref = strictId(raw.issue_number ?? raw.issueNumber);
+  if (type === 'proposal') ref = strictId(raw.session_id ?? raw.sessionId);
+  if (type === 'governance') ref = strictId(raw.proposal_id ?? raw.proposalId);
+  if (['issue', 'proposal', 'governance'].includes(type) && !ref) return null;
+  return { type, slug, ref };
+}
+
+async function hydrateLink(pool, user, raw) {
+  const link = normalizeLink(raw);
+  if (!link) return { type: LINK_TYPES.has(raw?.type) ? raw.type : 'app', available: false };
+  if (link.type === 'hub' || link.type === 'discussion') {
+    try {
+      const app = await resolveApp(pool, user, { appId: null, appSlug: link.slug });
+      if (!app) return { type: link.type, available: false };
+      const slug = encodeURIComponent(app.slug);
+      return {
+        type: link.type, available: true, appId: app.id, appSlug: app.slug,
+        title: app.name, subtitle: null,
+        href: link.type === 'hub' ? `#app/${slug}/workshop` : `#app/${slug}/dev/chat`,
+      };
+    } catch (_) {
+      return { type: link.type, available: false };
+    }
+  }
+  return hydrateOne(pool, user, {
+    object_type: TYPE_ALIASES.get(link.type),
+    app_id: null,
+    app_slug: link.slug,
+    object_ref: link.ref,
+    object_version: null,
+  });
+}
+
+/** One card per link, in order: at most MAX_LINK_CARDS, one at a time. */
+async function hydrateLinks(pool, user, refs) {
+  const cards = [];
+  for (const raw of (refs || []).slice(0, MAX_LINK_CARDS)) {
+    cards.push(await hydrateLink(pool, user, raw));
+  }
+  return cards;
+}
+
 module.exports = {
+  MAX_LINK_CARDS,
+  normalizeLink,
+  hydrateLink,
+  hydrateLinks,
   strictId,
   normalizeInput,
   validateForShare,

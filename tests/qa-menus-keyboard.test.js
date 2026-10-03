@@ -115,8 +115,9 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /useDismiss\(menu, \[menuWrapRef\], closeMenu\);/, 'an outside press and Escape close it');
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
   assert.match(head, /className="messages-thread-menu" role="menu"/);
-  // Includes Rename group and the conversation-level Report user action.
-  assert.equal((head.match(/role="menuitem"/g) || []).length, 5, 'every row is a menuitem');
+  // Includes Rename group, the conversation-level Report user action, and
+  // the Homeroom bot DM's "Activity & history" (#3692).
+  assert.equal((head.match(/role="menuitem"/g) || []).length, 6, 'every row is a menuitem');
 });
 
 test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and roves with the arrows', () => {

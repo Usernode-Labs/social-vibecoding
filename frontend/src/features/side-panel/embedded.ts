@@ -105,7 +105,7 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   // prerender's placeholder — the platform's name, which is no page's title —
   // and a panel that has just booted would read "Homeroom" until its page
   // loaded enough to title itself. Reported as '' instead, so the top falls
-  // back to the page's kind ("Discussion", "Messages").
+  // back to the page's kind ("Workshop", "Messages").
   let titled = false;
   const title = () => {
     if (!titled) return '';

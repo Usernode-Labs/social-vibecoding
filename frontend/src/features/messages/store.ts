@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
-import { platformSlug, subscribePlatformSlug } from './channel-hub';
+import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
@@ -97,8 +97,10 @@ const pendingByConversation = new Map<number, PendingSend[]>();
  * idempotency key so the server never stores it twice — and `sentKeys` maps a
  * confirmed server id back to the client key the row was drawn under, so the
  * row keeps its React key and is updated in place rather than remounted.
+ * `after` is the newest server id the transcript held when the row was drawn:
+ * the server's copy of that send can only be newer (withLocalRows).
  */
-const unsent = new Map<string, { conversationId: number; payload: PendingSend }>();
+const unsent = new Map<string, { conversationId: number; payload: PendingSend; after: number }>();
 const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
@@ -286,6 +288,66 @@ export function openChannel(raw: string): void {
   resolvePendingChannel();
 }
 
+/**
+ * The address a `#handle` names, when the lists already know it — the
+ * router follows it at once rather than drawing the inbox on the way
+ * (#3653) — or null, and openChannel waits for the lists.
+ */
+export function channelTarget(raw: string): string | null {
+  const handle = normalizeHandle(raw);
+  if (!handle) return null;
+  return channels().find((item) => item.handle === handle)?.target || null;
+}
+
+/**
+ * #3653: A CHANNEL IS ITS COMMUNITY'S DISCUSSION TAB, #general included.
+ *
+ * #general is a conversation of this store, of kind `channel`, and the
+ * Homeroom community's room: Homeroom's Discussion tab draws it in place
+ * (EmbeddedConversation, #3494). Its address here, `#messages/<id>` (and a
+ * thread or a message in it), is what its notifications, message links and
+ * `#general` references open — and they opened it on this screen, with a
+ * chevron up to the hub, a page apart from the community it belongs to.
+ *
+ * The project whose tab it is: the platform's, once anything has said its
+ * slug (channelHub's answer). Null for any other conversation, while nothing
+ * knows the conversation is a channel or the platform's slug, and for a
+ * viewer the platform's page is not served to, whose room stays here.
+ */
+export function channelHubSlug(conversationId: number): string | null {
+  if (!validId(conversationId) || typeof window === 'undefined') return null;
+  const row = state.active && state.active.id === conversationId
+    ? state.active
+    : state.conversations.find((item) => item.id === conversationId) || null;
+  if (!row || row.kind !== 'channel' || !platformHubServed()) return null;
+  return platformSlug();
+}
+
+/**
+ * The conversation on this screen turned out to be a channel (its detail or
+ * the list landed, or the platform's slug did): take the reader to its tab,
+ * at the thread or the message the address named, replacing the address
+ * (App.openDiscussionInHub). The router does the same at once when it
+ * already knows; this is a cold link's half.
+ */
+function channelToHub(): boolean {
+  if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return false;
+  const hub = channelHubSlug(conversationId);
+  const door = (window as { App?: { openDiscussionInHub?: (slug: string, target: unknown) => void } }).App?.openDiscussionInHub;
+  if (!hub || !door) return false;
+  // Only from this conversation's own address: a route that has already
+  // moved on is not this redirect's to take.
+  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  door(hub, {
+    conversationId,
+    threadRootId: state.route.threadRootId,
+    focusMessageId: state.route.focusMessageId,
+  });
+  return true;
+}
+
 function resolvePendingChannel(): void {
   if (!pendingChannel || typeof window === 'undefined') return;
   const found = channels().find((item) => item.handle === pendingChannel);
@@ -335,7 +397,8 @@ export async function loadConversations(force = false): Promise<void> {
   const request = ++listRequest;
   publish({ loadingList: true, error: null, demo: browserDemo() });
   try {
-    const conversations = await api.listConversations();
+    // A forced read follows a change, so it asks the server (api.ts ReadOptions).
+    const conversations = await api.listConversations({ fresh: force });
     if (request !== listRequest) return;
     for (const item of conversations) leftConversations.delete(item.id);
     publish({
@@ -345,6 +408,7 @@ export async function loadConversations(force = false): Promise<void> {
       online: true,
     });
     resolvePendingChannel();
+    channelToHub();
   } catch (error) {
     if (request !== listRequest) return;
     publish({
@@ -430,11 +494,17 @@ export async function loadThread(conversationId: number, force = false): Promise
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
     nextAfter: preserveVisibleThread ? state.nextAfter : null,
   });
+  // A FORCED READ RE-READS WHAT IS ON SCREEN BECAUSE SOMETHING CHANGED — a
+  // realtime event, a send, a reconnect — so it goes to the server, past the
+  // service worker's offline copy (#3705, #3706; api.ts ReadOptions). That
+  // copy was the page from before the change, and drawing it lost the very
+  // message the event was about.
+  const read = { fresh: force };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
-    const active = await api.getConversation(conversationId);
+    const active = await api.getConversation(conversationId, read);
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     // Old Preview links resolve to the viewer's persisted sample thread.
     // Use its canonical address for messages, writes, drafts and WS events.
@@ -444,22 +514,35 @@ export async function loadThread(conversationId: number, force = false): Promise
       openAddress(`#messages/${active.id}${suffix}`);
       return;
     }
+    // #3653: a channel opened on this screen goes to its community's tab as
+    // soon as this says it is one, before its messages are read here.
+    if (active.kind === 'channel' && state.route.open && !state.route.embedded) {
+      publish({ active });
+      if (channelToHub()) return;
+    }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
     const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
       ? { messages: [], nextBefore: null, nextAfter: null }
       : anchor
-        ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
+        ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId)), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
+      // In its community's page the room has no address of its own (#3653):
+      // the message it lands on moves in place.
+      if (state.route.embedded) {
+        publish({ route: { ...state.route, focusMessageId: page.focusMessageId } });
+        void loadThread(conversationId);
+        return;
+      }
       openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
       return;
     }
-    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
+    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id), member && !page.nextAfter);
     if (focus) focusLoaded = focus;
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
     upsertConversation(active);
@@ -489,26 +572,46 @@ export async function loadThread(conversationId: number, force = false): Promise
 }
 
 /**
- * A page read from the server, with the viewer's still-local rows kept.
+ * A page read from the server, with the viewer's own rows it cannot know of
+ * kept.
  *
  * Confirmed rows get back the client key they were first drawn under. A
  * local row (pending or failed) stays at the end unless the page already
  * holds it: the realtime echo can land before the POST that caused it
- * returns, and then the server's copy — the viewer's, same words, not yet
- * claimed by another local row — IS that row, so it takes its key and the
- * local one goes.
+ * returns, and then the server's copy — the viewer's, same words, NEWER than
+ * anything the transcript held when the row was drawn, not yet claimed by
+ * another local row — IS that row, so it takes its key and the local one
+ * goes. Newer, because the same words are sent again and again in the
+ * Homeroom bot's DM, whose suggested answers are "Yes" and "File it" every
+ * time (#3706): matched on the words alone, the OLDEST such message on the
+ * page took the new row's key, the next confirmation took that old message
+ * off the screen, and two rows went on sharing one React key.
+ *
+ * And a row the POST already confirmed stays when the page is older than it
+ * (#3706): a page that reaches the present and holds nothing as new was read
+ * before the send landed — a refresh already in flight, or a cached copy —
+ * and taking its word took the sender's message away until a reload. A
+ * later page that holds it, or anything newer, settles it as usual.
  */
-function withLocalRows(conversationId: number, page: ConversationMessage[]): ConversationMessage[] {
+function withLocalRows(conversationId: number, page: ConversationMessage[], reachesPresent = true): ConversationMessage[] {
   const me = currentUser().id;
   const claimed = new Set(sentKeys.values());
   const messages = page.map((item) => {
     const key = sentKeys.get(item.id);
     return key ? { ...item, clientKey: key } : item;
   });
+  const newest = newestServerId(messages);
   const local: ConversationMessage[] = [];
   for (const row of state.messages) {
-    if (row.id >= 0 || row.conversationId !== conversationId || !row.clientKey || claimed.has(row.clientKey)) continue;
-    const match = messages.find((item) => !item.clientKey && item.sender.id === me && item.content === row.content);
+    if (row.conversationId !== conversationId || !row.clientKey) continue;
+    if (row.id > 0) {
+      if (reachesPresent && row.id > newest && sentKeys.get(row.id) === row.clientKey) local.push(row);
+      continue;
+    }
+    if (claimed.has(row.clientKey)) continue;
+    const after = unsent.get(row.clientKey)?.after || 0;
+    const match = messages.find((item) => !item.clientKey && item.id > after
+      && item.sender.id === me && item.content === row.content);
     if (match && row.pending) {
       sentKeys.set(match.id, row.clientKey);
       match.clientKey = row.clientKey;
@@ -516,7 +619,12 @@ function withLocalRows(conversationId: number, page: ConversationMessage[]): Con
     }
     local.push(row);
   }
-  return messages.concat(local);
+  return messages.concat(local.sort(transcriptOrder));
+}
+
+/** The newest message the server has given these rows, or 0. */
+function newestServerId(rows: ConversationMessage[]): number {
+  return rows.reduce((top, item) => Math.max(top, item.id), 0);
 }
 
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
@@ -805,13 +913,33 @@ export function close(): void {
  * store back (route() never short-circuits an embedded route), and the page
  * gives it back when it leaves the screen (release).
  */
-export function embed(conversationId: number): void {
+export function embed(
+  conversationId: number,
+  at: { threadRootId?: number | null; focusMessageId?: number | null } | null = null,
+): void {
   if (!validId(conversationId) || state.route.open) return;
-  if (state.route.embedded && state.route.conversationId === conversationId) return;
+  // #3653: a door into the room can name a place in it — a reply thread to
+  // open beside it, or a message to land on — as its addresses here do.
+  const askedRoot = at?.threadRootId;
+  const askedFocus = at?.focusMessageId;
+  const root = validId(askedRoot) ? askedRoot : null;
+  const focus = validId(askedFocus) ? askedFocus : null;
+  if (state.route.embedded && state.route.conversationId === conversationId) {
+    // Already in place: the room stays, and moves to what the door names.
+    if (root && state.route.threadRootId !== root) {
+      publish({ thread: null, route: { ...state.route, threadRootId: root } });
+    }
+    if (focus && state.route.focusMessageId !== focus) {
+      focusLoaded = null;
+      publish({ route: { ...state.route, focusMessageId: focus } });
+      void loadThread(conversationId);
+    }
+    return;
+  }
   focusLoaded = null;
   unreadHold = null;
   publish({
-    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus },
     thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null,
   });
   void loadConversations();
@@ -891,7 +1019,8 @@ export function channelHub(): string | null {
  * unsubscribe; the screen holds it for as long as it is mounted.
  */
 export function followPlatformSlug(): () => void {
-  return subscribePlatformSlug(() => { if (state.route.open) syncChrome(); });
+  // #3653: and once it is known, a channel on screen goes to that hub's tab.
+  return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
 export function syncChrome(): void {
@@ -971,6 +1100,21 @@ function sidePanelTakes(target: string): boolean {
   }
 }
 
+/**
+ * #3653: a channel's address — an app's, or #general's — while its project
+ * page is the page on screen: the page turns to its Discussion tab, at the
+ * place the address names, instead of a second address for the page the
+ * reader is already on (App._discussionInPlace). False whenever that is not
+ * the moment, and the caller navigates, which the router takes to the tab.
+ */
+function turnsPageInPlace(href: string): boolean {
+  try {
+    return !!(window as { App?: { _discussionInPlace?: (href: string) => boolean } }).App?._discussionInPlace?.(href);
+  } catch {
+    return false;
+  }
+}
+
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
@@ -992,6 +1136,7 @@ let revealedAppFocus: string | null = null;
  */
 export function openAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (turnsPageInPlace(href)) return;
   if (sidePanelTakes(href)) return;
   if (window.location.hash !== href) { window.location.hash = href; return; }
   revealedAppFocus = null;
@@ -1021,6 +1166,7 @@ export function openDiscussion(slug: string): void {
   const safe = validSlug(slug);
   if (!safe) return;
   const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (turnsPageInPlace(target)) return;
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
   else window.location.hash = target;
@@ -1242,7 +1388,7 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
     threadRootId,
   };
-  unsent.set(pending.idempotencyKey, { conversationId, payload: pending });
+  unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
   setDraft(scope, '');
   setReply(scope, null);
   if (threadRootId && state.thread) {
@@ -1517,9 +1663,17 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
   });
   try {
-    const page = await api.listThread(conversationId, rootId);
+    // Forced: a re-read after a change, from the server (see loadThread).
+    const page = await api.listThread(conversationId, rootId, null, { fresh: force });
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
     if (page.root?.id && page.root.id !== rootId) {
+      // In its community's page the thread has no address of its own
+      // (#3653): it moves to its canonical root in place.
+      if (state.route.embedded) {
+        publish({ thread: null, route: { ...state.route, threadRootId: page.root.id } });
+        void loadReplyThread(conversationId, page.root.id);
+        return;
+      }
       openAddress(threadAddress(conversationId, page.root.id));
       return;
     }
@@ -1648,7 +1802,37 @@ function eventConversationId(event: ConversationEvent): number | null {
 
 /** Is this conversation's thread drawn — on this screen, or in its community's page (#3494)? */
 function onScreen(conversationId: number): boolean {
-  return (state.route.open || !!state.route.embedded) && state.route.conversationId === conversationId;
+  return showing() && state.route.conversationId === conversationId;
+}
+
+/** Is anything of this store's on screen: the Messages screen, or a room embedded in its community's page? */
+function showing(): boolean {
+  return state.route.open || !!state.route.embedded;
+}
+
+/**
+ * Re-read everything this store draws, from the server (#3705): the inbox
+ * and, when one is on screen, the conversation and the thread open beside it.
+ *
+ * Two callers, both of which used to stop at the inbox. A reconnect of the
+ * events socket (App.resyncCurrentView): a message that arrived while it was
+ * down — a phone locked, a network handed over — had its event dropped, and
+ * the conversation open in front of the reader never read it. And the service
+ * worker's late-answer correction (App.refreshActiveScreen): a conversation
+ * opened on a slow link is drawn from the worker's offline copy after a
+ * second, and the worker's word that the server has since said otherwise had
+ * nothing on this screen listening to it.
+ */
+export async function resync(): Promise<void> {
+  void loadAppDiscussions();
+  const reads = [loadConversations(true)];
+  const conversationId = state.route.conversationId;
+  if (conversationId && onScreen(conversationId)) {
+    reads.push(loadThread(conversationId, true));
+    const rootId = state.route.threadRootId;
+    if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
+  }
+  await Promise.all(reads);
 }
 
 export function handleEvent(raw: ConversationEvent): void {
@@ -1771,6 +1955,34 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
   }
 }
 
+/**
+ * #3660: a card posted straight into a conversation from outside it — the
+ * Share to… dialog (./share-to-dialog.tsx) — with the sharer's note as its
+ * words. Not `send()`, which writes into whichever conversation is open:
+ * this one names its destination. The server checks the sharer can see the
+ * card, and each reader's view of it, exactly as for a card shared from the
+ * composer. When that conversation is the one on screen the message is
+ * drawn at once, as the composer's own send draws it; either way the inbox
+ * is re-read so the conversation moves to the top.
+ */
+export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
+  if (!validId(conversationId)) throw new Error('Choose a conversation.');
+  const message = await api.sendMessage(conversationId, {
+    content: note.trim().slice(0, 8000),
+    object,
+    idempotencyKey: idempotencyKey(),
+  });
+  if (state.route.conversationId === conversationId && message.id > 0) {
+    publish({
+      messages: state.messages
+        .filter((item) => item.id !== message.id)
+        .concat(message)
+        .sort(transcriptOrder),
+    });
+  }
+  await loadConversations(true);
+}
+
 export function takePendingShare(): SharedObjectReference | null | undefined {
   const value = pendingShare;
   pendingShare = undefined;
@@ -1818,10 +2030,16 @@ export const messagesController = {
   // `#` autocomplete (public/js/group-chat.js), and the link resolver.
   channels,
   openChannel,
+  // #3653: what the router asks before it draws a channel on this screen.
+  channelTarget,
+  channelHubSlug,
   refresh: () => {
     void loadAppDiscussions();
     return loadConversations(true);
   },
+  // #3705: the inbox AND the conversation on screen (see resync).
+  resync,
+  showing,
 };
 
 export function initializeMessagesStore(): () => void {

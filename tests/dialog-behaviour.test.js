@@ -384,6 +384,23 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   // is what guarantees that.
   assert.match(src, /useState<\{ slug: string; name: string \} \| null>\(null\)/,
     'the progress view is gated on state that starts null');
+  // #3683: the progress card's button closes the dialog AND navigates, so the
+  // close is a navigating one: a plain close queues a history.back() that
+  // lands after the new address and undoes it (tests/dialog-suspend-exit.test.js
+  // runs the hook). Both destinations, the bot's DM and the Workshop.
+  assert.match(src, /dialog\.closeForNavigation\(\);\s*openMessages\(chat\);/,
+    'opening the Homeroom bot DM does not spend the record under its own address');
+  assert.match(src, /dialog\.closeForNavigation\(\);\s*\(window\.App\?\.navigateToApp/,
+    'nor does opening the new project');
+  assert.doesNotMatch(src, /dialog\.close\(\);\s*(?:openMessages|\(window\.App\?\.navigateToApp)/);
+  // "Set secrets" too: the secrets dialog pushes its own back-button record
+  // as it opens, and a plain close's queued back() would land on that record
+  // and close it again. (tests/dialog-suspend-exit.test.js runs the fork
+  // dialog's twin of this card.)
+  const setSecrets = src.slice(src.indexOf('onSetSecrets={() => {'), src.indexOf('onRetry={() => {'));
+  assert.match(setSecrets, /dialog\.closeForNavigation\(\);[\s\S]*window\.Secrets\?\.open/,
+    'opening the secrets dialog does not spend the record under its own');
+  assert.doesNotMatch(setSecrets, /dialog\.close\(\);/);
   // Close resets the form, so a half-finished import is never inherited.
   assert.match(src, /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.

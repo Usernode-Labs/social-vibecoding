@@ -69,7 +69,20 @@ every 5 seconds (`worker/shots-memory.js`):
 
 A last sample near the limit, or kills during the turn, says that memory ran
 out. The export has these as the `worker_memory_*` and `worker_oom_kills`
-columns.
+columns. `peakRssMb` adds up each process's resident memory, so memory that
+processes share (Chromium's above all) is counted once per process. Its sum
+can be several times the container's own figure: compare the classes with
+each other, and use `peakUsedMb` for how close the worker came to its limit.
+
+The shots agent works in the proposal's own worker, and a merge retires that
+worker and its volume. A run holds the worker while it runs
+(`worker.holdWorker`), so a merge in the middle of a run is carried out when
+the run ends (`worker.retireWorker`), not under the agent. Before that, a
+merge mid-run showed up as `container_gone` about 30 seconds after the merge,
+when Kubernetes' grace period for the deleted pod ran out. The 2026-10-02
+export had five such deaths. Withdrawing, pausing or moving a proposal back
+still stops its worker at once: shots of a change that is no longer up for a
+vote are not needed.
 
 `agentActivity.egressBlocked` counts the destinations the shots proxy refused,
 by reason and kind of host: for example `private_address:pair_host` (the pair's own

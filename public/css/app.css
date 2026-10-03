@@ -442,7 +442,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    The same construction at both widths: on a phone the list screen IS the
    strip and a thread is the strip's shoulder showing above the sheet; from
    768px up both panes sit on one strip with the sheet beside the list. */
-.messages-layout {
+/* The tokens are the project page's Discussion tab's too (#3653): an app
+   channel's reply thread opens there, in the same pane as here, with no
+   `.messages-layout` around it (project-discussion.tsx). */
+.messages-layout,
+.dev-ws-discussion {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
      light sheet. In dark it is the ladder's own raised step (--dc-raised),
@@ -456,12 +460,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      A translucent white so it reads as the row the sheet came out of. */
   --messages-selected: rgba(255, 255, 255, 0.55);
   --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.messages-layout {
   display: flex;
   width: 100%;
   height: 100%;
   min-height: 0;
 }
-.dark .messages-layout {
+.dark .messages-layout,
+.dark .dev-ws-discussion {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
   --messages-hair: rgba(255, 255, 255, 0.08);
@@ -1481,6 +1488,19 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-attachment-view { color: var(--accent); font-size: 13px; font-weight: 600; }
 .messages-object-card:hover { background: var(--messages-surface-2); }
 .messages-object-unavailable { opacity: .6; }
+/* #3660: a Homeroom link's card under a message in an app's discussion
+   (features/messages/link-cards.tsx). That transcript is drawn on the app's
+   own pages as well as in this inbox — outside .messages-layout, where the
+   card's two surfaces are not defined — so there it wears the surface the
+   discussion's own boxes do (.gc-event-box): the frosted sheet fill and its
+   hairline. */
+.gc-msg .messages-link-embeds { margin-top: 6px; }
+.gc-msg .messages-link-embeds .messages-object-card {
+  background-color: var(--dc-sheet-fill);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.gc-msg .messages-link-embeds .messages-object-card:hover { background-color: var(--bg-tertiary); }
+.gc-msg .messages-link-embeds .messages-object-icon { background: var(--bg-tertiary); }
 /* #2884: under the first card of a folded run, in the column the message
    writes in (16px inset + 36px avatar + 12px gap). */
 .messages-card-run { padding: 0 16px 6px 64px; }
@@ -14569,6 +14589,16 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-topic-back:hover { background: var(--brand-line); }
 .dev-topic-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-topic-back-icon { width: 18px; height: 18px; flex-shrink: 0; }
+/* #3691: a card opened from Messages carries two chips, "‹ Messages" and
+   "‹ Workshop", side by side in the one chip's place. The row takes over the
+   chip's left alignment; each chip keeps its own margins, so the row adds
+   none, and it wraps rather than overflowing a narrow phone. */
+.dev-topic-backs {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  align-self: flex-start;
+}
 .dev-change-overview {
   flex: 1;
   min-height: 0;
@@ -17627,8 +17657,18 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 /* An emoji tile's glyph at the tile's own size, not the launcher's. */
 .community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
 .platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-.community-switcher-tile-all { background: #1f2329; color: #fff; }
-.dark .community-switcher-tile-all { background: #3a3f47; }
+/* ALL COMMUNITIES WEARS THE TAB'S FACE (#3663): the people glyph in a square
+   ring, in the row's own ink, as `.platform-tab-ring-all` draws it on the
+   phone's bar. It was a filled near-black tile, which in the same list as
+   Homeroom's own (a cream H on near-black) read as a second Homeroom. The
+   ring is the tab's 2px at the tile's size, and the glyph is the tab's
+   share of it (18px in 28px) with the tab's 1.8 stroke. */
+.community-switcher-tile-all {
+  background: transparent; color: inherit;
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+.community-switcher-tile-all > svg { width: 26px; height: 26px; stroke-width: 1.8; }
+.community-switcher-menu .community-switcher-tile-all > svg { width: 22px; height: 22px; }
 .community-switcher-tile-add {
   background: transparent; color: var(--text-muted);
   box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
@@ -17700,6 +17740,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 .messages-layout-embedded > .messages-reply-pane { margin: 0; }
 @media (min-width: 768px) {
   .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
+}
+/* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
+   Messages opens beside an app channel (AppReplyThreadPane) opens beside the
+   group chat's pane here: to its right on a desktop, over it on a phone,
+   where its ✕ brings the room back. The host itself is never restyled from
+   outside: only the section's class says a thread is open. */
+.dev-ws-discussion-threaded > .messages-reply-pane { margin: 0; }
+@media (max-width: 767.98px) {
+  .dev-ws-discussion-threaded > .dev-ws-discussion-host { display: none; }
+}
+@media (min-width: 768px) {
+  .dev-ws-discussion-threaded { flex-direction: row; }
+  .dev-ws-discussion-threaded > .dev-ws-discussion-host { min-width: 0; }
+  .dev-ws-discussion-threaded > .messages-reply-pane { margin-left: 8px; }
 }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
@@ -17857,10 +17911,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     .dev-ws-tabs.dev-ws-band { top: calc(var(--ws-pin-top, 0px) - 15px); }
   }
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
-     back bar) and the head under it, with the grouping, the search and the
+  /* EVERYTHING PINS UP HERE, as one band: the project's tabs and, on All
+     items, the head under them, with the grouping, the search and the
      filters. The controls belong WITH the list you are
      narrowing, so they stay reachable however far down it you are.
+
+     ALL ITEMS' BACK BAR IS NOT PART OF IT (#3651). It is a second
+     `.dev-ws-tabs` box, and the strip's rule below made it sticky at the
+     tabs' own offset, so two bars pinned in one place: a little way down
+     the page "Workshop / All items" rode up across Hub and Discussion, and
+     further down its band covered the tabs altogether. It scrolls away now,
+     under the tabs, as it always has on a phone (#3522); the lit Workshop
+     tab is the way back from anywhere down the list. The tabs are the bar
+     the head and its band are measured against on every page (workshop.tsx,
+     `setBar`).
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
@@ -17879,6 +17943,20 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
+  /* Under 768px the tabs are the coloured band: opaque, and with no band of
+     sheet behind them (that is the row's, from 768px), so the column gap the
+     measured offset leaves under them would have nothing in it but the cards
+     going by. The head rests on the band's foot instead, as a phone's does:
+     where the band pins, plus its 58px (the 18px tuck and the 40px row). */
+  @media (max-width: 767.98px) {
+    #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-pin-top, 0px) - 15px + 58px); }
+  }
+  /* The back bar scrolls (above), in the flow and under the tabs, with no
+     band of its own. `top: auto` because the strip's offset would SHIFT a
+     relative box rather than pin it, and `z-index: auto` so it passes under
+     the pinned tabs rather than over them. */
+  .dev-ws-tabs.dev-ws-pagebar { position: relative; top: auto; z-index: auto; }
+  .dev-ws-tabs.dev-ws-pagebar::before { content: none; }
   .dev-ws-tabs {
     order: 0;
     /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
@@ -17986,16 +18064,23 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      a backdrop-filter nested inside another one. What was left was 50%
      white, which is exactly the "cards showing through" this fixes (and
      why the search row looked washed rather than frosted over the list).
-     So while pinned the band, and the head under it, take the sheet's
-     opaque colour, which is what the fallback below the frost rules already
-     uses where there is no backdrop-filter at all.
+     So while pinned the band takes the pane's own opaque colour, the one
+     its head and body already wear (`--dc-sheet-solid`, the fallback below
+     the frost rules).
+
+     THE PANE'S COLOUR, NOT `--dc-sheet` (#3651). The band and the pinned
+     head used to switch to `--dc-sheet`, which is white where the pane is
+     the warm `--dc-sheet-solid`: the head changed colour the moment it
+     pinned, and a white slab sat over a cream pane, its edge reading as a
+     gap down both sides and along the foot. The head keeps its colour now
+     and the band matches it, so pinned and at rest are one material.
 
      ONLY WHILE PINNED. At rest the bar sits on the page, and a band there
      would draw a slab of sheet colour around it for nothing.
 
      Behind the nav's own content (`z-index: -1` inside the strip's stacking
-     context), so the bar draws over it. The pinned head's rounded top-left
-     corner is squared: a curve there left a notch the cards showed through. */
+     context), so the bar draws over it. The pinned head squares its top
+     corners (`data-ws-head-pinned`, below the pane's base rule). */
   .dev-ws-tabs::before {
     content: '';
     position: absolute;
@@ -18004,15 +18089,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
     height: var(--dev-ws-head-top, calc(100% + 10px));
     left: var(--dev-ws-band-left, 0px);
     right: var(--dev-ws-band-right, 0px);
-    background-color: var(--dc-sheet);
+    background-color: var(--dc-sheet-solid);
     pointer-events: none;
     visibility: hidden;
   }
   .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
-  .dev-ws[data-ws-pinned] .dev-ws-pane-head {
-    background-color: var(--dc-sheet);
-    border-top-left-radius: 0;
-  }
   /* THE TRACK HOLDS THE PILL AND THE "+", 6px apart, and draws neither
      (#2934): it hugs the two. The surface is the phone rule's two items at
      this width's metrics — a 2px ring in the raised sheet, no hairline — so
@@ -18451,6 +18532,15 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   padding: 8px 10px;
   border-radius: 22px 22px 0 0;
 }
+/* PINNED, THE HEAD IS SQUARE ON TOP, at every width (#3651). Its rounded
+   corners are the pane's at rest; pinned, it meets the flat foot of the tabs
+   above it, and each curve left a notch between the two that the cards
+   scrolling by showed through. Only the top-left was squared, and only from
+   700px; the top-right kept its notch, and a phone kept both.
+   `data-ws-head-pinned` is workshop.tsx's usePinnedStrip: set once the head
+   has left the top of its pane, which is the moment it sticks, so the pane
+   keeps its rounded top all the while it is still scrolling up. */
+.dev-ws[data-ws-head-pinned] .dev-ws-pane-head { border-top-left-radius: 0; border-top-right-radius: 0; }
 .dev-ws-pane-body {
   display: flex; flex-direction: column; gap: 8px;
   padding: 8px 10px 12px;

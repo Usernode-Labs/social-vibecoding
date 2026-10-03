@@ -62,6 +62,24 @@ test('the prompt lists the replies, and offers revise only while revisions remai
   assert.match(capped, /already revised this proposal as many times as you may/);
 });
 
+test('#3703: the prompt carries the spec the proposal was built from, the card a reply in its discussion is about', () => {
+  const replies = [{ where: 'proposal', via: 'homeroom', author: 'evan', body: 'does the order make sense though?', createdAt: '2026-10-02T17:26:19Z' }];
+  const spec = '# Add relative-note lessons\n\n## User-facing changes\nA new Notes group appears above Intervals.';
+  const p = followup.followUpPrompt({ seed: 'SEED', proposalBlock: 'BLOCK', spec, prNumber: 10, replies });
+  assert.match(p, /==== THE SPEC THIS PROPOSAL WAS BUILT FROM/);
+  assert.match(p, /A new Notes group appears above Intervals\./);
+  assert.match(p, /Where it differs from the spec \(a revision since\), the working tree is the truth\./);
+  assert.ok(p.indexOf('BLOCK') < p.indexOf('THE SPEC THIS PROPOSAL') && p.indexOf('END SPEC') < p.indexOf('evan, in the proposal'),
+    'after the discussion, before the replies it answers');
+
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'SEED', prNumber: 10, replies }), /THE SPEC THIS PROPOSAL/, 'no spec, no block');
+  assert.equal(followup.followUpPrompt({ seed: 'SEED', prNumber: 10, replies, spec: '' }),
+    followup.followUpPrompt({ seed: 'SEED', prNumber: 10, replies }), 'and the prompt is as it was');
+
+  const long = followup.followUpPrompt({ seed: 'S', replies, spec: 'x'.repeat(followup.MAX_SPEC_CHARS + 500) });
+  assert.ok(long.includes(`${'x'.repeat(followup.MAX_SPEC_CHARS)}…`) && !long.includes('x'.repeat(followup.MAX_SPEC_CHARS + 1)), 'a runaway spec is clipped');
+});
+
 test('the action is the last fenced block; anything else is not guessed', () => {
   const text = 'notes\n```json\n{"action":"answer","reply":"x"}\n```\nmore\n```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```';
   assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.', stopMentioning: [], resumeMentioning: [] });
@@ -95,7 +113,7 @@ test('what it says has no em dashes', () => {
 // ── runTriage, down the follow-up path ───────────────────────────────────
 
 function harness({
-  proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [],
+  proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [], spec = null,
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
 } = {}) {
   const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [] };
@@ -104,8 +122,9 @@ function harness({
       const s = String(sql);
       calls.queries.push({ s, params });
       if (/SELECT id, status, pr_number FROM chat_sessions/.test(s)) {
-        return { rows: [{ id: 5001, status: proposalStatus, pr_number: 25 }] };
+        return { rows: proposalStatus ? [{ id: 5001, status: proposalStatus, pr_number: 25 }] : [] };
       }
+      if (/SELECT content FROM chat_session_specs/.test(s)) return { rows: spec == null ? [] : [{ content: spec }] };
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
         return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
@@ -196,6 +215,56 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.equal(insert.params[21], null, 'not a checks follow-up');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+});
+
+test('#3703: a question under the spec card is answered with that spec in front of the bot', async (t) => {
+  const h = harness({
+    proposalThread: [
+      { author: 'evan', body: 'does the order make sense though? Its the same as "intervals"', createdAt: '2026-09-26T11:20:00Z' },
+      { author: 'evan', body: '@homeroom_bot', createdAt: '2026-09-26T11:20:12Z' },
+    ],
+    spec: '# Add relative-note lessons that span different keys\n\nNotes comes before Intervals.',
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer');
+  const read = h.calls.queries.find((q) => /SELECT content FROM chat_session_specs/.test(q.s));
+  assert.deepEqual(read.params, [5001], 'the proposal\'s own spec');
+  assert.match(read.s, /ORDER BY version DESC LIMIT 1/, 'its newest version, the one the card opens');
+  assert.match(h.calls.exec[0].opts.prompt, /Notes comes before Intervals\./);
+  assert.match(h.calls.exec[0].opts.prompt, /@homeroom_bot/);
+  assert.equal(h.calls.posts[0].proposalSessionId, 5001, 'answered in the thread it was asked in');
+});
+
+test('#3703: without a spec (or when it cannot be read) the follow-up still runs', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  const realQuery = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/FROM chat_session_specs/.test(String(sql))) throw new Error('boom');
+    return realQuery(sql, params);
+  };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer');
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /THE SPEC THIS PROPOSAL/);
+});
+
+test('#3703: a row started as a follow-up beside other work never falls through to triage', async (t) => {
+  // The bot's proposal merged (or the app left the live list) between the
+  // pick and the run: the app's own session may be busy with another
+  // request, so the row touches nothing and goes back to the queue.
+  const comments = [{ author: 'evan', body: 'x', createdAt: '2026-09-26T11:30:00Z' }];
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  for (const settings of [SETTINGS, { ...SETTINGS, liveApps: [] }]) {
+    const h = harness({ proposalStatus: null, comments });
+    live.post = async (args) => { h.calls.posts.push(args); return {}; };
+    const out = await bot.runTriage(h.pool, {}, {
+      bot: BOT, app: APP, item: { ...ITEM, followUp: true }, mode: 'shadow', settings, deps: h.deps,
+    });
+    assert.deepEqual(out, { ran: false, reason: bot.NOT_FOLLOW_UP });
+    assert.equal(h.calls.exec.length, 0, 'no turn');
+    assert.equal(h.calls.posts.length, 0, 'no "looking" post');
+    assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs|DELETE FROM homeroom_bot_queue|status IN \('active', 'paused'\)/.test(q.s)));
+  }
 });
 
 test('a clear change is made on the proposal, and the proposal is reconciled like any revision', async (t) => {

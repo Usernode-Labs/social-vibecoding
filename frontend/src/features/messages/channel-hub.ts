@@ -22,6 +22,8 @@ import { useEffect, useSyncExternalStore } from 'react';
 
 type PlatformTargetLike = {
   slug?: () => string | null;
+  known?: () => { restricted?: boolean } | null;
+  cachedAbout?: () => { served?: boolean } | null;
   resolve?: () => Promise<unknown> | unknown;
   onSlug?: (listener: (slug: string | null) => void) => () => void;
 };
@@ -35,6 +37,22 @@ function platformTarget(): PlatformTargetLike | undefined {
 /** The platform project's slug, if anything has said it yet. */
 export function platformSlug(): string | null {
   try { return platformTarget()?.slug?.() || null; } catch { return null; }
+}
+
+/**
+ * May this viewer open the platform project's page? Not when the platform
+ * has said its row is not served to them (PlatformTarget's restricted
+ * target: not an admin, and SELF_APP_PUBLIC_VOTING off), whose hub would
+ * not load. Unknown counts as yes, as the hub's other doors assume.
+ */
+export function platformHubServed(): boolean {
+  try {
+    const target = platformTarget();
+    if (target?.known?.()?.restricted) return false;
+    return target?.cachedAbout?.()?.served !== false;
+  } catch {
+    return true;
+  }
 }
 
 /** Open `slug`'s hub, or Communities when there is no slug. */

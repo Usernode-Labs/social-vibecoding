@@ -705,6 +705,26 @@ test('fetchIssueComments returns a short thread without truncation', async () =>
   }
 });
 
+test('#3693: fetchIssueComments carries GitHub\'s comment id, and clipIssueComments does not', async () => {
+  // The id is what the Homeroom bot recorded for each comment it posted
+  // (homeroom_bot_posts.github_comment_id), so the request page can leave
+  // out the ones its Homeroom thread already shows. The clipped thread the
+  // UI and the models read keeps its three fields.
+  const origFetch = global.fetch;
+  try {
+    stubCommentPages([{ body: [{ ...fakeComment(1), id: 2950123456 }, fakeComment(2)], next: null }]);
+    const res = await github.fetchIssueComments('O', 'r', 9);
+    assert.deepStrictEqual(res.comments[0], {
+      author: 'commenter-1', body: 'comment 1', createdAt: '2026-06-02T00:00:00Z', id: 2950123456,
+    });
+    assert.ok(!('id' in res.comments[1]), 'no id from GitHub, no id field');
+    const clipped = github.clipIssueComments(res.comments);
+    assert.deepStrictEqual(Object.keys(clipped.comments[0]).sort(), ['author', 'body', 'createdAt']);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test('fetchIssueComments maps rate-limit, 404, non-array, and bad input to empty + note', async () => {
   const origFetch = global.fetch;
   try {

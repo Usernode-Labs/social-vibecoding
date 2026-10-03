@@ -200,7 +200,7 @@ test('the weekly allowance message is keyed by the platform week, which starts o
 
 // ── The bot's posts carry the news to the DM ─────────────────────────────
 
-test('a post with `dm` is relayed to the requester\'s DM after it is posted; one without is not', async (t) => {
+test('a post with `dm` is relayed to the requester\'s DM; one without is not', async (t) => {
   const relayed = [];
   const real = dm.relayIssuePost;
   dm.relayIssuePost = async (args) => { relayed.push(args); return null; };
@@ -403,4 +403,141 @@ test('the DM screen draws the bot\'s question and badge, and the reply bar names
   for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
     assert.ok(css.includes(cls), cls);
   }
+});
+
+// ── Typing, while the bot answers (#3684) ────────────────────────────────
+
+// The typing event goes out through the same audience gate a person's does
+// (conversations.withLockedAudience, which needs a database): stood in for
+// here by a DM of the bot (2) and Ada (9).
+function typingHarness(t) {
+  const conversations = require('../src/services/conversations');
+  const realAudience = conversations.withLockedAudience;
+  const audiences = [];
+  conversations.withLockedAudience = async (_pool, actor, conversationId, callback) => {
+    audiences.push({ actor: actor.id, conversationId });
+    await callback([2, 9]);
+    return [2, 9];
+  };
+  t.after(() => { conversations.withLockedAudience = realAudience; });
+  const events = [];
+  const ws = {
+    pushConversationEvent(memberIds, payload, options) { events.push({ memberIds, payload, options }); return 1; },
+  };
+  const typing = () => events.filter((e) => e.payload.type === 'conversation_typing').map((e) => e.payload.typing);
+  return { audiences, events, ws, typing };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('the bot types from the start of its answer until the answer is sent, as a person\'s typing event', async (t) => {
+  const { audiences, events, ws, typing } = typingHarness(t);
+  const out = await dm.whileTyping({}, { botId: 2, conversationId: 41, ws }, async () => {
+    await settle();
+    assert.deepEqual(typing(), [true], 'typing while it works');
+    ws.pushConversationEvent([2, 9], { type: 'conversation_message_created', conversationId: 41, messageId: 1 });
+    return 'answered';
+  });
+  assert.equal(out, 'answered', 'the answer is what the work resolved');
+  assert.deepEqual(events.map((e) => e.payload.type === 'conversation_typing' ? e.payload.typing : 'reply'), [true, 'reply', false],
+    'it stops once the answer is out, never before');
+  const first = events[0];
+  assert.deepEqual(first.payload, { type: 'conversation_typing', conversationId: 41, userId: 2, typing: true });
+  assert.deepEqual(first.options, { excludeUserId: 2 }, 'the same event and audience as the typing route');
+  assert.deepEqual(audiences, [{ actor: 2, conversationId: 41 }, { actor: 2, conversationId: 41 }],
+    'as the bot, through the gate that drops a DM the person blocked');
+});
+
+test('a long answer keeps the bot typing, and a failed one still stops it', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const { ws, typing } = typingHarness(t);
+  let finish;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 42, ws }, () => new Promise((resolve, reject) => { finish = reject; }));
+  await settle();
+  for (let i = 0; i < 5; i += 1) { t.mock.timers.tick(dm.TYPING_RENEW_MS); await settle(); }
+  finish(new Error('model failed'));
+  await assert.rejects(answering, /model failed/, 'the failure is the caller\'s to see');
+  await settle();
+  const said = typing();
+  assert.deepEqual(said, [true, true, true, true, true, true, false], 'said again on every renewal, then stopped');
+  t.mock.timers.tick(dm.TYPING_RENEW_MS * 3);
+  await settle();
+  assert.equal(typing().length, said.length, 'and nothing after');
+});
+
+test('an answer that never ends stops the typing at the cap, and each renewal beats the reader\'s expiry', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const { ws, typing } = typingHarness(t);
+  let finish;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 43, ws }, () => new Promise((resolve) => { finish = resolve; }));
+  await settle();
+  for (let at = 0; at < dm.TYPING_MAX_MS; at += dm.TYPING_RENEW_MS) { t.mock.timers.tick(dm.TYPING_RENEW_MS); await settle(); }
+  const said = typing();
+  assert.equal(said.at(-1), false, 'stopped at the cap, whatever the work is doing');
+  assert.equal(said.filter((v) => v === false).length, 1);
+  t.mock.timers.tick(dm.TYPING_RENEW_MS * 3);
+  await settle();
+  assert.equal(typing().length, said.length, 'no renewal after the cap');
+  finish('late');
+  assert.equal(await answering, 'late');
+  await settle();
+  assert.equal(typing().length, said.length, 'a late answer stops nothing twice');
+
+  // The Messages reader drops a typing line it has not heard again within
+  // its expiry, so the renewal must come sooner, with room for the trip.
+  const store = read('frontend/src/features/messages/store.ts');
+  const expiry = Number(store.match(/case 'conversation_typing': \{[\s\S]*?\}, (\d+)\)\);/)[1]);
+  assert.equal(expiry, 6000);
+  assert.ok(dm.TYPING_RENEW_MS <= expiry - 1500, 'renewed well inside the reader\'s expiry');
+});
+
+test('two answers in one DM keep one typing line up until the last is sent', async (t) => {
+  const { ws, typing } = typingHarness(t);
+  const finishers = [];
+  const work = () => new Promise((resolve) => { finishers.push(resolve); });
+  const first = dm.whileTyping({}, { botId: 2, conversationId: 44, ws }, work);
+  const second = dm.whileTyping({}, { botId: 2, conversationId: 44, ws }, work);
+  await settle();
+  assert.deepEqual(typing(), [true], 'said once');
+  finishers[0]('one');
+  await first;
+  await settle();
+  assert.deepEqual(typing(), [true], 'still typing the second answer');
+  finishers[1]('two');
+  await second;
+  assert.deepEqual(typing(), [true, false]);
+});
+
+test('a message from somebody on the list is answered while the bot types; anybody else\'s is not', async (t) => {
+  const { ws, typing } = typingHarness(t);
+  const pool = {
+    async query(sql) {
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_dm_users', value: '["ada"]' }] };
+      if (/FROM conversation_direct_pairs/.test(sql)) return { rows: [{ '?column?': 1 }] };
+      return { rows: [] };
+    },
+  };
+  const bot = { id: 2, username: 'homeroom_bot' };
+  const seen = [];
+  const mayor = {
+    async decideOffer() { return null; },
+    async runDmTurn(_pool, _config, args) { await settle(); seen.push(typing().slice()); return { turn: args.message.id }; },
+  };
+  const out = await dm.noteUserMessage(pool, {}, {
+    user: { id: 9, username: 'ada' }, conversationId: 45, message: { id: 70, content: 'what are you working on?' },
+    deps: { bot, mayor, ws },
+  });
+  assert.deepEqual(out, { turn: 70 });
+  assert.deepEqual(seen, [[true]], 'typing while the model answers');
+  assert.deepEqual(typing(), [true, false], 'and stopped once it has');
+
+  const conversations = require('../src/services/conversations');
+  const realOpen = conversations.ensureAdmittedDirect;
+  conversations.ensureAdmittedDirect = async () => null;
+  t.after(() => { conversations.ensureAdmittedDirect = realOpen; });
+  await dm.noteUserMessage(pool, {}, {
+    user: { id: 11, username: 'sam' }, conversationId: 46, message: { id: 71, content: 'hi' },
+    deps: { bot, mayor, ws },
+  });
+  assert.deepEqual(typing(), [true, false], 'the bot does not type to somebody it does not answer');
 });

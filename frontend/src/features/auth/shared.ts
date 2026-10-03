@@ -120,6 +120,8 @@ interface LegacyWindow {
     ): void;
     forgetSafeAreaFrame?(id: string): void;
     scheduleSafeAreaBroadcast?(): void;
+    // #3257: the theme the shell painted, for a frame URL's `un-theme`.
+    resolvedTheme?(): 'light' | 'dark';
   };
   AuthScreens?: Record<string, unknown>;
   // The native bridge (usernode-native). Absent in a regular browser, which is

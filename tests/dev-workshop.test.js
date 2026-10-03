@@ -3400,8 +3400,8 @@ test('the tabs are a band in the community\'s colour, not the old pill: nothing 
   // with an underline rather than a marker; All items is the Workshop's page.
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
   assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
-  assert.match(WORKSHOP, /<div ref=\{setBar\} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
-    'All items\' back bar keeps the strip\'s box, which the pinned pane head measures');
+  assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
+    'All items\' back bar keeps the strip\'s box');
   const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
   assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
   assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
@@ -5232,10 +5232,10 @@ test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)'
   assert.match(band[1], /height: var\(--dev-ws-head-top, calc\(100% \+ 10px\)\);/);
   assert.match(band[1], /left: var\(--dev-ws-band-left, 0px\);/);
   assert.match(band[1], /right: var\(--dev-ws-band-right, 0px\);/);
-  assert.match(band[1], /background-color: var\(--dc-sheet\);/, 'solid: a nested frost cannot blur here');
+  // #3651: solid in the PANE's colour, which its head keeps while pinned.
+  assert.match(band[1], /background-color: var\(--dc-sheet-solid\);/, 'solid: a nested frost cannot blur here');
   assert.match(band[1], /visibility: hidden;/, 'and not at rest, where it would be a slab for nothing');
   assert.match(decls, /\.dev-ws\[data-ws-pinned\] > \.dev-ws-tabs::before \{ visibility: visible; \}/);
-  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\);/);
   // The measurement and the flag.
   assert.match(WORKSHOP, /const STRIP_PROPS = \['--dev-ws-head-top', '--dev-ws-band-left', '--dev-ws-band-right'\];/);
   assert.match(WORKSHOP, /setProperty\('--dev-ws-band-left', `\$\{Math\.round\(p\.left - n\.left\)\}px`\)/);
@@ -5246,8 +5246,64 @@ test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)'
     'hears the dev frame\'s scroller and the document alike');
   assert.match(body, /host\.toggleAttribute\('data-ws-pinned', pinned\)/, 'written on the host, not as state');
   assert.match(body, /host\.removeAttribute\('data-ws-pinned'\)/, 'and taken off again on teardown');
-  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);/);
-  assert.match(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);/, 'only where the strip is sticky at all');
+  // #3651: asked at every width (a phone's band and head pin too, #3522);
+  // only the insets the band is drawn to are the wide layout's.
+  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, tab\);/);
+  assert.match(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);\s*useStripInsets\(bar, hostRef, stripSticks\);/,
+    'the insets only where the band behind the strip is drawn');
+});
+
+test('#3651: on All items one header pins, the tabs and the head, in the pane\'s colour and square on top', () => {
+  // THE BUG. "Sometimes workshop all items header formatting goes weird after
+  // you scroll down a little bit." From 700px every `.dev-ws-tabs` box was
+  // sticky at the same offset, and All items has two: the project's tabs and
+  // the back bar under them. A little way down the back bar's title rode up
+  // across Hub and Discussion; further down its band covered the tabs. And
+  // that band, with the head under it, turned white (`--dc-sheet`) over the
+  // cream pane, its top-right corner still rounded: a slab with a notch,
+  // whose edges read as a gap down both sides and along the foot.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // 1. THE TABS ARE THE BAR ON EVERY PAGE; the back bar is not measured.
+  assert.match(WORKSHOP, /<ProjectBand[^>]*?\n\s*barRef=\{setBar\}\n\s*\/>/, 'the band is the bar, All items too');
+  assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/, 'the back bar carries no ref');
+  assert.equal((WORKSHOP.match(/\{setBar\}/g) || []).length, 1, 'and nothing else is the bar');
+
+  // 2. THE BACK BAR SCROLLS, under the tabs: in the flow, unshifted, with
+  //    no stacking level over them and no band of its own.
+  assert.match(decls, /\n  \.dev-ws-tabs\.dev-ws-pagebar \{ position: relative; top: auto; z-index: auto; \}/);
+  assert.match(decls, /\n  \.dev-ws-tabs\.dev-ws-pagebar::before \{ content: none; \}/);
+  //    ...and it overrides the strip's rule by specificity, not by order:
+  //    the strip's own `position: sticky` is written after it.
+  assert.ok(decls.indexOf('.dev-ws-tabs.dev-ws-pagebar {') < decls.indexOf('\n  .dev-ws-tabs {'));
+
+  // 3. UNDER 768px THE HEAD RESTS ON THE BAND'S FOOT. The coloured band is
+  //    opaque and draws no sheet behind it, so the measured offset's column
+  //    gap would show the cards; a phone's head rests the same way (58px).
+  assert.match(decls, /@media \(max-width: 767\.98px\) \{\s*#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-pin-top, 0px\) - 15px \+ 58px\); \}\s*\}/);
+  assert.ok(decls.indexOf('- 15px + 58px') > decls.indexOf('#dev-workshop .dev-ws-pane-head {'),
+    'after the measured offset it overrides, which has the same specificity');
+
+  // 4. ONE COLOUR. The head keeps the pane's while pinned, and the band
+  //    behind the tabs matches it (asserted with the band's other rules).
+  assert.doesNotMatch(CSS.replace(/\/\*[\s\S]*?\*\//g, ''), /\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background/,
+    'the pinned head is not repainted');
+  assert.match(CSS, /\n\.dev-ws-pane-head, \.dev-ws-pane-body \{ background-color: var\(--dc-sheet-solid\); \}/);
+
+  // 5. SQUARE ON TOP, both corners, at every width (outside the wide block),
+  //    once the head has left the top of its pane.
+  assert.match(CSS, /\n\.dev-ws\[data-ws-head-pinned\] \.dev-ws-pane-head \{ border-top-left-radius: 0; border-top-right-radius: 0; \}/);
+  assert.doesNotMatch(decls, /border-top-left-radius/, 'not the wide block\'s left corner alone');
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body, /const below = bar\.nextElementSibling;/, 'pinned once what follows the bar slides under it — the back bar on All items');
+  assert.match(body, /host\.querySelector<HTMLElement>\(':scope > \.dev-ws-tabbody > \[data-ws-pane\]'\)/);
+  assert.match(body, /host\.toggleAttribute\('data-ws-head-pinned', headPinned\)/);
+  assert.equal((body.match(/host\.removeAttribute\('data-ws-head-pinned'\)/g) || []).length, 2,
+    'cleared with no bar, and on teardown');
+  assert.doesNotMatch(body, /enabled/, 'and not only from 700px');
 });
 
 test('the Needs-you card is marked voted only once the server has the vote (QA 2026-09-24 Q3)', () => {

@@ -19,8 +19,10 @@ const {
   conversationInviteLimiter,
   conversationReactionLimiter,
   conversationReportLimiter,
+  linkCardLimiter,
   userDirectoryLimiter,
 } = require('../middleware/rate-limits');
+const sharedObjects = require('../services/shared-objects');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const MAX_CONVERSATION_ATTACHMENT_BYTES = 200 * 1024 * 1024;
@@ -107,6 +109,51 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.json({ conversations: await conversations.listConversations(pool, req.user) });
     } catch (err) {
       log.error('conversations', 'list failed', { err: err.message, userId: req.user.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #3692: the activity tray at the top of the Homeroom bot's DM: what the
+  // bot is working on for the signed-in person now, and what it did for them
+  // before (services/homeroom-bot-tray.js). Their own work only: it takes no
+  // user parameter, and reads every row by req.user's id. Not a conversation
+  // id: the segment is a word, and no route takes `/:id/work`.
+  router.get('/api/conversations/homeroom-bot/work', async (req, res) => {
+    try {
+      const tray = require('../services/homeroom-bot-tray');
+      if (isDemo(req)) return res.json(tray.demoWork());
+      return res.json(await tray.workFor(pool, { user: req.user }));
+    } catch (err) {
+      log.error('conversations', 'homeroom bot work failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #3660: what the Homeroom links in a message are, for this viewer.
+  //
+  //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |
+  //                                    session_id | proposal_id }, …] }
+  //   → 200 { cards: [card | { type, available: false }, …] }  (in order)
+  //
+  // A DM and an app's discussion both ask, so it is not under either one's
+  // prefix. The client parsed each ref out of a link to this platform's own
+  // address (frontend/src/features/messages/homeroom-links.ts); this answers
+  // each through services/shared-objects.js `hydrateLink`, under the same
+  // view rules as a shared card, so a reader gets a card only for a page
+  // they can open. A POST because a list of refs is a body, not a query; it
+  // reads and writes nothing else. Still same-origin only, as every unsafe
+  // verb here is (middleware/same-site-browser.js): a page on a sibling
+  // subdomain has no business asking what this viewer can see.
+  router.post('/api/link-cards', linkCardLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const refs = req.body?.refs;
+    if (!Array.isArray(refs) || refs.length > sharedObjects.MAX_LINK_CARDS) {
+      return res.status(400).json({ error: `refs must be a list of at most ${sharedObjects.MAX_LINK_CARDS} links` });
+    }
+    try {
+      return res.json({ cards: await sharedObjects.hydrateLinks(pool, req.user, refs) });
+    } catch (err) {
+      log.error('conversations', 'link cards failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

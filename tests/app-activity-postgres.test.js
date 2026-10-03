@@ -82,6 +82,13 @@ test('activity receipts deduplicate concurrent delivery and preserve occurrence 
       [app.id, user.id]
     )).rows[0].seconds_spent, 13, 'receipt reuse rolls back without changing the total');
 
+    // The first delivery's commit also started the throttled background
+    // cleanup. Both pooled clients were busy then, so it waits for a new
+    // connection and can run its DELETE after the UPDATE below, purging the
+    // aged receipt itself and leaving the explicit purge nothing to count.
+    // Let it finish first; the throttle keeps the later commits in this test
+    // from starting another.
+    await activity._awaitReceiptCleanupForTests();
     await pool.query(
       `UPDATE app_activity_receipts SET received_at = NOW() - INTERVAL '31 days'
         WHERE batch_id = $1::uuid`,

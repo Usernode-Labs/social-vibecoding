@@ -193,6 +193,48 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
 });
 
+test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {
+  // A real spec runs past the 2,000 characters the comments route keeps of
+  // each body (github.clipIssueComments), so the page never saw the closing
+  // `</details>`, the split matched nothing, and the request page showed
+  // `<details><summary>The spec</summary>` as text. Through the real clip.
+  const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(fn, '_botSpecOf() found');
+  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
+  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
+  const live = require('../src/services/homeroom-bot-live');
+  const github = require('../src/services/github');
+  const spec = [
+    '# Add a light and dark mode toggle',
+    '',
+    '## User-facing changes',
+    '',
+    'The app gains a light mode and a dark mode, with a toggle on the home screen.',
+    '',
+    '## Design',
+    '',
+    ...Array.from({ length: 60 }, (_, k) => `- Detail ${k}: the toggle remembers the choice on this device.`),
+  ].join('\n');
+  const full = live.specCommentText(spec);
+  assert.ok(full.length > 2000, 'the fixture is longer than the clip, like a real spec');
+  const { comments: [clipped] } = github.clipIssueComments([{ author: 'usernode-bot', body: full, createdAt: '' }]);
+  assert.doesNotMatch(clipped.body, /<\/details>/, 'the clip cut the close off');
+
+  const got = botSpecOf(clipped);
+  assert.ok(got, 'the clipped comment is still recognised as the spec');
+  assert.equal(got.title, 'Add a light and dark mode toggle');
+  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  for (const part of [got.lead, got.body]) {
+    assert.doesNotMatch(part, /<\/?(details|summary)>/, 'no marker is left to show as text');
+  }
+  assert.match(got.body, /^## User-facing changes\n/);
+  assert.match(got.body, /… \[truncated\]$/, 'and it says it was cut short, as any clipped comment does');
+
+  // The whole comment still splits exactly as before.
+  assert.equal(botSpecOf({ author: 'usernode-bot', body: full }).body.endsWith('this device.'), true);
+});
+
 test('#3490: the spec is drawn as a spec, folded under its title, outside the comment\'s clamp', () => {
   const html = render({
     comments: [comment({

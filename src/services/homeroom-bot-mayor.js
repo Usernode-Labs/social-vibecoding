@@ -22,6 +22,14 @@
 // It ends every turn with `reply`: a short answer and up to three cards for
 // the requests or proposals it talks about.
 //
+// #3685: "how far along are you?" is answered from `progress`
+// (homeroom-bot-progress.js): for each thing the bot is doing for them, its
+// step (step 4 of 7, building it), since when, the step's time limit and
+// links, all from the platform's records. A model request that fails is
+// tried once more on a fresh provider route, with more room when it ran out
+// of it, and a turn whose model still cannot answer a question about their
+// work says what the records say instead of "I couldn't answer".
+//
 // It can also read the platform the way the agent-session Mayor does: the
 // same connector read tools (get_request, get_discussion, list_requests,
 // get_proposal, get_platform_conventions, …) through the Mayor's in-process
@@ -43,10 +51,24 @@
 // own ledger, scoped to one person, which is a handful of queries here.
 
 const log = require('./logger');
+const progressSvc = require('./homeroom-bot-progress');
 
 const MAX_HISTORY = 24;
 const MAX_ROUNDS = 6;
 const MAX_OUTPUT_TOKENS = 900;
+// A round cut off at its output limit is asked again with this much room: a
+// reasoning model spends its thinking from the same allowance, and a long
+// answer about their work is where it ran out.
+const RETRY_OUTPUT_TOKENS = 1800;
+// A failed model request is tried once more on a fresh route (a new
+// provider session), for these failures, while the turn is this young.
+const RETRYABLE_MODEL_ERRORS = new Set([
+  'timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error', 'output_limit',
+]);
+const RETRY_WITHIN_MS = 90_000;
+// A message that asks how their work is going. Read only when the model
+// could not answer, so the records are said instead.
+const PROGRESS_QUESTION = /\b(how far|progress|status|how('s| is| are) (it|things|that|my \w+) going|how long|(done|ready|finished|built|live) yet|eta|what are you (doing|working on|up to)|where are (you|we|things)|any (news|updates?)|still (working|building|setting))\b/i;
 const MAX_TURNS_PER_HOUR = 30;
 const MAX_CARDS = 3;
 const MAX_REPLY_CHARS = 2500;
@@ -129,14 +151,17 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     'at a time.',
     '',
     'In this chat you can:',
-    '- Say what you are working on for them and how it is going. For ANY question about their work, call my_work',
-    '  first and answer only from what it returns. Use request_detail for the whole story of one request.',
+    '- Say what you are working on for them and how far along it is. For "how far along are you?", "is it ready?"',
+    '  or "what are you doing?", call progress first: for each thing you are doing for them it gives the step you',
+    '  are on (say it, for example "step 4 of 7: building it, 6 minutes so far"), what is happening, since when,',
+    '  and who it waits on. For the whole list of their requests, call my_work. For ANY question about their',
+    '  work, answer only from what these return. Use request_detail for the whole story of one request.',
     '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
     '  word for word on the request\'s public discussion, where the group can see it; say so.',
     '- Offer to file a new request on one of their projects when they ask you to build or change something',
     '  (offer_request). Nothing is filed until they tap File it under your message. Use their own words.',
-    'Finish every turn by calling reply exactly once: short plain text, and cards for up to 3 requests or',
-    'proposals you mention.',
+    'Finish every turn by calling reply exactly once: short plain text, and cards for up to 3 requests,',
+    'proposals or projects you mention.',
     '',
     'HOW HOMEROOM WORKS',
     '- Each project has a board of requests (features and bugs) and a group of members. A change to a project is a',
@@ -155,8 +180,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     'Rules:',
     '- Only say what the tools show. If you do not know, say so. Never claim something is built, merged or live',
     '  unless the tools say it is.',
-    '- Plain everyday words. No code, no internal ids, no links (the cards are the links). Call things',
-    '  "request", "proposal" and the project by its name.',
+    '- Never guess how long something will take, and never say it is nearly done. A step\'s time limit is the',
+    '  most it can take before it is stopped, not an estimate: say it that way if they ask how long.',
+    '- Plain everyday words. No code and no internal ids. Show the requests, proposals and projects you mention',
+    '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
+    '  Call things "request", "proposal" and the project by its name.',
     '- Keep a reply under 120 words unless they ask for detail.',
     '- From this chat you cannot build, merge, vote, close requests or change settings. Changes happen through',
     '  requests and their proposals.',
@@ -171,6 +199,14 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
 }
 
 const TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'progress',
+      description: 'How far along you are with this person\'s work right now, from your own records. rightNow: each thing in progress (setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal\'s checks, the group\'s vote) with the step it is on (step and of, and the step\'s name), what is happening, since when and minutesSoFar, the step\'s time limit when it has one (the most it can take, not an estimate), waitingOn (them, or the group; none when it is on you), busyNow when you are doing it this minute, the proposal\'s checks and votes, and links. finishedLately: what came to something in the last two weeks. Empty rightNow means you are doing nothing for them now.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -247,12 +283,12 @@ const TOOLS = [
           cards: {
             type: 'array',
             maxItems: MAX_CARDS,
-            description: 'Up to 3 requests or proposals you mention, shown as cards under the reply.',
+            description: 'Up to 3 requests, proposals or projects you mention, shown as cards under the reply.',
             items: {
               type: 'object',
               properties: {
-                kind: { type: 'string', enum: ['request', 'proposal'] },
-                project: { type: 'string', description: 'For a request: its project\'s short name.' },
+                kind: { type: 'string', enum: ['request', 'proposal', 'project'] },
+                project: { type: 'string', description: 'For a request or a project: the project\'s short name.' },
                 number: { type: 'integer', description: 'For a request: its number.' },
                 proposal: { type: 'integer', description: 'For a proposal: its proposal id from my_work.' },
               },
@@ -275,7 +311,7 @@ function statusOf(row) {
   const proposal = row.proposal_status || null;
   if (proposal === 'merged') return 'approved and live';
   if (proposal === 'merging') return 'approved, being merged now';
-  if (row.started_at) return row.building ? 'building it now' : 'looking at it now';
+  if (row.started_at) return 'looking at it now';
   if (row.open_question) return 'waiting for their answer to your question';
   if (proposal === 'promoted') return 'proposal up for the group\'s vote';
   if (row.enqueued_at) return row.queue_position ? `waiting in your queue (number ${row.queue_position})` : 'waiting in your queue';
@@ -289,47 +325,32 @@ function statusOf(row) {
   }
 }
 
-async function proposalFacts(pool, sessionId) {
-  if (!sessionId) return null;
-  const { rows } = await pool.query(
-    `SELECT cs.id, cs.app_id, cs.status, cs.check_state, cs.session_title, cs.pr_title, cs.promoted_at,
-            cs.created_at,
-            (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${require('./pr-vote-revision').currentVotePredicateSql('pv', 'cs')}) AS yes,
-            (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${require('./pr-vote-revision').currentVotePredicateSql('pv', 'cs')}) AS no
-       FROM chat_sessions cs WHERE cs.id = $1`,
-    [sessionId],
-  );
-  const s = rows[0];
-  if (!s) return null;
-  let needed = null;
-  if (s.status === 'promoted') {
-    try {
-      const governance = require('./governance');
-      const gov = await governance.getGovernance(pool, s.app_id);
-      const electorate = await governance.getElectorate(pool, s.app_id, gov);
-      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at).required;
-    } catch { needed = null; }
-  }
-  return {
-    proposal: Number(s.id),
-    title: s.session_title || s.pr_title || null,
-    status: { promoted: 'up for a vote', merging: 'being merged', merged: 'merged and live', closed: 'closed' }[s.status] || s.status,
-    checks: s.check_state || 'not run yet',
-    yesVotes: s.yes,
-    noVotes: s.no,
-    votesNeeded: Number.isFinite(needed) ? needed : null,
-  };
+// Where links point: the platform's own domain, as the bot's posts use it.
+function domainOf(deps) {
+  return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
+}
+
+/** `progress` (homeroom-bot-progress.js) for this person, with the DM's own dependencies. */
+async function progressOf(pool, { userId, settings, config = null, deps = {} }) {
+  return progressSvc.progressFor(pool, {
+    userId, settings, config, deps: { botSvc: deps.botSvc, creationPhase: deps.creationPhase, domain: domainOf(deps) },
+  });
+}
+
+/** A progress entry as one line of my_work: "step 4 of 7: building it". */
+function stepLine(entry) {
+  return entry.step ? `step ${entry.step} of ${entry.of}: ${entry.doing}` : entry.doing;
 }
 
 /**
  * Everything the bot knows it is doing for `userId`: the requests recorded
  * as theirs (homeroom_bot_requesters), plus anything of theirs waiting in
  * its queue that it has not looked at yet, and the first versions it is
- * waiting to file. Newest first.
+ * waiting to file. Newest first. What is in progress, and how far along,
+ * is `progress`'s (homeroom-bot-progress.js): a build has no queue row, so
+ * the queue alone would call a request being built idle.
  */
-async function myWork(pool, { userId, settings, deps = {} }) {
+async function myWork(pool, { userId, settings, config = null, deps = {} }) {
   const bot = botModule(deps);
   const { rows } = await pool.query(
     `WITH mine AS (
@@ -347,7 +368,7 @@ async function myWork(pool, { userId, settings, deps = {} }) {
             q.id AS queue_id, q.started_at, q.enqueued_at,
             run.verdict, run.created_at AS run_at, run.build_ok,
             prop.proposal_session_id, cs.status AS proposal_status,
-            oq.message_id AS open_question, news.kind AS news_kind, news.created_at AS news_at
+            oq.message_id AS open_question
        FROM mine m
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
@@ -367,11 +388,6 @@ async function myWork(pool, { userId, settings, deps = {} }) {
           WHERE user_id = $1 AND app_id = m.app_id AND issue_number = m.issue_number AND question_status = 'open'
           ORDER BY created_at DESC LIMIT 1
        ) oq ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT kind, created_at FROM homeroom_bot_dm_messages
-          WHERE user_id = $1 AND app_id = m.app_id AND issue_number = m.issue_number
-          ORDER BY created_at DESC LIMIT 1
-       ) news ON TRUE
       ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz), COALESCE(q.enqueued_at, 'epoch'::timestamptz)) DESC
       LIMIT 25`,
     [userId],
@@ -388,24 +404,35 @@ async function myWork(pool, { userId, settings, deps = {} }) {
     );
     queue.forEach((q, i) => position.set(Number(q.id), i + 1));
   }
+  // What is in progress. Without it the list still answers, from the queue.
+  let progress = null;
+  try {
+    progress = await progressOf(pool, { userId, settings, config, deps });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId, err: err.message });
+  }
+  const inProgress = new Map((progress?.rightNow || []).map((e) => [`${e.project}#${e.number || ''}`, e]));
   const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
   const requests = [];
   for (const row of rows) {
-    // Building once its "I'm building this now" reached them during this turn of work.
-    const building = !!(row.started_at && row.news_kind === 'spec' && row.news_at
-      && new Date(row.news_at) >= new Date(row.started_at));
+    const now = inProgress.get(`${row.slug}#${Number(row.issue_number)}`);
     const item = {
       project: row.slug,
       projectName: row.name || row.slug,
       number: Number(row.issue_number),
       title: row.first_version ? 'First version' : (row.issue_title || null),
-      status: statusOf({ ...row, building, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
+      status: now
+        ? stepLine(now)
+        : statusOf({ ...row, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
       botBuildsHere: builds(row.slug),
     };
-    if (row.started_at) item.since = new Date(building ? row.news_at : row.started_at).toISOString();
+    if (now?.since) item.since = now.since;
+    else if (row.started_at) item.since = new Date(row.started_at).toISOString();
     if (row.run_at) item.lastLooked = new Date(row.run_at).toISOString();
-    if (row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed') {
-      item.proposal = await proposalFacts(pool, Number(row.proposal_session_id));
+    if (now?.proposal) {
+      item.proposal = now.proposal;
+    } else if (row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed') {
+      item.proposal = await progressSvc.proposalFacts(pool, Number(row.proposal_session_id), { domain: domainOf(deps) });
     }
     requests.push(item);
   }
@@ -415,17 +442,27 @@ async function myWork(pool, { userId, settings, deps = {} }) {
       ORDER BY f.created_at DESC LIMIT 10`,
     [userId],
   );
-  const now = await bot.workingNow(pool, settings, { userId });
+  const workingOnNow = progress
+    ? progress.rightNow.filter((e) => e.busyNow).map((e) => ({
+      project: e.project, projectName: e.projectName, ...(e.number ? { number: e.number } : {}),
+      title: e.title, status: stepLine(e), ...(e.since ? { since: e.since } : {}),
+    }))
+    : (await bot.workingNow(pool, settings, { userId }))
+      .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
   const cap = Number(settings?.userWeeklyCents) || 0;
   const spent = await dmModule(deps).weeklySpentCents(pool, userId);
   return {
-    workingOnNow: now.map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since })),
+    workingOnNow,
     requests,
-    firstVersionsNotFiledYet: firsts.map((f) => ({
-      project: f.slug,
-      projectName: f.name || f.slug,
-      status: f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
-    })),
+    firstVersionsNotFiledYet: firsts.map((f) => {
+      const setup = inProgress.get(`${f.slug}#`);
+      return {
+        project: f.slug,
+        projectName: f.name || f.slug,
+        status: setup ? stepLine(setup)
+          : f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
+      };
+    }),
     atOnce: `You work on up to ${settings?.perPerson || 2} of their projects at a time, one request per project.`,
     allowance: cap > 0
       ? { usedThisWeek: dollars(spent), weeklyAllowance: dollars(cap), left: dollars(Math.max(0, cap - spent)) }
@@ -499,7 +536,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
       build: r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${clip(r.build_error || 'no reason recorded', 300)}`),
     })),
-    proposal: sessionId ? await proposalFacts(pool, Number(sessionId)) : null,
+    proposal: sessionId ? await progressSvc.proposalFacts(pool, Number(sessionId), { domain: domainOf(deps) }) : null,
   };
 }
 
@@ -701,6 +738,10 @@ async function resolveCards(pool, user, cards) {
     } else if (card?.kind === 'request' && Number.isInteger(Number(card.number))) {
       const app = await findApp(pool, card.project);
       if (app && await canView(pool, app, user)) out.push({ type: 'issue', appId: Number(app.id), issueNumber: Number(card.number) });
+    } else if (card?.kind === 'project') {
+      // #3685: a project still being set up has no request or proposal yet.
+      const app = await findApp(pool, card.project);
+      if (app && await canView(pool, app, user)) out.push({ type: 'app', appId: Number(app.id) });
     }
   }
   const seen = new Set();
@@ -717,7 +758,14 @@ async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
   try {
     switch (name) {
-      case 'my_work': return await myWork(pool, { userId: user.id, settings, deps });
+      case 'progress': {
+        ctx.progress = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
+        return ctx.progress;
+      }
+      case 'my_work': {
+        ctx.readWork = true;
+        return await myWork(pool, { userId: user.id, settings, config: ctx.config, deps });
+      }
       case 'request_detail': return await requestDetail(pool, { user, project: args.project, number: args.number, settings, deps });
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'answer_question': {
@@ -785,6 +833,43 @@ function parseArgs(raw) {
 }
 
 /**
+ * Pure: how to ask a failed model round once more, or null when asking
+ * again would not help. Every retry goes on a fresh route; one cut off at
+ * its output limit gets more room, and a round that forced the reply tool
+ * on a provider that refuses forced tool choices lets the model choose.
+ */
+function retryPlan(err, { forced = false, elapsedMs = 0 } = {}) {
+  if (elapsedMs > RETRY_WITHIN_MS) return null;
+  const code = err?.code;
+  if (code === 'output_limit') return { maxOutputTokens: RETRY_OUTPUT_TOKENS };
+  if (forced && code === 'invalid_request' && err?.status) return { toolChoice: 'auto' };
+  return RETRYABLE_MODEL_ERRORS.has(code) ? {} : null;
+}
+
+/**
+ * When the model could not answer a question about their work: what the
+ * records say, from the turn's own progress read or a fresh one, with cards.
+ * Null for any other question, or when the records cannot be read either.
+ */
+async function recordsAnswer(pool, ctx) {
+  if (!ctx.progress && !ctx.readWork && !PROGRESS_QUESTION.test(ctx.userText)) return null;
+  let progress = ctx.progress;
+  if (!progress) {
+    try {
+      progress = await progressOf(pool, { userId: ctx.user.id, settings: ctx.settings, config: ctx.config, deps: ctx.deps });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId: ctx.user.id, err: err.message });
+      return null;
+    }
+  }
+  const cards = await resolveCards(pool, ctx.user, progress.rightNow.slice(0, MAX_CARDS).map((e) => {
+    if (e.number) return { kind: 'request', project: e.project, number: e.number };
+    return { kind: 'project', project: e.project };
+  }));
+  return { text: `I couldn't put a full answer together just now. ${progressSvc.progressText(progress)}`, cards };
+}
+
+/**
  * Answer one message in the bot's DM. `bot` and `settings` come from
  * noteUserMessage. Resolves what was sent, or null.
  */
@@ -794,8 +879,10 @@ function runDmTurn(pool, config, { bot, user, settings, conversationId, message,
 
 async function turn(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const dm = dmModule(deps);
+  // #3707: every answer quotes the message it answers, so with several in
+  // flight each one points at its own.
   const say = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: `hrbot-mayor-${message.id}`, ...extra,
+    bot, userId: user.id, content, idempotencyKey: `hrbot-mayor-${message.id}`, replyToId: message.id, ...extra,
   });
   if (settings.mode === 'off') return say(OFF_TEXT);
   if (await turnsLastHour(pool, user.id) >= MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
@@ -836,8 +923,8 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     : [];
   const tools = [...TOOLS, ...platformTools];
   const ctx = {
-    user, settings, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null,
+    user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
+    cards: [], offer: null, reply: null, progress: null, readWork: false,
   };
   const messages = [
     { role: 'system', content: systemPrompt({ username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0 }) },
@@ -848,11 +935,16 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
   let rounds = 0;
   let finalText = '';
   let error = null;
+  // OpenRouter's session pins a provider. It is this turn's, not the
+  // person's: one that failed them is not the one every later turn of theirs
+  // is sent to. A retry moves to a fresh one, and the turn stays there.
+  let route = 1;
+  const startedMs = Date.now();
   try {
     while (rounds < MAX_ROUNDS && !ctx.reply) {
       rounds += 1;
       const last = rounds === MAX_ROUNDS;
-      const ask = () => chat({
+      const ask = (overrides = {}) => chat({
         apiKey,
         baseUrl: config.openrouterApiBase,
         origin: config.openrouterOrigin,
@@ -862,17 +954,27 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
         tools,
         toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
         maxOutputTokens: MAX_OUTPUT_TOKENS,
-        sessionId: `hrbot-dm-${user.id}`,
+        sessionId: `hrbot-dm-${user.id}-${message.id}${route > 1 ? `-r${route}` : ''}`,
+        ...overrides,
       });
       let res;
       try {
         res = await ask();
       } catch (err) {
-        // A picture the provider cannot read fails the whole request. Once,
-        // send the round again with every picture named instead.
-        if (err?.status !== 400 || !hasPictures(messages)) throw err;
-        withoutPictures(messages);
-        res = await ask();
+        if (err?.status === 400 && hasPictures(messages)) {
+          // A picture the provider cannot read fails the whole request. Once,
+          // send the round again with every picture named instead.
+          withoutPictures(messages);
+          res = await ask();
+        } else {
+          // #3685: one failed request used to end the turn with "I couldn't
+          // answer just now", whatever the round had already read.
+          const plan = retryPlan(err, { forced: last, elapsedMs: Date.now() - startedMs });
+          if (!plan) throw err;
+          route += 1;
+          log.info('homeroom-bot-mayor', 'Asking the DM model again', { userId: user.id, round: rounds, code: err?.code });
+          res = await ask(plan);
+        }
       }
       usage.inputTokens += res.usage?.inputTokens || 0;
       usage.outputTokens += res.usage?.outputTokens || 0;
@@ -914,7 +1016,13 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     }
   }
   const text = clip(ctx.reply?.text || finalText, MAX_REPLY_CHARS);
-  if (!text && !ctx.offer) return say(error ? BROKEN_TEXT : 'I\'m not sure what to say to that. Ask me what I\'m working on for you, or what you\'d like built.');
+  if (!text && !ctx.offer) {
+    // A question about their work is answered from the records even when
+    // the model could not put an answer together.
+    const fromRecords = await recordsAnswer(pool, ctx);
+    if (fromRecords) return say(fromRecords.text, { objects: fromRecords.cards, metadata: { kind: 'chat' } });
+    return say(error ? BROKEN_TEXT : 'I\'m not sure what to say to that. Ask me what I\'m working on for you, or what you\'d like built.');
+  }
   if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
   const cards = [...ctx.cards, ...await resolveCards(pool, user, ctx.reply?.cards)];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
@@ -942,6 +1050,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     userId: user.id,
     content: body,
     idempotencyKey: `hrbot-mayor-${message.id}`,
+    // It quotes the message it answers, and that quote is where the
+    // request's later news finds what it started from (#3707,
+    // homeroom-bot-dm.js requestStart).
+    replyToId: message.id,
     metadata: {
       kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
       question: `File this as a request on ${name}?`, answers: [FILE_IT, NOT_NOW], status: 'open', mirrors: false,
@@ -977,7 +1089,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
   const no = said(message.content, NOT_NOW);
   if (!yes && !no) return null;
   const ack = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: `hrbot-offer-${message.id}`, ...extra,
+    bot, userId: user.id, content, idempotencyKey: `hrbot-offer-${message.id}`, replyToId: message.id, ...extra,
   });
   // Decided once: the first tap wins, and a second says what happened.
   const { rows: claimed } = await pool.query(
@@ -1092,7 +1204,11 @@ module.exports = {
   PLATFORM_TOOLS,
   platformRules,
   systemPrompt,
+  RETRY_OUTPUT_TOKENS,
+  RETRYABLE_MODEL_ERRORS,
+  PROGRESS_QUESTION,
   statusOf,
+  retryPlan,
   myWork,
   requestDetail,
   myProjects,

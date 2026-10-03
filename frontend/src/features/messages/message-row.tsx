@@ -13,6 +13,7 @@ import {
 import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { BotQuestion } from './bot-question';
+import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -248,6 +249,9 @@ export const MessageRow = memo(function MessageRow({
       {message.sender.bot && message.metadata?.homeroomBot?.question ? <BotQuestion message={message} conversationId={conversationId} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
+      {/* #3660: a link in the words to one of Homeroom's own pages, as the
+          card it names — for this reader, and never one already above. */}
+      {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
       {message.thread && !inThread ? (
         <ThreadSummaryChip

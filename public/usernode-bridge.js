@@ -3941,8 +3941,45 @@
   // =====================================================================
   //  QR Transaction Modal
   // =====================================================================
+  /* __USERNODE_QR_MODAL_BEGIN__ */
   var _qrOverlay = null;
   var _qrCancelReject = null;
+  var _qrThemeWired = false;
+
+  // The card's light/dark look is the viewer's PLATFORM theme
+  // (`usernode.theme`, set by the theme block further down), not the OS:
+  // inside the platform frame `prefers-color-scheme` follows the OS, so a
+  // viewer who picked Dark on a light-mode OS got a white card over a dark
+  // app. The OS decides only while no platform theme is known (standalone,
+  // or a frame the shell has not answered yet), and then exactly as the
+  // card always did: dark unless the OS asks for light.
+  function qrTheme() {
+    var theme = window.usernode && window.usernode.theme;
+    if (theme === "dark" || theme === "light") return theme;
+    try {
+      return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    } catch (_) {
+      return "dark";
+    }
+  }
+
+  function applyQrTheme() {
+    if (_qrOverlay) _qrOverlay.setAttribute("data-un-theme", qrTheme());
+  }
+
+  // Live while the card is open: the shell's change (the bridge's
+  // `usernode:theme-changed`) and, for the fallback only, an OS flip.
+  // Wired on first show, so an app that never pays by QR adds no listener.
+  function wireQrTheme() {
+    if (_qrThemeWired) return;
+    _qrThemeWired = true;
+    window.addEventListener("usernode:theme-changed", applyQrTheme);
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: light)");
+      if (mq.addEventListener) mq.addEventListener("change", applyQrTheme);
+      else if (mq.addListener) mq.addListener(applyQrTheme);
+    } catch (_) {}
+  }
 
   function createQrOverlayStyles() {
     if (document.getElementById("__usernode-qr-styles")) return;
@@ -3951,20 +3988,23 @@
     style.textContent = [
       ".__un-qr-overlay{position:fixed;inset:0;z-index:999999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);font-family:-apple-system,system-ui,sans-serif}",
       ".__un-qr-card{background:#1a1f2e;color:#e7edf7;border-radius:16px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4)}",
-      "@media(prefers-color-scheme:light){.__un-qr-card{background:#fff;color:#0b1220;box-shadow:0 8px 32px rgba(0,0,0,0.15)}}",
+      // Keyed off the overlay's data-un-theme (qrTheme above), never a
+      // media query: that would follow the OS over the platform theme.
+      ".__un-qr-overlay[data-un-theme=light] .__un-qr-card{background:#fff;color:#0b1220;box-shadow:0 8px 32px rgba(0,0,0,0.15)}",
       ".__un-qr-title{font-size:17px;font-weight:600;margin:0 0 4px}",
       ".__un-qr-subtitle{font-size:13px;opacity:0.7;margin:0 0 20px}",
       ".__un-qr-canvas{border-radius:12px;margin:0 auto 16px}",
       ".__un-qr-status{font-size:12px;opacity:0.6;margin:0 0 16px;min-height:16px}",
       ".__un-qr-cancel{background:none;border:1px solid rgba(255,255,255,0.2);color:inherit;border-radius:8px;padding:8px 24px;font-size:14px;cursor:pointer;opacity:0.8}",
       ".__un-qr-cancel:hover{opacity:1}",
-      "@media(prefers-color-scheme:light){.__un-qr-cancel{border-color:rgba(0,0,0,0.15)}}",
+      ".__un-qr-overlay[data-un-theme=light] .__un-qr-cancel{border-color:rgba(0,0,0,0.15)}",
     ].join("\n");
     document.head.appendChild(style);
   }
 
   function showQrModal(payload, opts) {
     createQrOverlayStyles();
+    wireQrTheme();
 
     var title = (opts && opts.confirmTitle) || "Confirm Transaction";
     var subtitle = (opts && opts.confirmSubtitle) || "Scan this QR code with the Usernode mobile app.";
@@ -3976,6 +4016,7 @@
 
     var overlay = document.createElement("div");
     overlay.className = "__un-qr-overlay";
+    overlay.setAttribute("data-un-theme", qrTheme());
 
     var card = document.createElement("div");
     card.className = "__un-qr-card";
@@ -4025,6 +4066,7 @@
     }
     _qrOverlay = null;
   }
+  /* __USERNODE_QR_MODAL_END__ */
 
   // ── QR sendTransaction ─────────────────────────────────────────────────
   function qrSendTransaction(destination_pubkey, amount, memo, opts) {
@@ -6295,7 +6337,8 @@
   //      theme change; nothing reloads the app).
   //
   // It reports only. The app decides what dark means for it, so nothing
-  // here writes a class, an attribute or a style.
+  // here writes a class, an attribute or a style. (The bridge's own QR
+  // transaction card reads it too: see qrTheme.)
   /* __USERNODE_THEME_BEGIN__ */
   (function () {
     function normalize(value) {

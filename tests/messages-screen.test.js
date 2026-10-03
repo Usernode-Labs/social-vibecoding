@@ -63,18 +63,22 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,1400}navigateToMessages/);
 });
 
-test('an app\'s channel keeps its address here, though it is listed on its hub', () => {
+test('an app\'s channel address goes to its project page\'s Discussion tab; only Homeroom\'s archive stays here', () => {
   // #2718 review. The row was listed in this inbox and addressed as
   // `#app/<slug>/dev/chat` — a different SCREEN ROOT — so a row in this list
   // opened a full-window takeover with the app view's own back slot instead
   // of a pane beside the list. Both complaints it drew ("still one pane for
   // apps", "back goes to the workshop") were that one mismatch.
+  //
+  // #3653: the room is its project page's Discussion tab now, so the address
+  // goes there (App._appChatToHub, tests/discussion-in-hub.test.js); the one
+  // room still drawn here is Homeroom's archived app chat.
   const routeStart = app.indexOf("if (parts[0] === 'messages')");
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
-  assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
+  assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox reads the address');
   // #2387: what follows the slug — a reply thread, a message link — rides
   // along as a fourth argument (App._messagesExtras).
-  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
+  assert.match(messagesRoute, /if \(App\._appChatToHub\(parts\[2\], parts\.slice\(3\), hash\)\) return;\s*App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
   // #2813 added the agent thread as a third argument, last in precedence;
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
@@ -119,17 +123,22 @@ test('the conversation list loads only after auth and reconciles on reconnect', 
     'the auth listener is cleaned up if the island unmounts first');
   const resyncStart = app.indexOf('  resyncCurrentView() {');
   const resync = app.slice(resyncStart, app.indexOf('// #1038:', resyncStart));
-  assert.match(resync, /window\.UsernodeReact\?\.messages\?\.refresh\?\.\(\)/);
-  assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.refresh/,
+  // #3705: `resync` — the list, and the conversation on screen with it.
+  assert.match(resync, /window\.UsernodeReact\?\.messages\?\.resync\?\.\(\)/);
+  assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.resync/,
     'reconnect refreshes the conversation list even when the Messages screen is closed');
+  const storeResync = store.slice(store.indexOf('export async function resync('),
+    store.indexOf('\n}', store.indexOf('export async function resync(')));
+  assert.match(storeResync, /const reads = \[loadConversations\(true\)\];/,
+    'the list is re-read whatever is on screen');
 });
 
 test('an invitation resolves metadata before deciding whether history may be fetched', () => {
   const fn = store.slice(store.indexOf('export async function loadThread('),
     store.indexOf('export async function loadOlder('));
-  const detailAt = fn.indexOf('await api.getConversation(conversationId)');
+  const detailAt = fn.indexOf('await api.getConversation(conversationId, read)');
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
-  const messagesAt = fn.indexOf('await api.listMessages(conversationId)');
+  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
   assert.match(screen, /Accepting gives you access to the complete retained conversation history/);
   assert.match(api, /if \(raw === null \|\| \(action === 'decline'/,

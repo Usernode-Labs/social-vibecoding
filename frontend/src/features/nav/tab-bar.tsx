@@ -80,7 +80,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, goToCommunity, hydrateCommunityScope, shortName, toggleSwitcher, warmCommunities,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, toggleSwitcher, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
@@ -165,6 +165,23 @@ export function tabLabel(
 }
 
 /**
+ * The Communities tab's accessible name (#3709).
+ *
+ * THE WORD STAYS "Communities" WHEREVER THE TAB IS. It used to take the
+ * community it was on as its label, "Recipe Box" under the tile, which made
+ * the fourth tab read as one project rather than the place all of yours are,
+ * and the owner asked for the word back, on the phone's bar and the desktop
+ * rail alike. The tile still says which community the tab is on, so only the
+ * spoken name has to add it: it starts with the visible word, for the reason
+ * tabLabel gives, and names the community after it. On All communities the
+ * word is the whole of it, and the anchor carries no label of its own, as
+ * the prerender ships it.
+ */
+export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
+  return scoped ? `Communities, on ${scoped.name}` : undefined;
+}
+
+/**
  * Home's plain click, routed in place.
  *
  * Copied in shape from `#switcher-row-home` in
@@ -204,6 +221,8 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 
 /**
  * THE COMMUNITIES TAB'S FACE: the community it is on, or All communities.
+ * Only the glyph changes: the tab's label says Communities either way
+ * (#3709, communitiesAriaLabel).
  *
  * On the phone's bar, a square ring, the shape of an app's own tile, around
  * either that community's tile, in its colour (features/workshop/
@@ -894,7 +913,7 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' && scoped ? `${scoped.name}, your communities` : tabLabel(key, label, viewer).ariaLabel}
+          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, label, viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">
@@ -939,9 +958,7 @@ export function PlatformTabs() {
             ) : null}
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">
-            {key === 'workshop' && scoped ? shortName(scoped.name) : tabLabel(key, label, viewer).text}
-          </span>
+          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>,
       ])}
       {/*

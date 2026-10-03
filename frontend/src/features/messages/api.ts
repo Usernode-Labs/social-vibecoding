@@ -4,7 +4,11 @@ import type {
   ConversationMessage,
   ConversationSummary,
   ConversationUser,
+  HomeroomBotJob,
   HomeroomBotMeta,
+  HomeroomBotOutcome,
+  HomeroomBotPhase,
+  HomeroomBotWork,
   MessageAttachment,
   MessageReaction,
   MessageThreadSummary,
@@ -13,6 +17,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import type { HomeroomLink } from './homeroom-links';
 import { plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
@@ -157,9 +162,9 @@ function normalizeAttachment(input: unknown, conversationId: number): MessageAtt
 function normalizeObject(input: unknown): SharedObjectCard {
   const row = record(input);
   const ref = record(pick(row, 'reference', 'ref') ?? row);
-  const type = text(pick(ref, 'type', 'kind')) as SharedObjectReference['type'];
+  const type = text(pick(ref, 'type', 'kind')) as SharedObjectCard['type'];
   return {
-    type: ['app', 'issue', 'proposal', 'governance', 'spec'].includes(type) ? type : 'app',
+    type: ['app', 'issue', 'proposal', 'governance', 'spec', 'hub', 'discussion'].includes(type) ? type : 'app',
     appId: strictId(pick(ref, 'appId', 'app_id')) || undefined,
     appSlug: text(pick(ref, 'appSlug', 'app_slug')) || undefined,
     issueNumber: strictId(pick(ref, 'issueNumber', 'issue_number')) || undefined,
@@ -295,6 +300,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     canManage: bool(pick(row, 'canManage', 'can_manage'), text(pick(row, 'myRole', 'my_role', 'role')) === 'owner'),
     archived: bool(pick(row, 'archived')) || text(pick(row, 'status')) === 'archived',
     channelKey: kind === 'channel' ? text(pick(row, 'channelKey', 'channel_key')) || null : null,
+    ...(kind === 'direct' && pick(row, 'homeroomBot') === true ? { homeroomBot: true } : {}),
   };
 }
 
@@ -302,6 +308,30 @@ function demoQuery(path: string): string {
   if (typeof window === 'undefined') return path;
   if (new URLSearchParams(window.location.search).get('demo') !== '1') return path;
   return `${path}${path.includes('?') ? '&' : '?'}demo=1`;
+}
+
+/**
+ * How a read is asked for (#3705, #3706). `fresh` is a read made because
+ * something CHANGED — a realtime event, a send settling, a reconnect — and it
+ * needs the server's answer, not the service worker's.
+ *
+ * The worker answers an ordinary GET /api/* from its offline copy once the
+ * network has taken a second (public/sw.js, API_TIMEOUT_MS). For a read like
+ * this one that copy is the transcript from BEFORE the change: the message the
+ * event announced is missing, and the store, taking the page as the server's
+ * word, dropped the sender's own just-confirmed row with it. The Homeroom
+ * bot's DM is where it showed, because its page is the slowest to answer.
+ *
+ * `cache: 'no-store'` is the worker's existing "leave this to the network"
+ * signal: its fetch handler returns before classifying such a request. A
+ * first open keeps the ordinary read, and with it the offline copy.
+ */
+export interface ReadOptions {
+  fresh?: boolean;
+}
+
+function readInit(options?: ReadOptions): RequestInit {
+  return options?.fresh ? { cache: 'no-store' } : {};
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -320,13 +350,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-export async function listConversations(): Promise<ConversationSummary[]> {
-  const data = record(await request<unknown>('/api/conversations'));
+export async function listConversations(options?: ReadOptions): Promise<ConversationSummary[]> {
+  const data = record(await request<unknown>('/api/conversations', readInit(options)));
   return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
 }
 
-export async function getConversation(id: number): Promise<ConversationDetail> {
-  const data = record(await request<unknown>(`/api/conversations/${id}`));
+export async function getConversation(id: number, options?: ReadOptions): Promise<ConversationDetail> {
+  const data = record(await request<unknown>(`/api/conversations/${id}`, readInit(options)));
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
@@ -374,10 +404,10 @@ export async function leaveConversation(id: number): Promise<void> {
   await request<unknown>(`/api/conversations/${id}/leave`, { method: 'POST', body: '{}' });
 }
 
-export async function listMessages(id: number, before?: number | null): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
+export async function listMessages(id: number, before?: number | null, options?: ReadOptions): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
@@ -400,14 +430,14 @@ export async function sendMessage(id: number, input: { content: string; replyToI
  * window is around the thread's first message and `focus.threadRootId` names
  * it, so the thread opens beside it.
  */
-export async function listMessagesAround(id: number, messageId: number): Promise<{
+export async function listMessagesAround(id: number, messageId: number, options?: ReadOptions): Promise<{
   messages: ConversationMessage[];
   nextBefore: number | null;
   nextAfter: number | null;
   focus: { messageId: number; threadRootId: number | null };
 }> {
   const params = new URLSearchParams({ limit: '50', around: String(messageId) });
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   const focus = record(pick(data, 'focus'));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
@@ -431,14 +461,14 @@ export async function listMessagesAfter(id: number, after: number): Promise<{ me
 }
 
 /** A thread: the message it hangs off, and its replies oldest first (#2387). */
-export async function listThread(id: number, rootId: number, before?: number | null): Promise<{
+export async function listThread(id: number, rootId: number, before?: number | null, options?: ReadOptions): Promise<{
   root: ConversationMessage | null;
   messages: ConversationMessage[];
   nextBefore: number | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
-  const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`));
+  const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`, readInit(options)));
   const root = pick(data, 'root');
   return {
     root: root ? normalizeMessage(root, id) : null,
@@ -521,6 +551,36 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
   }).filter((item) => item.id);
 }
 
+/**
+ * #3660: the cards a message's Homeroom links stand for, as the server
+ * resolves them for THIS viewer — one answer per link, in order, and an
+ * unavailable one for a page they cannot see. Only the parsed page goes up
+ * (./homeroom-links.ts), never the link itself.
+ */
+export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'>>): Promise<SharedObjectCard[]> {
+  const refs = links.map((link) => ({
+    type: link.type,
+    app_slug: link.appSlug,
+    ...(link.issueNumber ? { issue_number: link.issueNumber } : {}),
+    ...(link.sessionId ? { session_id: link.sessionId } : {}),
+    ...(link.proposalId ? { proposal_id: link.proposalId } : {}),
+  }));
+  const data = record(await request<unknown>('/api/link-cards', { method: 'POST', body: JSON.stringify({ refs }) }));
+  return array(pick(data, 'cards')).map(normalizeObject);
+}
+
+/**
+ * #3660: post a message to an app's discussion (its general stream) over
+ * the REST twin of the chat socket — the same canonical write
+ * (routes/chat.js), for a page that has no socket open to that app.
+ */
+export async function postAppMessage(slug: string, content: string): Promise<void> {
+  await request<unknown>(`/api/apps/${encodeURIComponent(slug)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content: content.slice(0, 8000) }),
+  });
+}
+
 export async function reportMessage(
   conversationId: number,
   messageId: number,
@@ -557,4 +617,51 @@ export async function listBlocks(): Promise<ConversationUser[]> {
     const row = record(entry);
     return normalizeUser(pick(row, 'user', 'blockedUser', 'blocked_user') ?? row);
   }).filter((user) => user.id);
+}
+
+const BOT_PHASES = new Set<HomeroomBotPhase>(['looking', 'building', 'following_up', 'setting_up']);
+const BOT_OUTCOMES = new Set<HomeroomBotOutcome>([
+  'question', 'ready', 'proposed', 'live', 'closed', 'build_failed', 'person', 'empty', 'failed', 'answer', 'revise',
+]);
+
+/**
+ * #3692: one job of the Homeroom bot's, field by field. `href` is kept only
+ * when it is one of the platform's own in-app addresses (`#app/…`): the
+ * tray draws it as a link, and a link it draws never leaves the shell.
+ */
+function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
+  const href = text(pick(row, 'href'));
+  return {
+    appSlug: text(pick(row, 'appSlug')) || null,
+    appName: text(pick(row, 'appName')) || text(pick(row, 'appSlug')) || 'A project',
+    issueNumber: strictId(pick(row, 'issueNumber')),
+    title: text(pick(row, 'title')) || null,
+    firstVersion: pick(row, 'firstVersion') === true,
+    href: href.startsWith('#app/') ? href : null,
+  };
+}
+
+export function normalizeBotWork(input: unknown): HomeroomBotWork {
+  const data = record(input);
+  const now = array(pick(data, 'now')).map((entry) => {
+    const row = record(entry);
+    const phase = text(pick(row, 'phase')) as HomeroomBotPhase;
+    return { ...normalizeBotJob(row), phase: BOT_PHASES.has(phase) ? phase : 'looking', since: text(pick(row, 'since')) || null };
+  });
+  const history = array(pick(data, 'history')).map((entry) => {
+    const row = record(entry);
+    const outcome = text(pick(row, 'outcome')) as HomeroomBotOutcome;
+    return {
+      ...normalizeBotJob(row),
+      id: strictId(pick(row, 'id')) || 0,
+      outcome: BOT_OUTCOMES.has(outcome) ? outcome : 'failed',
+      at: text(pick(row, 'at')) || null,
+    };
+  }).filter((job) => job.id);
+  return { now, history };
+}
+
+/** #3692: what the Homeroom bot is doing for the signed-in person, and did before. */
+export async function getHomeroomBotWork(): Promise<HomeroomBotWork> {
+  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work'));
 }

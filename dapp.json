@@ -1095,10 +1095,10 @@
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"assignee\"]"
     },
     {
-      "name": "Issue cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "name": "Issue cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
       "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&cards=open#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
-      "expectText": "Share to Messages"
+      "expectText": "Share to…"
     },
     {
       "name": "Dev board: attribute chips keep the small label inside the 20px box",
@@ -1129,10 +1129,10 @@
       "expectText": "Technical details"
     },
     {
-      "name": "Proposal cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "name": "Proposal cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
-      "expectText": "Share to Messages"
+      "expectText": "Share to…"
     },
     {
       "name": "A directly-opened proposal opens its assignee picker (#1324, #1330)",
@@ -2609,9 +2609,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar) and its name",
+      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar), but keeps the word (#3709)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
+      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"][aria-label^=\"Communities, on \"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
       "expectText": "Homeroom"
     },
     {
@@ -3189,15 +3189,14 @@
       "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
     },
     {
-      "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
+      "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines (in Homeroom's Discussion tab, where its address opens since #3653)",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
     },
     {
-      "name": "#2783: the #general thread names itself as a channel everyone is in",
+      "name": "#3653: #general's address opens Homeroom's Discussion tab, the room in place under the page's own header and tabs (the page names the community, so the room draws no header of its own), not a page of its own on the Messages screen",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-thread-header .messages-thread-name",
-      "expectText": "#general"
+      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded.messages-thread-channel:not(:has(.messages-thread-header))"
     },
     {
       "name": "#2783: #name in a message is a link to that channel",
@@ -3213,18 +3212,18 @@
     {
       "name": "#2884: four shared cards in a row in #general draw as the first card and a “… 3 more” row, the rest folded",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
       "expectText": "… 3 more"
     },
     {
       "name": "#2884: a plain message before the run is not folded into it",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:not(:has(.messages-object-card)) + .messages-message:has(.messages-object-card) + .messages-card-run"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message:not(:has(.messages-object-card)) + .messages-message:has(.messages-object-card) + .messages-card-run"
     },
     {
       "name": "#general is what people said: Homeroom posts no proposal or merge line there, so the room is people's messages alone",
       "path": "/#messages/channel/general",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(.messages-message-system)) .messages-message:not(.messages-message-system)"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel:not(:has(.messages-message-system)) .messages-message:not(.messages-message-system)"
     },
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
@@ -3278,7 +3277,7 @@
     {
       "name": "#2905: a follow-up message's report and block sit behind one ⋯ disc, not three, so the line keeps its width on a phone",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message-grouped > .msgx-bar.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message-grouped > .msgx-bar.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
       "impact": [
         "frontend/src/features/messages/**",
         "public/css/app.css"
@@ -4805,9 +4804,9 @@
       "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
     },
     {
-      "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's)",
+      "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's); its old full-screen address opens the project page's Discussion tab, where the channel is (#3653)",
       "path": "/?demo=1#app/staging-demo-app/dev/chat",
-      "expectSelector": "#dev-chat-body > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .dev-ws-discussion-host > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
     },
     {
       "name": "Settings is a frosted strip with each section as a sheet inside it",
@@ -4918,7 +4917,7 @@
     {
       "name": "A project's channel is what people said: where nobody has spoken it is the quiet card alone, with no line from Homeroom about a proposal, a merge or anything else",
       "path": "/app/staging-demo-quiet/dev/chat",
-      "expectSelector": "#gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] #gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
       "expectText": "Nobody has said anything here yet"
     },
     {
@@ -4927,9 +4926,9 @@
       "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg:not(.gc-msg-self) > .min-w-0 > div > .gc-msg-content"
     },
     {
-      "name": "The same channel in Messages is the quiet card alone too: Homeroom's activity is not a line in any channel",
+      "name": "The same channel by its old Messages address is the quiet card alone too, in its project page's Discussion tab (#3653): Homeroom's activity is not a line in any channel",
       "path": "/#messages/app/staging-demo-quiet",
-      "expectSelector": "#messages-screen:not(.hidden) #gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] #gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
       "expectText": "Nobody has said anything here yet"
     },
     {
@@ -5363,9 +5362,9 @@
       "expectText": "3 replies"
     },
     {
-      "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own",
+      "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own (#general's, in Homeroom's Discussion tab since #3653)",
       "path": "/?demo=1#messages/910004/thread/9100404",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread] .messages-composer-thread",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-layout-embedded.messages-has-reply-thread > .messages-reply-pane[data-reply-thread] .messages-composer-thread",
       "expectText": "Threads keep the room readable"
     },
     {
@@ -5375,9 +5374,9 @@
       "expectText": "Message deleted"
     },
     {
-      "name": "An app's channel opens full width, with no list beside it and no toggle for one",
+      "name": "#3653: an app channel's Messages address opens its project page's Discussion tab, the room in place under the page's header and tabs, not a page of its own on the Messages screen",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-list-collapsed .messages-thread-discussion[data-discussion-app=\"staging-demo-app\"] > .messages-thread-header:not(:has(.messages-list-toggle))"
+      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] section.dev-ws-discussion[data-discussion-app=\"staging-demo-app\"] > .dev-ws-discussion-host #gc-messages"
     },
     {
       "name": "#2387 follow-up: a dev session's pane carries Full width too, after Open full view",
@@ -5391,9 +5390,9 @@
       "expectText": "3 replies"
     },
     {
-      "name": "#2387: a link to a reply in an app channel opens the reply thread it is in, beside the channel",
+      "name": "#2387: a link to a reply in an app channel opens the reply thread it is in, beside the channel, in its project page's Discussion tab (#3653)",
       "path": "/?demo=1#messages/app/staging-demo-app/m/9902022",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane-app[data-reply-thread=\"9902003\"] .messages-reply-host",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .dev-ws-discussion.dev-ws-discussion-threaded[data-discussion-app=\"staging-demo-app\"] > .messages-reply-pane-app[data-reply-thread=\"9902003\"] .messages-reply-host",
       "expectText": "Replies stay in here"
     },
     {
@@ -5409,9 +5408,9 @@
       "expectText": "3 replies in thread"
     },
     {
-      "name": "An open channel belongs to its community: it lights Communities, and its arrow goes back to the project's hub",
+      "name": "An open channel belongs to its community (#3653): its old address opens the project page under the Communities tab, with no back button of the room's own",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "body:has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#back-btn[href=\"#app/staging-demo-app/workshop\"]) #messages-screen:not(.hidden)"
+      "expectSelector": "body:has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#platform-header a#back-btn.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"]"
     },
     {
       "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",
@@ -5438,9 +5437,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624)",
+      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has([aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) .messages-bot-question[data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) [data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
       "expectText": "public discussion",
       "id": "homeroom-bot-dm-question",
       "visual": true,
@@ -5448,6 +5447,20 @@
         "frontend/src/features/messages/**",
         "src/services/homeroom-bot-dm.js",
         "src/services/staging-messages.js"
+      ]
+    },
+    {
+      "name": "The Homeroom bot's DM pins an activity tray above its transcript: a strip naming what the bot is working on for you and the step it is at, which opens what it is doing now and its history (#3692)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane > [data-bot-work-tray] > button[data-bot-work-strip][aria-expanded=\"false\"][aria-controls=\"messages-bot-work-panel\"]",
+      "expectText": "Working on: Staging demo app #14 · building",
+      "id": "homeroom-bot-dm-activity-tray",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/messages/**",
+        "src/services/homeroom-bot-tray.js",
+        "src/services/conversations.js",
+        "src/routes/conversations.js"
       ]
     },
     {
