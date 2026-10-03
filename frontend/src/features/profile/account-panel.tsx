@@ -22,7 +22,8 @@
  * allowance shows outside the create dialog, so a "your app quota changed"
  * notice has somewhere to point: "1 of 2 app slots used", from the session's
  * allowance store. A plain click opens the create dialog in place, whose
- * allowance card offers "Request more"; a modified click keeps `#create`. Friends was a section of its own under these rows
+ * allowance card offers "Request more" once one slot or none is left (#23);
+ * a modified click keeps `#create`. Friends was a section of its own under these rows
  * (#2386); it is a row now, with the one number it is allowed ("1 request
  * waiting": friends themselves are never counted), and it opens the same
  * section as a card over this screen (./friends-sheet.tsx), at its own
