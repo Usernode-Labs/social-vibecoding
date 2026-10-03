@@ -344,7 +344,7 @@ test('live: the spec goes on the issue before the build, and on the proposal onc
     return { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0, specMd: SPEC, specVersion: 3 };
   };
   const postedAt = [];
-  const acted = await bot.actOnVerdict({
+  const acted = await bot.buildLive({
     pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
     parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 'seed',
     seedReadAt: '2026-09-28T09:59:00Z', postedAt, turnBudgetMs: 1000, model: 'm', deps: h.deps,
@@ -381,13 +381,13 @@ test('live: no spec, no spec posts; a build that fails still records the spec it
     parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 'seed',
     seedReadAt: '2026-09-28T09:59:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', deps: h.deps,
   };
-  await bot.actOnVerdict(args);
+  await bot.buildLive(args);
   assert.deepEqual(h.posts.map((p) => p.kind), ['proposal']);
   assert.deepEqual(h.sent, []);
 
   h.posts.length = 0;
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build produced no change to propose', costUsd: 0, specMd: SPEC, specVersion: 1 });
-  assert.equal(await bot.actOnVerdict(args), 'build_failed');
+  assert.equal(await bot.buildLive(args), 'build_failed');
   assert.ok(h.queries.some((q) => /SET build_spec_md = \$2/.test(q.sql) && q.params[1] === SPEC));
   assert.deepEqual(h.sent, [], 'no proposal, so nothing to post it on');
 });

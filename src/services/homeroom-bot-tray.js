@@ -79,6 +79,7 @@ const EARLIER_LIMIT = 5;
 const PHASE_OF_STAGE = Object.freeze({
   setting_up: 'setting_up',
   queued: 'queued',
+  build_queued: 'queued',
   reading: 'looking',
   starting: 'building',
   planning: 'building',
@@ -198,7 +199,11 @@ function outcomeOf(row) {
         return 'proposed';
       }
       if (row.build_ok === true) return 'proposed';
-      if (row.build_ok === false) return /^blocked:/.test(String(row.build_error || '')) ? 'blocked' : 'build_failed';
+      if (row.build_ok === false) {
+        // Its request was closed before its build started: it stopped.
+        if (/^skipped:/.test(String(row.build_error || ''))) return 'stopped';
+        return /^blocked:/.test(String(row.build_error || '')) ? 'blocked' : 'build_failed';
+      }
       return null;
     case 'question': case 'person': case 'empty': case 'failed': case 'answer': case 'revise':
       return row.verdict;

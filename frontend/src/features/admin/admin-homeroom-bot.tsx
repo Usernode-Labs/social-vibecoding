@@ -1298,6 +1298,8 @@ function HomeroomBotSection() {
     }
     const data = await write('/api/admin/homeroom-bot/run', 'POST', { slug: runSlug, issueNumber: n },
       `#${n} on ${runSlug} is at the head of the queue${payload?.settings.mode === 'off' ? ' (the bot is off, so it waits)' : ''}.`);
+    // A request the bot is on right now is left to finish, not started twice.
+    if (data?.running) setStatus({ text: `The bot is already working on #${n} on ${runSlug}; it looks again once that ends.`, tone: 'ok' });
     if (data) { setRunIssue(''); load(); }
   };
 

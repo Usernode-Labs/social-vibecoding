@@ -65,6 +65,7 @@ const STEP_OF_STAGE = Object.freeze({
   queued: 'read',
   reading: 'read',
   question: 'read',
+  build_queued: 'plan',
   held: 'plan',
   starting: 'plan',
   planning: 'plan',
@@ -92,7 +93,7 @@ const BUSY_STAGES = new Set([
 // its queue to be done (a request to read, a follow-up on its proposal).
 // Not what waits on them or the group, a proposal's checks running, or a
 // build held back or stalled. The activity tray's Now is exactly this.
-const IN_FLIGHT_STAGES = new Set([...BUSY_STAGES, 'queued', 'followup_queued', 'fix_queued']);
+const IN_FLIGHT_STAGES = new Set([...BUSY_STAGES, 'queued', 'build_queued', 'followup_queued', 'fix_queued']);
 
 // app-creation-phase.js PHASES, in words.
 const SETUP_PARTS = Object.freeze({
@@ -221,6 +222,11 @@ function stageOf(row, { now = new Date() } = {}) {
           : 'ready to build, but held back by the daily limit on questions and notes on this project',
       };
     }
+    // Built after the turn that read it, one build per project at a time
+    // (homeroom-bot.js buildLive): waiting its turn until its build starts.
+    if (row.build_waiting_at && !row.build_session_id) {
+      return { stage: 'build_queued', since: row.build_waiting_at, doing: 'ready to build; waiting its turn to be built' };
+    }
     if (!row.build_session_id) {
       if (now.getTime() - new Date(row.run_at).getTime() <= START_GRACE_MS) {
         return { stage: 'starting', since: row.run_at, doing: 'starting a workspace to build it in' };
@@ -250,6 +256,9 @@ function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
   if (row.proposal_status === 'closed') return 'its proposal was closed without merging';
   if (row.mode !== 'live') return null;
+  if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
+    return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
+  }
   if (row.build_ok === false) return `the build did not succeed${row.build_error ? `: ${String(row.build_error).slice(0, 200)}` : ''}`;
   switch (row.verdict) {
     case 'person': return 'left for the group to decide';
@@ -299,6 +308,7 @@ async function requestRows(pool, userId) {
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
+            run.live_build_waiting_at AS build_waiting_at,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
@@ -311,7 +321,7 @@ async function requestRows(pool, userId) {
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
        LEFT JOIN LATERAL (
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
-                proposal_session_id
+                proposal_session_id, live_build_waiting_at
            FROM homeroom_bot_runs
           WHERE app_id = m.app_id AND issue_number = m.issue_number
           ORDER BY id DESC LIMIT 1
@@ -365,7 +375,8 @@ async function queuePositions(pool, rows, settings) {
  * rest. By app id: [{ issueNumber, since, what }], newest first.
  */
 async function projectsBusy(pool, rows) {
-  const appIds = [...new Set(rows.filter((r) => r.queue_id && !r.started_at).map((r) => Number(r.app_id)))];
+  const appIds = [...new Set(rows.filter((r) => (r.queue_id && !r.started_at) || (r.build_waiting_at && !r.build_session_id))
+    .map((r) => Number(r.app_id)))];
   if (!appIds.length) return new Map();
   const { rows: found } = await pool.query(
     `(SELECT q.app_id, q.issue_number, q.started_at AS since, 'reading' AS what
@@ -381,7 +392,7 @@ async function projectsBusy(pool, rows) {
         FROM homeroom_bot_runs r
         LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
        WHERE r.app_id = ANY($1::int[]) AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
-         AND r.cap_suppressed IS NULL AND r.proposal_session_id IS NULL
+         AND r.cap_suppressed IS NULL AND r.proposal_session_id IS NULL AND r.live_build_waiting_at IS NULL
          AND r.created_at > NOW() - make_interval(hours => $3)
          AND (bs.id IS NULL OR bs.status = 'active')
        ORDER BY r.app_id, r.issue_number, r.id DESC)`,
@@ -433,6 +444,33 @@ function queuedWait(row, { busy = new Map(), working = 0, perPerson = 2, queuePo
     };
   }
   return {};
+}
+
+/**
+ * Pure: what a build waiting its turn waits for, as the `build_queued`
+ * stage's words and `waitingFor`: another build on its project (one at a
+ * time), the most the bot does for one person at once, or nothing: it
+ * starts next.
+ */
+function buildWait(row, { busy = new Map(), working = 0, perPerson = 2, now = new Date() } = {}) {
+  const ahead = (busy.get(Number(row.app_id)) || [])
+    .find((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
+  if (ahead) {
+    const minutes = minutesSince(ahead.since, now);
+    return {
+      doing: `ready to build; ${row.name || row.slug} is building request #${ahead.issueNumber} first (one build per project at a time)`,
+      waitingFor: {
+        reason: 'project_building', number: ahead.issueNumber, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+      },
+    };
+  }
+  if (working >= perPerson) {
+    return {
+      doing: `ready to build; ${plural(working, 'thing')} of theirs ${working === 1 ? 'is' : 'are'} in progress, the most at once for one person`,
+      waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
+    };
+  }
+  return { doing: 'ready to build; its build starts next', waitingFor: { reason: 'next' } };
 }
 
 /**
@@ -572,16 +610,20 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   // is the work already under way that does not come from these requests.
   const busyCount = working
     + staged.filter((s) => s.state && BUSY_STAGES.has(s.state.stage) && !s.state.waitingOn).length;
-  const busy = staged.some((s) => s.state?.stage === 'queued') ? await projectsBusy(pool, rows) : new Map();
+  const busy = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
+    ? await projectsBusy(pool, rows) : new Map();
+  const perPerson = Number(settings?.perPerson) || 2;
   return staged.map((s) => {
-    if (s.state?.stage !== 'queued') return { row: s.row, state: s.state };
-    return {
-      row: s.row,
-      state: {
-        ...s.state,
-        ...queuedWait(s.row, { busy, working: busyCount, perPerson: Number(settings?.perPerson) || 2, queuePosition: s.queuePosition, now }),
-      },
-    };
+    if (s.state?.stage === 'queued') {
+      return {
+        row: s.row,
+        state: { ...s.state, ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now }) },
+      };
+    }
+    if (s.state?.stage === 'build_queued') {
+      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now }) } };
+    }
+    return { row: s.row, state: s.state };
   });
 }
 
@@ -684,6 +726,7 @@ module.exports = {
   inFlight,
   stageOf,
   queuedWait,
+  buildWait,
   projectsBusy,
   outcomeOf,
   setupOf,

@@ -231,7 +231,7 @@ test('a live first version passes the flag to its build, and a benchmark trial r
   live.buildAndPropose = async (args) => { seen.push(args.firstVersion); return { ok: false, error: 'stop here', costUsd: 0 }; };
   const pool = { async query() { return { rows: [] }; } };
   for (const firstVersion of [true, false]) {
-    await bot.actOnVerdict({
+    await bot.buildLive({
       pool, config: {}, bot: { id: 77, username: 'homeroom_bot' }, app: { id: 9, slug: 'pulse' }, repo: { owner: 'o', repo: 'r' },
       issueNumber: 13, issue: { title: 'x' }, parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900,
       seed: 's', seedReadAt: '2026-09-28T10:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', firstVersion,

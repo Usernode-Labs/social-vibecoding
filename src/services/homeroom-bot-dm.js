@@ -366,21 +366,36 @@ function startTyping(pool, { botId, conversationId, ws = null }) {
     }, TYPING_RENEW_MS);
     created.timer.unref?.();
     typingNow.set(id, created);
-    sendTyping(pool, botId, id, true, io);
+    created.first = sendTyping(pool, botId, id, true, io);
     entry = created;
   }
   const holder = Symbol('typing');
   entry.holders.set(holder, Date.now() + TYPING_MAX_MS);
-  return async () => {
+  const stop = async () => {
     // Already timed out, or another answer is still being written.
     if (!entry.holders.delete(holder) || entry.holders.size) return;
     await entry.end();
   };
+  // Settles once "typing" has gone out (whileTyping waits for it).
+  stop.ready = entry.first || Promise.resolve();
+  return stop;
 }
+
+// The longest the answer waits for its "typing" to go out first.
+const TYPING_FIRST_WAIT_MS = 2000;
 
 /** Run `work` with the bot typing in the conversation, and stop when it settles. */
 async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
   const stop = startTyping(pool, { botId, conversationId, ws });
+  // "typing" goes out before anything the answer does: a quick answer's own
+  // events (its quote answered, its message) used to reach the reader first
+  // when the typing event's audience lookup was slower than the answer.
+  let waited = null;
+  await Promise.race([
+    Promise.resolve(stop.ready).catch(() => {}),
+    new Promise((resolve) => { waited = setTimeout(resolve, TYPING_FIRST_WAIT_MS); waited.unref?.(); }),
+  ]);
+  clearTimeout(waited);
   try {
     return await work();
   } finally {

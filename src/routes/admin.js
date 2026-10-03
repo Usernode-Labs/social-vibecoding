@@ -1387,7 +1387,7 @@ function adminRoutes(config) {
       log.info('admin', 'Homeroom bot run requested', {
         by: req.user.username, slug, issueNumber: Number(issueNumber),
       });
-      res.status(202).json({ item: result.item });
+      res.status(202).json({ item: result.item, ...(result.running ? { running: true } : {}) });
     } catch (err) {
       log.error('admin', 'Homeroom bot run request failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

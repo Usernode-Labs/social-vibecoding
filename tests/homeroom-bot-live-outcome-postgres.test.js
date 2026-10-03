@@ -233,4 +233,37 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.equal(seconds, bot.PLATFORM_BUILD_TIME_FACTOR * (1200 + live.SPEC_TURN_MAX_MS / 1000) + 600);
     assert.ok(seconds < 3 * 3600, 'the fixtures above are past it');
   });
+
+  await t.test('a ready verdict waits on its run for its project\'s build slot, and a newer verdict replaces it', async () => {
+    const waiting = async (issue) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, thread_seen_at)
+       VALUES ($1, $2, 'live', 'ready', 'build it', $3) RETURNING id`,
+      [recipebot.id, issue, SEEN],
+    )).rows[0].id;
+    const first = await waiting(80);
+    await bot.queueLiveBuild(pool, { runId: first, appId: recipebot.id });
+    const second = await waiting(81);
+    await bot.queueLiveBuild(pool, { runId: second, appId: recipebot.id });
+    const quietRun = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at)
+       VALUES ($1, 82, 'live', 'ready', 'x', NOW()) RETURNING id`, [quiet.id],
+    )).rows[0].id;
+    const candidates = await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] });
+    assert.deepEqual(candidates.map((c) => Number(c.id)), [first, second], 'oldest first, only where the bot acts');
+    assert.ok(!candidates.some((c) => Number(c.id) === quietRun));
+    assert.deepEqual(bot.pickLiveBuilds(candidates, { slots: 6, perPerson: 2 }).map((p) => Number(p.id)), [first],
+      'one build per project at a time');
+    assert.deepEqual(await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'], pausedApps: ['recipebot'] }), []);
+
+    // A newer verdict on #81 (someone replied while it waited): the old wait is not built.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note) VALUES ($1, 81, 'live', 'question', 'x')`,
+      [recipebot.id],
+    );
+    assert.deepEqual((await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] })).map((c) => Number(c.id)), [first]);
+    // Its session exists: restart recovery owns it, and it no longer waits.
+    const sessionId = await session(recipebot);
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [first, sessionId]);
+    assert.deepEqual(await bot.liveBuildCandidates(pool, { liveSlugs: ['recipebot'] }), []);
+  });
 });

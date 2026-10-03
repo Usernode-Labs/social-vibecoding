@@ -628,6 +628,15 @@ async function act(h, parsed, { capSuppressed = null, quietHold = false } = {}) 
   });
 }
 
+// A ready verdict's build, as the lane starts it (buildOne): the same arguments.
+async function build(h, parsed, extra = {}) {
+  return bot.buildLive({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed, runId: 900, seed: 'seed', seedReadAt: '2026-09-25T17:00:00Z', postedAt: [],
+    turnBudgetMs: 1000, model: 'm', deps: h.deps, ...extra,
+  });
+}
+
 test('each verdict says its own thing; a verdict held by a cap says only that it is held', async (t) => {
   const h = actHarness();
   const realPost = live.post;
@@ -653,9 +662,16 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
     await args.onSession({ id: 5001 });
     return { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.25 };
   };
-  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
-  assert.ok(h.queries.some((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
-    'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471)');
+  // Ready: queued for a build slot of its own, not built inside the turn
+  // that read it, so the project's next request is read meanwhile.
+  h.posts.length = 0;
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_queued');
+  assert.deepEqual(h.posts, [], 'nothing built and nothing said yet');
+  assert.ok(h.queries.some((q) => /SET live_build_waiting_at = NOW\(\)/.test(q.sql) && q.params[0] === 900));
+  // The lane builds it.
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
+    'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471), and no longer waits');
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
   assert.deepEqual(card.metadata, { vote: { sessionId: 5001, prNumber: 42 } });
@@ -664,7 +680,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.deps.limits.spend, [25], 'the build is paid for from the bot\'s weekly allowance');
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build produced no change to propose', costUsd: 0 });
-  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
   assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
 });
 
@@ -730,19 +746,19 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'b'.repeat(40), commits: 2,
     costUsd: 0.3, specNote: 'no spec (the spec ran past its time limit); the build worked from the plan',
   });
-  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
   assert.deepEqual(recorded(), [900, true, 'no spec (the spec ran past its time limit); the build worked from the plan',
     'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null, 'm'],
     'a proposal built without a spec says why; #3654: and the model it was built on');
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build ran past its time limit', costUsd: 0.2 });
-  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
   assert.deepEqual(recorded().slice(0, 3), [900, false, 'the build ran past its time limit']);
 
   live.buildAndPropose = async () => ({
     ok: false, sessionId: 5003, blocked: 'the app has no image generation', error: 'the spec found it impossible', costUsd: 0.1,
   });
-  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'blocked');
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'blocked');
   assert.deepEqual(recorded().slice(0, 3), [900, false, 'blocked: the app has no image generation'],
     'blocked and failed are told apart');
 
@@ -798,7 +814,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   assert.equal(h.posts[0].kind, 'held_proposals_total');
   assert.match(h.posts[0].text, /already has 20 proposals open across Homeroom/);
   // Not held, the build carries the ceiling to its promote.
-  assert.equal(await bot.actOnVerdict({
+  assert.equal(await bot.buildLive({
     pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
     parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 's',
     seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
@@ -825,9 +841,10 @@ test('runTriage acts only through the live module, and only when the app is live
   for (const forbidden of ['createIssueComment', 'sendSystemMessage', '/promote']) {
     assert.ok(!BOT_SRC.includes(forbidden), `homeroom-bot.js never reaches ${forbidden} itself`);
   }
-  // Two build calls: actOnVerdict's, and the shadow build's, which never
-  // proposes and never posts (shadow builds leave a branch and nothing else).
-  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'actOnVerdict, and the shadow build');
+  // Two build calls: buildLive's (a live ready verdict, in its own slot),
+  // and the shadow build's, which never proposes and never posts (shadow
+  // builds leave a branch and nothing else).
+  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'buildLive, and the shadow build');
   const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
   assert.match(shadow, /propose: false,?\s*\}\);/);
   assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
