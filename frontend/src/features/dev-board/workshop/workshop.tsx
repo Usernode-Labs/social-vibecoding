@@ -1918,6 +1918,16 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
 const END_KEY = 'done';
 
 /**
+ * #3702: the door the running app's vote pill opens. The Communities screen's
+ * Needs you pane relays it (features/workshop/index.tsx NeedsLanding); this
+ * is where it lands. The feed's rows are newest first, so the first unseen
+ * card is the first row: land there, the way the count the pill carries was
+ * worked out (needs-seen.ts), rather than at the top of a feed the reader may
+ * have already swiped partway through.
+ */
+const NEEDS_FIRST_EVENT = 'usernode:needs-land-first';
+
+/**
  * `?shot=needs-end`: open the feed ON the end card. The declared check's
  * route, and the only way to a state that otherwise takes a swipe past
  * every item. Read at mount, guarded for the vm the tests render in.
@@ -2275,6 +2285,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // Still owed the instant scroll to the end card (the effect below): true
   // until the scroller has a height to scroll by.
   const endScrollRef = useRef<boolean>(endOnOpen);
+  // #3702: the door event landed while the pane was not mounted — the usual
+  // order, since a door routes before the page draws — so this is owed the
+  // instant snap to the first card the publish below gives.
+  const firstLandRef = useRef<boolean>(false);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -2382,6 +2396,32 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
+   * #3702: the pill's door. Effect, not render: the scroller exists once the
+   * pane is up, and the door may have arrived before it was. A row-0 land is
+   * the same `at` the seed gives, so the scroller snaps there (the assignment
+   * is instant, like wantsEnd's) and the re-sync below keeps it against rows
+   * that arrive later. A door is a navigation, not a swipe: it passes
+   * nothing over, so the count the pill showed is still the count the
+   * landed card belongs to.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const land = () => {
+      const el = scrollRef.current;
+      if (!el || !el.clientHeight) {
+        firstLandRef.current = true;
+        return;
+      }
+      el.style.scrollBehavior = 'auto';
+      el.scrollTop = 0;
+      el.style.scrollBehavior = '';
+      firstLandRef.current = false;
+    };
+    window.addEventListener(NEEDS_FIRST_EVENT, land);
+    return () => window.removeEventListener(NEEDS_FIRST_EVENT, land);
+  }, []);
+
+  /**
    * The `?shot=needs-end` open: the seed put `at` on the end card, and this
    * puts the scroller there in the same frame, instantly (see the re-sync
    * above for why not smoothly). Once — but on the first publish that finds
@@ -2396,6 +2436,17 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     endScrollRef.current = false;
     el.style.scrollBehavior = 'auto';
     el.scrollTop = items.length * el.clientHeight;
+    el.style.scrollBehavior = '';
+  }, [items]);
+
+  // The door that arrived while the scroller had no height yet: same
+  // assignment, once the publish has laid the feed out.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!firstLandRef.current || !el || !el.clientHeight) return;
+    firstLandRef.current = false;
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = 0;
     el.style.scrollBehavior = '';
   }, [items]);
 

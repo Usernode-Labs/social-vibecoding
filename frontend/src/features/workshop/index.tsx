@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -146,6 +146,31 @@ function SectionGlyph({ audience }: { audience: Audience }) {
 type Counts = Record<string, { working?: number; needs?: number; owed?: unknown } | undefined>;
 
 type TabKey = 'status' | 'needs';
+
+/**
+ * #3702: WHAT "FIRST UNSEEN" MEANS FROM A DOOR. The Communities screen's own
+ * Needs you row opens at the top of its feed, because a reader who pressed it
+ * chose the screen; a door that names a COUNT (the running app's "N to vote"
+ * pill) opens at the first card the count is still counting — the feed's
+ * rows are newest first, so that is row 0 while any remain. A swipe from a
+ * door has already made that card seen (NeedsFeed's landOn), so the next
+ * door lands on the next unseen one, the way the pill's count does. Back and
+ * Forward are traversals, not doors: their event carries `traversal` and
+ * lands nothing. Fired in an EFFECT, after paint — the scroller is in the
+ * document by then, and a first-render dispatch would beat it.
+ */
+function NeedsLanding(): null {
+  useEffect(() => {
+    const onDoor = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string; traversal?: boolean } | null>).detail;
+      if (!detail || detail.tab !== 'needs' || detail.traversal) return;
+      try { window.dispatchEvent(new CustomEvent('usernode:needs-land-first')); } catch { /* no window to tell */ }
+    };
+    window.addEventListener('usernode:workshop-tab', onDoor);
+    return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, []);
+  return null;
+}
 
 /** The demo flag the board's own fetches forward, in the same spelling. */
 function demoQuery(): string {
@@ -627,6 +652,14 @@ export function WorkshopScreen() {
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
+            {/* ONE VOTE OWED: #3702's in-app vote pill lands on the first
+                unseen card, not the top of the feed. The feed is what the
+                pill's count was worked out from; on the ALL screen the first
+                card is also the newest (the order the screen draws), so this
+                is the same "first unseen" both doors promise. A traversal
+                (Back or Forward) leaves the reading position alone, the way a
+                door does not. */}
+            <NeedsLanding />
             {state.error ? null : (
               <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
             )}

@@ -45,6 +45,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { AppChromeControls } from './app-chrome';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
@@ -684,6 +685,17 @@ export function PlatformHeader() {
               only on hover. Same for #sidebar-toggle; the back button and
               the app chip keep theirs.
           */}
+          {/*
+              THE APP'S OWN TWO DOORS (#3702): votes waiting on you for the
+              app on screen, and Ask for a change, in the running app's chrome
+              rather than only behind the mark's menu. ./app-chrome.tsx carries
+              the whole argument; the two rules that matter here are that they
+              sit INSIDE this measured group (rightGroupRef is what
+              use-header-layout.ts counts for the title's clearance) and that
+              they render nothing on the platform's own screens — an app's
+              chrome names no app, and the menu keeps both entries.
+          */}
+          <AppChromeControls />
           <a
             id="notifications-btn"
             href="#notifications"
