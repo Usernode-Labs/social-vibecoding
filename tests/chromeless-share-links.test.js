@@ -199,8 +199,8 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
   // getElementById + assignment, but it must still compose through the
   // builder — and the builder must be the only source of that url.
   assert.ok(
-    src.includes('frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });'),
-    'token refresh reuses the shared builder (#2219 added the grant set beside it)');
+    src.includes('frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow(), build });'),
+    'token refresh reuses the shared builder (#2219 added the grant set beside it, WP2 the build it loads)');
   assert.ok(!/\.src\s*=\s*(?!AppView\.buildAppIframeSrc)[^;\n]*token/.test(src),
     'no other code path assigns a token-bearing src to the app iframe');
   assert.ok(!src.includes('?token=${AppView.iframeToken}'),

@@ -1818,7 +1818,8 @@ const AppView = {
       const frame = AppView._appFrame();
       if (frame.hasFrame() && AppView.appData?.url
           && AppView.tokenForSlug(AppView.appData.slug)) {
-        frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });
+        const build = AppView.buildFor(AppView.appData.slug);
+        frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow(), build });
       }
     };
     AppView.tokenRefreshInterval = setInterval(tick, AppView.TOKEN_REFRESH_MS);
@@ -2179,6 +2180,7 @@ const AppView = {
     retire() { return false; },
     resume() { return false; },
     resumed() { return false; },
+    markStale() { return false; },
     evict() { return false; },
     evictAll() {},
     liveSlugs() { return []; },
@@ -2267,11 +2269,14 @@ const AppView = {
     const src = el && el.src;
     if (!src) return false;
     const granted = typeof AppView._grantedNow === 'function' ? AppView._grantedNow() : [];
+    // The build it reloads onto, so the frame is not taken for the old one
+    // when it is next left and resumed (see buildFor).
+    const build = AppView.buildFor(typeof frame.slug === 'function' ? frame.slug() : '');
     frame.setOnLoad(() => {
       frame.setOnLoad(null);
-      setTimeout(() => { frame.setSrc(src, { granted }); }, AppView.APP_RELOAD_SETTLE_MS);
+      setTimeout(() => { frame.setSrc(src, { granted, build }); }, AppView.APP_RELOAD_SETTLE_MS);
     });
-    frame.setSrc(src, { granted });
+    frame.setSrc(src, { granted, build });
     return true;
   },
 
@@ -2297,10 +2302,12 @@ const AppView = {
   },
 
   // Bring `slug`'s kept (or still-mounted) frame back as it was. False, and
-  // nothing changed, when there is none to bring back or it is too old.
+  // nothing changed, when there is none to bring back, it is too old, or it is
+  // a build other than the one the app is on now (see buildFor).
   _resumeAppFrame(slug) {
     const frame = AppView._appFrame();
-    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS })) return false;
+    const build = AppView.buildFor(slug);
+    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS, build })) return false;
     // #685: an issue-state provider that announced itself from this document
     // is still that document. Believe it again, and only if it is.
     const prior = AppView._issueStateBySlug[slug] || null;
@@ -2317,20 +2324,64 @@ const AppView = {
 
   // A build that just landed for an app that is kept alive, or an app that
   // stopped running: its hidden document is the previous build (or nothing),
-  // so let it go and the next open loads afresh. The app on screen is not
-  // touched here — its reload is the Improve panel's offer to make.
+  // so let it go and the next open loads afresh. That includes a frame parked
+  // behind the app's own Workshop, where the build is watched landing.
+  //
+  // The app on screen is not touched here: its reload is the Improve panel's
+  // offer to make. It is marked stale instead: closing it lets it go rather
+  // than keeping it, and the next open loads the new build. True only when a
+  // frame was let go.
   evictKeptApp(slug) {
     if (!slug) return false;
     const frame = AppView._appFrame();
-    if (frame.slug && frame.slug() === slug && frame.isActive()) return false;
+    if (frame.slug && frame.slug() === slug && frame.isActive()) {
+      frame.markStale?.(slug);
+      return false;
+    }
     delete AppView._issueStateBySlug[slug];
     return frame.evict(slug);
+  },
+
+  // The build each app is on, as the last app_version_changed announced it,
+  // with the list sha it replaced (see buildFor). By slug.
+  _builds: {},
+
+  // app_version_changed: `sha` is now live for `slug`.
+  noteBuild(slug, sha) {
+    if (!slug || !sha) return false;
+    AppView._builds[slug] = { sha: String(sha), was: AppView._listedBuild(slug) };
+    return true;
+  },
+
+  // The commit the app records this tab holds say `slug` is on: the app on
+  // screen's own record, else the launcher's cached row. '' when neither says.
+  _listedBuild(slug) {
+    const shaOf = (rec) => (rec && ((rec.version && rec.version.sha) || rec.main_sha)) || '';
+    const own = AppView.appData && AppView.appData.slug === slug ? AppView.appData : null;
+    return shaOf(own) || shaOf(AppView.launchRecordFor(slug));
+  },
+
+  // The build `slug` is on now, as far as this tab knows: what a frame is
+  // stamped with when it loads, and what a kept frame must match to resume.
+  //
+  // The sha app_version_changed announced wins while the records still say
+  // what they said before it: the Home list re-read on the redeploy's end
+  // event is fetched before apps.main_sha is written, so it still names the
+  // old build. A record that has moved on since is newer than the event.
+  // '' when nothing says, and an unknown build never stops a resume.
+  buildFor(slug) {
+    if (!slug) return '';
+    const listed = AppView._listedBuild(slug);
+    const landed = AppView._builds[slug];
+    if (landed && (!listed || listed === landed.was)) return landed.sha;
+    return listed;
   },
 
   // Sign-out: nothing of one viewer's apps outlives their session.
   evictAllAppFrames() {
     AppView._issueStateSource = null;
     AppView._issueStateBySlug = {};
+    AppView._builds = {};
     AppView._appActivity().clearAccount();
     AppView._appFrame().evictAll();
   },
@@ -2406,7 +2457,7 @@ const AppView = {
       AppView._watchLaunchLoad(iframe, launchId);
       // `slug`, not appData: on the launch path the detail fetch may not
       // have landed yet, and grantedForSlug answers [] for the wrong app.
-      frame.setSrc(src, { granted: AppView.grantedForSlug(slug) });
+      frame.setSrc(src, { granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug) });
     };
 
     if (AppView.hasFreshToken(slug)) {
@@ -3012,7 +3063,7 @@ const AppView = {
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
     });
-    frame.setSrc(iframeSrc, { granted: AppView._grantedNow() });
+    frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) });
   },
 
   // Single source of truth for the per-app version pill on home cards.
@@ -22960,7 +23011,9 @@ const AppView = {
     // grant needs a reload and the next launch will apply it.
     if (!AppView.tokenForSlug(slug)) return false;
     if (!AppView.appData || AppView.appData.slug !== slug) return false;
-    frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView.grantedForSlug(slug) });
+    frame.setSrc(AppView.buildAppIframeSrc(), {
+      granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug),
+    });
     return true;
   },
 

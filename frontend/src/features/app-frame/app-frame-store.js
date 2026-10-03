@@ -41,12 +41,13 @@ import { BASE_ALLOW } from './app-frame-policy.js';
  * }} LaunchCoverState
  * @typedef {{
  *   slug: string, seq: number, background: string, sandboxReady: boolean,
- *   allow: string, navigatedAt: number, title: string,
+ *   allow: string, navigatedAt: number, title: string, build: string,
  * }} KeptFrame
  * @typedef {{
  *   slug: string, active: boolean, faded: boolean, background: string,
  *   sandboxReady: boolean, allow: string, cover: LaunchCoverState | null,
- *   seq: number, navigatedAt: number, title: string, kept: KeptFrame[],
+ *   seq: number, navigatedAt: number, title: string, build: string,
+ *   stale: boolean, kept: KeptFrame[],
  * }} AppFrameState
  */
 
@@ -136,6 +137,18 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
    * "frame". '' until a mount names it.
    */
   title: '',
+  /**
+   * The commit the mounted frame's document was loaded from, as the shell knew
+   * it at the navigation; '' when it did not. Kept frames carry theirs too, so
+   * a resume can refuse a previous build (see `resume` in ./app-frame-bridge.js).
+   */
+  build: '',
+  /**
+   * A new build landed while this frame was on screen. Its document is left
+   * alone while it is in use, but it is not kept or brought back: leaving it
+   * lets it go, and the next open loads the new build. See `markStale`.
+   */
+  stale: false,
   /**
    * #2902: the apps you left that are still loaded, hidden, most recently used
    * first. The mounted frame is NOT in here; it is the top-level fields above.
