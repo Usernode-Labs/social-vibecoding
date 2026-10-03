@@ -138,6 +138,7 @@ import {
   watchCreation,
 } from './creation-progress-store.js';
 import { normalizeRepositoryUrl } from './repository-url';
+import { askForPingWhileBotBuilds } from './ping-ask';
 import { open as openMessages } from '../messages/store';
 import { useDialog } from './use-dialog';
 
@@ -1221,6 +1222,8 @@ export function CreateAppDialog() {
       // #3624: the bot is building it, and says so in its DM.
       const chat = Number(data.homeroomBot?.conversationId);
       setBotChat(Number.isInteger(chat) && chat > 0 ? chat : null);
+      // #12 (D10): it messages when it is ready, so offer the ping now.
+      if (Number.isInteger(chat) && chat > 0) askForPingWhileBotBuilds();
       // The POST returns 201 with the row still in 'creating' — the build
       // runs async server-side. The dialog STAYS OPEN and reports the phases
       // app-creator broadcasts.

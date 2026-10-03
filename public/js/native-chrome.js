@@ -566,14 +566,19 @@
     // ── First-run permissions step (thin-shell onboarding) ───────────
     //
     // Replaces the native onboarding permission screens: after the first
-    // successful native-session establishment on a device, offer the exact-alarm /
-    // battery-optimization prompts (Android) or the notification prompt
-    // (iOS) the node needs. One-shot per device via a localStorage
-    // marker set on dismiss — except on iOS while the OS notification
-    // prompt has never been presented (permission still un-determined),
-    // where the marker is not final: the OS prompt itself is one-shot,
-    // so an un-asked device must keep its chance. The same rows live
-    // permanently in Settings → Homeroom app.
+    // successful native-session establishment on a device, offer the
+    // notification, exact-alarm and battery-optimization prompts the
+    // Android node needs. The same rows live permanently in Settings →
+    // Homeroom app.
+    //
+    // iOS presents NOTHING here any more (#12, decision D10). Its sheet was
+    // only ever the notification prompt, and asking for that on the first
+    // screen of a fresh install, before the person has made anything worth
+    // hearing about, is how the ask got answered "no" (or never seen) for
+    // good: iOS shows its own prompt once. The ask now comes at the moment
+    // it means something, when the Homeroom bot starts building a new app
+    // (askForPing below, called from the create dialog). The Settings row
+    // stays the way to allow notifications at any other time.
     //
     // Android waits for block production (#2960). Both of its rows (exact
     // alarms, unrestricted background / battery optimization) exist only so
@@ -600,6 +605,11 @@
     // GHOST_CLICK_MS, because that is what it is defending against.
     _FIRST_RUN_MIN_SEEN_MS: 450,
 
+    // The record that the sheet was answered, or had nothing left to ask.
+    // Nothing reads it since iOS stopped presenting the sheet (#12): its one
+    // reader was the iOS re-ask rule. Asking again is gated by the
+    // once-a-day key below; this stays as the record of a finished first
+    // run, which the first-run tests pin.
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
@@ -607,8 +617,7 @@
     // Android asks again while something is still missing, but at most once
     // a day: the marker above used to end the asking for good, so a user
     // who skipped once, or turned a permission off later, was never asked
-    // again. iOS keeps the marker's rule, because a determined iOS
-    // permission can only be changed in the OS settings app.
+    // again.
     _ASKED_AT_KEY: 'sv:device_permissions_asked_at',
     _REASK_AFTER_MS: 24 * 60 * 60 * 1000,
 
@@ -641,8 +650,16 @@
       try { state = await bridge.getSocialPushState(); } catch (_) {
         return null;
       }
-      const raw = state && typeof state.permissionStatus === 'string'
-        ? state.permissionStatus.toLowerCase().replace(/[_\s-]/g, '')
+      return NativeChrome._permissionStatusOf(state && state.permissionStatus);
+    },
+
+    // One spelling for a native permission status, wherever it was read
+    // from (the social push state above, or the settings snapshot's
+    // `permissions.notificationPermission` on builds that report it):
+    // 'undetermined' | 'granted' | 'denied', or null for anything else.
+    _permissionStatusOf(value) {
+      const raw = typeof value === 'string'
+        ? value.toLowerCase().replace(/[_\s-]/g, '')
         : '';
       if (raw === 'notdetermined' || raw === 'undetermined') {
         return 'undetermined';
@@ -828,15 +845,17 @@
 
     // What the first-run trigger does once the permission snapshot is in.
     // Pure, for the same reason decideNotificationTap is. Returns:
+    //   "skip"     iOS: present nothing and record nothing. Its sheet was
+    //              the notification prompt alone, and that ask moved to
+    //              the create dialog (#12, D10; see askForPing)
     //   "done"     nothing left to ask; record the one-shot marker
     //   "defer"    Android, block production not enabled: present nothing
     //              and record NOTHING, so the sheet can still be offered
     //              once the account asks to produce blocks (#2960)
     //   "present"  show the "Set up your device" sheet
-    // iOS never defers: its sheet is the notification prompt, which has
-    // nothing to do with block production (off on iOS since v4).
     decideFirstRunSheet(state) {
       const s = state || {};
+      if (s.isAndroid !== true) return 'skip';
       if (!s.needsAlarm && !s.needsBattery && !s.needsNotifications) return 'done';
       // The Android notification prompt has nothing to do with block
       // production, so it never waits for the producer queue.
@@ -897,26 +916,14 @@
       const force = !!(options && options.force);
       if (NativeChrome._firstRunSheetOpen) return;
       if (NativeChrome._firstRunSheetPresented && !force) return;
-      let marked = false;
-      try {
-        marked = localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1';
-      } catch (_) {}
-      let pushStatus;
-      if (marked) {
-        // The OS notification prompt on iOS is system-one-shot, so the
-        // only unrecoverable state is "never asked". Old shell/app
-        // versions (and a dismissed sheet) wrote this marker without the
-        // prompt ever being presented — while iOS still reports the
-        // permission as un-prompted, the marker must not be final.
-        // Android is re-read instead: see _askedRecently.
-        const kit = window.unNative;
-        if (kit && kit.platform === 'ios') {
-          pushStatus = await NativeChrome._iosPushPermissionStatus();
-          if (pushStatus !== 'undetermined') return;
-        }
-      }
+      // iOS has nothing to present here (#12, D10), so it returns before a
+      // single bridge read. This is the fast path; decideFirstRunSheet says
+      // the same thing again from the settings snapshot's own platform, for
+      // a page whose kit could not tell.
+      const kit = window.unNative;
+      if (kit && kit.platform === 'ios') return;
       // Android already asked today: leave it until tomorrow, without a
-      // single bridge read. iOS never writes this key.
+      // single bridge read.
       if (!force && NativeChrome._askedRecently()) return;
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
       if (!(await NativeChrome.has('getSettingsState'))) return;
@@ -935,23 +942,9 @@
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
       let needsAlarm = !perms.exactAlarmGranted;
-      // iOS: the notification permission is the real subject of this
-      // sheet, so when the build exposes the push permission status let
-      // it override the alarm boolean — there are no exact alarms on
-      // iOS, and a build reporting exactAlarmGranted: true must not
-      // swallow a never-shown notification prompt.
-      if (!isAndroid) {
-        if (pushStatus === undefined) {
-          pushStatus = await NativeChrome._iosPushPermissionStatus();
-        }
-        if (pushStatus === 'undetermined') needsAlarm = true;
-        else if (pushStatus === 'granted') needsAlarm = false;
-      } else {
-        pushStatus = null;
-      }
-      // Android notifications: asked of everyone, like the iOS prompt,
-      // whenever the build can ask for them on their own. An older build
-      // that does not report the permission is not asked.
+      // Android notifications: asked of everyone whenever the build can
+      // ask for them on their own. An older build that does not report the
+      // permission is not asked.
       const notificationsAskable = isAndroid &&
         perms.notificationsGranted === false &&
         typeof window.usernode.requestNotificationPermission === 'function' &&
@@ -978,18 +971,19 @@
         isAndroid, needsAlarm, needsBattery, blockProduction,
         needsNotifications: notificationsAskable,
       });
+      // iOS (by the snapshot's own word) and the Android deferral both
+      // present nothing and record nothing.
+      if (decision === 'skip' || decision === 'defer') return;
       if (decision === 'done') {
         NativeChrome._markFirstRunDone();
         return;
       }
-      if (decision === 'defer') return;
 
       let settled = null;
       const settledPromise = new Promise((resolve) => { settled = resolve; });
       const handle = NativeChrome.presentPermissionsSheet({
         perms,
         isAndroid,
-        pushStatus,
         blockProduction,
         productionDeferred,
         notificationsAskable,
@@ -998,9 +992,9 @@
         // it is the opening gesture's ghost click landing on the backdrop.
         // The kit guards its own backdrop against exactly that now
         // (decideBackdropDismiss in public/usernode-native/v1/native.js),
-        // but THIS marker is one-shot and silences the iOS notification
-        // prompt forever, so it does not ride on that guard alone: leave
-        // it unwritten and let a later launch offer the sheet again.
+        // but THESE markers end the asking for a day, so they do not ride
+        // on that guard alone: leave them unwritten and let a later launch
+        // offer the sheet again.
         onDismiss: (info) => {
           NativeChrome._firstRunSheetOpen = false;
           if (info.interacted ||
@@ -1016,9 +1010,8 @@
         },
       });
       // Kit unavailable (degraded shell): present nothing and record
-      // nothing — burning the one-shot marker here silenced the iOS
-      // notification prompt forever. A later healthy launch retries;
-      // the permanent Settings rows remain the in-session fallback.
+      // nothing. A later healthy launch retries; the permanent Settings
+      // rows remain the in-session fallback.
       if (handle) {
         NativeChrome._firstRunSheetPresented = true;
         NativeChrome._firstRunSettledPromise = settledPromise;
@@ -1031,7 +1024,9 @@
     // it, and so does the `?shot=notif-permissions` screenshot-state link
     // in public/js/app.js, which means the dapp.json check that asserts
     // the sheet survives its opening tap is exercising the real sheet
-    // rather than a stand-in.
+    // rather than a stand-in. Its iOS variant is no longer presented by the
+    // first-run trigger (#12, D10); the link still draws it, because what
+    // that check pins is the kit sheet's ghost-click guard.
     //
     // opts: { perms, isAndroid, pushStatus, blockProduction,
     // productionDeferred, notificationsAskable, onDismiss }. onDismiss is
@@ -1414,6 +1409,232 @@
       return { granted, status };
     },
 
+    // ── The notification ask at Create (#12, decision D10) ────────────
+    //
+    // "Get a ping when your app is ready?", asked when the Homeroom bot
+    // starts building a new app (frontend/src/features/dialogs/ping-ask.ts,
+    // called by the create dialog once POST /api/apps answers with the
+    // bot's chat). That is the moment the permission plainly means
+    // something: the bot messages the person when the first version is
+    // ready to try, and a push is how that message reaches a phone in a
+    // pocket. It replaces the first-run sheet's iOS ask, which came on the
+    // first screen of a fresh install.
+    //
+    // An in-app question first, and the OS prompt only behind "Notify me":
+    // iOS presents its own prompt ONCE, so it must not be spent on someone
+    // who has not said yes to the idea. And only while the permission is
+    // still undetermined. Denied (or already allowed) shows nothing, since
+    // iOS would present no prompt and "Notify me" would be a button that
+    // does nothing; Settings → Homeroom app, with its way to the OS
+    // settings page, is how a denial gets fixed. Android shows nothing
+    // either: requestPermissions() there is the exact-alarm permission, and
+    // its notification ask is the "Set up your device" sheet's.
+    //
+    // Presented with PlatformUI.confirm, the kit's alert card: the create
+    // dialog is a kit modal, and the alert is the kit surface that stacks
+    // over one (the members and secrets dialogs ask their questions the
+    // same way).
+    _PING_ASK_COPY: {
+      'app-building': {
+        title: 'Get a ping when your app is ready?',
+        message: 'Homeroom bot will message you when it’s ready to try.',
+      },
+    },
+    // Written once "Notify me" has called requestPermissions() on this
+    // device. Read only where the build cannot report the real permission
+    // (see decidePingAsk).
+    _PING_ASK_PROMPTED_KEY: 'sv:ping_ask_prompted',
+    // Reads slower than this mean the person has moved on from the create
+    // dialog, and an ask arriving now would be about nothing on screen.
+    _PING_ASK_STALE_MS: 8000,
+    _pingAskOpen: false,
+    // "Not now" holds for the rest of this document: a second app made in
+    // the same sitting is not a reason to ask again.
+    _pingAskDeclined: false,
+
+    _pingAskPrompted() {
+      try {
+        return localStorage.getItem(NativeChrome._PING_ASK_PROMPTED_KEY) === '1';
+      } catch (_) {
+        return false;
+      }
+    },
+
+    _markPingAskPrompted() {
+      try { localStorage.setItem(NativeChrome._PING_ASK_PROMPTED_KEY, '1'); } catch (_) {}
+    },
+
+    // Whether the ask may be shown. Pure, like decideNotificationTap, so the
+    // table is testable without a WebView. Returns { verdict: 'ask' } or
+    // { verdict: 'skip', reason }.
+    //
+    // `notificationPermission` is the settings snapshot's own read of the
+    // OS permission, independent of push configuration, and it wins when
+    // the build reports it. An older build does not, and its only signal is
+    // the social push state's `permissionStatus`, which a build without
+    // push configured reports as undetermined forever. So that fallback is
+    // trusted once per device: after "Notify me" has called
+    // requestPermissions() here, an older build is never asked again.
+    decidePingAsk(state) {
+      const s = state || {};
+      if (s.isNative !== true || s.hasRequestMethod !== true) {
+        return { verdict: 'skip', reason: 'not running inside the Homeroom app' };
+      }
+      if (s.platform !== 'ios') {
+        return {
+          verdict: 'skip',
+          reason: 'only iOS asks here; Android asks in its first-run sheet',
+        };
+      }
+      if (s.supported === false) {
+        return {
+          verdict: 'skip',
+          reason: 'this app build does not advertise requestPermissions',
+        };
+      }
+      const reported = NativeChrome._permissionStatusOf(s.notificationPermission);
+      if (reported) {
+        if (reported === 'undetermined') return { verdict: 'ask' };
+        return {
+          verdict: 'skip',
+          reason: reported === 'granted'
+            ? 'notifications are already allowed'
+            : 'notifications are denied, and iOS shows no prompt for that',
+        };
+      }
+      if (s.pushStatus !== 'undetermined') {
+        return {
+          verdict: 'skip',
+          reason: s.pushStatus == null
+            ? 'the notification permission could not be read'
+            : 'the notification permission is already ' + s.pushStatus,
+        };
+      }
+      if (s.promptedBefore === true) {
+        return {
+          verdict: 'skip',
+          reason: 'this build cannot report the permission, and it was ' +
+            'already asked for on this device',
+        };
+      }
+      return { verdict: 'ask' };
+    },
+
+    // Everything decidePingAsk needs, read without asking anything. Stops
+    // reading as soon as the answer is already no.
+    async _pingAskState() {
+      const bridge = window.usernode;
+      const isNative = !!bridge && bridge.isNative === true;
+      const kit = window.unNative;
+      const state = {
+        isNative,
+        hasRequestMethod: isNative &&
+          typeof bridge.requestPermissions === 'function',
+        platform: kit && typeof kit.platform === 'string' ? kit.platform : null,
+        supported: null,
+        notificationPermission: undefined,
+        pushStatus: null,
+        promptedBefore: NativeChrome._pingAskPrompted(),
+      };
+      if (!state.hasRequestMethod || state.platform === 'android') return state;
+      state.supported = await NativeChrome.supports('requestPermissions');
+      if (state.supported === false) return state;
+      let perms = null;
+      if (await NativeChrome.has('getSettingsState')) {
+        try {
+          const snapshot = await bridge.getSettingsState();
+          perms = snapshot && snapshot.permissions;
+        } catch (_) { /* unreadable: the fallback below decides */ }
+      }
+      if (perms && typeof perms.platform === 'string') {
+        state.platform = perms.platform;
+      }
+      if (perms && perms.notificationPermission != null) {
+        state.notificationPermission = perms.notificationPermission;
+      } else if (state.platform === 'ios') {
+        state.pushStatus = await NativeChrome._iosPushPermissionStatus();
+      }
+      return state;
+    },
+
+    // options: { reason }, a key of _PING_ASK_COPY. Never throws and never
+    // asks the OS anything until "Notify me" is pressed. Resolves
+    // { shown, outcome: 'skipped' | 'not-now' | 'notify', reason?, granted? }.
+    async askForPing(options) {
+      const reason = options && typeof options.reason === 'string'
+        ? options.reason : '';
+      const copy = Object.prototype.hasOwnProperty.call(
+        NativeChrome._PING_ASK_COPY, reason)
+        ? NativeChrome._PING_ASK_COPY[reason] : null;
+      if (!copy) {
+        console.warn('[native-chrome] askForPing: unknown reason', reason);
+        return { shown: false, outcome: 'skipped', reason: 'unknown reason' };
+      }
+      if (NativeChrome._pingAskOpen) {
+        return { shown: false, outcome: 'skipped', reason: 'already asking' };
+      }
+      if (NativeChrome._pingAskDeclined) {
+        return {
+          shown: false, outcome: 'skipped',
+          reason: 'the answer was "Not now" earlier in this session',
+        };
+      }
+      const startedAt = Date.now();
+      NativeChrome._pingAskOpen = true;
+      let shown = false;
+      try {
+        const plan = NativeChrome.decidePingAsk(
+          await NativeChrome._pingAskState());
+        if (plan.verdict !== 'ask') {
+          return { shown: false, outcome: 'skipped', reason: plan.reason };
+        }
+        if (Date.now() - startedAt > NativeChrome._PING_ASK_STALE_MS) {
+          return { shown: false, outcome: 'skipped', reason: 'the moment passed' };
+        }
+        const ui = window.PlatformUI;
+        // No kit, no ask: PlatformUI.confirm would fall back to the
+        // browser's own confirm(), which a native WebView may not draw.
+        if (!ui || typeof ui.confirm !== 'function' ||
+            typeof ui.hasKit !== 'function' || !ui.hasKit()) {
+          return { shown: false, outcome: 'skipped', reason: 'no UI kit' };
+        }
+        shown = true;
+        const yes = await ui.confirm({
+          title: copy.title,
+          message: copy.message,
+          confirmLabel: 'Notify me',
+          cancelLabel: 'Not now',
+        });
+        if (!yes) {
+          NativeChrome._pingAskDeclined = true;
+          return { shown, outcome: 'not-now' };
+        }
+        NativeChrome._markPingAskPrompted();
+        let next = null;
+        try {
+          next = await window.usernode.requestPermissions();
+        } catch (err) {
+          console.warn('[native-chrome] requestPermissions failed:',
+            err && err.message ? err.message : err);
+          return { shown, outcome: 'notify', granted: false };
+        }
+        const perms = next && next.permissions;
+        const flag = !!(next && next.granted === true) ||
+          NativeChrome._permissionStatusOf(
+            perms && perms.notificationPermission) === 'granted';
+        // Same completion as the Settings row: wait out a lagging status,
+        // and start push registration now rather than on the next resume.
+        const settled = await NativeChrome.settleIosPushGrant(flag);
+        return { shown, outcome: 'notify', granted: settled.granted };
+      } catch (err) {
+        console.warn('[native-chrome] askForPing failed:',
+          err && err.message ? err.message : err);
+        return { shown, outcome: 'skipped', reason: 'failed' };
+      } finally {
+        NativeChrome._pingAskOpen = false;
+      }
+    },
+
     _initSessionRecoveryEvents() {
       const recover = () => {
         if (document.visibilityState === 'hidden') return;
@@ -1549,6 +1770,166 @@
       }
     },
 
+    // ── Status-bar tone (#26) ─────────────────────────────────────────
+    //
+    // The app draws the status bar's clock and battery from its own theme,
+    // which is the appearance published above. That is right over the
+    // shell's own screens and wrong over the surfaces drawn in a tone of
+    // their own: the fullscreen staging preview and the before/after
+    // compare overlay are always dark, and a running app paints its own
+    // page colour up behind the bar (`data-app-tone`,
+    // frontend/src/features/app-frame/app-tone.js). On the light shell that
+    // put dark glyphs on the preview's near-black bar, where nobody could
+    // read them.
+    //
+    // So the app is told the tone of the GROUND under the status bar
+    // whenever it changes: 'dark' while the fullscreen preview or the
+    // compare overlay is open, else the running app's tone, else null,
+    // which hands the bar back to the app's theme. A 'dark' ground wants
+    // light glyphs. Unprivileged and not persisted (NATIVE-BRIDGE.md,
+    // `setStatusBarTone`), and capability-gated like setAppearance, so an
+    // older build never sees the call.
+    //
+    // Until a build takes the tone, app.css paints the fullscreen preview
+    // bar's safe-area band in the shell's ground colour, so the glyphs the
+    // theme picked sit on the ground they were picked for. The first tone
+    // the app accepts puts _STATUS_TONE_CLASS on <html>, which retires that
+    // stopgap: from then on the band is the bar's own dark and the glyphs
+    // follow it.
+    _STATUS_TONE_CLASS: 'native-status-bar-tone',
+    // `undefined` until the first publish, so the boot publish always goes
+    // out: null at boot also clears an override a previous document left
+    // behind (a reload while the preview was open).
+    _statusBarTonePublished: undefined,
+    _statusBarTonePromise: null,
+    _statusBarToneRerun: false,
+
+    // Pure: 'dark' | 'light' | null for the ground under the status bar.
+    statusBarToneFor(state) {
+      const s = state || {};
+      if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      return s.appTone === 'dark' || s.appTone === 'light' ? s.appTone : null;
+    },
+
+    // Read off the document: the overlays' classes (React toggles them
+    // through refs, frontend/src/features/staging/) and the app-tone
+    // attribute. The preview counts only when FULLSCREEN: docked it sits
+    // mid-page, and under a session's chrome the platform header is what
+    // the status bar is over.
+    _statusBarToneState() {
+      const state = { previewFullscreen: false, compareOpen: false, appTone: null };
+      try {
+        const shown = (el) => !!el && !el.classList.contains('hidden');
+        const preview = document.getElementById('staging-overlay');
+        state.previewFullscreen = shown(preview) &&
+          !preview.classList.contains('staging-overlay-docked') &&
+          !preview.classList.contains('staging-overlay-under-chrome');
+        state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
+        state.appTone = document.documentElement.getAttribute('data-app-tone');
+      } catch (_) { /* no document to read: the theme's bar */ }
+      return state;
+    },
+
+    // A framed copy of the shell (a platform change's staging preview is
+    // this same document inside the preview's iframe) is not what the
+    // status bar sits over, so only the top document publishes.
+    _isTopDocument() {
+      try {
+        return !window.parent || window.parent === window;
+      } catch (_) {
+        return false;
+      }
+    },
+
+    _statusBarToneCallable() {
+      const bridge = window.usernode;
+      return !!bridge && bridge.isNative === true &&
+        typeof bridge.setStatusBarTone === 'function' &&
+        NativeChrome._isTopDocument();
+    },
+
+    // Fire-and-forget, never throws, sends only a CHANGED tone. Same
+    // coalescing as publishAppearance, plus one more pass when a change
+    // lands after the loop has already decided it was done, because an
+    // overlay can open and close again inside one bridge round trip.
+    publishStatusBarTone() {
+      if (!NativeChrome._statusBarToneCallable()) return Promise.resolve(false);
+      if (NativeChrome._statusBarTonePromise) {
+        NativeChrome._statusBarToneRerun = true;
+        return NativeChrome._statusBarTonePromise;
+      }
+      const run = NativeChrome._runStatusBarTonePublish()
+        .catch(() => false)
+        .then((published) => {
+          NativeChrome._statusBarTonePromise = null;
+          if (NativeChrome._statusBarToneRerun) {
+            NativeChrome._statusBarToneRerun = false;
+            return NativeChrome.publishStatusBarTone();
+          }
+          return published;
+        });
+      NativeChrome._statusBarTonePromise = run;
+      return run;
+    },
+
+    async _runStatusBarTonePublish() {
+      try {
+        do {
+          NativeChrome._statusBarToneRerun = false;
+          const tone = NativeChrome.statusBarToneFor(
+            NativeChrome._statusBarToneState());
+          if (tone === NativeChrome._statusBarTonePublished) continue;
+          // A degraded probe is "don't know" (#978): no latch, and the
+          // next change asks again.
+          const info = await NativeChrome.getInfo();
+          if (info && info.degraded === true) return false;
+          const capabilities = Array.isArray(info && info.capabilities)
+            ? info.capabilities : [];
+          if (!capabilities.includes('setStatusBarTone')) return false;
+          await window.usernode.setStatusBarTone({ tone });
+          NativeChrome._statusBarTonePublished = tone;
+          try {
+            document.documentElement.classList.add(NativeChrome._STATUS_TONE_CLASS);
+          } catch (_) { /* no document: nothing to retire */ }
+        } while (NativeChrome._statusBarToneRerun);
+        return true;
+      } catch (err) {
+        // A build that advertised the method and then failed it, or timed
+        // out. Never a console.error: proposal checks fail any route that
+        // logs one, and the bar keeps the app's theme, which is the old
+        // behaviour.
+        console.warn('[native-chrome] status-bar tone publish failed:',
+          err && err.message);
+        return false;
+      }
+    },
+
+    // Publishes on boot and on every change to what decides the tone.
+    // Nothing is observed where nothing could be sent (a browser, an
+    // embedded copy, a bridge without the method).
+    _initStatusBarTonePublish() {
+      if (!NativeChrome._statusBarToneCallable()) return;
+      NativeChrome.publishStatusBarTone();
+      if (typeof MutationObserver !== 'function') return;
+      try {
+        const observer = new MutationObserver(() => {
+          NativeChrome.publishStatusBarTone();
+        });
+        observer.observe(document.documentElement,
+          { attributes: true, attributeFilter: ['data-app-tone'] });
+        // Both overlays are in the shell's static markup ahead of this
+        // script, and their islands never unmount (the staging one holds
+        // the preview iframe, whose identity is pinned).
+        ['staging-overlay', 'visual-compare-overlay'].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+      } catch (err) {
+        console.warn('[native-chrome] status-bar tone observer failed:',
+          err && err.message);
+      }
+    },
+
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
@@ -1559,6 +1940,8 @@
       // is fixing is the one before sign-in, and the appearance it
       // publishes is presentation state with no account in it.
       NativeChrome._initAppearancePublish();
+      // Same reasoning: the tone under the status bar is presentation state.
+      NativeChrome._initStatusBarTonePublish();
       // Native session establishment needs a verified web session, so it
       // waits for the session boot stage. Always observe later SPA account
       // changes, even when a session was already present at script load.

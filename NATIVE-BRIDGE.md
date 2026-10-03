@@ -100,6 +100,12 @@ One additive **presentation** capability extends v4 the same way:
   effect" and republishes on every theme change. Unprivileged, unlike the
   notification and settings actions: see "Appearance" below for why, and
   for the producer contract it unlocks.
+- `setStatusBarTone`: the shell draws the status bar's glyphs for the tone
+  of the page ground SV says is under them, instead of from its theme,
+  until SV clears it. Advertise it only once the override reaches the
+  status bar style: SV reads the capability as "the app takes the tone",
+  and stops painting its web-side stopgap band under the status bar.
+  Unprivileged and not persisted: see "Status-bar tone" below.
 
 ## Methods
 
@@ -331,6 +337,64 @@ Producer requirements for a build that advertises the capability:
 Builds without the capability lose only the improvement: SV feature-detects
 it via `getBridgeInfo().capabilities`, an unknown method is dropped
 silently, and the wrapper races a 4s timeout so nothing waits on the answer.
+
+### Status-bar tone (additive; `setStatusBarTone`)
+
+#### `setStatusBarTone({ tone })` → resolves when applied
+
+`tone` is the tone of the page GROUND under the status bar, the same
+vocabulary as `data-app-tone` (`frontend/src/features/app-frame/app-tone.js`):
+
+- `"dark"`: the ground is dark, so draw LIGHT status-bar glyphs.
+- `"light"`: the ground is light, so draw DARK glyphs.
+- `null`: clear the override; the glyphs follow the app's theme again.
+
+The wrapper sends anything else as `null`.
+
+**The problem it solves (#26).** The app picks the status-bar style from its
+own theme, which is the appearance SV publishes (`setAppearance`). That is
+right over the shell's own screens and wrong over a surface with a tone of
+its own. The fullscreen staging preview's bar is always near-black, so on
+the light shell its clock and battery were dark on dark. A running app
+paints its own page colour up behind the bar, so a dark app under the light
+shell (or a light one under the dark shell) has the same problem.
+
+SV calls it from `public/js/native-chrome.js` (`publishStatusBarTone`) on
+boot and whenever the answer changes, and only with a changed value:
+
+- `"dark"` while the fullscreen staging preview (`#staging-overlay`, not
+  docked and not under a session's chrome) or the before/after compare
+  overlay (`#visual-compare-overlay`) is open;
+- otherwise the running app's tone (`data-app-tone` on `<html>`), when an
+  app is on screen;
+- otherwise `null`. The boot publish is `null` too, which also clears an
+  override a previous document left behind.
+
+**Unprivileged and not persisted.** It carries no account state, and it is
+true only for as long as the current document says so. Only the top
+document publishes; a framed copy of the shell (a platform change's staging
+preview) does not.
+
+Producer requirements for a build that advertises the capability:
+
+- **The override wins over the theme** for the status-bar style while it is
+  set, and `null` returns to the theme-derived style.
+- **Do not persist it.** Reset it on document load and when the WebView is
+  disposed, like `setBackNavigationEnabled`, so a value never outlives the
+  page that set it.
+- **Idempotent, last write wins.** Re-applying the current value changes
+  nothing.
+- **Nothing else changes on receipt.** It is presentation state.
+
+Builds without the capability lose only the improvement. SV feature-detects
+it via `getBridgeInfo().capabilities` and never calls it otherwise. A build
+that did receive it would drop the unknown method; the wrapper then rejects
+after its 4s timeout and SV logs a `console.warn`, never a `console.error`.
+Until a build takes the tone, `public/css/app.css` paints the fullscreen
+preview bar's safe-area band in the shell's ground colour (scoped to
+`html.in-native-webview`), so the theme's glyphs sit on the ground they were
+picked for. The first tone the app accepts puts `.native-status-bar-tone` on
+`<html>`, which retires that band for the rest of the document.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
@@ -657,10 +721,22 @@ owned entirely by the authenticated Social session.
     "platform": "android",        // android | ios
     "exactAlarmGranted": true,
     "batteryOptDisabled": false,  // Android only, else null
-    "deviceManufacturer": "samsung" // Android only, else null
+    "deviceManufacturer": "samsung", // Android only, else null
+    "notificationPermission": "notDetermined" // notDetermined | denied | authorized; optional
   }
 }
 ```
+
+`permissions.notificationPermission` is the OS notification permission as
+the OS reports it, read independently of push configuration (additive;
+older builds omit it). It is what `NativeChrome.askForPing` trusts first
+when deciding whether "Get a ping when your app is ready?" may be offered:
+only `notDetermined` is askable, because iOS presents its own prompt once
+and a determined permission makes `requestPermissions()` a tap that shows
+nothing. Without the field SV falls back to `getSocialPushState()`'s
+`permissionStatus`, which a build without push configured reports as
+`notDetermined` forever, so that fallback is trusted only until this device
+has been asked once.
 
 v4 removed `termsAccepted` (terms moved to the session-authed
 `/challenges-api/terms/*` web routes) and `iosKeepAliveActive` (the iOS

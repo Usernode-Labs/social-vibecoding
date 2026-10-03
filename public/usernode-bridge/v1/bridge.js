@@ -5513,6 +5513,35 @@
     );
   };
 
+  // setStatusBarTone({ tone }) → tells the native shell the tone of the
+  // page ground UNDER the status bar right now, so it can draw the clock and
+  // battery glyphs that read on it (#26). The app's own theme picks them
+  // otherwise, and that theme is the shell's appearance, which is wrong
+  // over a surface with a tone of its own: the always-dark fullscreen
+  // staging preview, or a running app's page colour.
+  //
+  //   tone  "dark" (light glyphs) | "light" (dark glyphs) | null, which
+  //         clears the override and hands the bar back to the app's theme.
+  //         Anything else is sent as null.
+  //
+  // UNPRIVILEGED and NOT PERSISTED, like setAppearance: presentation state
+  // with no account in it, true only for as long as this document says so.
+  // Same short timeout, for the same reason: nothing waits on it, and on a
+  // build that does not know the method the timeout is the answer.
+  //
+  // Additive capability: feature-detect `setStatusBarTone` via
+  // getBridgeInfo().capabilities before calling (NativeChrome does). Older
+  // builds drop the unknown method, the call rejects after the timeout,
+  // and they lose only the improvement; producer requirements live in
+  // NATIVE-BRIDGE.md.
+  window.usernode.setStatusBarTone = function (state) {
+    var tone = state && (state.tone === "dark" || state.tone === "light")
+      ? state.tone : null;
+    return callNativeChromeAction(
+      "setStatusBarTone", { tone: tone }, _APPEARANCE_TIMEOUT_MS
+    );
+  };
+
   // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
   //  getLlmUsage)
