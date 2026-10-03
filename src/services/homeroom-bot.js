@@ -3151,6 +3151,41 @@ const pendingLive = new Map();
 // card reads past it to that look's run (homeroom-bot-activity.js).
 const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triaged again';
 
+// How many builds of one request in a row a restart may send back to be
+// triaged again. Nothing counted them: on 30 Sep, with 85 merges to main and
+// a deploy behind most of them, a request whose spec turn kept landing on a
+// restart went round again each time (a new ready run, a new spec on the
+// issue, more spend) and never ended in a proposal or in a word about why.
+// The third one in a row within the window is not sent back: it is recorded
+// failed and said, as any failed build is, and a reply or Run now starts it
+// again.
+const MAX_RESTARTED_BUILDS = 3;
+const RESTARTED_BUILDS_WINDOW_HOURS = 24;
+
+/**
+ * How many of the request's latest live builds before `runId`, back to back
+ * and within the window, a restart sent back. A run that never started a
+ * build (a held verdict, a question) is not one of its builds and does not
+ * break the count.
+ */
+async function restartedBuildsBefore(pool, { appId, issueNumber, runId }) {
+  const { rows } = await pool.query(
+    `SELECT build_error FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND id < $3
+        AND build_session_id IS NOT NULL
+        AND created_at > NOW() - make_interval(hours => $4)
+      ORDER BY id DESC
+      LIMIT $5`,
+    [appId, issueNumber, runId, RESTARTED_BUILDS_WINDOW_HOURS, MAX_RESTARTED_BUILDS - 1],
+  );
+  let n = 0;
+  for (const row of rows) {
+    if (!String(row.build_error || '').endsWith(RESTARTED_BUILD_NOTE)) break;
+    n += 1;
+  }
+  return n;
+}
+
 /** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
 async function liveRunOfSession(pool, sessionId) {
   const { rows } = await pool.query(
@@ -3194,7 +3229,8 @@ async function requeueForRestart(pool, appId, issueNumber) {
  *   - a spec turn that found the request impossible says so;
  *   - any other spec turn, and a turn recovery could not follow at all, sends
  *     the issue back to be triaged again: its queue row is gone, and without
- *     this the issue would sit on "looking into it" for good.
+ *     this the issue would sit on "looking into it" for good. The third such
+ *     build in a row (MAX_RESTARTED_BUILDS) is said to have failed instead.
  * Never throws; returns what it did, or null when nothing was noted.
  */
 async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
@@ -3218,22 +3254,35 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
 
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
       ? live.readSpec(plan.result?.lastResultText) : null;
+    // Set when restarts have cut this request's builds short too many times
+    // in a row to send it round again (MAX_RESTARTED_BUILDS).
+    let restartedOut = 0;
     if (plan.lost || (plan.mode === 'scout' && !specRead?.blocked)) {
       await archive();
-      // The run says what became of its build: it was interrupted, and the
-      // issue goes round again as a new run, which speaks for itself. Left
-      // unrecorded, it read as a build with a session and no outcome (run
-      // 613), indistinguishable from one still going.
-      await recordLiveBuild(pool, plan.runId, {
-        ok: false, sessionId: Number(sessionId), costUsd,
-        error: `interrupted: ${plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short'}`
-          + ` ${RESTARTED_BUILD_NOTE}`,
+      const before = await restartedBuildsBefore(pool, plan).catch(() => 0);
+      if (before + 1 < MAX_RESTARTED_BUILDS) {
+        // The run says what became of its build: it was interrupted, and the
+        // issue goes round again as a new run, which speaks for itself. Left
+        // unrecorded, it read as a build with a session and no outcome (run
+        // 613), indistinguishable from one still going.
+        await recordLiveBuild(pool, plan.runId, {
+          ok: false, sessionId: Number(sessionId), costUsd,
+          error: `interrupted: ${plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short'}`
+            + ` ${RESTARTED_BUILD_NOTE}`,
+        });
+        await requeueForRestart(pool, plan.appId, plan.issueNumber);
+        log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
+          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: plan.why || plan.mode,
+        });
+        return 'requeued';
+      }
+      // Not sent round again: said below as a failed build, so the person
+      // hears why, and recorded without RESTARTED_BUILD_NOTE, so their
+      // activity card stops on it instead of reading past it.
+      restartedOut = before + 1;
+      log.warn('homeroom-bot', 'Restarts cut a live build short too many times in a row; not sending it back', {
+        app: app.slug, issueNumber: plan.issueNumber, sessionId, inARow: restartedOut, why: plan.why || plan.mode,
       });
-      await requeueForRestart(pool, plan.appId, plan.issueNumber);
-      log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
-        app: app.slug, issueNumber: plan.issueNumber, sessionId, why: plan.why || plan.mode,
-      });
-      return 'requeued';
     }
 
     const github = deps.github || require('./github');
@@ -3257,7 +3306,12 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const turnFailed = plan.mode === 'scout' || plan.timedOut
       ? null : live.failedClaudeTurn(plan.result);
     let built;
-    if (plan.mode === 'scout') {
+    if (restartedOut) {
+      built = {
+        ok: false, sessionId: Number(sessionId),
+        error: `the platform restarted in the middle of each of its last ${restartedOut} tries at building this`,
+      };
+    } else if (plan.mode === 'scout') {
       built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };
     } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut && !turnFailed) {
       const pushed = {
