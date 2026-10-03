@@ -576,3 +576,52 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
     assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
   }
 });
+
+// Test accounts for first-run testing (routes/test-accounts.js). Three routes
+// outside /api/admin and /api/auth (which a connector can never reach),
+// allowed because every handler refuses anybody who is not a full platform
+// admin before anything else runs: they mint a new sign-in, list accounts,
+// and delete one with the apps it made. The gate comes first, then the
+// per-admin limiter, then the same-origin browser guard, on all three; and no
+// path carries a `password` segment, which the canonical-target wall would
+// refuse anyway.
+test('the three test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+  for (const [method, target] of [
+    ['POST', '/api/test-accounts'],
+    ['GET', '/api/test-accounts'],
+    ['POST', '/api/test-accounts/12/retire'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/test-accounts'],
+    ['GET', '/api/test-accounts/12'],
+    ['DELETE', '/api/test-accounts/12'],
+    ['POST', '/api/test-accounts/12'],
+    ['GET', '/api/test-accounts/12/retire'],
+    ['POST', '/api/test-accounts//retire'],
+    ['POST', '/api/test-accounts/12/retire/extra'],
+    ['POST', '/api/test-accounts/12/password'],
+    ['GET', '/api/test-accounts/password'],
+    // The admin console's own user routes stay out of reach.
+    ['POST', '/api/admin/users'],
+    ['POST', '/api/v4/admin/users'],
+    ['POST', '/api/auth/register'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/test-accounts.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/test-accounts[^']*)', ([^(]+)handler\(/g)];
+  assert.deepEqual(routes.map(([, method, route]) => `${method.toUpperCase()} ${route}`).sort(), [
+    'GET /api/test-accounts',
+    'POST /api/test-accounts',
+    'POST /api/test-accounts/:id/retire',
+  ]);
+  for (const [, method, route, chain] of routes) {
+    assert.equal(chain, 'requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, ',
+      `${method.toUpperCase()} ${route} is full-admin gated, then limited, then guarded`);
+    assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
+  }
+  // Nothing else in the file registers a route.
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 3);
+});

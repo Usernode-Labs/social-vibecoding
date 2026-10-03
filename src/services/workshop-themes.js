@@ -69,7 +69,7 @@ const crypto = require('crypto');
 const github = require('./github');
 const topicAttrs = require('./topic-attributes');
 const issueProgress = require('./issue-progress');
-const { currentVotePredicateSql } = require('./pr-vote-revision');
+const { countedVotePredicateSql } = require('./pr-vote-revision');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -235,10 +235,10 @@ async function buildThemeInput(pool, app) {
             cs.created_at, u.username,
             (SELECT COUNT(*) FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
             (SELECT COUNT(*) FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND cs.status IN ('promoted', 'merging')

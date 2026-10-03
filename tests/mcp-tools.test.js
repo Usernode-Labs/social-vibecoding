@@ -2298,6 +2298,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #3654. Cancelling a benchmark run: full platform admins only.
     'cancel_bench_run',
     'claim_request', 'create_request',
+    // Test accounts for first-run testing (create_test_account,
+    // list_test_accounts, retire_test_account): registered only for a full
+    // platform admin, and every route behind them refuses anybody else.
+    'create_test_account',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
@@ -2323,7 +2327,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
     'launch_bench_run',
     'list_apps', 'list_bench_grading_queue', 'list_bench_runs',
-    'list_my_proposals', 'list_requests',
+    'list_my_proposals', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
@@ -2339,6 +2343,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'propose_close_request',
     'recheck_change',
     'release_request',
+    'retire_test_account',
     'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_platform_build', 'submit_work',
     'sync_change',
@@ -2548,9 +2553,11 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'cancel_bench_run',
-    'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
+    'create_request', 'create_test_account',
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'label_bench_task', 'launch_bench_run',
-    'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change', 'start_change',
+    'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
+    'retire_test_account', 'start_change',
     'start_platform_build', 'submit_bench_grade',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',

@@ -36,6 +36,7 @@ const {
   reviewedHeadForSession,
   visualHeadForSession,
   currentVotePredicateSql,
+  countedVotePredicateSql,
   sameSha,
 } = require('../services/pr-vote-revision');
 
@@ -280,6 +281,16 @@ function stagingMockProposals(viewer) {
         '[Mock] Re-confirm test: you said yes to an earlier version of this proposal',
         30, 0, 0, 2, { required: 2, windowEndsAt: null }),
       my_prior_vote: 'yes',
+    },
+    // Test accounts: the viewer is a test account and a real person made the
+    // app, so their vote is recorded but not counted, and the vote picker
+    // says "Test account: this vote won't count." — reviewable on staging via
+    // ?demo=1 without signing in as one.
+    {
+      ...mk(9000040, 900140,
+        '[Mock] Test-account vote: your vote here is recorded but will not count',
+        8, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(64) }),
+      my_vote_uncounted: true,
     },
     // One No vote: eased threshold restored, window pushed back out.
     {
@@ -2116,13 +2127,17 @@ function mergedRowSelect() {
            -- vanishing. Mirrors the /promoted subqueries.
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-               AND ${currentVotePredicateSql('pv', 'cs')}) as yes_count,
+               AND ${countedVotePredicateSql('pv', 'cs')}) as yes_count,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${currentVotePredicateSql('pv', 'cs')}) as no_count,
+               AND ${countedVotePredicateSql('pv', 'cs')}) as no_count,
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- Test accounts (D1): the viewer is a test account and a real
+           -- person made this app, so their vote is recorded and shown but
+           -- not counted. The vote picker says so in one line.
+           NOT counts_toward_outcome($2, cs.app_id) AS my_vote_uncounted,
            -- kudos_count folds in any issue bounties AWARDED to this PR on
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
@@ -3671,10 +3686,10 @@ function voteRoutes(config) {
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
          WHERE cs.user_id = $1 AND cs.status IN ('promoted', 'merging')
            AND cs.is_headless = FALSE
@@ -3685,8 +3700,8 @@ function voteRoutes(config) {
       const { rows: governance } = await pool.query(
         `SELECT i.id, i.title, i.kind, i.created_at,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) AS down_count
          FROM issues i JOIN apps a ON a.id = i.app_id
          WHERE i.created_by = $1 AND i.kind = 'secret_change' AND i.status = 'open'
          ORDER BY i.created_at DESC`,
@@ -3944,13 +3959,17 @@ function voteRoutes(config) {
            cs.active_users_at_promote,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-               AND ${currentVotePredicateSql('pv', 'cs')}) as yes_count,
+               AND ${countedVotePredicateSql('pv', 'cs')}) as yes_count,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${currentVotePredicateSql('pv', 'cs')}) as no_count,
+               AND ${countedVotePredicateSql('pv', 'cs')}) as no_count,
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- Test accounts (D1): the viewer is a test account and a real
+           -- person made this app, so their vote is recorded and shown but
+           -- not counted. The vote picker says so in one line.
+           NOT counts_toward_outcome($2, cs.app_id) AS my_vote_uncounted,
            -- #1688: the viewer's vote on an EARLIER version — still on their
            -- row, no longer counted. The card asks "Still yes?" from it.
            (SELECT pv.vote FROM pr_votes pv
@@ -4357,8 +4376,8 @@ function voteRoutes(config) {
                 i.github_issue_number, i.created_by, i.created_at,
                 COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) AS completed_at,
                 u.username AS created_by_username,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) AS down_count,
                 (SELECT COUNT(*)::int FROM chat_messages cm
                   WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
                     AND cm.msg_type = 'message') AS chat_count,

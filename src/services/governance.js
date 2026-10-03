@@ -41,7 +41,7 @@
 // never make its own merge gate unreachable.
 
 const log = require('./logger');
-const { currentVotePredicateSql } = require('./pr-vote-revision');
+const { countedVotePredicateSql } = require('./pr-vote-revision');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -266,9 +266,15 @@ async function qualifiedCounts(pool, kind, id, approverIds) {
   // PR-only: issue_votes has no epoch, and an issue vote has no revision to
   // go stale against.
   const scoped = kind !== 'issue';
-  const epochClause = scoped
+  // Test accounts (D1): a test account's vote on an app a real person made
+  // is recorded but not counted — the same rule as countedVotePredicateSql,
+  // keyed by the proposal's id because that is all this holds.
+  const epochClause = (scoped
     ? ` AND approval_epoch = (SELECT approval_epoch FROM chat_sessions WHERE id = ${'$'}1)`
-    : '';
+    : '')
+    + (scoped
+      ? ` AND counts_toward_session_outcome(user_id, ${'$'}1)`
+      : ` AND counts_toward_issue_outcome(user_id, ${'$'}1)`);
   if (approverIds == null) {
     // Unrestricted electorate: the exact two COUNT queries the merge
     // paths always issued (cheaper than a FILTER scan, and existing
@@ -317,6 +323,7 @@ async function qualifiedCountsBatch(pool, kind, ids, approverIds) {
        FROM issue_votes
        WHERE issue_id = ANY($1::int[])
          AND user_id = ANY($2::int[])
+         AND counts_toward_issue_outcome(user_id, issue_id)
        GROUP BY issue_id`
     : `SELECT pv.session_id AS id,
          COUNT(*) FILTER (WHERE pv.vote = '${yesVal}') AS yes,
@@ -325,7 +332,7 @@ async function qualifiedCountsBatch(pool, kind, ids, approverIds) {
        JOIN chat_sessions cs ON cs.id = pv.session_id
        WHERE pv.session_id = ANY($1::int[])
          AND pv.user_id = ANY($2::int[])
-         AND ${currentVotePredicateSql('pv', 'cs')}
+         AND ${countedVotePredicateSql('pv', 'cs')}
        GROUP BY pv.session_id`;
   const { rows } = await pool.query(sql, [ids, approverIds]);
   for (const r of rows) out.set(r.id, { yes: parseInt(r.yes, 10) || 0, no: parseInt(r.no, 10) || 0 });

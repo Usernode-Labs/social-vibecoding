@@ -485,9 +485,9 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
     `SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress,
             cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${revision.currentVotePredicateSql('pv', 'cs')}) AS yes,
+                AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${revision.currentVotePredicateSql('pv', 'cs')}) AS no
+                AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS no
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
     [sessionId],
   );
