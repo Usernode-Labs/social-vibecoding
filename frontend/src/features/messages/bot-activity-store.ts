@@ -1,7 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
-import { WORK_CHANGED_EVENT } from './bot-work';
+import { WORK_CHANGED_EVENT } from './bot-shared';
 import type { HomeroomBotActivity } from './types';
 
 /*

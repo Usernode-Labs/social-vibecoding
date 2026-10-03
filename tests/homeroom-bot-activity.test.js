@@ -366,7 +366,7 @@ test('the row draws a bot\'s activity message as the card, in place of its words
 
 test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /\{botDm \? <BotWorkTray [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
+  assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
 test('the staging preview\'s declared check finds the card being built in the demo DM, beside the tray', () => {

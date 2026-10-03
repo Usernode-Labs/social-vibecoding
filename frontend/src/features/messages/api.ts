@@ -8,7 +8,7 @@ import type {
   HomeroomBotActivityOutcome,
   HomeroomBotJob,
   HomeroomBotMeta,
-  HomeroomBotOutcome,
+  HomeroomBotPastJob,
   HomeroomBotPhase,
   HomeroomBotWork,
   MessageAttachment,
@@ -621,55 +621,6 @@ export async function listBlocks(): Promise<ConversationUser[]> {
   }).filter((user) => user.id);
 }
 
-const BOT_PHASES = new Set<HomeroomBotPhase>([
-  'setting_up', 'queued', 'looking', 'building', 'follow_up_queued', 'following_up', 'merging',
-]);
-const BOT_OUTCOMES = new Set<HomeroomBotOutcome>([
-  'question', 'ready', 'proposed', 'live', 'closed', 'build_failed', 'person', 'empty', 'failed', 'answer', 'revise',
-]);
-
-/**
- * #3692: one job of the Homeroom bot's, field by field. `href` is kept only
- * when it is one of the platform's own in-app addresses (`#app/…`): the
- * tray draws it as a link, and a link it draws never leaves the shell.
- */
-function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
-  const href = text(pick(row, 'href'));
-  return {
-    appSlug: text(pick(row, 'appSlug')) || null,
-    appName: text(pick(row, 'appName')) || text(pick(row, 'appSlug')) || 'A project',
-    issueNumber: strictId(pick(row, 'issueNumber')),
-    title: text(pick(row, 'title')) || null,
-    firstVersion: pick(row, 'firstVersion') === true,
-    href: href.startsWith('#app/') ? href : null,
-  };
-}
-
-export function normalizeBotWork(input: unknown): HomeroomBotWork {
-  const data = record(input);
-  const now = array(pick(data, 'now')).map((entry) => {
-    const row = record(entry);
-    const phase = text(pick(row, 'phase')) as HomeroomBotPhase;
-    return { ...normalizeBotJob(row), phase: BOT_PHASES.has(phase) ? phase : 'looking', since: text(pick(row, 'since')) || null };
-  });
-  const history = array(pick(data, 'history')).map((entry) => {
-    const row = record(entry);
-    const outcome = text(pick(row, 'outcome')) as HomeroomBotOutcome;
-    return {
-      ...normalizeBotJob(row),
-      id: strictId(pick(row, 'id')) || 0,
-      outcome: BOT_OUTCOMES.has(outcome) ? outcome : 'failed',
-      at: text(pick(row, 'at')) || null,
-    };
-  }).filter((job) => job.id);
-  return { now, history };
-}
-
-/** #3692: what the Homeroom bot is doing for the signed-in person, and did before. */
-export async function getHomeroomBotWork(): Promise<HomeroomBotWork> {
-  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work'));
-}
-
 const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
@@ -679,6 +630,91 @@ const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
 function inAppHref(value: unknown): string | null {
   const href = text(value);
   return href.startsWith('#app/') ? href : null;
+}
+
+const BOT_PHASES = new Set<HomeroomBotPhase>([
+  'setting_up', 'queued', 'looking', 'building', 'follow_up_queued', 'following_up', 'merging',
+]);
+
+/**
+ * #3692: who one of the Homeroom bot's tray entries is about, and where it
+ * opens, field by field. Every address is kept only when it is one of the
+ * platform's own in-app addresses (`#app/…`): the tray draws them as links,
+ * and a link it draws never leaves the shell. An earlier run with an
+ * unknown ending reads as one that stopped, as a card's does.
+ */
+function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
+  const links = record(pick(row, 'links'));
+  const appSlug = text(pick(row, 'appSlug')) || null;
+  const issueNumber = strictId(pick(row, 'issueNumber'));
+  const firstVersion = pick(row, 'firstVersion') === true;
+  return {
+    key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
+    appSlug,
+    appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    issueNumber,
+    title: text(pick(row, 'title')) || null,
+    firstVersion,
+    href: inAppHref(pick(row, 'href')),
+    links: {
+      request: inAppHref(pick(links, 'request')),
+      proposal: inAppHref(pick(links, 'proposal')),
+      project: inAppHref(pick(links, 'project')),
+    },
+    earlier: array(pick(row, 'earlier')).map((entry) => {
+      const run = record(entry);
+      const outcome = text(pick(run, 'outcome')) as HomeroomBotActivityOutcome;
+      return {
+        id: strictId(pick(run, 'id')) || 0,
+        outcome: ACTIVITY_OUTCOMES.has(outcome) ? outcome : 'stopped',
+        at: text(pick(run, 'at')) || null,
+      };
+    }).filter((run) => run.id),
+  };
+}
+
+/** A past entry (Needs you or History). One without a known ending says what waits instead, or is dropped. */
+function normalizeBotPastJob(entry: unknown): HomeroomBotPastJob | null {
+  const row = record(entry);
+  const outcome = text(pick(row, 'outcome')) as HomeroomBotActivityOutcome;
+  const known = ACTIVITY_OUTCOMES.has(outcome);
+  const doing = text(pick(row, 'doing')) || null;
+  if (!known && !doing && !outcome) return null;
+  return {
+    ...normalizeBotJob(row),
+    id: strictId(pick(row, 'id')) || 0,
+    outcome: known ? outcome : (outcome ? 'failed' : null),
+    doing,
+    at: text(pick(row, 'at')) || null,
+  };
+}
+
+export function normalizeBotWork(input: unknown): HomeroomBotWork {
+  const data = record(input);
+  const now = array(pick(data, 'now')).map((entry) => {
+    const row = record(entry);
+    const phase = text(pick(row, 'phase')) as HomeroomBotPhase;
+    const step = strictId(pick(row, 'step'));
+    const of = strictId(pick(row, 'of'));
+    const whole = !!step && !!of && step <= of && of <= 12;
+    return {
+      ...normalizeBotJob(row),
+      phase: BOT_PHASES.has(phase) ? phase : 'looking',
+      step: whole ? step : null,
+      of: whole ? of : null,
+      stepName: whole ? text(pick(row, 'stepName')) || null : null,
+      doing: text(pick(row, 'doing')) || null,
+      since: text(pick(row, 'since')) || null,
+    };
+  });
+  const past = (key: string) => array(pick(data, key)).map(normalizeBotPastJob)
+    .filter((job): job is HomeroomBotPastJob => !!job);
+  return { now, needsYou: past('needsYou'), history: past('history') };
+}
+
+/** #3692: what the Homeroom bot is doing for the signed-in person, what waits on them, and what it did before. */
+export async function getHomeroomBotWork(): Promise<HomeroomBotWork> {
+  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work'));
 }
 
 /**
