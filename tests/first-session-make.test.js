@@ -68,6 +68,31 @@ test('making something, or starting from the story, answers the join screen with
   assert.match(read('src/middleware/auth.js'), /'\/api\/me\/first-session\/started',\s+\];/);
 });
 
+test('an account that signs in some other way is asked what to make in the join screen\'s place', () => {
+  // The server: only for an account still due the join screen, while the story is on.
+  const auth = read('src/routes/auth.js');
+  assert.match(auth, /if \(needsCommunitiesChoice\) storyFirstSession = await firstSession\.storyLandingEnabled\(pool\);/);
+  assert.match(auth, /needsCommunitiesChoice,\s+\/\/[^\n]*\n(?:\s+\/\/[^\n]*\n)*\s+storyFirstSession,/);
+  // The join step hands over to the island, answering itself as 'sign_in'.
+  const join = read('frontend/src/features/auth/communities-first-run.js');
+  assert.match(join, /if \(window\.App\.user\.storyFirstSession === true\s+&& firstSession && typeof firstSession\.make === 'function'\) \{/);
+  assert.match(join, /body: JSON\.stringify\(\{ via: 'sign_in' \}\),/);
+  assert.match(join, /window\.App\.user\.needsCommunitiesChoice = false;\s+firstSession\.make\(\);\s+CommunitiesFirstRun\._resolve\(\);\s+return;/);
+  // It comes before the suggestions are fetched, so the join screen is never drawn first.
+  assert.ok(join.indexOf('firstSession.make()') < join.indexOf("fetch('/api/me/join-suggestions'"));
+  assert.match(read('src/routes/onboarding.js'), /const answer = req\.body && req\.body\.via === 'sign_in' \? 'sign_in' : 'story';/);
+  // The island opens it once, whichever of the two asks first.
+  const island = read(`${DIR}/index.tsx`);
+  assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
+  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
+});
+
+test('the route records which way the first session was reached', async () => {
+  const pool = fakePool([[]]);
+  await firstSession.answerJoinScreen(pool, 8, 'sign_in');
+  assert.deepEqual(pool.calls[0].params, [8, 'sign_in']);
+});
+
 test('the landing: the story in place of the pitch unless switched off, for nobody signed in and no invite', () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
   // The default, so it is drawn before the options arrive, and when they fail.

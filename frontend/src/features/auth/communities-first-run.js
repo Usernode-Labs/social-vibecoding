@@ -14,6 +14,11 @@
 // (src/services/onboarding.js). Every account that existed before this step
 // reads false, so nobody who already uses the platform is walked through it.
 //
+// While the story landing is on (`App.user.storyFirstSession`), the step is
+// the first session's "What do you want to make?" instead (../first-session):
+// the question a new account made from the story's own sheet is asked, put
+// to every new account however it signed in.
+//
 // ── What it shows ──────────────────────────────────────────────────────
 //
 // GET /api/me/join-suggestions: Homeroom first (the platform's own project,
@@ -176,6 +181,35 @@
       // A ghost-click window after the sheet before it, the same one the
       // terms gate leaves after the username step.
       await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+
+      // The first session in place of this screen (`storyFirstSession` on
+      // /api/auth/me, while the story landing is on): an account that
+      // signed in some other way than the story's own sheet (a password, a
+      // code, a provider, an admin-made test account) is asked "What do
+      // you want to make?" like one that did (../first-session). It answers
+      // this step the way that sheet does (POST /api/me/first-session/
+      // started), so it is not asked again and Getting started stays out of
+      // the first session. With no island to open it, the join screen is
+      // asked as before.
+      const firstSession = window.UsernodeReact && window.UsernodeReact.firstSession;
+      if (window.App.user.storyFirstSession === true
+          && firstSession && typeof firstSession.make === 'function') {
+        try {
+          await fetch('/api/me/first-session/started', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ via: 'sign_in' }),
+          });
+        } catch (err) {
+          console.warn('[communities-first-run] first session start not recorded:', err);
+        }
+        CommunitiesFirstRun._answered = true;
+        window.App.user.needsCommunitiesChoice = false;
+        firstSession.make();
+        CommunitiesFirstRun._resolve();
+        return;
+      }
 
       let list = null;
       try {

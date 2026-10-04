@@ -23,6 +23,7 @@ const {
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
@@ -725,6 +726,13 @@ function authRoutes(config) {
     // direction here is the one it had before the server kept it: the
     // browser's answer alone.
     let tourDone = false;
+    // The first session's question in place of the join screen: an account
+    // still due the join screen is asked "What do you want to make?"
+    // instead whenever the story landing is on, however it signed in (the
+    // story's own sheet, a password, a code, a provider). Only read for an
+    // account that is due it; FALSE when the switch cannot be read, which
+    // leaves the join screen as it was.
+    let storyFirstSession = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -764,6 +772,7 @@ function authRoutes(config) {
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
+      if (needsCommunitiesChoice) storyFirstSession = await firstSession.storyLandingEnabled(pool);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -864,6 +873,10 @@ function authRoutes(config) {
         // screen after the username and terms steps
         // (frontend/src/features/auth/communities-first-run.js).
         needsCommunitiesChoice,
+        // TRUE when the join screen above is to be the first session's
+        // "What do you want to make?" instead (the story landing is on).
+        // Only ever TRUE alongside needsCommunitiesChoice.
+        storyFirstSession,
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,

@@ -61,11 +61,15 @@ function onboardingRoutes(config) {
 
   // An account just made from the signed-out story (the sheet the story's
   // "Get started" opens): the first session asks what to make, not which
-  // communities to join (services/first-session.js).
+  // communities to join (services/first-session.js). `{ via: 'sign_in' }`
+  // is the same answer for an account that signed in some other way and
+  // was asked in the join screen's place (communities-first-run.js), so
+  // Journey can tell the two apart.
   router.post('/api/me/first-session/started', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const answer = req.body && req.body.via === 'sign_in' ? 'sign_in' : 'story';
     try {
-      await firstSession.answerJoinScreen(pool, req.user.id, 'story');
+      await firstSession.answerJoinScreen(pool, req.user.id, answer);
       res.json({ ok: true });
     } catch (err) {
       log.error('onboarding', 'first session start failed', { message: err.message });
