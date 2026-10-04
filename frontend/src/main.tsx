@@ -122,6 +122,10 @@ import './lib/wallpaper-scroll';
 // …and where the on-screen keyboard has panned the screen to, so a centred
 // dialog stays inside what is visible above the keys (#2765).
 import './lib/visual-viewport';
+// …and whether the keyboard is open on a phone at all, including in the
+// Homeroom app, whose web view is resized for it so the kit never sees it
+// covered: the tab bar and the Resume strip step aside (app.css).
+import './lib/keyboard-open';
 // …and a sheet, dialog or menu opened over a dark app takes the app's tone
 // rather than the viewer's light mode (#2803).
 import './lib/surface-tone';
