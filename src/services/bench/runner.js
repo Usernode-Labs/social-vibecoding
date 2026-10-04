@@ -383,6 +383,8 @@ function triagePrompt(snapshot, seed, readsImages = false) {
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
     // #3772: who decided on the project when the original look ran.
     decider: snapshot.extra?.decider || null,
+    // A first version's people when the original look ran (membersNote).
+    members: snapshot.extra?.members || null,
   });
 }
 

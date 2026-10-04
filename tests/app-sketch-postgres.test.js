@@ -100,6 +100,9 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     assert.equal(llm.calls[0].model, sketch.SKETCH_MODEL);
     assert.match(llm.calls[0].user, /APP NAME:\nRun Club 1/);
     assert.match(llm.calls[0].user, /Log our Sunday runs/);
+    // Grounded: today's date, and the creator read from their account.
+    assert.match(llm.calls[0].user, /TODAY:\n[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4} \(\d{4}-\d{2}-\d{2}\)/);
+    assert.match(llm.calls[0].user, /THE CREATOR \(shown on the screen as "You"\):\n@ada/);
     assert.deepEqual(limits.spends, [{ userId: ada.id, cents: 3, opts: { byok: false } }]);
   });
 

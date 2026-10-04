@@ -368,6 +368,13 @@ const FIRST_VERSION_NOTE = [
   'When the request names a design target (`design/sketch.html`, described in `design/sketch.json`), its creator has',
   'already seen that screen: plan the first version as it, with its job, layout, words and accent, and list any change',
   'under `assumptions` with the reason.',
+  // 2026-10-04: a sketch's made-up flatmates became a plan's question ("The
+  // sketch rotates chores between Maya, Jasper and Sophie. Should you be in
+  // the rotation too?") on a project of two real people.
+  'The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the',
+  'group, and never a `plan` bullet or a `choices` question. When the app involves the people in its group (whose turn',
+  'it is, who did what, who sees what), plan around the project\'s real members, listed under WHO IS IN THIS PROJECT',
+  'when known, and around new members joining later; never around people the sketch made up.',
   // B6: the creator sees the plan before anything is built, and taps Build
   // it or asks for changes (homeroom-bot-dm.js sendPlanCard).
   'Its creator sees your plan before anything is built, and taps Build it or asks for changes. So with `ready`, also',
@@ -1661,10 +1668,13 @@ function triageClosing(issueNumber) {
  * (prompts.runtimeReadsImages); a prompt rebuilt without it is the text-only
  * one every triage ran before it existed.
  */
-function triagePromptFor({ seed, issueNumber, firstVersion = false, readsImages = false, decider = null, planChange = null }) {
+function triagePromptFor({
+  seed, issueNumber, firstVersion = false, readsImages = false, decider = null, planChange = null, members = null,
+}) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     firstVersion ? FIRST_VERSION_NOTE : null,
+    firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
     deciderNote(decider),
     triageReference({ readsImages }), triageClosing(issueNumber),
@@ -1705,6 +1715,81 @@ function planChangeNote(planChange) {
     'What they asked:',
     ...planChange.changes.map((c) => `- "${String(c).replace(/\s+/g, ' ').slice(0, 1500)}"`),
   ].join('\n');
+}
+
+// How many of a first version's people its plan is told by name.
+const PROJECT_MEMBERS_SHOWN = 12;
+
+/**
+ * 2026-10-04: who is in a first version's project, so its plan is about
+ * them. The sketch it was drawn from shows sample people, and a plan that
+ * could not see the real ones planned around those: it asked a project of
+ * two whether its creator should join the sketch's three made-up flatmates
+ * in the rota. Pure; null says nothing (no roster, or an empty one), which
+ * is also every prompt the benchmark rebuilds from a snapshot without one.
+ */
+function membersNote(members) {
+  const people = Array.isArray(members?.people) ? members.people.filter((p) => p && p.username) : [];
+  if (!people.length) return null;
+  const label = (p) => {
+    const handle = `@${String(p.username).slice(0, 40)}`;
+    const name = String(p.name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    return name && name.toLowerCase() !== String(p.username).toLowerCase() ? `${name} (${handle})` : handle;
+  };
+  const lines = people.map((p) => `- ${label(p)}${p.creator ? ', who made the project' : ''}${p.invited ? ', invited and not joined yet' : ''}`);
+  const more = Number(members.more) || 0;
+  if (more > 0) lines.push(`- and ${more} more`);
+  const byEmail = Number(members.emailInvites) || 0;
+  if (byEmail > 0) lines.push(`- and ${byEmail} invited by email, not on Homeroom yet`);
+  return [
+    '==== WHO IS IN THIS PROJECT ====',
+    '',
+    'Its real people right now. Plan anything about who uses it around them, and around more people joining later:',
+    ...lines,
+  ].join('\n');
+}
+
+/**
+ * The people of a project, for membersNote: its members (its creator
+ * first), then the people invited who have not joined, by display name and
+ * username, and a count of invites by email still waiting for an account.
+ * { people, more, emailInvites }, or null when it has nobody.
+ */
+async function projectMembers(pool, app) {
+  if (!app?.id) return null;
+  const { rows } = await pool.query(
+    `SELECT username, display_name, creator, invited,
+            (COUNT(*) OVER ())::int AS total,
+            (SELECT COUNT(*)::int FROM app_email_invites e
+              WHERE e.app_id = $1 AND e.claimed_at IS NULL) AS by_email
+       FROM (
+         SELECT u.username, u.display_name, COALESCE(u.id = a.created_by, FALSE) AS creator, FALSE AS invited,
+                m.joined_at AS since
+           FROM apps a
+           JOIN community_members m ON m.community_id = a.community_id
+           JOIN users u ON u.id = m.user_id
+          WHERE a.id = $1 AND u.is_synthetic = FALSE
+         UNION ALL
+         SELECT u.username, u.display_name, FALSE, TRUE, c.created_at
+           FROM app_collaborators c
+           JOIN apps a ON a.id = c.app_id
+           JOIN users u ON u.id = c.user_id
+          WHERE c.app_id = $1 AND c.status = 'invited' AND u.is_synthetic = FALSE
+            AND NOT EXISTS (SELECT 1 FROM community_members m
+                             WHERE m.community_id = a.community_id AND m.user_id = c.user_id)
+       ) p
+      ORDER BY invited, creator DESC, since, username
+      LIMIT $2`,
+    [app.id, PROJECT_MEMBERS_SHOWN],
+  );
+  if (!rows.length) return null;
+  return {
+    people: rows.map((r) => ({
+      username: r.username, name: r.display_name || null, creator: r.creator === true, invited: r.invited === true,
+    })),
+    more: Math.max(0, (Number(rows[0].total) || 0) - rows.length),
+    emailInvites: Number(rows[0].by_email) || 0,
+  };
 }
 
 /**
@@ -2454,8 +2539,17 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       return null;
     })
     : null;
+  // 2026-10-04: and who is in its project, so the plan is about its real
+  // people rather than the sketch's sample ones.
+  const members = liveMode && requester?.firstVersion
+    ? await projectMembers(pool, app).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read a project\'s members', { app: app.slug, err: err.message });
+      return null;
+    })
+    : null;
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
+    ...(members ? { members } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
@@ -2477,6 +2571,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     extra: {
       model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null,
       ...(decider?.requesterDecides ? { decider } : {}),
+      // So the benchmark rebuilds the prompt this look read (bench/runner.js).
+      ...(members ? { members } : {}),
     },
   };
 
@@ -6935,6 +7031,8 @@ module.exports = {
   triagePromptFor,
   deciderNote,
   whoDecides,
+  membersNote,
+  projectMembers,
   headShaOf,
   INFRA_ERRORS,
   isLiveLaneSaturated,
