@@ -300,8 +300,16 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.deepEqual([made.link.expiresAt, made.link.maxUses], [null, null]);
       const { rows: [row] } = await pool.query('SELECT expires_at, max_uses FROM community_invites WHERE id = $1', [made.link.id]);
       assert.deepEqual(row, { expires_at: null, max_uses: null });
-      const { rows: [created] } = await pool.query(
-        `SELECT metadata FROM events WHERE event_type = 'invite_link_created' ORDER BY id DESC LIMIT 1`);
+      // The event is written without waiting (events.record), so this link's
+      // own row is waited for, not whichever was newest a moment ago.
+      let created = null;
+      for (let i = 0; i < 40 && !created; i += 1) {
+        ({ rows: [created] } = await pool.query(
+          `SELECT metadata FROM events
+            WHERE event_type = 'invite_link_created' AND (metadata->>'inviteId')::int = $1`, [made.link.id]));
+        if (!created) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(created, 'the link\'s own event');
       assert.deepEqual([created.metadata.days, created.metadata.maxUses], [null, null]);
       assert.equal((await invites.preview(pool, made.link.token)).expiresAt, null);
       assert.ok((await invites.listInvites(pool, { app: arena, user: ADA })).links.some((l) => l.id === made.link.id), 'listed as live');
