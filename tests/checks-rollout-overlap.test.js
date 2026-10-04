@@ -385,3 +385,84 @@ test('the merge gate blocks on it as an error and words it as a retry', () => {
   // merge exactly as for any other error.
   assert.match(src, /if \(checkState !== 'passing' && checkState !== 'skipped'\) \{/);
 });
+
+// ── The ?demo=1 fixture ─────────────────────────────────────────────────
+//
+// No ordinary staging steps make a run overlap a rollout, so a mock row is
+// how the sentence is reviewable in a preview. It is asserted against the row
+// `stagingMockProposals` actually serves, and through the card that renders
+// it, not against a hand-made row.
+
+const vm = require('node:vm');
+
+function stagingRow(id) {
+  const src = read('src/routes/votes.js');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  return JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === id) || null));
+}
+
+function makeAppView() {
+  const sandbox = {
+    console,
+    relTime: () => 'just now',
+    App: { user: { id: 1 }, currentTab: 'dev', currentSubTab: 'topic' },
+    Kudos: { renderButton: () => '' },
+    DOMPurify: { sanitize: (s) => s },
+    document: {
+      getElementById: () => null,
+      querySelector: () => ({ innerHTML: '' }),
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
+      body: { appendChild: () => {} },
+      hidden: false,
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    alert: () => {},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener: () => {},
+    localStorage: { getItem: () => null, setItem: () => {} },
+    location: { search: '', hash: '' },
+    URLSearchParams,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext([
+    read('public/js/merge-status.js'),
+    read('public/js/session-transcript.js'),
+    read('public/js/app-view.js'),
+    ';globalThis.__AppView = AppView;',
+  ].join('\n'), sandbox);
+  const AppView = sandbox.__AppView;
+  AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
+  AppView.appData = { slug: 'app' };
+  return AppView;
+}
+
+test('the demo fixture serves the sentence the settle path writes, and the card leads with it', () => {
+  const src = read('src/routes/votes.js');
+  assert.match(src, /check_error_detail: ROLLOUT_RETRY_DETAIL,/,
+    'a hand-copied string in the fixture would drift from the copy in production');
+
+  const row = stagingRow(9000046);
+  assert.ok(row, 'the fixture proposal exists');
+  assert.equal(row.check_state, 'error');
+  assert.equal(row.check_error_detail, ROLLOUT_RETRY_DETAIL);
+  assert.match(row.pr_title, /^\[Mock\] /, 'staging fixtures are obviously fake');
+
+  const notes = makeAppView()._checksStatusNotes({ ...row, status: 'promoted' });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].tone, 'error');
+  assert.equal(notes[0].rows[0].parts.join(''), ROLLOUT_RETRY_DETAIL,
+    'the reason is the first line of the checks note');
+});

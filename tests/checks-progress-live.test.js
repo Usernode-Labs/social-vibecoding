@@ -798,7 +798,7 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
     if (src[j] === '{') depth += 1;
     else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
   }
-  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);

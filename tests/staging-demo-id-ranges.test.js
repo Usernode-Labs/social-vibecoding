@@ -31,6 +31,7 @@ function mockIds(file, name, call) {
   const rows = vm.runInNewContext(`${fn}; ${call}`, {
     Date, Math, Number, String, JSON, Array, Object,
     connectionExhaustionMessage: () => 'fixture',
+    ROLLOUT_RETRY_DETAIL: 'fixture',
   });
   return rows.map((row) => Number(row.id));
 }

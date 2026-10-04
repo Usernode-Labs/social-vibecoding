@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
+const { ROLLOUT_RETRY_DETAIL } = require('../services/staging-recovery');
 const { governanceVoteLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const github = require('../services/github');
@@ -793,6 +794,20 @@ function stagingMockProposals(viewer) {
       check_error_detail: connectionExhaustionMessage(
         { max: 100, used: 98 }, { where: 'ran its checks' }
       ),
+      recheckable: true,
+      test_results: [],
+    },
+    // The other red badge that is not the author's to fix: a run that
+    // overlapped a platform rollout and came back red is stored as 'error'
+    // and runs again on its own. No ordinary staging steps can make a run
+    // overlap a rollout, so this row is how the sentence is reviewable. It
+    // reads the constant the settle path writes, so the copy cannot drift.
+    {
+      ...mk(9000046, 900146,
+        '[Mock] Checks-error test: the checks ran while Homeroom was updating',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: ROLLOUT_RETRY_DETAIL,
       recheckable: true,
       test_results: [],
     },
