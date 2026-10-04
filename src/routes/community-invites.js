@@ -9,6 +9,8 @@
  *                                                  who manages the project)
  *   DELETE /api/invite-links/:id                   turn one off
  *   GET    /api/public/invites/:token              the preview, signed out
+ *   GET    /api/public/invites/:token/picture      the project's picture, when
+ *                                                  it is an after-shot
  *   GET    /api/invite-links/by-token/:token       the preview plus where
  *                                                  the viewer stands on it
  *   POST   /api/invite-links/by-token/:token/redeem  follow it
@@ -50,31 +52,39 @@ function escapeAttr(value) {
 
 /**
  * The link-preview tags for an invite page: what iMessage, Slack and the
- * rest show when the link is pasted. A live link names the project, who
- * invited you and its icon; a dead or unknown one says only that it is a
- * Homeroom invite, so a pasted link discloses no more than preview() does.
+ * rest show when the link is pasted. A live link reads the way its page does:
+ * "Maya made this for Sunday Run Club" when the person who sent it made the
+ * project, with their note (else the project's line, else who invited you)
+ * and its picture (else its icon). A dead or unknown one says only that it
+ * is a Homeroom invite, so a pasted link discloses no more than preview()
+ * does.
  */
 function previewTags(preview, origin) {
   const live = preview && preview.live;
   const name = live ? preview.project.name : null;
-  const title = live ? `Join ${name} on Homeroom` : 'Homeroom invite';
+  const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
+  const title = !live ? 'Homeroom invite' : madeBy ? `${madeBy} made this for ${name}` : `Join ${name} on Homeroom`;
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';
-  const description = live
-    ? `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`
-    : 'This invite link is no longer active.';
+  const description = !live
+    ? 'This invite link is no longer active.'
+    : preview.note
+      || preview.project.description
+      || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
+  const picture = live && preview.project.picture ? preview.project.picture.url : null;
+  const image = picture || (live ? preview.project.iconUrl : null);
   const tags = [
     `<meta property="og:type" content="website">`,
     `<meta property="og:site_name" content="Homeroom">`,
     `<meta property="og:title" content="${escapeAttr(title)}">`,
     `<meta property="og:description" content="${escapeAttr(description)}">`,
-    `<meta name="twitter:card" content="summary">`,
+    `<meta name="twitter:card" content="${picture && origin ? 'summary_large_image' : 'summary'}">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
     `<meta name="twitter:description" content="${escapeAttr(description)}">`,
   ];
-  if (live && preview.project.iconUrl && origin) {
-    tags.push(`<meta property="og:image" content="${escapeAttr(origin + preview.project.iconUrl)}">`);
+  if (image && origin) {
+    tags.push(`<meta property="og:image" content="${escapeAttr(origin + image)}">`);
   }
   return tags.join('\n');
 }
@@ -106,7 +116,7 @@ function communityInviteRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const made = await invites.createInvite(pool, {
-        app, user: req.user, days: req.body?.days, maxUses: req.body?.maxUses,
+        app, user: req.user, days: req.body?.days, maxUses: req.body?.maxUses, note: req.body?.note,
       });
       if (!made.ok) return res.status(made.status).json({ error: made.error });
       log.info('invites', 'Invite link made', { slug: app.slug, by: req.user.username, id: made.link.id });
@@ -163,6 +173,31 @@ function communityInviteRoutes(config) {
       return res.status(preview.reason === 'unknown' ? 404 : 200).json(preview);
     } catch (err) {
       log.error('invites', 'Invite preview failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The after-shot a live link's page shows (invites.pictureFor). Anonymous
+  // like the preview, and only while the link is live: turning it off turns
+  // this off too. Whoever holds the link sees the project before joining it.
+  router.get('/api/public/invites/:token/picture', invitePreviewLimiter, async (req, res) => {
+    try {
+      const picture = invites.isToken(req.params.token)
+        ? await invites.pictureBytes(pool, req.params.token)
+        : null;
+      if (!picture) return res.status(404).json({ error: 'No picture' });
+      const data = Buffer.isBuffer(picture.data) ? picture.data : Buffer.from(picture.data || '');
+      res.set({
+        'Content-Type': picture.contentType,
+        'Content-Length': String(data.length),
+        'Cache-Control': 'private, max-age=300',
+        ETag: `"${picture.sha256}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+      });
+      return res.end(data);
+    } catch (err) {
+      log.error('invites', 'Invite picture failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

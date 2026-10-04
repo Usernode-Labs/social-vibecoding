@@ -21,6 +21,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
 const communityInvites = require('../../../services/community-invites');
+const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
@@ -741,6 +742,33 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: formatInviteTree(await communityInvites.adminPayload(pool)) });
     } catch (err) {
       log.error('topochain-admin', 'PUT /admin/invite-tree failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET / PUT /api/v4/admin/story-landing ────────────────────────────
+  // Whether the signed-out landing tells the first-session story and asks
+  // people to get started, instead of pointing at the waitlist
+  // (services/first-session.js). On unless switched off here.
+  const formatStory = (s) => ({ enabled: s.enabled, updated_at: iso(s.updatedAt), updated_by: s.updatedBy });
+  router.get('/api/v4/admin/story-landing', async (req, res) => {
+    try {
+      return ok(res, { data: formatStory(await firstSession.readStorySetting(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/story-landing failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  router.put('/api/v4/admin/story-landing', adminWriteGate, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
+    try {
+      await firstSession.setStoryLanding(pool, { enabled, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Story landing switched', { enabled, adminId: req.user?.id });
+      return ok(res, { data: formatStory(await firstSession.readStorySetting(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'PUT /admin/story-landing failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

@@ -964,6 +964,67 @@ function InviteTreePanel() {
   );
 }
 
+// ── The story landing: what a signed-out visitor is asked to do ─────────
+//
+// On (the default), the landing tells the first-session story and asks them
+// to get started: an account is made on the spot (services/first-session.js).
+// Off, it points at the waitlist ("Join the waitlist"). It belongs beside the
+// invite setting because it is the same valve.
+
+type StoryLanding = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
+
+function StoryLandingPanel() {
+  const [story, setStory] = useState<StoryLanding | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/story-landing');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setStory(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (next: boolean) => {
+    if (!canWrite() || saving.current) return;
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/story-landing', { enabled: next });
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the landing setting.'); return; }
+    setStory(data.data);
+  }, []);
+
+  const help = 'Signed-out visitors see what Homeroom is and "Get started", which makes an account '
+    + 'and asks them what to make. Off, they are sent to the waitlist instead. Anyone new still '
+    + 'waits here until admitted unless they already have access.';
+  return (
+    <div id="admin-topo-wl-story">
+      <Panel title="Landing">
+        {error ? (
+          <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !story ? <Skeleton rows={1} /> : null}
+        {!error && story ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-story-enabled" label="Signed-out landing asks people to get started" help={help} checked={story.enabled} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{story.enabled ? 'The landing asks people to get started.' : 'The landing points at the waitlist.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {story?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.`}
+          </p>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
 // ── Batch admit: paste a list, see who is there, admit them together ────
 //
 // For the case the one-row Admit button handles badly: a list of addresses
@@ -1536,6 +1597,7 @@ function WaitlistScreen() {
             ) : null}
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
             <InviteTreePanel />
+            <StoryLandingPanel />
           </>
         )}
         exportCsv={write

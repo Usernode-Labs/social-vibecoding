@@ -56,6 +56,9 @@ const DENIED_TABLES = new Set([
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'web_signup_sessions', // hashed, single-use first-password continuations
+  'sign_in_providers',  // Apple/Google client secrets and private keys (AES blobs, still deny)
+  'oauth_sign_in_states', // Apple/Google round trips: state, binder, nonce, PKCE verifier
+  'oauth_signup_sessions', // hashed, single-use username-step continuations
   'mobile_auth_tokens', // protocol-2 native bearer hashes
   'native_session_web_incarnations', // protocol-2 web-session security lineage
   'native_session_attempts', // protocol-2 subject/network binding

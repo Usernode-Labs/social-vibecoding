@@ -66,6 +66,7 @@ function anonymisedEmail(keptId, mergedId) {
 const REVOKED_TABLES = Object.freeze([
   'sessions',
   'web_signup_sessions',
+  'oauth_signup_sessions',
   'mobile_auth_tokens',
   'mobile_push_registrations',
   'mcp_tokens',

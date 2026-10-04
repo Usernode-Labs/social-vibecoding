@@ -45,5 +45,6 @@ import './admin-gallery.tsx';
 import './admin-campaigns.tsx';
 import './admin-push.tsx';
 import './admin-mail.tsx';
+import './admin-sign-in.tsx';
 import './admin-e2e.tsx';
 import './admin-topochain.js';

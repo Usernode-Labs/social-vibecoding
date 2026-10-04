@@ -178,6 +178,79 @@ CREATE INDEX IF NOT EXISTS idx_web_signup_sessions_expires
   ON web_signup_sessions (expires_at);
 COMMENT ON TABLE web_signup_sessions IS 'staging:private';
 
+-- Sign in with Apple and Google (src/services/sign-in-providers.js). Set up
+-- by an admin in Admin → Sign-in providers, one row per provider, and offered
+-- on the sign-in sheet only once a row is complete and switched on.
+-- `secret_enc` is Google's client secret or Apple's .p8 private key,
+-- encrypted with the data key (services/secrets.js). Private to staging: a
+-- preview never has a provider set up, and the data key it runs with could
+-- not read production's ciphertext anyway.
+CREATE TABLE IF NOT EXISTS sign_in_providers (
+  provider    TEXT PRIMARY KEY CHECK (provider IN ('apple', 'google')),
+  enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+  client_id   TEXT CHECK (client_id IS NULL OR char_length(client_id) BETWEEN 1 AND 200),
+  team_id     TEXT CHECK (team_id IS NULL OR team_id ~ '^[A-Z0-9]{10}$'),
+  key_id      TEXT CHECK (key_id IS NULL OR key_id ~ '^[A-Z0-9]{10}$'),
+  secret_enc  TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+COMMENT ON TABLE sign_in_providers IS 'staging:private';
+COMMENT ON COLUMN sign_in_providers.secret_enc IS 'staging:private';
+
+-- An account's Apple or Google identity: the provider's stable subject, so
+-- the next sign-in finds the account even if the address on it changed.
+-- The first sign-in links by verified address, or makes the account.
+CREATE TABLE IF NOT EXISTS user_oauth_identities (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider     TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  subject      TEXT NOT NULL CHECK (char_length(subject) BETWEEN 1 AND 255),
+  email        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  UNIQUE (provider, subject),
+  UNIQUE (user_id, provider)
+);
+COMMENT ON TABLE user_oauth_identities IS 'staging:private';
+
+-- One provider round trip, from the sheet's button to the callback: single
+-- use, ten minutes, stored only as hashes. `binder_hash` ties it to the
+-- browser that started it (an HttpOnly cookie), so a callback replayed into
+-- somebody else's browser signs nobody in there. `follow_invite` and
+-- `started_from` are what the sheet knew, carried across the trip.
+CREATE TABLE IF NOT EXISTS oauth_sign_in_states (
+  state_hash    VARCHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
+  provider      TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  binder_hash   VARCHAR(64) NOT NULL CHECK (binder_hash ~ '^[0-9a-f]{64}$'),
+  nonce         TEXT NOT NULL,
+  code_verifier TEXT,
+  follow_invite BOOLEAN NOT NULL DEFAULT FALSE,
+  started_from  TEXT,
+  return_to     TEXT NOT NULL DEFAULT '/',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_sign_in_states_expires
+  ON oauth_sign_in_states (expires_at);
+COMMENT ON TABLE oauth_sign_in_states IS 'staging:private';
+COMMENT ON COLUMN oauth_sign_in_states.nonce IS 'staging:private';
+COMMENT ON COLUMN oauth_sign_in_states.code_verifier IS 'staging:private';
+
+-- The username step after a provider sign-in made (or found) an account that
+-- has never chosen a handle: the web_signup_sessions shape, for a step that
+-- sets no password. Consumed in the transaction that mints the session.
+CREATE TABLE IF NOT EXISTS oauth_signup_sessions (
+  token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_signup_sessions_expires
+  ON oauth_signup_sessions (expires_at);
+COMMENT ON TABLE oauth_signup_sessions IS 'staging:private';
+
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (
@@ -11250,6 +11323,24 @@ CREATE TABLE IF NOT EXISTS community_invites (
 );
 CREATE INDEX IF NOT EXISTS idx_community_invites_app ON community_invites (app_id, created_by);
 COMMENT ON TABLE community_invites IS 'staging:private';
+
+-- The maker's own words, shown on the page a link opens and in its preview
+-- ("Come help with our run tracker!"). Plain text, at most 280 characters;
+-- NULL when they left none. services/community-invites.js cleanNote() is the
+-- one writer.
+ALTER TABLE community_invites ADD COLUMN IF NOT EXISTS note TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'community_invites'::regclass
+       AND conname = 'community_invites_note_length'
+  ) THEN
+    ALTER TABLE community_invites
+      ADD CONSTRAINT community_invites_note_length
+      CHECK (note IS NULL OR char_length(note) BETWEEN 1 AND 280);
+  END IF;
+END $$;
 
 -- One row per person who followed a link. 'joined' was applied; 'queued' is
 -- somebody without platform access yet, whose community waits for the day

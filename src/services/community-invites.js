@@ -163,6 +163,26 @@ function invitePath(token) {
   return `/invite/${token}`;
 }
 
+// A link's note: the maker's own words for the people it goes to, shown on
+// the page it opens and in its preview. Plain text in one paragraph, at most
+// NOTE_MAX characters (schema.sql, community_invites_note_length).
+const NOTE_MAX = 280;
+
+/**
+ * The note as stored: whitespace collapsed, control characters refused.
+ * Returns { ok: true, note } (note is null for none) or { ok: false, error }.
+ */
+function cleanNote(value) {
+  if (value === undefined || value === null) return { ok: true, note: null };
+  if (typeof value !== 'string') return { ok: false, error: 'A note must be text.' };
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) return { ok: false, error: 'A note must be plain text.' };
+  const note = value.replace(/\s+/g, ' ').trim();
+  if (!note) return { ok: true, note: null };
+  if ([...note].length > NOTE_MAX) return { ok: false, error: `A note is at most ${NOTE_MAX} characters.` };
+  return { ok: true, note };
+}
+
 /** A whole number within [min, max], or `fallback` when none was given. */
 function clampInt(value, fallback, min, max) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -223,6 +243,7 @@ function serializeLink(row, viewerId) {
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     createdBy: row.created_by_username || null,
     mine: row.created_by != null && row.created_by === viewerId,
+    note: row.note || null,
   };
 }
 
@@ -230,10 +251,12 @@ function serializeLink(row, viewerId) {
  * Make a link. `app` carries ACCESS_COLUMNS, community_id and name. Returns
  * `{ ok: true, link }` or `{ ok: false, status, error }`.
  */
-async function createInvite(pool, { app, user, days, maxUses }) {
+async function createInvite(pool, { app, user, days, maxUses, note }) {
   if (!(await canCreate(pool, app, user))) {
     return { ok: false, status: 403, error: 'Only people in this project can invite others to it.' };
   }
+  const cleaned = cleanNote(note);
+  if (!cleaned.ok) return { ok: false, status: 400, error: cleaned.error };
   const d = clampInt(days, DEFAULT_DAYS, LIMITS.minDays, LIMITS.maxDays);
   const u = clampInt(maxUses, DEFAULT_USES, LIMITS.minUses, LIMITS.maxUses);
   if (d === null) {
@@ -253,16 +276,16 @@ async function createInvite(pool, { app, user, days, maxUses }) {
   }
   const token = newToken();
   const { rows } = await pool.query(
-    `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, expires_at)
-     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 || ' days')::interval)
-     RETURNING id, token, created_by, max_uses, uses, expires_at, created_at`,
-    [token, app.community_id, app.id, user.id, u, String(d)]
+    `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, expires_at, note)
+     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 || ' days')::interval, $7)
+     RETURNING id, token, created_by, max_uses, uses, expires_at, created_at, note`,
+    [token, app.community_id, app.id, user.id, u, String(d), cleaned.note]
   );
   events.record(pool, {
     type: events.EVENT_TYPES.INVITE_LINK_CREATED,
     userId: user.id,
     appId: app.id,
-    metadata: { inviteId: rows[0].id, days: d, maxUses: u },
+    metadata: { inviteId: rows[0].id, days: d, maxUses: u, hasNote: !!cleaned.note },
   });
   return { ok: true, link: serializeLink({ ...rows[0], created_by_username: user.username }, user.id) };
 }
@@ -274,7 +297,7 @@ async function createInvite(pool, { app, user, days, maxUses }) {
 async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
-    `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at,
+    `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
             u.username AS created_by_username
        FROM community_invites i
        LEFT JOIN users u ON u.id = i.created_by
@@ -333,10 +356,11 @@ async function loadInvite(db, token, { lock = false } = {}) {
   if (!isToken(token)) return null;
   const { rows } = await db.query(
     `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
-            i.expires_at, i.revoked_at,
+            i.expires_at, i.revoked_at, i.note,
             a.slug, a.name, a.icon_emoji, a.icon_image_id, a.created_by AS app_created_by,
             a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
-            u.username AS inviter,
+            a.manifest_snapshot->>'description' AS description,
+            u.username AS inviter, u.display_name AS inviter_display_name,
             community_invite_maker_holds(i.id) AS maker_holds
        FROM community_invites i
        JOIN apps a ON a.id = i.app_id
@@ -358,16 +382,85 @@ async function memberCount(db, communityId) {
 }
 
 /**
+ * The picture a link's page shows of the project, or null. In order:
+ *
+ *   'shot'          the phone-shaped after-shot of the project's latest
+ *                   merged change, as its members saw it on the change: what
+ *                   the project actually looks like. Served only through the
+ *                   link (GET /api/public/invites/:token/picture), and only
+ *                   while the link is live.
+ *   'illustration'  the Discover card's image, which its group chose to show
+ *                   (and is already served to anyone by its id).
+ *
+ * A project with neither shows its icon and description instead.
+ */
+async function pictureFor(db, appId) {
+  const { rows } = await db.query(
+    `SELECT a.id
+       FROM chat_sessions s
+       JOIN shot_runs r ON r.id = s.shots_run_id AND r.state = 'verified'
+       JOIN shot_artifacts a ON a.run_id = r.id
+      WHERE s.app_id = $1 AND s.merged_at IS NOT NULL AND s.shots_state = 'verified'
+        AND a.side = 'head' AND a.media = 'png' AND a.variant IN ('context', 'focus')
+        AND a.width IS NOT NULL AND a.height IS NOT NULL AND a.height >= a.width
+      ORDER BY s.merged_at DESC, (a.variant = 'context') DESC, a.width ASC, a.story_id ASC
+      LIMIT 1`,
+    [appId]
+  );
+  if (rows[0]) return { kind: 'shot', artifactId: rows[0].id };
+  const { rows: ill } = await db.query(
+    `SELECT f.id, f.dark_id
+       FROM apps a JOIN app_illustrations f ON f.app_id = a.id
+      WHERE a.id = $1 AND a.featured_illustration IS NOT NULL`,
+    [appId]
+  );
+  if (ill[0]) return { kind: 'illustration', id: ill[0].id, darkId: ill[0].dark_id || null };
+  return null;
+}
+
+/**
+ * The shot a live link's page shows, as { data, contentType, sha256 }, or
+ * null: the link must be live and its project must have one (pictureFor).
+ */
+async function pictureBytes(pool, token) {
+  const invite = await loadInvite(pool, token);
+  if (deadReason(invite)) return null;
+  const picture = await pictureFor(pool, invite.app_id);
+  if (!picture || picture.kind !== 'shot') return null;
+  const { rows } = await pool.query(
+    'SELECT data, content_type, sha256 FROM shot_artifacts WHERE id = $1',
+    [picture.artifactId]
+  );
+  if (!rows[0]) return null;
+  return { data: rows[0].data, contentType: rows[0].content_type, sha256: rows[0].sha256 };
+}
+
+function pictureUrls(token, picture) {
+  if (!picture) return null;
+  if (picture.kind === 'shot') return { kind: 'shot', url: `/api/public/invites/${token}/picture`, darkUrl: null };
+  return {
+    kind: 'illustration',
+    url: `/app-illustrations/${picture.id}`,
+    darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
+  };
+}
+
+/**
  * What a link shows before anyone signs in. A live link discloses the
- * project's name and icon, who invited you and how many are in it — what the
- * invite itself offers to share — and never the project's address: that
- * comes after joining. A dead or unknown link discloses nothing but why.
+ * project's name, icon and one-line description, who invited you (and
+ * whether they made it), their note, one picture of it (pictureFor) and how
+ * many are in it — what the invite itself offers to share — and never the
+ * project's address: that comes after joining. A dead or unknown link
+ * discloses nothing but why.
  */
 async function preview(pool, token) {
   const invite = await loadInvite(pool, token);
   const reason = deadReason(invite);
   if (reason) return { live: false, reason };
-  const count = await memberCount(pool, invite.community_id);
+  const [count, picture] = await Promise.all([
+    memberCount(pool, invite.community_id),
+    pictureFor(pool, invite.app_id),
+  ]);
   return {
     live: true,
     reason: null,
@@ -375,8 +468,14 @@ async function preview(pool, token) {
       name: invite.name || invite.slug,
       iconEmoji: invite.icon_emoji || null,
       iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
+      description: invite.description || null,
+      picture: pictureUrls(token, picture),
     },
     inviter: invite.inviter || null,
+    inviterName: invite.inviter_display_name || invite.inviter || null,
+    // The person who sent it made the project: "Maya made this for …".
+    inviterMadeIt: invite.created_by != null && invite.created_by === invite.app_created_by,
+    note: invite.note || null,
     memberCount: count,
     expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
   };
@@ -402,12 +501,32 @@ async function standing(pool, token, user) {
   const invite = await loadInvite(pool, token);
   if (!invite || !user) return { ...base, mine: null, slug: null };
   const { rows } = await pool.query(
-    'SELECT status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
+    'SELECT status, applied_at FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
     [invite.id, user.id]
   );
   const inIt = await alreadyHasGrant(pool, invite, user.id);
   const mine = inIt ? 'joined' : (rows[0]?.status || null);
-  return { ...base, mine, slug: inIt ? invite.slug : null };
+  // When THIS link joined them, so the shell can tell somebody it just let
+  // in (the sign-in they came through followed it) from a member opening an
+  // old link: only the first gets "You're in".
+  const appliedAt = inIt && rows[0]?.status === 'joined' ? rows[0].applied_at : null;
+  // Whether the account is about as old as its joining: made by the sign-up
+  // this link opened, so "You're in" tells it what Homeroom is.
+  let newAccount = false;
+  if (appliedAt) {
+    const { rows: u } = await pool.query(
+      `SELECT created_at >= $2::timestamptz - INTERVAL '1 hour' AS fresh FROM users WHERE id = $1`,
+      [user.id, appliedAt]
+    );
+    newAccount = !!u[0]?.fresh;
+  }
+  return {
+    ...base,
+    mine,
+    slug: inIt ? invite.slug : null,
+    joinedAt: appliedAt instanceof Date ? appliedAt.toISOString() : (appliedAt || null),
+    newAccount,
+  };
 }
 
 /**
@@ -481,6 +600,20 @@ async function redeem(pool, { token, user }) {
     const { rows: after } = await client.query(
       'SELECT status FROM community_invite_redemptions WHERE id = $1',
       [redemption[0].id]
+    );
+    // Somebody who arrived by a link has their community: the join screen
+    // a new account answers ("What communities do you want to join?",
+    // services/onboarding.js) is not put between them and it. Answered
+    // as 'invite' for the admin Journey page, and communities_onboarded_at
+    // stays NULL, so the Getting started card stays out of their first
+    // session too.
+    await client.query(
+      `UPDATE users
+          SET needs_communities_choice = FALSE,
+              getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                     || jsonb_build_object('join_answer', 'invite')
+        WHERE id = $1 AND needs_communities_choice = TRUE`,
+      [user.id]
     );
     await client.query('COMMIT');
 
@@ -632,6 +765,9 @@ module.exports = {
   DEFAULT_DAYS,
   DEFAULT_USES,
   LIMITS,
+  NOTE_MAX,
+  cleanNote,
+  pictureBytes,
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
   INVITE_COOKIE,

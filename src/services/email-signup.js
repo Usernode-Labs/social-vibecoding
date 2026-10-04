@@ -483,6 +483,9 @@ module.exports = {
   EmailSignupError,
   OTP_TTL_MS,
   SIGNUP_TTL_MS,
+  // Shared with Apple and Google sign-in (services/sign-in-providers.js),
+  // which makes the same account for an address the provider vouched for.
+  insertEmailUser,
   normalizeEmail,
   requestCode,
   verifyCode,

@@ -33,6 +33,11 @@ const PUBLIC_PATHS = [
   '/api/auth/password-reset/confirm',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
+  // Apple and Google sign-in (src/routes/sign-in-providers.js): the start,
+  // the provider callback and the username step, all pre-login by
+  // definition. Each is bound to the browser that started it by its own
+  // HttpOnly cookie.
+  '/api/auth/oauth/',
   // Read-only kudos leaderboard (Top PRs / Top users). Public so the
   // board can be linked/embedded without a session; no private data is
   // exposed (usernames + public PR titles + aggregate counts only).
@@ -169,6 +174,11 @@ const GATE_OPEN_PATHS = [
   // room shows: making and managing links stays behind the gate.
   '/api/invite-links/by-token/',
   '/api/invite-links/queued',
+  // An account just made from the signed-out story records that it
+  // started there (routes/onboarding.js), before it is let in, so the day
+  // it is let in it is asked what to make rather than which communities to
+  // join. It writes only that answer, on the caller's own account.
+  '/api/me/first-session/started',
 ];
 
 // Documents owned by the platform SPA. Clean app URLs deliberately live in

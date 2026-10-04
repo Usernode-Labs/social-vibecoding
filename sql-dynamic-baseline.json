@@ -929,9 +929,9 @@
     {
       "source": "src/services/community-invites.js",
       "kind": "structural-template",
-      "fingerprint": "b6d1aa5f14b1c9bc2dbc",
+      "fingerprint": "cb8be7324b69a371ce8c",
       "count": 1,
-      "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, a.slug, a.name, a.icon_emoji, a.icon_image_id, a."
+      "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, i.note, a.slug, a.name, a.icon_emoji, a.icon_imag"
     },
     {
       "source": "src/services/connector-limits.js",

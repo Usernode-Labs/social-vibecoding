@@ -56,13 +56,16 @@ test('the landing offers exactly two ways in, and neither is in the bar', () => 
   assert.doesNotMatch(header[0], /<a[\s>]/, 'no CTA in the landing bar');
 
   const interior = interiorHtmlFor('auth-landing-screen');
-  // One pill to the waitlist, one to sign-in, and nothing else. Account
-  // creation is still deferred: it happens at the end of the waitlist
-  // journey, or when a gated app routes to #signup.
+  // The waitlist landing: one pill to the waitlist, one to sign-in, and
+  // nothing else. It is still drawn, hidden, for when the first session's
+  // story is switched off (services/first-session.js).
   assert.match(interior, /id="landing-waitlist-link"/);
   assert.match(interior, /<a href="#login"/);
   assert.doesNotMatch(interior, /Create account/);
-  assert.doesNotMatch(interior, /href="#signup"/);
+  // The story is the default, and its "Get started" is the one way to make
+  // an account from here; the waitlist landing still defers it.
+  assert.equal((interior.match(/href="#signup"/g) || []).length, 1);
+  assert.match(interior, /<a href="#signup" data-landing-story-start=""/);
   // The in-app survey is not one of them any more. #landing-status-link is
   // the exception and keeps its own href — see the check-my-status test.
   const pills = interior.slice(interior.indexOf('id="landing-waitlist-link"'));
@@ -149,11 +152,14 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   assert.match(link.slice(0, 300), /data-offline-disabled/);
   assert.match(link.slice(0, 400), /Check your status/);
   assert.match(interior, /Already joined\? /);
-  // dapp.json's declared check selects on exactly this.
+  // It is the waitlist landing's, which shows only when the first session's
+  // story is switched off (services/first-session.js); the story is the
+  // default, so the declared check that used to select on this link now
+  // selects on the story's own "Sign in" instead.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(
-    manifest.tests.some((t) => /#landing-status-link\[href="#waitlist\?confirm=1"\]/.test(t.expectSelector || '')),
-    'the declared check for the status link is untouched',
+    manifest.tests.some((t) => /a\[data-landing-story-signin\]\[href="#login"\]/.test(t.expectSelector || '')),
+    'the declared check signs an existing account in from the story',
   );
 });
 

@@ -121,6 +121,10 @@ const SESSION_MINT_PATHS = [
   '/api/auth/wallet-reset-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
+  // The username step after an Apple or Google sign-in made the account
+  // (routes/sign-in-providers.js). Its callback mints a session too, by GET,
+  // and makes the same check itself.
+  '/api/auth/oauth/finish',
 ];
 
 function createSessionCookie(res, token, expiresAt) {
@@ -362,10 +366,14 @@ function authRoutes(config) {
       // An invite link this visitor opened first is followed as the account
       // the code just CREATED (services/community-invites.js): signing up
       // from the link is the consent, and the new account's community is
-      // queued for the day it is let in. An account that already existed is
+      // queued for the day it is let in. An account that already existed
+      // follows it only when this sign-in IS the Join its page asked for
+      // (`followInvite`, sent by the sheet "Made for you" opens: the person
+      // just pressed "Join …" on the link's own page). Anywhere else it is
       // asked by the shell instead, like a password sign-in, so the carried
       // copy is only dropped. Never throws.
-      const invite = verified.created
+      const consented = verified.created || req.body?.followInvite === true;
+      const invite = consented
         ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
         : (communityInvites.clearInviteCookie(res), null);
       // A link whose maker's skip let this person straight in has joined
@@ -1912,4 +1920,6 @@ function authRoutes(config) {
   return router;
 }
 
-module.exports = { authRoutes, DEV_FLOWS };
+// Apple and Google sign-in (routes/sign-in-providers.js) mints the same
+// session, with the same cookie, and answers with the same role fields.
+module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields };

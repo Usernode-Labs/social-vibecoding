@@ -47,10 +47,13 @@ async function connectPool() {
   const pool = new Pool({ connectionString: DSN, max: 4, options: `-c search_path=${SCHEMA_NAME}` });
   await pool.query(`
     CREATE TABLE users (
-      id SERIAL PRIMARY KEY, username TEXT NOT NULL,
+      id SERIAL PRIMARY KEY, username TEXT NOT NULL, display_name TEXT,
       is_admin BOOLEAN NOT NULL DEFAULT FALSE,
       has_platform_access BOOLEAN NOT NULL DEFAULT FALSE,
-      platform_access_granted_at TIMESTAMPTZ);
+      platform_access_granted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
+      getting_started_seen JSONB);
     CREATE TABLE communities (id SERIAL PRIMARY KEY);
     CREATE TABLE apps (
       id SERIAL PRIMARY KEY, slug TEXT NOT NULL, name TEXT,
@@ -58,7 +61,19 @@ async function connectPool() {
       collab_visibility TEXT NOT NULL DEFAULT 'public',
       view_visibility TEXT NOT NULL DEFAULT 'public',
       icon_emoji TEXT, icon_image_id TEXT,
+      manifest_snapshot JSONB, featured_illustration JSONB,
       community_id INTEGER REFERENCES communities(id));
+    -- What the page's picture reads (community-invites.js pictureFor).
+    CREATE TABLE chat_sessions (
+      id SERIAL PRIMARY KEY, app_id INTEGER, merged_at TIMESTAMPTZ,
+      shots_state TEXT, shots_run_id TEXT);
+    CREATE TABLE shot_runs (id TEXT PRIMARY KEY, state TEXT NOT NULL);
+    CREATE TABLE shot_artifacts (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL,
+      side TEXT NOT NULL, variant TEXT NOT NULL, media TEXT NOT NULL,
+      content_type TEXT NOT NULL, data BYTEA NOT NULL, sha256 TEXT NOT NULL,
+      width INTEGER, height INTEGER);
+    CREATE TABLE app_illustrations (app_id INTEGER PRIMARY KEY, id TEXT NOT NULL, dark_id TEXT);
     CREATE TABLE community_members (
       community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -94,6 +109,7 @@ async function connectPool() {
       (1, 'ada', TRUE, FALSE), (2, 'bo', TRUE, FALSE), (3, 'cy', FALSE, FALSE),
       (4, 'dee', TRUE, FALSE), (5, 'eve', FALSE, FALSE), (6, 'fay', FALSE, FALSE),
       (7, 'gus', FALSE, FALSE), (9, 'root', TRUE, TRUE);
+    UPDATE users SET display_name = 'Ada' WHERE id = 1;
     SELECT setval(pg_get_serial_sequence('users', 'id'), 20);
     INSERT INTO communities (id) VALUES (1), (2);
     INSERT INTO apps (id, slug, name, created_by, collab_visibility, view_visibility, community_id) VALUES
@@ -147,7 +163,17 @@ test('invite links against a real PostgreSQL', async (t) => {
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {
       const bo = as(2, 'bo', true);
+      // A new account, still to answer the join screen: the link answers it.
+      await pool.query('UPDATE users SET needs_communities_choice = TRUE WHERE id = 2');
       const joined = await invites.redeem(pool, { token, user: bo });
+      const answered = await pool.query(
+        "SELECT needs_communities_choice, getting_started_seen->>'join_answer' AS answer FROM users WHERE id = 2");
+      assert.deepEqual(answered.rows, [{ needs_communities_choice: false, answer: 'invite' }]);
+      // The standing says when, and that the account is about as old as that.
+      const standing = await invites.standing(pool, token, bo);
+      assert.equal(standing.mine, 'joined');
+      assert.ok(Date.now() - Date.parse(standing.joinedAt) < 60 * 1000);
+      assert.equal(standing.newAccount, true);
       assert.deepEqual([joined.status, joined.slug, joined.name], ['joined', 'arena', 'Arena']);
       assert.equal(await member(1, 2), true);
       const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = 1 AND user_id = 2');
@@ -217,6 +243,46 @@ test('invite links against a real PostgreSQL', async (t) => {
       // Put gus back on the waitlist for the tree case below.
       await pool.query('UPDATE users SET has_platform_access = FALSE, invite_generation = NULL WHERE id = 7');
       await pool.query('DELETE FROM community_invite_redemptions WHERE user_id = 7');
+    });
+
+    await t.test('a link carries its maker\'s note, and its page shows the project: an after-shot, else the card image', async () => {
+      const group = await app('book-club');
+      const refused = await invites.createInvite(pool, { app: group, user: ADA, note: 'x'.repeat(281) });
+      assert.equal(refused.status, 400);
+      const made = await invites.createInvite(pool, { app: group, user: ADA, note: '  Come  read with us! ' });
+      assert.equal(made.link.note, 'Come read with us!');
+      await pool.query(`UPDATE apps SET manifest_snapshot = '{"description":"Our monthly pick"}' WHERE id = 2`);
+      let preview = await invites.preview(pool, made.link.token);
+      assert.deepEqual(
+        [preview.inviterName, preview.inviterMadeIt, preview.note, preview.project.description, preview.project.picture],
+        ['Ada', true, 'Come read with us!', 'Our monthly pick', null],
+      );
+      assert.equal(await invites.pictureBytes(pool, made.link.token), null, 'nothing to show yet');
+      // The card image its group chose, served by its own id.
+      await pool.query(`UPDATE apps SET featured_illustration = '{"zoom":1,"x":0,"y":0}' WHERE id = 2`);
+      await pool.query(`INSERT INTO app_illustrations (app_id, id, dark_id) VALUES (2, 'light1', 'dark1')`);
+      preview = await invites.preview(pool, made.link.token);
+      assert.deepEqual(preview.project.picture, { kind: 'illustration', url: '/app-illustrations/light1', darkUrl: '/app-illustrations/dark1' });
+      // A merged change's phone-shaped after-shot wins; an unmerged one, a
+      // before-shot or a landscape one never shows.
+      await pool.query(`
+        INSERT INTO shot_runs (id, state) VALUES ('r1', 'verified'), ('r2', 'verified');
+        INSERT INTO chat_sessions (id, app_id, merged_at, shots_state, shots_run_id) VALUES
+          (1, 2, NOW() - INTERVAL '1 day', 'verified', 'r1'),
+          (2, 2, NULL, 'verified', 'r2');
+        INSERT INTO shot_artifacts (id, run_id, story_id, side, variant, media, content_type, data, sha256, width, height) VALUES
+          ('wide', 'r1', 's1', 'head', 'context', 'png', 'image/png', '\\x01', 'aa', 1280, 800),
+          ('before', 'r1', 's1', 'base', 'context', 'png', 'image/png', '\\x02', 'bb', 390, 844),
+          ('phone', 'r1', 's1', 'head', 'context', 'png', 'image/png', '\\x89504e47', 'cc', 390, 844),
+          ('unmerged', 'r2', 's1', 'head', 'context', 'png', 'image/png', '\\x03', 'dd', 390, 844);
+      `);
+      preview = await invites.preview(pool, made.link.token);
+      assert.deepEqual(preview.project.picture, { kind: 'shot', url: `/api/public/invites/${made.link.token}/picture`, darkUrl: null });
+      const bytes = await invites.pictureBytes(pool, made.link.token);
+      assert.deepEqual([bytes.contentType, bytes.sha256, bytes.data.toString('hex')], ['image/png', 'cc', '89504e47']);
+      // Turning the link off turns its picture off too.
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal(await invites.pictureBytes(pool, made.link.token), null);
     });
 
     await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {

@@ -1221,6 +1221,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      // Made from the first session's "What do you want to make?"
+      // (frontend/src/features/first-session): making something answers the
+      // join screen, so it is not put between them and what they made.
+      if (req.body.from === 'first-session') {
+        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
+          .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
+      }
+
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
