@@ -254,3 +254,59 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     assert.deepEqual(rows.map((r) => r.user_id), [ada.id]);
   });
 });
+
+// B9's staging fixture: a preview has no live bot, so one demo message in the
+// platform's own chat wears the chip, for the shots and the declared check.
+test('B9: the staging demo seeds one chat request wearing its Building chip, once, and only on staging', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const name = `hrbot_chat_seed_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 2 });
+  const env = process.env.USERNODE_ENV;
+  t.after(async () => {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(read('src/db/schema.sql'));
+  const owner = (await pool.query(
+    `INSERT INTO users (username, password) VALUES ('owner', 'x') RETURNING id`)).rows[0].id;
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by) VALUES ('Homeroom', 'homeroom-self', 'running', $1) RETURNING id`,
+    [owner])).rows[0].id;
+  const { seedStagingBotChatRequest } = require('../src/db/migrate');
+  const config = { selfAppSlug: 'homeroom-self' };
+
+  delete process.env.USERNODE_ENV;
+  await seedStagingBotChatRequest(pool, config);
+  assert.equal((await pool.query('SELECT 1 FROM chat_messages WHERE id = 900083')).rows.length, 0, 'nothing outside staging');
+
+  process.env.USERNODE_ENV = 'staging';
+  await seedStagingBotChatRequest(pool, config);
+  await seedStagingBotChatRequest(pool, config);
+  const { rows } = await pool.query(
+    `SELECT m.app_id, m.content, m.metadata, m.thread_type, u.username
+       FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = 900083`);
+  assert.equal(rows.length, 1, 'seeded once');
+  assert.equal(Number(rows[0].app_id), Number(app));
+  assert.equal(rows[0].thread_type, null, 'in the main stream');
+  assert.equal(rows[0].username, 'staging-demo-asker', 'a demo account, never the viewer');
+  assert.match(rows[0].content, /^Staging demo: @Homeroom bot /);
+  assert.deepEqual(rows[0].metadata, { botRequest: { status: 'building' } });
+
+  // Folded into #2905's check on the same route rather than taking a slot.
+  const check = JSON.parse(read('dapp.json')).tests.find((c) => /B9: a message that asked Homeroom bot/.test(c.name));
+  assert.ok(check, 'a declared check reads the chip');
+  assert.equal(check.path, '/?demo=1#messages/app/usernode-2d5619');
+  assert.match(check.expectSelector, /#gc-messages:has\(\.gc-msg\):has\(\[data-bot-request=building\]\)/);
+  assert.ok(check.expectSelector.length <= 256, 'within the capture runner\'s selector cap');
+  assert.equal(check.expectText, 'Building');
+});
