@@ -244,6 +244,15 @@ export interface SharedObjectReference {
 }
 
 /**
+ * An item staged on the composer: its reference, and the title the page that
+ * staged it knew, shown on the chip until the server's reading of it comes.
+ * The title is never sent: the server reads the live one.
+ */
+export interface StagedObject extends SharedObjectReference {
+  title?: string | null;
+}
+
+/**
  * What a card under a message can be: anything that can be shared, plus the
  * two pages a pasted Homeroom link can name that are not items (#3660) — a
  * community's hub and its discussion. Those two are never stored on a

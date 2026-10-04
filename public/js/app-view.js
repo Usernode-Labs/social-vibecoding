@@ -17613,11 +17613,18 @@ const AppView = {
 
   /**
    * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
-   * with it, with this change staged as a card to write about.
+   * with it, with this change attached on the composer and the caret in the
+   * box (messages/store.ts openBot). The page names the change's project, so
+   * nothing is asked of them first; the server reads its live title.
    */
   askBotForChanges(sessionId, title) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    const reference = { type: 'proposal', sessionId: Number(sessionId), title: title || null };
+    const app = AppView.appData || {};
+    const reference = {
+      type: 'proposal', sessionId: Number(sessionId), title: title || null,
+      appId: Number(app.id) > 0 ? Number(app.id) : undefined,
+      appSlug: app.slug || App.currentApp || undefined,
+    };
     if (messages && typeof messages.openBot === 'function') messages.openBot(reference);
     else location.hash = '#messages';
   },

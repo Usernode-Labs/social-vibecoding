@@ -2199,6 +2199,15 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
     if (typed?.sent) return typed.sent;
     if (typed?.decisionWithoutOffer) turnDeps = { ...deps, decisionWithoutOffer: true };
   }
+  // A message that carries one of the bot's own changes still waiting for
+  // approval (the change page's Ask for changes) is about that change: it is
+  // fixed there before it goes live, as Change something on its ready card
+  // does, never filed as a new request. Null when a gate refused it, and the
+  // model reads it with the card in front of it.
+  if (typeof mayor.reviseAttached === 'function') {
+    const revised = await mayor.reviseAttached(pool, config, { bot, user, settings, conversationId, message, deps: turnDeps });
+    if (revised) return revised;
+  }
   if (settings.dmChat !== false) {
     return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps: turnDeps });
   }
