@@ -990,7 +990,7 @@
       "name": "Dev board, round three: a second action pill can fold into the menu (one-line band)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
-      "expectText": "Claim this issue"
+      "expectText": "I'll work on this"
     },
     {
       "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
@@ -1026,7 +1026,7 @@
       "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[data-act=\"markIssueInProgress\"]",
-      "expectText": "Claim this issue"
+      "expectText": "I'll work on this"
     },
     {
       "name": "Dev board: the Underway column names the exact state — a paused session says \"Paused\", not \"In progress\" (#1112)",
@@ -1112,20 +1112,20 @@
       "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
     },
     {
-      "name": "Issue detail renders the Set priority / Set category / Unassigned metadata chips",
+      "name": "Request detail renders the Set priority / Set category metadata chips; who is on it shows only when somebody is (B10c)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
       "expectText": "Set priority"
     },
     {
-      "name": "Issue detail metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "name": "Request detail metadata chips keep their compiled utility styling (no console error from the cascade self-check); the category chip's dot, now that an empty assignee chip is not drawn (B10c)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
+      "expectSelector": "button.attr-chip[data-attr-field=\"category\"] .attr-dot"
     },
     {
       "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open a dev chat with a message about this PR\"], .dev-card-menu [data-menu-idx][title^=\"Open a dev chat with a message about this PR\"]",
+      "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open an agent session with a message about this change\"], .dev-card-menu [data-menu-idx][title^=\"Open an agent session with a message about this change\"]",
       "expectText": "Explore in a coding agent"
     },
     {
@@ -1687,10 +1687,10 @@
       "expectText": "Read the build"
     },
     {
-      "name": "A published chat opens read-only on the dev session’s own page, keeping its author attribution",
+      "name": "A published chat opens read-only on the agent session’s own page, keeping its author attribution (B10e)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
       "expectSelector": "#dev-section .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
-      "expectText": "Dev chat by staging-demo-user"
+      "expectText": "Agent session by staging-demo-user"
     },
     {
       "name": "The published chat renders its messages on the session page, and no composer with them",
@@ -4720,10 +4720,10 @@
       "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
-      "name": "Sorting by activity shows what it sorted on (#1383)",
+      "name": "Sorting by activity shows what it sorted on (#1383), in live words (B10d)",
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
-      "expectText": "merged in 30d"
+      "expectText": "live in 30d"
     },
     {
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
@@ -4907,7 +4907,7 @@
       "name": "A proposal's own Discussion keeps the line that put it up for a vote: a message from whoever proposed it, name and stamp on the header line, and one box with a glyph and a line of text that is no door, because the proposal is the page",
       "path": "/?demo=1#app/staging-demo-quiet/dev/proposals/900110",
       "expectSelector": "[data-change-discussion] .gc-event[data-event=\"submitted\"][data-here][data-msg-id=\"900118\"]:has(div.gc-event-box > .dev-card-icon + .gc-event-text) span:has(> [data-event-sender]) + span > .gc-msg-time[title]",
-      "expectText": "Proposed this change for a vote",
+      "expectText": "Asked for approval",
       "visual": true,
       "impact": [
         "frontend/src/features/group-chat/**",
@@ -5214,7 +5214,7 @@
       "name": "#2813: on a desktop a dev session opens in the pane beside the Messages list, not on a screen of its own",
       "path": "/?demo=1#messages/session/usernode-2d5619/990002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-pane + .messages-thread-session[data-agent-session=\"usernode-2d5619/990002\"] .messages-session-host .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
-      "expectText": "Dev chat by staging-demo-user"
+      "expectText": "Agent session by staging-demo-user"
     },
     {
       "name": "#2813: the session pane links to the session's full view in the app",
@@ -5260,7 +5260,7 @@
       "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
       "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
-      "expectText": "14 merged"
+      "expectText": "14 live"
     },
     {
       "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",

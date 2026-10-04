@@ -4611,7 +4611,7 @@ const AppView = {
       body.steps = AppView._topicStepsView(item, card, body);
       body.tested = AppView._testedLine(item);
     }
-    body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
+    body.aboutTitle = { issue: 'About this request', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
   },
 
@@ -4724,8 +4724,8 @@ const AppView = {
         onBand.push({
           key: 'build', cls: 'gc-vote-btn', label: body.build.label,
           title: body.build.kind === 'owner'
-            ? 'Open the dev session behind this change'
-            : 'Read the dev chat that built this change',
+            ? 'Open the agent session behind this change'
+            : 'Read the agent session that built this change',
           act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
@@ -5545,7 +5545,7 @@ const AppView = {
       if (mine && item.source !== 'imported') {
         pills.push({
           key: 'session', cls: 'gc-vote-btn', label: 'Continue building',
-          title: 'Open the dev session behind this proposal',
+          title: 'Open the agent session behind this change',
           act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
@@ -5589,14 +5589,14 @@ const AppView = {
       // building the request: a claim would only tell it to step back.
       if (myClaim) {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
-          title: 'Give up your claim on this issue so somebody else can take it',
+          key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
+          title: 'Stop working on this so somebody else can pick it up',
           act: { fn: 'clearIssueClaim', args: [item.number] },
         });
       } else if (!item.bot) {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
-          title: "Tell everyone you're taking this issue. A claim, not a promise of progress",
+          key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+          title: "Let everyone know you'll work on this. It's not a promise of progress",
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
       }
@@ -5604,7 +5604,7 @@ const AppView = {
       pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
         label: item.my_bounty ? '★ Bountied' : 'Pledge kudos',
-        title: "Pledge a kudos bounty, paid to whoever's merged PR closes this issue",
+        title: "Pledge kudos to whoever's change makes this happen",
         disabled: !!(item.my_bounty || meta.myRemaining === 0),
         act: { fn: 'giveIssueBounty', args: [item.number] },
       });
@@ -5618,7 +5618,7 @@ const AppView = {
         }
         : {
           key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
-          title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
+          title: 'Ask the group to close this request. If they approve, it\'s closed',
           act: { fn: 'promptCloseIssue', args: [item.number] },
         });
     }
@@ -6223,7 +6223,7 @@ const AppView = {
   // groups — the long copy became the label's tooltip, and the row
   // builders in _mySessionsRows / _inProgressRows supply both.
 
-  EXPLORE_CHAT_TITLE: 'Open a dev chat with a message about this PR ready to edit and send',
+  EXPLORE_CHAT_TITLE: 'Open an agent session with a message about this change ready to edit and send',
 
   // #827: the closing paragraph of every exploration seed. Load-bearing —
   // it is what keeps an UNEDITED send from making the Mayor dispatch the
@@ -11177,7 +11177,7 @@ const AppView = {
     if (f.assignee) {
       chips.push({
         key: 'assignee',
-        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Unassigned' : f.assignee,
+        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Nobody yet' : f.assignee,
       });
     }
     if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
@@ -12064,7 +12064,7 @@ const AppView = {
   // muted shell, so the information survives at a fraction of the height.
   PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions here. Their code is on public GitHub.',
   VISIBLE_DIVIDER_TITLE: 'Visible to everyone, including a live preview of your changes.',
-  OTHERS_DIVIDER_TITLE: 'Dev sessions other people have made visible.',
+  OTHERS_DIVIDER_TITLE: 'Agent sessions other people have made visible.',
 
   _privateDividerRow() {
     return { t: 'divider', key: 'div:private', d: { label: 'Yours · not shared', title: AppView.PRIVATE_DIVIDER_TITLE } };
@@ -12100,7 +12100,7 @@ const AppView = {
     return {
       t: 'note',
       key: 'note:session-filter',
-      text: `Regular dev sessions don't carry priority, category or assignee. The ${sessionCount} `
+      text: `Agent sessions don't carry priority, category or assignee. The ${sessionCount} `
         + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${list}.`,
     };
   },
@@ -12575,7 +12575,7 @@ const AppView = {
       label: cached
         || ((typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
           ? SessionTranscript.headerText(item, { expanded: false })
-          : 'Read the dev chat'),
+          : 'Read the agent session'),
       expanded,
     };
   },
@@ -12636,7 +12636,7 @@ const AppView = {
     if (!content) return false;
     const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
       ? SessionTranscript.headerText(data.session, { expanded: true })
-      : 'Dev chat';
+      : 'Agent session';
     content.innerHTML = `
       <div class="dev-session-read">
         <div class="st-section" data-transcript-section="${id}">
@@ -13479,7 +13479,7 @@ const AppView = {
       items.push({
         label: 'Open session',
         icon: 'session',
-        title: 'Open the dev session behind this proposal',
+        title: 'Open the agent session behind this change',
         act: () => AppView.openProposalSession(pr.id),
       });
     }
@@ -14339,7 +14339,7 @@ const AppView = {
     // passes) unless the lane has recorded that it tried and could not.
     const served = (pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
-    const sync = ': open the session’s dev-chat and run "Sync with main".';
+    const sync = ': open the agent session and run "Sync with main".';
     // QA 2026-09-24: `lead` is the sentence about what the PLATFORM does and
     // `rest` is what a person can do. `parts` is both, as before. The
     // proposal's "Sync with main" step already opens with its own sentence
@@ -14353,7 +14353,7 @@ const AppView = {
         rest = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
       } else if (mode === 'conflict') {
         lead = 'Automatic resolution may not run for this proposal. ';
-        rest = [{ b: creator }, ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
+        rest = [{ b: creator }, ' needs to bring it up to date: open the agent session and run "Sync with main".'];
       } else if (served.includes('integrating')) {
         lead = 'The platform is resolving it now. ';
         rest = ['Nobody needs to do anything.'];
@@ -14383,8 +14383,8 @@ const AppView = {
     // has always carried; an imported one gets the note's sentence, since
     // that is the first time the pill has had anything true to say about it.
     const nativeDetail = {
-      failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
-      conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
+      failed: 'The change’s owner needs to resolve it from their agent session.',
+      conflict: 'Its creator needs to bring it up to date from their agent session ("Sync with main").',
     };
     // WHO RESOLVES IT DECIDES HOW THE TAG LOOKS, and it is decided right
     // here (#2221/#2222). The tag used to carry a fixed string and the
@@ -15012,7 +15012,7 @@ const AppView = {
         : 'there was nothing to test';
       return [{
         key: 'checks', tone: 'neutral', heading: 'Checks skipped.',
-        rows: [{ t: 'line', parts: [`Automated checks were skipped: ${reason}. This does not block the merge.`] }],
+        rows: [{ t: 'line', parts: [`Checks were skipped: ${reason}. It can still go live.`] }],
         action: recheck,
       }];
     }
@@ -16458,6 +16458,9 @@ const AppView = {
       const placed = field === 'category' && !(summary && summary.top)
         && !!AppView._placedCategoryFor(targetType, targetRef);
       if (omitUnset && !(summary && summary.top) && !placed) continue;
+      // B10c: who is on it shows only when somebody is. "Unassigned" was a
+      // grey chip saying nothing; the ⋯ row "Assign someone…" sets it.
+      if (field === 'assignee' && !(summary && summary.top)) continue;
       out.push(AppView._attrChipSpec(field, targetType, targetRef, summary, readonly));
     }
     return out;
@@ -17184,7 +17187,7 @@ const AppView = {
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     if (issue.bounty_count) {
       meta.push({
-        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos bounties pledged on this issue',
+        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos pledged on this request',
         s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
       });
     }
@@ -17238,7 +17241,7 @@ const AppView = {
       ? {
         t: 'chip', key: 'closed', cls: `dev-badge ${AppView._WORK_TONE_CLS.zinc}`,
         label: 'Closed',
-        title: issue.closedAt ? `Closed ${relTime(issue.closedAt)}` : 'This issue is closed',
+        title: issue.closedAt ? `Closed ${relTime(issue.closedAt)}` : 'This request is closed',
       }
       : null;
 
@@ -17319,7 +17322,7 @@ const AppView = {
     const attrs = { 'data-ref-issue': String(n) };
     if (!noNav) {
       attrs['data-issue-row'] = String(n);
-      attrs.title = "Open this issue's discussion";
+      attrs.title = 'Open this request';
     }
     return {
       key: `issue:${n}`,
@@ -17589,13 +17592,13 @@ const AppView = {
     if (!mine && issue.bot) return null;
     return mine
       ? {
-        key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
-        title: 'Give up your claim on this issue so somebody else can take it',
+        key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
+        title: 'Stop working on this so somebody else can pick it up',
         act: { fn: 'clearIssueClaim', args: [n] },
       }
       : {
-        key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
-        title: "Tell everyone you're taking this issue. A claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue's thread keeps it alive.",
+        key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+        title: "Let everyone know you'll work on this. It's not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request's thread keeps it going.",
         act: { fn: 'markIssueInProgress', args: [n] },
       };
   },
@@ -17634,7 +17637,7 @@ const AppView = {
         label: issue.my_bounty ? 'Bountied' : 'Pledge kudos',
         icon: 'kudos',
         title: kudosReason
-          || 'Pledge a kudos bounty, paid to whoever’s merged PR closes this issue',
+          || 'Pledge kudos to whoever’s change makes this happen',
         disabled: !!kudosReason,
         act: kudosReason ? null : () => AppView.giveIssueBounty(n),
       });
@@ -17652,15 +17655,15 @@ const AppView = {
       if (!st.progressOnFace && (myClaim || !issue.bot)) {
         items.push(myClaim
           ? {
-            label: 'Release my claim',
+            label: 'Stop working on this',
             icon: 'clear',
-            title: 'Give up your claim on this issue so somebody else can take it',
+            title: 'Stop working on this so somebody else can pick it up',
             act: () => AppView.clearIssueClaim(n),
           }
           : {
-            label: 'Claim this issue',
+            label: 'I\'ll work on this',
             icon: 'progress',
-            title: 'Tell everyone you’re taking this issue. A claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            title: 'Let everyone know you’ll work on this. It’s not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request’s thread keeps it going.',
             act: () => AppView.markIssueInProgress(n),
           });
       }
@@ -17691,7 +17694,7 @@ const AppView = {
           : {
             label: 'Propose to close',
             icon: 'close',
-            title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
+            title: 'Ask the group to close this request. If they approve, it\'s closed',
             danger: true,
             act: () => AppView.promptCloseIssue(n),
           });
@@ -17702,7 +17705,7 @@ const AppView = {
     items.push({
       label: 'Share to…',
       icon: 'share',
-      title: 'Share this issue card to a chat or a discussion',
+      title: 'Share this request to a chat or a discussion',
       act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
     if (issue.htmlUrl) {
@@ -18179,7 +18182,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't claim this issue (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't pick this up (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -18199,7 +18202,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't claim this issue: ${err.message}`);
+      PlatformUI.toast(`Couldn't pick this up: ${err.message}`);
     }
   },
 
@@ -18222,7 +18225,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't release the claim (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't stop working on this (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -18240,7 +18243,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't release the claim: ${err.message}`);
+      PlatformUI.toast(`Couldn't stop working on this: ${err.message}`);
     }
   },
 
@@ -18945,9 +18948,9 @@ const AppView = {
     if (mainPause) {
       out.push({
         key: 'main_paused',
-        label: mainPause.confirming ? 'Merges paused · re-checking main' : 'Merges paused',
-        detail: `${mainPause.note ? mainPause.note.charAt(0).toUpperCase() + mainPause.note.slice(1) : 'Main’s unit suite is failing, so merges for this app are paused'}. `
-          + 'Nothing about this proposal is wrong; it merges once main is green again or an admin resumes merges.',
+        label: mainPause.confirming ? 'Going live is paused · re-checking main' : 'Going live is paused',
+        detail: `${mainPause.note ? mainPause.note.charAt(0).toUpperCase() + mainPause.note.slice(1) : 'Main’s unit suite is failing, so going live is paused for this app'}. `
+          + 'Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.',
       });
     }
 
@@ -19554,8 +19557,8 @@ const AppView = {
       // #461: explicit terminal "nothing to test" verdict — grey, no
       // spinner, and NON-blocking (the merge gate treats it like passing).
       const why = pr.check_error_detail
-        ? `Automated checks were skipped: ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
-        : 'Automated checks were skipped: there was nothing to test. This does not block the merge.';
+        ? `Checks were skipped: ${String(pr.check_error_detail).slice(0, 280)}. It can still go live.`
+        : 'Checks were skipped: there was nothing to test. It can still go live.';
       return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
     }
     // 'pending' (or anything else): tests are still running. #405: grey
@@ -20487,7 +20490,7 @@ const AppView = {
       paused: 'Started',
       answer_needed: 'Needs an answer',
       draft_ready: 'Draft ready to review',
-      claimed: 'Claimed',
+      claimed: 'Picked up',
       bot: bot && bot.what === 'queued' ? 'Homeroom bot will build this'
         : AppView._botWorkReading(bot) ? 'Homeroom bot is reading this' : 'Homeroom bot is building this',
     };
@@ -20549,7 +20552,7 @@ const AppView = {
     if (s.key === 'in_review') {
       main = `${subj} ${has} put this up for review as a proposal, so it is waiting on reviewers rather than on more work.`;
     } else if (s.key === 'working') {
-      main = `${subj} ${is} working on this in a dev session${age ? `, last active ${age}` : ''}.`;
+      main = `${subj} ${is} working on this in an agent session${age ? `, last active ${age}` : ''}.`;
     } else if (s.key === 'bot') {
       // B8: and who asked it to, when somebody did.
       if (s.bot === 'queued') {
@@ -20569,12 +20572,13 @@ const AppView = {
     } else if (s.key === 'draft_ready') {
       main = 'An auto-solve run finished and left a draft here for someone to look over.';
     } else {
-      main = `${subj} claimed this issue${when} but ${has} not started a dev session on it yet.`
-        + (clears ? ` The claim clears itself on ${clears}.` : '');
+      // B10c: in the words of the button that said it.
+      main = `${subj} said ${isYou ? 'you' : 'they'}'d work on this${when} but ${isYou ? 'haven' : 'hasn'}'t started building it yet.`
+        + (clears ? ` It opens up for others again on ${clears} if nothing happens.` : '');
     }
     const also = [];
     if (s.otherClaims && s.claimUsers && s.claimUsers.length) {
-      also.push(`claimed by ${s.claimUsers.join(', ')}`);
+      also.push(`picked up by ${s.claimUsers.join(', ')}`);
     }
     if (s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready') {
       also.push('an auto-solve run is on it too');
@@ -22054,7 +22058,7 @@ const AppView = {
       AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
         title: 'Preview couldn’t be rebuilt',
-        sub: error || 'The staging build failed. See the dev chat for details.',
+        sub: error || 'The preview failed to build. See the agent session for details.',
         ...AppView._offerStagingPreviewRetry(pending.retry),
       });
       return;
@@ -24074,7 +24078,7 @@ const AppView = {
         purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
         intro: byokOnly
           ? `This lets ${appName} use your own Anthropic API key, without exposing the key to the app.`
-          : `This lets ${appName} spend from your daily AI budget (the same one your dev chats use) up to the daily cap below.`,
+          : `This lets ${appName} spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.`,
         capacity: noCapacity
           ? { t: 'blocked', eligibilityUnavailable }
           : {

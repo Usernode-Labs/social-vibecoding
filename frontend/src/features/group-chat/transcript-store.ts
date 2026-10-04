@@ -167,7 +167,7 @@ export interface ProposalEvent {
   text?: string;
   /**
    * True on the proposal's OWN page: the row names the act without the
-   * number and title ("Proposed this change for a vote"), and is no door.
+   * number and title ("Asked for approval"), and is no door.
    */
   here?: boolean;
   /** The Friday card's data; set only when `type` is `weekly`. */

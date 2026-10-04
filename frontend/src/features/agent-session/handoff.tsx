@@ -120,8 +120,8 @@ function lead(agent: HandoffAgent, target: HandoffTarget | null): string {
   const label = AGENT_LABELS[agent];
   const product = AGENT_PRODUCT[agent];
   const lands = target?.change
-    ? `its work comes back as an update to ${target.change.prNumber ? `PR #${target.change.prNumber}` : 'this change'}`
-    : `its work comes back as a new proposal${target?.appName ? ` on ${target.appName}` : ''}`;
+    ? 'its work comes back as an update to this change'
+    : `its work comes back as a new change${target?.appName ? ` on ${target.appName}` : ''}`;
   return `${label} builds on your own ${product} plan and pushes to your fork of the app; ${lands}. No Homeroom credits.`;
 }
 
@@ -233,7 +233,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     <div className="flex flex-col gap-3 text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-handoff={agent}>
       {target ? <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300">{lead(agent, target)}</p> : (
         <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty>
-          There is nothing to hand over yet. Tell the Mayor which app to change first, then come back here.
+          There is nothing to hand over yet. Tell the agent which app to change first, then come back here.
         </p>
       )}
       {error ? <p role="alert" className="px-1 text-red-700 dark:text-red-300">{error}</p> : null}
