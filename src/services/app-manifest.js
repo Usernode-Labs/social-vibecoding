@@ -631,6 +631,63 @@ function readPlatformEnv(parsed) {
   return out;
 }
 
+// Normalize the top-level `secrets` array: the child dapp's container env.
+// Lenient like every reader here: an entry with an invalid key, a reserved
+// key, a key also declared in `platform_env`, or a duplicate key is dropped
+// with a log.warn, and an absent/invalid block resolves to [].
+//
+// A key declared in BOTH blocks is a mistake with a dangerous failure mode:
+// `secrets` values are handed to a dapp container, platform_env values are
+// not. Rather than guess, platform_env wins and the `secrets` entry is
+// dropped, so the containment guarantee (a platform variable never leaks
+// into a dapp's env) holds by construction rather than by review.
+//
+// `opts.platformEnv` is readPlatformEnv(parsed) when the caller already has
+// it; `opts.filePath` only labels the warnings.
+function readSecrets(parsed, opts = {}) {
+  const platformEnv = Array.isArray(opts.platformEnv) ? opts.platformEnv : readPlatformEnv(parsed);
+  const platformEnvKeys = new Set(platformEnv.map((e) => e.key));
+  const filePath = opts.filePath;
+
+  const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
+  const seen = new Set();
+  const secrets = [];
+
+  for (const s of secretsIn) {
+    if (!s || typeof s !== 'object') continue;
+    const key = typeof s.key === 'string' ? s.key.trim() : '';
+    if (!KEY_RE.test(key)) {
+      log.warn('app-manifest', 'Skipping invalid key', { filePath, key: s.key });
+      continue;
+    }
+    if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
+      log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
+      continue;
+    }
+    if (platformEnvKeys.has(key)) {
+      log.warn('app-manifest', 'Skipping secrets key also declared in platform_env', { filePath, key });
+      continue;
+    }
+    if (seen.has(key)) {
+      log.warn('app-manifest', 'Skipping duplicate key', { filePath, key });
+      continue;
+    }
+    seen.add(key);
+    secrets.push({
+      key,
+      description: typeof s.description === 'string' ? s.description : '',
+      required: !!s.required,
+      // `private` is the canonical field; `sensitive` is accepted as
+      // a backward-compatible alias. Either present (and truthy) flips
+      // the entry to private. Internally we expose only `.private`.
+      private: !!s.private || !!s.sensitive,
+      default: typeof s.default === 'string' ? s.default : null,
+      staging_default: typeof s.staging_default === 'string' ? s.staging_default : null,
+    });
+  }
+  return secrets;
+}
+
 // Bounds for the optional top-level `name` field (see readName). Matches
 // the rename flow's MAX_APP_NAME_LENGTH so a hand-written manifest name
 // can't outrun the apps.name column or the rename UI's validation.
@@ -1106,50 +1163,7 @@ function read(cloneDir) {
   }
 
   const platformEnv = readPlatformEnv(parsed);
-  const platformEnvKeys = new Set(platformEnv.map((e) => e.key));
-
-  const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
-  const seen = new Set();
-  const secrets = [];
-
-  for (const s of secretsIn) {
-    if (!s || typeof s !== 'object') continue;
-    const key = typeof s.key === 'string' ? s.key.trim() : '';
-    if (!KEY_RE.test(key)) {
-      log.warn('app-manifest', 'Skipping invalid key', { filePath, key: s.key });
-      continue;
-    }
-    if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
-      log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
-      continue;
-    }
-    // A key declared in BOTH blocks is a mistake with a dangerous failure
-    // mode: `secrets` values are handed to a dapp container, platform_env
-    // values are not. Rather than guess, platform_env wins and the
-    // `secrets` entry is dropped — the containment guarantee (a
-    // platform variable never leaks into a dapp's env) holds by
-    // construction rather than by review.
-    if (platformEnvKeys.has(key)) {
-      log.warn('app-manifest', 'Skipping secrets key also declared in platform_env', { filePath, key });
-      continue;
-    }
-    if (seen.has(key)) {
-      log.warn('app-manifest', 'Skipping duplicate key', { filePath, key });
-      continue;
-    }
-    seen.add(key);
-    secrets.push({
-      key,
-      description: typeof s.description === 'string' ? s.description : '',
-      required: !!s.required,
-      // `private` is the canonical field; `sensitive` is accepted as
-      // a backward-compatible alias. Either present (and truthy) flips
-      // the entry to private. Internally we expose only `.private`.
-      private: !!s.private || !!s.sensitive,
-      default: typeof s.default === 'string' ? s.default : null,
-      staging_default: typeof s.staging_default === 'string' ? s.staging_default : null,
-    });
-  }
+  const secrets = readSecrets(parsed, { platformEnv, filePath });
 
   return {
     name: readName(parsed),
@@ -1929,6 +1943,7 @@ module.exports = {
   normalizeIconColor,
   readAdmins,
   readPlatformEnv,
+  readSecrets,
   reconcilePlatformEnv,
   PLATFORM_ENV_UNWRITABLE,
   MAX_PLATFORM_ENV,

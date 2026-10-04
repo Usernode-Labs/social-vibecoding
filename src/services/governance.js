@@ -132,13 +132,22 @@ async function isApprover(pool, appId, userId) {
 // there. "N approvals, no clock" has no notion of losing, so the real
 // failure state is never-approved, and the only honest remedy is time:
 // how long, whether the author is warned, whether a vote resets it.
-function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now()) {
+function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now(), opts = {}) {
   const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
   const required = Math.max(parseInt(n, 10) || 1, 1);
   const thresholdMet = yes >= required;
+  // The member floor (applyNoTimerMerge below): a flagged proposal whose
+  // only qualifying Yes is its author's is not mergeable however many
+  // approvals the count shows. `floorMet` defaults to true, so every caller
+  // that is not flagged keeps exactly the old gate.
+  const floorMet = opts.floorMet !== false;
+  const mergeable = thresholdMet && floorMet;
   // Keep-alive: a proposal that already has its approvals is mergeable,
-  // and must not be auto-rejected out from under them.
-  const rejWindowMs = thresholdMet
+  // and must not be auto-rejected out from under them. Keyed on MERGEABLE,
+  // not on the count: an author's own Yes on a flagged proposal is not
+  // support the floor accepts, so it must not keep a proposal the group is
+  // voting down alive forever either.
+  const rejWindowMs = mergeable
     ? null
     : activeUsers().oppositionWindowMs(yes, noCount);
   const rejectionArmed = rejWindowMs !== null;
@@ -170,7 +179,7 @@ function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now()
     windowElapsed: true,
     lazyArmed: false,
     lazyWindowMs: null,
-    mergeable: thresholdMet,
+    mergeable,
     rejectionWindowMs: rejWindowMs,
     rejectionArmed,
     rejectionEndsAt: rejectionArmed && Number.isFinite(openedMs)
@@ -181,8 +190,9 @@ function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now()
 }
 
 // #788 "explicit approval" modifier. A proposal whose diff changes a
-// privilege-granting dapp.json block (today: the top-level `admins`
-// list) keeps the app's NORMAL approval rules — same threshold, same
+// protected dapp.json block (admins, governance, visibility,
+// platform_env, secrets; services/explicit-approval.js) keeps the app's
+// NORMAL approval rules — same threshold, same
 // electorate, same at-least-N / invited-approver configuration, same
 // contested handling — but loses every TIME-BASED merge path:
 //
@@ -203,7 +213,22 @@ function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now()
 // Note this is a no-op on the merge side under 'at_least' (atLeastGate
 // is already clock-free), and deliberately does NOT re-arm that mode's
 // rejection fields — "as before" means as that app normally behaves.
-function applyNoTimerMerge(gate) {
+//
+// THE MEMBER FLOOR. `floor` (memberFloor below) adds one condition on
+// top: whenever the community has more than one member, a flagged
+// proposal also needs at least one qualifying Yes from someone other than
+// its author. Without it the "real votes" the modifier asks for could be
+// the author's alone: on a small app the eased threshold is often one Yes,
+// so a proposal to make the app private, change its admins or carry a key
+// value merged on its author's own say-so the moment it was proposed. The
+// threshold (`required`, `thresholdMet`) still reports the vote count; the
+// floor is its own fact, so a surface can say which of the two is missing.
+// `floor` null means "not evaluated" (a display serializer that does not
+// read it): the merge side then behaves as before, and every merge path
+// that decides anything goes through governedGate, which always evaluates
+// it.
+function applyNoTimerMerge(gate, floor = null) {
+  const floorMet = !floor || floor.met !== false;
   return {
     ...gate,
     windowMs: 0,
@@ -211,8 +236,23 @@ function applyNoTimerMerge(gate) {
     windowElapsed: true,
     lazyArmed: false,
     lazyWindowMs: null,
-    mergeable: !!gate.thresholdMet,
+    mergeable: !!gate.thresholdMet && floorMet,
   };
+}
+
+// The member floor for one flagged proposal, from the community's member
+// count and the qualifying Yes votes cast by someone other than the author.
+// Returns null when the member count is unknown (not evaluated), else
+// { applies, otherYes, met }: `applies` is false for a one-member
+// community, where nobody else exists to ask (the author alone decides, as
+// on any solo project), and `met` is true whenever the floor does not apply.
+function memberFloor({ memberCount, otherYes } = {}) {
+  if (memberCount === undefined || memberCount === null) return null;
+  const members = parseInt(memberCount, 10);
+  if (!Number.isFinite(members)) return null;
+  const applies = members > 1;
+  const other = Math.max(parseInt(otherYes, 10) || 0, 0);
+  return { applies, otherYes: other, met: !applies || other >= 1 };
 }
 
 // Pure mode dispatch given already-resolved governance + counts. The
@@ -223,18 +263,25 @@ function applyNoTimerMerge(gate) {
 // whichever regime the app configured — `mode` still reports the real
 // regime ('default' / 'at_least'), because the app's rules are what
 // still decide the threshold.
+//
+// `opts.memberCount` + `opts.otherYes` evaluate the member floor for a
+// flagged proposal (applyNoTimerMerge above); `memberFloor` on the result
+// is null when the proposal is not flagged or the floor was not evaluated.
 function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
-  const base = gov.approvalsRequired != null
-    ? atLeastGate(gov.approvalsRequired, yesCount, noCount, openedAt, now)
-    : activeUsers().mergeGate(active, yesCount, noCount, openedAt, now);
   const explicitApproval = !!opts.explicitApproval;
-  const gated = explicitApproval ? applyNoTimerMerge(base) : base;
+  const floor = explicitApproval ? memberFloor(opts) : null;
+  const base = gov.approvalsRequired != null
+    ? atLeastGate(gov.approvalsRequired, yesCount, noCount, openedAt, now,
+      { floorMet: !floor || floor.met })
+    : activeUsers().mergeGate(active, yesCount, noCount, openedAt, now);
+  const gated = explicitApproval ? applyNoTimerMerge(base, floor) : base;
   return {
     ...gated,
     policy: gov.approverPolicy,
     mode: gov.approvalsRequired != null ? 'at_least' : 'default',
     approvalsRequired: gov.approvalsRequired,
     explicitApproval,
+    memberFloor: floor,
     qualifiedYes: Math.max(parseInt(yesCount, 10) || 0, 0),
     qualifiedNo: Math.max(parseInt(noCount, 10) || 0, 0),
     activeCount: Math.max(parseInt(active, 10) || 0, 1),
@@ -254,7 +301,17 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
 // because it changes the commit without changing the work — see
 // services/pr-vote-revision.js for why a commit could never answer that on
 // its own. Issue votes are unscoped: they have no revision to go stale.
-async function qualifiedCounts(pool, kind, id, approverIds) {
+//
+// `opts.authorId` asks for one more number, `otherYes`: the qualifying Yes
+// votes cast by someone other than the proposal's author (the member floor;
+// see applyNoTimerMerge). Only asked for a flagged proposal, so the common
+// path keeps its exact queries. A null author (a deleted account) counts
+// every Yes as someone else's.
+async function qualifiedCounts(pool, kind, id, approverIds, opts) {
+  const wantOther = !!opts && typeof opts === 'object'
+    && Object.prototype.hasOwnProperty.call(opts, 'authorId');
+  const authorNum = wantOther ? parseInt(opts.authorId, 10) : NaN;
+  const authorId = Number.isFinite(authorNum) ? authorNum : null;
   const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
   const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';
   const yesVal = kind === 'issue' ? 'up' : 'yes';
@@ -287,47 +344,70 @@ async function qualifiedCounts(pool, kind, id, approverIds) {
       `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${epochClause}`,
       [id]
     );
-    return {
+    const out = {
       yes: parseInt(yesRows[0]?.cnt, 10) || 0,
       no: parseInt(noRows[0]?.cnt, 10) || 0,
     };
+    if (wantOther) {
+      const { rows: otherRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM ${table}
+          WHERE ${keyCol} = $1 AND vote = '${yesVal}'
+            AND user_id IS DISTINCT FROM $2::int${epochClause}`,
+        [id, authorId]
+      );
+      out.otherYes = parseInt(otherRows[0]?.cnt, 10) || 0;
+    }
+    return out;
   }
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
-       COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
+       COUNT(*) FILTER (WHERE vote = '${noVal}') AS no${wantOther
+    ? `,
+       COUNT(*) FILTER (WHERE vote = '${yesVal}' AND user_id IS DISTINCT FROM $3::int) AS other_yes`
+    : ''}
      FROM ${table}
      WHERE ${keyCol} = $1
        AND user_id = ANY($2::int[])${epochClause}`,
-    [id, approverIds]
+    wantOther ? [id, approverIds, authorId] : [id, approverIds]
   );
-  return {
+  const out = {
     yes: parseInt(rows[0]?.yes, 10) || 0,
     no: parseInt(rows[0]?.no, 10) || 0,
   };
+  if (wantOther) out.otherYes = parseInt(rows[0]?.other_yes, 10) || 0;
+  return out;
 }
 
 // Batch variant for serializers: qualifying counts for MANY proposals
 // in one query. Only called with a restricted electorate (callers use
 // the raw per-row tallies under 'anyone'). Returns a Map of
-// id -> { yes, no } (missing ids have zero votes from the electorate).
+// id -> { yes, no, otherYes } (missing ids have zero votes from the
+// electorate). `otherYes` is the member floor's count: qualifying Yes
+// votes from someone other than the row's author (chat_sessions.user_id
+// for a PR, issues.created_by for an issue).
 async function qualifiedCountsBatch(pool, kind, ids, approverIds) {
   const out = new Map();
   if (!ids.length) return out;
   const yesVal = kind === 'issue' ? 'up' : 'yes';
   const noVal = kind === 'issue' ? 'down' : 'no';
   const sql = kind === 'issue'
-    ? `SELECT issue_id AS id,
-         COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
-         COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
-       FROM issue_votes
-       WHERE issue_id = ANY($1::int[])
-         AND user_id = ANY($2::int[])
-         AND counts_toward_issue_outcome(user_id, issue_id)
-       GROUP BY issue_id`
+    ? `SELECT iv.issue_id AS id,
+         COUNT(*) FILTER (WHERE iv.vote = '${yesVal}') AS yes,
+         COUNT(*) FILTER (WHERE iv.vote = '${noVal}') AS no,
+         COUNT(*) FILTER (WHERE iv.vote = '${yesVal}'
+                            AND iv.user_id IS DISTINCT FROM i.created_by) AS other_yes
+       FROM issue_votes iv
+       JOIN issues i ON i.id = iv.issue_id
+       WHERE iv.issue_id = ANY($1::int[])
+         AND iv.user_id = ANY($2::int[])
+         AND counts_toward_issue_outcome(iv.user_id, iv.issue_id)
+       GROUP BY iv.issue_id`
     : `SELECT pv.session_id AS id,
          COUNT(*) FILTER (WHERE pv.vote = '${yesVal}') AS yes,
-         COUNT(*) FILTER (WHERE pv.vote = '${noVal}') AS no
+         COUNT(*) FILTER (WHERE pv.vote = '${noVal}') AS no,
+         COUNT(*) FILTER (WHERE pv.vote = '${yesVal}'
+                            AND pv.user_id IS DISTINCT FROM cs.user_id) AS other_yes
        FROM pr_votes pv
        JOIN chat_sessions cs ON cs.id = pv.session_id
        WHERE pv.session_id = ANY($1::int[])
@@ -335,8 +415,43 @@ async function qualifiedCountsBatch(pool, kind, ids, approverIds) {
          AND ${countedVotePredicateSql('pv', 'cs')}
        GROUP BY pv.session_id`;
   const { rows } = await pool.query(sql, [ids, approverIds]);
-  for (const r of rows) out.set(r.id, { yes: parseInt(r.yes, 10) || 0, no: parseInt(r.no, 10) || 0 });
+  for (const r of rows) {
+    out.set(r.id, {
+      yes: parseInt(r.yes, 10) || 0,
+      no: parseInt(r.no, 10) || 0,
+      otherYes: parseInt(r.other_yes, 10) || 0,
+    });
+  }
   return out;
+}
+
+// The member floor's two reads (applyNoTimerMerge), for the paths that
+// decide something.
+//
+// How many people are in the community the app belongs to. A missing app
+// answers null (floor not evaluated); an app with no community yet answers
+// 0, which is a one-person community as far as the floor is concerned.
+async function communityMemberCount(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(m.user_id)::int AS n
+       FROM apps a
+       LEFT JOIN community_members m ON m.community_id = a.community_id
+      WHERE a.id = $1
+      GROUP BY a.id`,
+    [appId]
+  );
+  return rows.length ? (parseInt(rows[0].n, 10) || 0) : null;
+}
+
+// Who proposed it: chat_sessions.user_id for a PR, issues.created_by for an
+// issue. Null for a deleted account, which the floor reads as "every Yes is
+// someone else's".
+async function proposalAuthorId(pool, kind, id) {
+  const { rows } = kind === 'issue'
+    ? await pool.query('SELECT created_by AS author_id FROM issues WHERE id = $1', [id])
+    : await pool.query('SELECT user_id AS author_id FROM chat_sessions WHERE id = $1', [id]);
+  const n = parseInt(rows[0]?.author_id, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 // Electorate resolution: who counts, and how many of them there are.
@@ -358,22 +473,58 @@ async function getElectorate(pool, appId, gov) {
 // anchor (promoted_at || created_at for PRs, created_at for issues).
 // Returns the mergeGate-shaped object from computeGate above, extended
 // with { policy, mode, approvalsRequired, qualifiedYes, qualifiedNo,
-// activeCount }.
-async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, explicitApproval = false } = {}) {
+// activeCount, memberFloor }.
+//
+// A flagged proposal (`explicitApproval`) always has its member floor
+// evaluated here: `authorId` when the caller has the row (pass null for a
+// deleted author), else it is read off the row. This is the path every
+// merge and apply decision takes, so the floor can never be skipped by a
+// caller that forgot to ask for it.
+async function governedGate(pool, appId, {
+  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId,
+} = {}) {
   const gov = await getGovernance(pool, appId);
   const electorate = await getElectorate(pool, appId, gov);
+  let floorOpts;
+  if (explicitApproval) {
+    floorOpts = {
+      authorId: authorId !== undefined ? authorId : await proposalAuthorId(pool, kind, id),
+    };
+  }
   // #2038: scoped by approval epoch inside qualifiedCounts. Callers no
   // longer pass a revision, because the revision was never the right key —
   // a proposal's commit changes for reasons that have nothing to do with
   // whether the approvals still describe it.
-  const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds);
+  const { yes, no, otherYes } = await qualifiedCounts(
+    pool, kind, id, electorate.approverIds, floorOpts
+  );
+  const memberCount = explicitApproval ? await communityMemberCount(pool, appId) : undefined;
   // #788: the no-timer modifier rides on top of whatever regime the app
-  // configured — see applyNoTimerMerge.
-  const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, { explicitApproval });
+  // configured — see applyNoTimerMerge — and with it the member floor.
+  const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
+    explicitApproval, otherYes, memberCount,
+  });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
   }
   return gate;
+}
+
+// The fields a display serializer hangs on a proposal row for the member
+// floor, from the gate computeGate returned for it (with `otherYes` and
+// `memberCount` passed in). `needs_other_member_yes` is true only when the
+// row is flagged AND its community has more than one member; the card's
+// requirement row (services/merge-requirements.js) and the status pill
+// read these rather than re-deriving the rule.
+function explicitApprovalRowFields(row, gate) {
+  const flagged = !!(row && row.requires_explicit_approval);
+  const floor = flagged && gate ? gate.memberFloor : null;
+  return {
+    requires_explicit_approval: flagged,
+    explicit_approval_reason: flagged ? (row.explicit_approval_reason || null) : null,
+    needs_other_member_yes: !!(floor && floor.applies),
+    other_member_yes_count: floor ? floor.otherYes : null,
+  };
 }
 
 // #3234: the electorate count to stamp on a proposal as it is promoted —
@@ -410,9 +561,13 @@ module.exports = {
   isApprover,
   atLeastGate,
   applyNoTimerMerge,
+  memberFloor,
   computeGate,
   qualifiedCounts,
   qualifiedCountsBatch,
+  communityMemberCount,
+  proposalAuthorId,
+  explicitApprovalRowFields,
   getElectorate,
   governedGate,
 };

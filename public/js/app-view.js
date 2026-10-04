@@ -12986,6 +12986,50 @@ const AppView = {
   // Returns null when there is nothing to say: a merged or withdrawn row, or a
   // proposal the gate has never run against. An empty checklist would be a
   // claim about a merge that nothing has evaluated.
+  // ── Explicit approval: the words for why (#788, the member floor) ───
+  //
+  // services/explicit-approval.js on the server, MergeStatus here: a
+  // flagged proposal changes who runs the app, how changes are approved,
+  // who can see it, its platform settings or its keys, and needs a Yes from
+  // a member other than its author whenever the community has more than one.
+  _explicitCopy(reason) {
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    if (MS && typeof MS.explicitApprovalCopy === 'function') return MS.explicitApprovalCopy(reason);
+    return {
+      phrase: null,
+      sentence: 'This change needs a Yes from another member.',
+      line: 'It changes a protected setting',
+    };
+  },
+
+  // Still waiting on the member floor: more than one member, and nobody but
+  // the author has said Yes.
+  _awaitingOtherMember(pr) {
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    if (MS && typeof MS.awaitingOtherMember === 'function') return MS.awaitingOtherMember(pr);
+    return !!(pr && pr.requires_explicit_approval && pr.needs_other_member_yes
+      && !((parseInt(pr.other_member_yes_count, 10) || 0) >= 1));
+  },
+
+  // The lock's tooltip (the status pill's glyph and the vote pill's chip).
+  _lockTitle(pr) {
+    const copy = AppView._explicitCopy(pr && pr.explicit_approval_reason);
+    const lead = pr && pr.needs_other_member_yes
+      ? copy.sentence
+      : `It changes ${copy.phrase || 'a protected setting'}.`;
+    return `${lead} It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold, and it can still be voted down.`;
+  },
+
+  // The Admin merge control's tooltip. Only a platform admin sees it on a
+  // flagged row (the server refuses an app admin there).
+  _adminMergeTitle(pr) {
+    if (!pr || !pr.requires_explicit_approval) {
+      return 'Admin: merge this PR right now, bypassing the vote majority';
+    }
+    const phrase = AppView._explicitCopy(pr.explicit_approval_reason).phrase;
+    return `Admin: merge this change to ${phrase || 'a protected setting'} right now, without the vote or another member’s Yes`;
+  },
+
   requirementsSpec(pr) {
     const p = pr || {};
     if (p.status === 'merged' || p.status === 'closed') return null;
@@ -13071,11 +13115,12 @@ const AppView = {
       // The status pill carries the count; the change page's step names the
       // voters (_voteNamesLine).
       case 'approvals': return null;
+      // The member floor: the row's label says what is needed ("A Yes from
+      // another member"), the line says why, from the reason the gate
+      // recorded (or the row's own, for a recording from before it did).
       case 'explicit': {
         if (g.state === 'done' || !reached) return null;
-        const need = parseInt(p.votes_required, 10);
-        return Number.isFinite(need) && need > 0
-          ? `Admin change · needs ${plural(need, 'yes vote', 'yes votes')}` : 'Admin change · needs yes votes';
+        return AppView._explicitCopy(detail.reason || p.explicit_approval_reason).line;
       }
       case 'admin_yes': return g.state === 'done' || !reached ? null : 'Needs one admin to vote yes';
       case 'integration': return AppView._integrationLine(g, p, o.viewer);
@@ -13383,16 +13428,14 @@ const AppView = {
 
     if (!ro && !isMerged) {
       // Admin force-merge: platform admins always; the app's own admins
-      // except on a proposal that changes the admins block (self-escalation).
+      // except on a flagged proposal (it waits for another member's Yes).
       const canForceMerge = App.user?.canAdminWrite
         || (!!ctx.isAppAdmin && !pr.requires_explicit_approval);
       if (canForceMerge && pr.status === 'promoted') {
         items.push({
           label: 'Admin merge',
           icon: 'merge',
-          title: pr.requires_explicit_approval
-            ? 'Admin: merge this admins-changing PR right now, bypassing the vote'
-            : 'Admin: merge this PR right now, bypassing the vote majority',
+          title: AppView._adminMergeTitle(pr),
           danger: true,
           act: () => AppView.castAdminMerge(pr.id),
         });
@@ -13610,10 +13653,18 @@ const AppView = {
         ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
       const eSnap = parseInt(pr.votes_required);
       const eReq = (Number.isFinite(eSnap) && eSnap > 0) ? eSnap : (parseInt(ctx.majority) || 1);
+      // The member floor (needs_other_member_yes): the votes can all be in
+      // and it still waits, until someone other than the author says Yes.
+      const eWaitsOnMember = AppView._awaitingOtherMember(pr);
       const eBody = eYes >= eReq
-        ? `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`
+        ? (eWaitsOnMember
+          ? `It has the Yes votes it needs (${eYes} of ${eReq}), but none of them is from another member yet.`
+          : `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`)
         : `It needs ${eReq} real Yes vote${eReq === 1 ? '' : 's'} and has ${eYes} so far.`;
-      explicitNote = `This proposal edits the app's admins list, so it won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
+      const eLead = pr.needs_other_member_yes
+        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
+        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`;
+      explicitNote = `${eLead} It won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
     }
 
     // "How voting works" explainer affordances — only on live proposals (the
@@ -14019,16 +14070,24 @@ const AppView = {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
     }
 
-    // #788: this proposal changes who can administer the app, so the
-    // time-based merge paths are off. The app's NORMAL rules still
-    // decide the threshold — which is why this is a suffix appended to
-    // the regime-specific wording below rather than a branch that
-    // replaces it. Every countdown branch is skipped because the server
-    // sends no merge_window_ends_at for a flagged row.
+    // #788: this proposal changes a protected setting (who runs the app,
+    // how changes are approved, who can see it, its platform settings or
+    // its keys), so the time-based merge paths are off. The app's NORMAL
+    // rules still decide the threshold — which is why this is a suffix
+    // appended to the regime-specific wording below rather than a branch
+    // that replaces it. Every countdown branch is skipped because the
+    // server sends no merge_window_ends_at for a flagged row.
     const noTimer = !!pr.requires_explicit_approval;
     const noTimerNote = noTimer
-      ? ` This changes who can administer the app, so it won’t merge on a timer. It needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
+      ? ` ${pr.needs_other_member_yes
+        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
+        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`} It won’t merge on a timer: it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
       : '';
+    // The member floor holds a proposal whose votes are in: say so, rather
+    // than "queued to merge shortly".
+    if (noTimer && reached && AppView._awaitingOtherMember(pr) && !blocker) {
+      blocker = 'none of its Yes votes is from another member yet';
+    }
 
     // #646: "at least N approvals" mode — clock-free, so none of the
     // countdown/contested branches below apply. Describe the configured
@@ -15344,7 +15403,10 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if ((ctx.locked && !issue.demo) || issue.contested) {
+    // The member floor (a secret change): the votes can be in while it
+    // still waits for a Yes from someone other than its author, and that
+    // wait is not an apply in flight.
+    if ((ctx.locked && !issue.demo) || issue.contested || AppView._awaitingOtherMember(issue)) {
       delete AppView._govDueSince[issue.id];
       return null;
     }
@@ -19045,7 +19107,10 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
-    const base = { yes, no, majority: maj, advisory, lock, reasons: [] };
+    const base = {
+      yes, no, majority: maj, advisory, lock, reasons: [],
+      ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+    };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
     // derived answer from /merged. Missing/unknown is deliberately the old
@@ -19115,19 +19180,24 @@ const AppView = {
       return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
         title: 'Enough people have objected that the timer is off. This needs a straight majority of Yes votes, so talk it through.' };
     }
+    // The member floor: a flagged row whose votes are in still waits for a
+    // Yes from someone other than its author, so it is not "reached" green.
+    const waitsOnMember = isOpenRow && AppView._awaitingOtherMember(p);
     // "At least N approvals" mode is clock-free, so it can't count down.
     if (p.approvals_required != null && isOpenRow) {
       const n = parseInt(p.approvals_required, 10) || 1;
       const reached = yes >= n;
       return { ...base, tier: 6, key: 'approvals', majority: n, fill: true, reached,
         label: `${yes} of ${n} approval${n === 1 ? '' : 's'}`,
-        tone: reached ? 'ok' : 'progress', reasons,
-        title: reached
-          ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
-          : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
+        tone: reached && !waitsOnMember ? 'ok' : 'progress', reasons,
+        title: reached && waitsOnMember
+          ? AppView._explicitCopy(p.explicit_approval_reason).sentence
+          : reached
+            ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
+            : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
     }
-    // 4 — counting down. A flagged (admins-changing) row never merges on a
-    // clock, so it must never promise one even from a stale cached row.
+    // 4 — counting down. A flagged row never merges on a clock, so it
+    // must never promise one even from a stale cached row.
     const windowEndsMs = p.merge_window_ends_at ? Date.parse(p.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
     const reachedMaj = yes >= maj;
@@ -19158,11 +19228,13 @@ const AppView = {
         title: 'You haven’t voted on this yet' };
     }
     // 6 — plain tally.
-    const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
+    const outcome = yes >= maj ? (waitsOnMember ? 'progress' : 'ok') : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
-      title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+      title: (yes >= maj && waitsOnMember)
+        ? AppView._explicitCopy(p.explicit_approval_reason).sentence
+        : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+          ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
@@ -19204,13 +19276,14 @@ const AppView = {
       ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers. They don't count toward merging">+${advisoryYes} advisory</span>`
       : '';
 
-    // #788: this proposal changes who can administer the app. The app's
-    // normal threshold is unchanged — only the clocks are off — so the
-    // chip sits BESIDE the ordinary tally rather than replacing it.
-    // Suppressed on settled rows (the vote is history there).
+    // #788: this proposal changes a protected setting. The app's normal
+    // threshold is unchanged — only the clocks are off, and another
+    // member has to say Yes — so the chip sits BESIDE the ordinary tally
+    // rather than replacing it. Suppressed on settled rows (the vote is
+    // history there).
     const explicitChip = (pr.requires_explicit_approval
         && pr.status !== 'merged' && pr.status !== 'merging')
-      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer. It needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
+      ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">Explicit approval</span>`
       : '';
 
     // #646: "at least N" mode — a clock-free approvals-progress pill
@@ -20613,7 +20686,7 @@ const AppView = {
     const canForceMerge = App.user?.canAdminWrite
       || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
     const adminMerge = canForceMerge
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     // The vote carries the approval epoch this card was rendered with, so a
     // proposal that genuinely changed under the voter is still refused —
