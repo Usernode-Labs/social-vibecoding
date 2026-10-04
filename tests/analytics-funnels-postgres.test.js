@@ -35,6 +35,7 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
       CREATE TABLE users (
         id integer PRIMARY KEY,
         is_admin boolean NOT NULL DEFAULT false,
+        test_account_created_at timestamptz,
         created_at timestamptz NOT NULL
       );
       CREATE TABLE chat_sessions (
@@ -190,6 +191,20 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
       pr: 113, status: 'merged', promoted: '2026-08-25T10:00Z', merged: '2026-08-27T10:00Z',
     });
     await event(15, 113, 'pr_opened', '2026-08-24T10:00Z', { prNumber: 113 });
+
+    // A test account (services/test-accounts.js) walks both funnels end to
+    // end. It is nobody's real use, so it is in neither, with or without
+    // admins: every count below is the same as without it.
+    await client.query(
+      "INSERT INTO users (id, is_admin, test_account_created_at, created_at) VALUES (16, false, '2026-08-13T10:00Z', '2026-08-13T10:00Z')");
+    await event(16, null, 'dapp_opened', '2026-08-14T09:00Z', { source: 'app_tab' });
+    await event(16, null, 'dapp_opened', '2026-08-15T09:00Z', { source: 'app_tab' });
+    await event(16, null, 'chat_message_sent', '2026-08-16T09:00Z');
+    await event(16, null, 'app_created', '2026-08-17T09:00Z');
+    await session(116, 16, '2026-08-13T11:00Z', {
+      pr: 116, status: 'merged', promoted: '2026-08-14T10:00Z', merged: '2026-08-15T10:00Z',
+    });
+    await event(16, 116, 'pr_opened', '2026-08-13T12:00Z', { prNumber: 116 });
 
     const withoutAdmins = await fetchFunnels(client, { now: AS_OF, includeAdmins: false });
     assert.equal(withoutAdmins.dappUsage.coverage.startsAt.toISOString(), '2026-08-01T00:00:00.000Z');

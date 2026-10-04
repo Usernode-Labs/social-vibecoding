@@ -46,17 +46,49 @@ const LOST_CUTOFFS = Object.freeze({
 const FEW_MOVES = 10;
 
 // Real people (#3369 rulings): not an admin (view-only admins included), not
-// a bot, not restricted by moderation, not deleted, not a platform service
-// account (the reserved name prefixes nobody else may take), and not on the
-// admin-edited left-out list. Every query that names people uses this, with
-// $3 = the reserved prefixes as LIKE patterns and $4 = the left-out ids.
+// a bot, not a test account (services/test-accounts.js; its own flag, so it
+// stays out whether or not it is on the left-out list), not restricted by
+// moderation, not deleted, not a platform service account (the reserved name
+// prefixes nobody else may take), and not on the admin-edited left-out list.
+// Every query that names people uses this, with $3 = the reserved prefixes as
+// LIKE patterns and $4 = the left-out ids.
 const RESERVED_PATTERNS = Object.freeze(['usernode%', 'staging%']);
 const REAL_PERSON_SQL = `u.is_admin IS NOT TRUE
   AND u.is_synthetic IS NOT TRUE
+  AND u.test_account_created_at IS NULL
   AND u.participation_restricted_at IS NULL
   AND u.anonymised_at IS NULL
   AND NOT (LOWER(u.username) LIKE ANY($3::text[]))
   AND NOT (u.id = ANY($4::int[]))`;
+
+// The same rule for the people who said yes to a change, joined as `uy`
+// wherever a query reads a change's votes.
+const REAL_VOTER_SQL = `uy.is_admin IS NOT TRUE
+  AND uy.is_synthetic IS NOT TRUE
+  AND uy.test_account_created_at IS NULL
+  AND uy.participation_restricted_at IS NULL
+  AND uy.anonymised_at IS NULL
+  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+  AND NOT (uy.id = ANY($4::int[]))`;
+
+// Who a change is credited to: an expression over `cs` (chat_sessions). A
+// change is its author's, except one the Homeroom bot built. The bot is a
+// synthetic account and the session's author, so its changes used to count
+// for nobody; such a change is the person's who asked for it, recorded in
+// homeroom_bot_requesters for the request it was built from, else whoever
+// filed that request on Homeroom (the same join as
+// topochain/challenge-scorer.js and homeroom-bot.js liveCandidates). A bot
+// build with neither is NULL, and still counts for nobody.
+const CHANGE_PERSON_SQL = `(CASE
+      WHEN EXISTS (SELECT 1 FROM users bu WHERE bu.id = cs.user_id AND bu.is_synthetic)
+      THEN COALESCE(
+        (SELECT r.user_id FROM homeroom_bot_requesters r
+          WHERE r.app_id = cs.app_id AND r.issue_number = cs.created_from_issue_number),
+        (SELECT ri.created_by FROM issues ri
+          WHERE ri.app_id = cs.app_id AND ri.github_issue_number = cs.created_from_issue_number
+          ORDER BY ri.id LIMIT 1))
+      ELSE cs.user_id
+    END)`;
 
 function notRecorded(reason) {
   return { recorded: false, reason };
@@ -640,24 +672,28 @@ const STAGES_SQL = `WITH real AS (
      WHERE i.created_at >= $1::timestamptz AND i.created_at < $2::timestamptz AND i.created_by IS NOT NULL
     UNION SELECT pvx.user_id, 'vote' FROM pr_votes pvx WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
     UNION SELECT ivx.user_id, 'vote' FROM issue_votes ivx WHERE ivx.created_at >= $1::timestamptz AND ivx.created_at < $2::timestamptz
-    UNION SELECT cs.user_id, 'change' FROM chat_sessions cs
+    UNION SELECT ${CHANGE_PERSON_SQL}, 'change' FROM chat_sessions cs
      WHERE cs.created_at >= $1::timestamptz AND cs.created_at < $2::timestamptz AND ${OWN_CHANGE}
   ), belong AS (
-    SELECT pvx.user_id FROM pr_votes pvx JOIN chat_sessions cs ON cs.id = pvx.session_id JOIN real ra ON ra.id = cs.user_id
-     WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz AND pvx.user_id <> cs.user_id
+    SELECT pvx.user_id FROM pr_votes pvx JOIN chat_sessions cs ON cs.id = pvx.session_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
+     WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz AND pvx.user_id <> ra.id
        AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'
-    UNION SELECT k.giver_user_id FROM pr_kudos k JOIN chat_sessions cs ON cs.id = k.session_id JOIN real ra ON ra.id = cs.user_id
-     WHERE k.created_at >= $1::timestamptz AND k.created_at < $2::timestamptz AND k.giver_user_id <> cs.user_id
+    UNION SELECT k.giver_user_id FROM pr_kudos k JOIN chat_sessions cs ON cs.id = k.session_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
+     WHERE k.created_at >= $1::timestamptz AND k.created_at < $2::timestamptz AND k.giver_user_id <> ra.id
     UNION SELECT cmx.user_id FROM chat_messages cmx JOIN chat_sessions cs ON cmx.thread_type = 'session' AND cmx.thread_ref = cs.id
-      JOIN real ra ON ra.id = cs.user_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
      WHERE cmx.created_at >= $1::timestamptz AND cmx.created_at < $2::timestamptz AND cmx.msg_type = 'message'
-       AND cmx.user_id <> cs.user_id
+       AND cmx.user_id <> ra.id
   ), used AS (
-    SELECT cs.user_id FROM chat_sessions cs
-     WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
-       AND EXISTS (SELECT 1 FROM pr_votes pvx JOIN real ry ON ry.id = pvx.user_id
-                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
-                      AND pvx.approval_epoch = cs.approval_epoch)
+    SELECT p.user_id FROM (
+      SELECT cs.id, cs.approval_epoch, ${CHANGE_PERSON_SQL} AS user_id FROM chat_sessions cs
+       WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
+    ) p
+     WHERE EXISTS (SELECT 1 FROM pr_votes pvx JOIN real ry ON ry.id = pvx.user_id
+                    WHERE pvx.session_id = p.id AND pvx.vote = 'yes' AND pvx.user_id <> p.user_id
+                      AND pvx.approval_epoch = p.approval_epoch)
   ), invited AS (
     SELECT inv.admitted_by AS user_id FROM users inv JOIN real ri ON ri.id = inv.id
      WHERE inv.admitted_by IS NOT NULL AND inv.id IN (SELECT user_id FROM arrive)
@@ -741,52 +777,44 @@ async function stages(pool, { week, now = new Date(), leftOutIds = [], memberIds
 
 // ── Active groups ──────────────────────────────────────────────────────
 //
-// Every change that went live, with its project, its real author and the
-// real people other than the author who said yes to the revision that
+// Every change that went live, with its project, the real person it is
+// credited to (CHANGE_PERSON_SQL: its author, or the person a bot build was
+// for) and the real people other than them who said yes to the revision that
 // merged. Merged changes number in the low thousands in total, so the weeks
 // are bucketed here rather than in SQL. $1 is unused padding kept for the
 // shared parameter layout: the end of the window, $2 now, $3/$4 real people.
 const LIVE_CHANGES_SQL = `SELECT cs.id, cs.app_id, ap.slug, ap.name, ap.self_hosted,
-         cs.merged_at, cs.user_id AS author_id, u.username AS author,
+         cs.merged_at, u.id AS author_id, u.username AS author,
          ARRAY(SELECT pvx.user_id FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                   AND pvx.approval_epoch = cs.approval_epoch
-                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                  AND NOT (uy.id = ANY($4::int[]))
+                  AND ${REAL_VOTER_SQL}
                 ORDER BY pvx.user_id) AS yes_ids,
          ARRAY(SELECT uy.username FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                   AND pvx.approval_epoch = cs.approval_epoch
-                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                  AND NOT (uy.id = ANY($4::int[]))
+                  AND ${REAL_VOTER_SQL}
                 ORDER BY pvx.user_id) AS yes_names
     FROM chat_sessions cs
     JOIN apps ap ON ap.id = cs.app_id
-    JOIN users u ON u.id = cs.user_id
+    JOIN users u ON u.id = ${CHANGE_PERSON_SQL}
    WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
      AND cs.merged_at < $1::timestamptz AND cs.merged_at <= $2::timestamptz
      AND ${REAL_PERSON_SQL}`;
 
 // Changes put to the group and still waiting, with no yes yet from another
 // real person: the other half of "groups one short".
-const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, cs.user_id AS author_id, u.username AS author, cs.promoted_at
+const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, u.id AS author_id, u.username AS author, cs.promoted_at
     FROM chat_sessions cs
     JOIN apps ap ON ap.id = cs.app_id
-    JOIN users u ON u.id = cs.user_id
+    JOIN users u ON u.id = ${CHANGE_PERSON_SQL}
    WHERE cs.status IN ('promoted', 'merging') AND COALESCE(ap.self_hosted, FALSE) = FALSE
      AND cs.promoted_at IS NOT NULL AND cs.promoted_at < $1::timestamptz AND cs.promoted_at <= $2::timestamptz
      AND ${REAL_PERSON_SQL}
      AND NOT EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                      WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                      WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                         AND pvx.approval_epoch = cs.approval_epoch
-                        AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                        AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                        AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                        AND NOT (uy.id = ANY($4::int[])))
+                        AND ${REAL_VOTER_SQL})
    ORDER BY cs.promoted_at`;
 
 // How many weeks of active-group counts come back with each week, oldest
@@ -1308,22 +1336,20 @@ const LOCKSTEP_CUTOFFS = Object.freeze({
 // $1 week start, $2 week end, $3/$4 real people, $5 lockstep seconds,
 // $6 lockstep minimum votes, $7 lockstep minimum share.
 const TRUST_SQL = `WITH live AS (
-    SELECT cs.id, cs.user_id, ap.slug, ap.name AS project, au.username AS author, au.is_admin AS author_is_admin,
+    SELECT cs.id, au.id AS user_id, ap.slug, ap.name AS project, au.username AS author, au.is_admin AS author_is_admin,
            EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> au.id
                       AND pvx.approval_epoch = cs.approval_epoch
-                      AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                      AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                      AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                      AND NOT (uy.id = ANY($4::int[]))) AS group_yes,
+                      AND ${REAL_VOTER_SQL}) AS group_yes,
            EXISTS (SELECT 1 FROM events e WHERE e.event_type = 'pr_merged' AND e.session_id = cs.id
                      AND e.created_at >= $1::timestamptz - INTERVAL '1 day'
                      AND COALESCE((e.metadata->>'forced')::boolean, FALSE)) AS forced
       FROM chat_sessions cs
       JOIN apps ap ON ap.id = cs.app_id
-      JOIN users au ON au.id = cs.user_id
+      JOIN users au ON au.id = ${CHANGE_PERSON_SQL}
      WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
-       AND au.is_synthetic IS NOT TRUE AND NOT (LOWER(au.username) LIKE ANY($3::text[]))
+       AND au.is_synthetic IS NOT TRUE AND au.test_account_created_at IS NULL
+       AND NOT (LOWER(au.username) LIKE ANY($3::text[]))
   ), yes AS (
     SELECT pvx.user_id, pvx.session_id, pvx.created_at FROM pr_votes pvx JOIN users u ON u.id = pvx.user_id
      WHERE pvx.vote = 'yes' AND pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
@@ -1443,6 +1469,8 @@ module.exports = {
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
   REAL_PERSON_SQL,
+  REAL_VOTER_SQL,
+  CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
   VISIT_GAP_MS,
   WEEK_MS,

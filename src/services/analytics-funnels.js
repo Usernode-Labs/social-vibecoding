@@ -32,6 +32,7 @@ WITH coverage AS (
    WHERE u.created_at <= $1::timestamptz
      AND ($2::timestamptz IS NULL OR u.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
+     AND u.test_account_created_at IS NULL
 ), journeys AS (
   SELECT b.*, opened.opened_at, returned.returned_at,
          engaged.engaged_at, creator.creator_at,
@@ -279,6 +280,7 @@ WITH coverage AS (
    WHERE cs.created_at <= $1::timestamptz
      AND ($2::timestamptz IS NULL OR cs.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
+     AND u.test_account_created_at IS NULL
 ), opened AS (
   SELECT b.*, op.opened_recorded_at,
          promo_any.promoted_independent_at,

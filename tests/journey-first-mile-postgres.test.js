@@ -102,6 +102,12 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     await signup('boss@example.test', boss);
     const qa = await user('qa_phone');
     await signup('qa@example.test', qa);
+    // Test accounts (services/test-accounts.js) are left out by their own
+    // flag, with no left-out entry: one admitted in the cohort, and one let
+    // in another way.
+    const tester = await user('tester_1', { test_account_created_at: admitAt });
+    await signup('tester@example.test', tester);
+    await user('tester_2', { test_account_created_at: '2026-09-25T09:00:00Z', platform_access_granted_at: '2026-09-25T09:00:00Z' });
     // Another cohort, and someone who came in by a member's invite link.
     await signup('later@example.test', null, '2026-09-26T08:00:00Z');
     const host = await user('host', { platform_access_granted_at: '2026-06-01T00:00:00Z' });
@@ -112,7 +118,7 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     assert.deepEqual(list.cohorts, [
       { day: '2026-09-26', admitted: 1, withAccount: 0 },
       { day: D, admitted: 4, withAccount: 3 },
-    ], 'old members, admins and left-out accounts are not newcomers');
+    ], 'old members, admins, test accounts and left-out accounts are not newcomers');
     assert.deepEqual(list.otherWay, { people: 1 });
 
     const mile = await journey.firstMile(pool, { day: D, now, leftOutIds });
