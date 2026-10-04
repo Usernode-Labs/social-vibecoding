@@ -90,6 +90,22 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     defaultEnabled: true,
     kinds: Object.freeze(['check_failed', 'stale_pr', 'pr_merged']),
   }),
+  // A person's message in the discussion of a private project of 8 people or
+  // fewer (services/group-channel-notify.js). ON: in a group that small the
+  // discussion is the group chat, and a message nobody hears is a
+  // conversation that stalls. `smallGroupOnly`: offered on a project's own
+  // dialog only while it IS such a group, because nothing else ever sends
+  // it, so a switch anywhere else would be a switch that does nothing. The
+  // account-wide row is the "quiet in every group" choice, and a project's
+  // own row beats it, as for every category here.
+  Object.freeze({
+    key: 'channel_messages',
+    label: 'Every message in the discussion',
+    description: 'In a private project of 8 people or fewer, anything someone writes in its discussion. Mentions reach you either way.',
+    defaultEnabled: true,
+    smallGroupOnly: true,
+    kinds: Object.freeze(['channel_message']),
+  }),
   Object.freeze({
     key: 'thread_replies',
     label: 'Replies to you',
@@ -247,14 +263,22 @@ function isKindEnabled(kind, overrides) {
 /**
  * The categories to show one person for one app, as view models.
  *
- * `isAdmin` hides the admin-only rows. `source` says WHERE each answer came
+ * `isAdmin` hides the admin-only rows, and `smallGroup` (the project is a
+ * private group of 8 people or fewer, group-channel-notify.isSmallGroup) is
+ * what shows the small-group ones. `source` says WHERE each answer came
  * from, which is what lets the dialog draw "following your default" against
  * a row nobody has touched, rather than presenting an inherited value as a
  * per-app decision.
  */
-function serializeAppCategories({ appOverrides = {}, accountOverrides = {}, isAdmin = false } = {}) {
+function offeredOn(category, { isAdmin = false, smallGroup = false } = {}) {
+  return (!category.adminOnly || isAdmin) && (!category.smallGroupOnly || smallGroup);
+}
+
+function serializeAppCategories({
+  appOverrides = {}, accountOverrides = {}, isAdmin = false, smallGroup = false,
+} = {}) {
   return APP_CATEGORY_DEFINITIONS
-    .filter((category) => !category.adminOnly || isAdmin)
+    .filter((category) => offeredOn(category, { isAdmin, smallGroup }))
     .map((category) => {
       const hasApp = typeof appOverrides[category.key] === 'boolean';
       const hasAccount = typeof accountOverrides[category.key] === 'boolean';
@@ -443,6 +467,7 @@ module.exports = {
   isGatedKind,
   categoryForKind,
   definitionFor,
+  offeredOn,
   resolveEnabled,
   isKindEnabled,
   serializeAppCategories,

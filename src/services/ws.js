@@ -10,6 +10,7 @@ const appAccess = require('./app-access');
 const communities = require('./communities');
 const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
+const groupChannelNotify = require('./group-channel-notify');
 const wsBus = require('./ws-bus');
 
 // #328: server-side cap on a single chat message body. Must match the
@@ -1009,11 +1010,13 @@ async function handleMessage(pool, client, msg) {
       }
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
-      if (postedVia !== 'agent') {
-        void require('./invite-activity').noteFirstMessage(pool, {
+      // Not awaited here; the small-group ring below waits for it, so the
+      // maker is not told about the same message twice. It never throws.
+      const hello = postedVia !== 'agent'
+        ? require('./invite-activity').noteFirstMessage(pool, {
           appId: client.appId, userId: client.user.id, chatMessageId: rows[0].id,
-        });
-      }
+        })
+        : null;
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
@@ -1129,6 +1132,29 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
 
+      // A small private group's discussion is its group chat: a person's
+      // message in the main stream reaches the rest of the group, one row
+      // per discussion that folds the next ones in
+      // (services/group-channel-notify.js). Whoever this message already
+      // reached above, or as the invite maker's "said hi", is not told
+      // twice. Never a connector's post.
+      if (!thread && postedVia !== 'agent') {
+        try {
+          const said = hello ? await hello : null;
+          if (said?.row && Number(said.row.chat_message_id) === Number(rows[0].id)) {
+            directlyNotified.add(Number(said.row.user_id));
+          }
+          await groupChannelNotify.notifyChannelMessage(pool, {
+            appId: client.appId,
+            messageId: rows[0].id,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+        } catch (err) {
+          log.warn('ws', 'group channel notify failed', { appId: client.appId, err: err.message });
+        }
+      }
+
       // #2387: a reply in a reply thread pings the root's author and the
       // earlier repliers ('thread_reply'), minus the sender and anybody the
       // two blocks above already reached — a mention wins.
@@ -1155,9 +1181,23 @@ async function handleMessage(pool, client, msg) {
       // cleared, fan out notifications_changed so the sender's bell badge +
       // other tabs (and their chat dots) re-sync.
       try {
-        const cleared = await notifications.markReadForAction(
+        let cleared = await notifications.markReadForAction(
           pool, client.user.id, 'message_sent', client.appId
         );
+        // Writing in the main stream is reading it to here, so this
+        // person's own small-group discussion row is read too. Its own
+        // guard: a failure here must not cost the clear above its re-sync.
+        if (!thread) {
+          try {
+            cleared += await groupChannelNotify.markChannelRead(
+              pool, client.user.id, client.appId, rows[0].id
+            );
+          } catch (err) {
+            log.warn('ws', 'discussion notification clear failed', {
+              appId: client.appId, userId: client.user.id, err: err.message,
+            });
+          }
+        }
         if (cleared > 0) {
           pushNotificationToUser(client.user.id, { type: 'notifications_changed' });
         }

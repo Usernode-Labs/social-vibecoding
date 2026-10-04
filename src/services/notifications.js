@@ -22,6 +22,10 @@
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
+// 'channel_message' is a person's message in the discussion of a private
+// project of 8 people or fewer, to the rest of its people: one row per
+// discussion that folds later messages into a count in `detail`
+// (services/group-channel-notify.js, which writes and clears it).
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -1460,7 +1464,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 // address of its own (#2387).
 const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply',
   // WP-E: somebody your invite brought said hi; it opens on what they said.
-  'first_message']);
+  'first_message',
+  // A small group's discussion: it opens on the newest message it counts.
+  'channel_message']);
 
 // Where an app-chat message notification opens, in the client's Messages
 // addresses: a reply-thread message opens its thread

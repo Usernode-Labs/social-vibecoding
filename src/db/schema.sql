@@ -5277,6 +5277,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_reaction', 'messages', TRUE),
   -- #2387: a reply in a conversation thread you started or replied in.
   ('conversation_thread_reply', 'messages', TRUE),
+  -- A person's message in a small private group's discussion
+  -- (services/group-channel-notify.js): the group's chat, so Messages.
+  ('channel_message', 'messages', TRUE),
   -- WP-E: the Homeroom bot's moments about something you asked it for
   -- (services/homeroom-bot-dm.js BUILD_KINDS), so turning Messages off does
   -- not silence "it's ready to try".
@@ -5316,6 +5319,8 @@ DELETE FROM mobile_push_kind_categories
    'friend_request', 'friend_accept',
    -- #2387.
    'conversation_thread_reply',
+   -- A small private group's discussion.
+   'channel_message',
    -- #3181.
    'session_stalled',
    -- Server-wide limit alerts for full admins.

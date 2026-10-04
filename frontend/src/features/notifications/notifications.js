@@ -362,13 +362,27 @@ const Notifications = {
     if (!notif) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
+    //
+    // A row can also come back GROWN: a small group's discussion row folds
+    // the next message into itself (src/services/group-channel-notify.js),
+    // and an invite's moments fold the same way. It was already unread, so
+    // it is not a second unread notification, and when it is newer than it
+    // was it moves to the top, where the feed's newest-first order puts it.
     const existing = Notifications.items.findIndex((n) => n.id === notif.id);
+    const wasUnread = existing >= 0 && !Notifications.items[existing].readAt;
     if (existing >= 0) {
-      Notifications.items[existing] = notif;
+      const before = Date.parse(Notifications.items[existing].createdAt) || 0;
+      const after = Date.parse(notif.createdAt) || 0;
+      if (after > before) {
+        Notifications.items.splice(existing, 1);
+        Notifications.items.unshift(notif);
+      } else {
+        Notifications.items[existing] = notif;
+      }
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -2579,6 +2593,30 @@ function rowView(n) {
         'Spec shared',
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
+    };
+  }
+
+  // A person's message in a small private group's discussion
+  // (src/services/group-channel-notify.js). One row per discussion: the
+  // messages that arrive before you read it fold in, `detail` counting them
+  // and the newest one its message and author. Headed by the person and the
+  // project, as a group chat's banner is, over what they said; the meta line
+  // names the surface (Discussion), as a conversation row's names Messages,
+  // so the project's name is not said twice.
+  if (n.kind === 'channel_message') {
+    const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
+    const place = n.appName || 'the discussion';
+    const snippet = (n.messageContent || '').slice(0, 140);
+    const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    return {
+      ...base,
+      wrap: true,
+      icon: '💬',
+      by: null,
+      appLine: 'Discussion',
+      ...(count > 1
+        ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
+        : headline(`${author} in ${place}`, snippet || null)),
     };
   }
 
