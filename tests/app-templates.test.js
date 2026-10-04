@@ -91,7 +91,8 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.match(server, /app\.post\('\/api\/press'/);
   assert.match(server, /CREATE TABLE IF NOT EXISTS presses/);
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [] });
+  // P15: every new app welcomes guests (read-only visitors with no account).
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], guests: true });
   assert.throws(() => getTemplateFiles('Notes', 'notes', 'pg://x', null, { template: 'chess' }), /Unknown app template: chess/);
 });
 
@@ -164,7 +165,8 @@ for (const id of STARTERS) {
     // dapp.json: the starter's icon and checks, kept by the platform's own
     // reader, every check anchored on something the screen has.
     const dapp = JSON.parse(file(files, 'dapp.json'));
-    assert.deepEqual(Object.keys(dapp), ['icon', 'secrets', 'tests']);
+    assert.deepEqual(Object.keys(dapp), ['icon', 'secrets', 'guests', 'tests']);
+    assert.equal(dapp.guests, true, 'a starter welcomes guests too');
     assert.deepEqual(dapp.secrets, []);
     assert.equal(appManifest.readIcon(dapp).emoji, meta.icon);
     const read = appManifest.readTests(dapp);
@@ -196,7 +198,7 @@ test('a starter carries the creator\'s line and rule into its dapp.json like Emp
     description: 'Catch stars together',
     governance: { approverPolicy: 'invited', approvalsRequired: 2 },
   }), 'dapp.json'));
-  assert.deepEqual(Object.keys(dapp), ['description', 'icon', 'secrets', 'governance', 'tests']);
+  assert.deepEqual(Object.keys(dapp), ['description', 'icon', 'secrets', 'guests', 'governance', 'tests']);
   assert.equal(dapp.description, 'Catch stars together');
   assert.deepEqual(appManifest.readGovernance(dapp), { approvers: 'invited', approvals: 2 });
 });

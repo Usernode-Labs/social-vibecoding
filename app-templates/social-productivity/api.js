@@ -1,6 +1,7 @@
 // This app's API: shared lists of tasks that anyone in the project can add
-// to, claim and tick off. server.js mounts it after the sign-in check, so
-// every route here has req.user ({ id, username }).
+// to, claim and tick off. server.js mounts it after the sign-in check: a
+// write always has req.user ({ id, username }); a read may come from a guest
+// with no account (req.guest, no req.user).
 //
 // It came from Homeroom's "Social productivity" template. Change it freely.
 
@@ -88,9 +89,10 @@ function routes(app, pool) {
           [ids]
         )
         : { rows: [] };
-      const me = req.user.id;
+      // A guest (no account) owns and has claimed nothing.
+      const me = req.user ? req.user.id : null;
       res.json({
-        me: { id: me, username: req.user.username },
+        me: req.user ? { id: me, username: req.user.username } : null,
         lists: lists.map((l) => ({
           id: l.id,
           title: l.title,

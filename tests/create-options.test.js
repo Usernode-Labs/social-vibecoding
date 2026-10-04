@@ -86,12 +86,13 @@ test('invite emails are addresses, for a private community only, lowercased, ded
 test('the new repository\'s dapp.json carries a non-default rule, and only then', () => {
   const dapp = (governance) => JSON.parse(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { governance })
     .find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(dapp(null), { secrets: [] }, 'a default project\'s manifest is unchanged');
-  assert.deepEqual(dapp({ approverPolicy: 'anyone', approvalsRequired: null }), { secrets: [] });
+  // `guests: true` (P15) is in every new app's manifest.
+  assert.deepEqual(dapp(null), { secrets: [], guests: true }, 'a default project\'s manifest carries no rule');
+  assert.deepEqual(dapp({ approverPolicy: 'anyone', approvalsRequired: null }), { secrets: [], guests: true });
   assert.deepEqual(dapp({ approverPolicy: 'invited', approvalsRequired: null }),
-    { secrets: [], governance: { approvers: 'invited', approvals: 'default' } });
+    { secrets: [], guests: true, governance: { approvers: 'invited', approvals: 'default' } });
   assert.deepEqual(dapp({ approverPolicy: 'invited', approvalsRequired: 3 }),
-    { secrets: [], governance: { approvers: 'invited', approvals: { atLeast: 3 } } });
+    { secrets: [], guests: true, governance: { approvers: 'invited', approvals: { atLeast: 3 } } });
   // What it writes is what the manifest reader reads back.
   const { readGovernance } = require('../src/services/app-manifest');
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
@@ -119,12 +120,12 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
 test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only when there is one', () => {
   const files = (description) => getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { description });
   const dapp = (description) => JSON.parse(files(description).find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(dapp(null), { secrets: [] });
-  assert.deepEqual(dapp('Shared notes for the house'), { description: 'Shared notes for the house', secrets: [] });
+  assert.deepEqual(dapp(null), { secrets: [], guests: true });
+  assert.deepEqual(dapp('Shared notes for the house'), { description: 'Shared notes for the house', secrets: [], guests: true });
   const both = JSON.parse(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {
     description: 'Shared notes', governance: { approverPolicy: 'invited', approvalsRequired: null },
   }).find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(Object.keys(both), ['description', 'secrets', 'governance']);
+  assert.deepEqual(Object.keys(both), ['description', 'secrets', 'guests', 'governance']);
   const about = (description) => {
     const claude = files(description).find((f) => f.path === 'CLAUDE.md').content;
     return claude.slice(claude.indexOf('## About Notes'), claude.indexOf('## App-specific conventions'));

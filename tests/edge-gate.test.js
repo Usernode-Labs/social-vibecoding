@@ -86,6 +86,8 @@ const fakePool = {
       const app = APPS[params[0]];
       return { rows: app ? [{ ...app, created_by: 1, self_hosted: false, moderation_suspended_at: null }] : [] };
     }
+    // P15: none of these apps welcomes guests (tests/app-host-guests.test.js).
+    if (/manifest_snapshot -> 'guests'/.test(sql)) return { rows: [{ guests: false }] };
     if (/SELECT runtime_name FROM apps WHERE id/.test(sql)) {
       const app = byId(params[0]);
       return { rows: app ? [{ runtime_name: app.runtime_name }] : [] };
@@ -644,11 +646,13 @@ test('cookie names carry the __Host- prefix in production', () => {
   const saved = process.env.NODE_ENV;
   process.env.NODE_ENV = 'production';
   try {
-    assert.deepEqual(edgeGate.cookieNames(), { access: '__Host-usernode_access', anon: '__Host-usernode_anon' });
+    assert.deepEqual(edgeGate.cookieNames(), {
+      access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest',
+    });
   } finally {
     if (saved === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved;
   }
-  assert.deepEqual(edgeGate.cookieNames(), { access: '__usernode_access', anon: '__usernode_anon' });
+  assert.deepEqual(edgeGate.cookieNames(), { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest' });
 });
 
 test('stripGateCookies removes only the gate’s cookies, in either spelling', () => {

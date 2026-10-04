@@ -64,9 +64,32 @@
 // code, and the token it would receive is good for the production app too.
 // Previews keep the behaviour they had (members-only for private apps).
 //
+// ── Guests (P15) ────────────────────────────────────────────────────────
+//
+// A view-public app whose dapp.json says `"guests": true` (its production
+// deploy's snapshot) is open to people with no Homeroom account, at its own
+// production address only:
+//
+//   * such a visitor's requests carry a GUEST token (platform-jwt
+//     signGuestToken: audience `usernode:app:<id>:guest`, `pur: 'guest'`,
+//     `guest: true`, no id or username), under the same same-origin rules
+//     as a person's identity. No app that has not opted in accepts it;
+//   * every write they make from a browser (POST, PUT, PATCH, DELETE with
+//     an Origin or Sec-Fetch-Site) is refused here with 401 and JSON
+//     `{ error: 'account_required' }`, which the bridge turns into a
+//     "Make an account to continue" sheet. A server-to-server call (a
+//     webhook: neither header) is the app's to answer, as before;
+//   * a readable, host-only hint cookie tells the bridge to show its
+//     "You're looking around" strip. It grants nothing.
+//
+// Never on a preview, never on a private app, never when the app has not
+// opted in. `/__usernode_access?account=signup|signin&next=` sends the
+// visitor to the platform's sign-up or sign-in, which brings them back
+// through the authorize hop, signed in.
+//
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
-// identity from the cookie, the chromeless view for a direct visit to a
-// private app) while keeping everything else.
+// identity from the cookie, no guests, the chromeless view for a direct visit
+// to a private app) while keeping everything else.
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
@@ -95,6 +118,14 @@ const CACHE_MAX = 5000;
 const CAPTURE_USERNAME = 'usernode-capture';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// How long the readable guest hint lasts. Signing in clears it.
+const GUEST_HINT_TTL_S = 12 * 60 * 60;
+
+const ACCOUNT_REQUIRED = Object.freeze({
+  error: 'account_required',
+  message: 'Make an account to continue.',
+});
 
 function secureCookies() {
   return process.env.NODE_ENV === 'production';
@@ -105,8 +136,8 @@ function secureCookies() {
 // ("cookie tossing"). Plain HTTP dev boxes cannot use the prefix.
 function cookieNames() {
   return secureCookies()
-    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon' }
-    : { access: '__usernode_access', anon: '__usernode_anon' };
+    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest' }
+    : { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest' };
 }
 
 function signinEnabled() {
@@ -226,12 +257,15 @@ function boundedSet(map, key, value) {
 }
 
 const liveSessions = new Map();      // `${sid}:${uid}` -> at
+const guestOptIns = new Map();       // appId -> { at, on }
+const guestTokens = new Map();       // appId -> { at, token }
 const identities = new Map();        // `${appId}:${uid}` -> { at, token }
 const upstreams = new Map();         // host -> { at, name }
 let captureId = { at: 0, id: null };
 
 function resetCachesForTest() {
   liveSessions.clear(); identities.clear(); upstreams.clear();
+  guestOptIns.clear(); guestTokens.clear();
   captureId = { at: 0, id: null };
 }
 
@@ -297,6 +331,42 @@ async function mintIdentity(pool, appId, uid) {
   });
   boundedSet(identities, key, { at: Date.now(), token });
   return token;
+}
+
+// Has this app opted in to guests? Read off its production deploy's dapp.json
+// snapshot (services/app-manifest.js readGuests), cached like visibility.
+async function guestsEnabled(pool, appId) {
+  const hit = guestOptIns.get(appId);
+  if (hit && Date.now() - hit.at < 10_000) return hit.on;
+  const { rows } = await pool.query(
+    "SELECT (manifest_snapshot -> 'guests') = 'true'::jsonb AS guests FROM apps WHERE id = $1",
+    [appId]
+  );
+  const on = rows[0]?.guests === true;
+  boundedSet(guestOptIns, appId, { at: Date.now(), on });
+  return on;
+}
+
+// One guest token per app, reused like a person's identity.
+function guestToken(appId) {
+  const hit = guestTokens.get(appId);
+  if (hit && Date.now() - hit.at < IDENTITY_REUSE_MS) return hit.token;
+  const token = platformJwt.signGuestToken({ appId });
+  boundedSet(guestTokens, appId, { at: Date.now(), token });
+  return token;
+}
+
+// A request a browser made: browsers send Origin on every write and
+// Sec-Fetch-Site on every request; a server-to-server call sends neither.
+function browserRequest(headers) {
+  return !!header(headers, 'origin') || !!header(headers, 'sec-fetch-site');
+}
+
+// The platform's sign-up or sign-in, coming back through the authorize hop
+// to the same page of the app, signed in (auth-screens.js RETURN_TO_PATHS).
+function accountUrl(kind, host, next) {
+  const back = `/__access/authorize?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+  return `https://${USERNODE_DOMAIN}/?return_to=${encodeURIComponent(back)}#${kind === 'signup' ? 'signup' : 'login'}`;
 }
 
 async function isCaptureIdentity(pool, uid) {
@@ -390,10 +460,12 @@ async function handleAccess(pool, req, res) {
 
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
-  const allow = async ({ identityFor = null } = {}) => {
+  const allow = async ({ identityFor = null, guest = false } = {}) => {
     if (identityFor != null) {
       const token = await mintIdentity(pool, vis.appId, identityFor);
       if (token) res.set('X-Usernode-Identity', token);
+    } else if (guest) {
+      res.set('X-Usernode-Identity', guestToken(vis.appId));
     }
     if (viaKubernetesGate) {
       const upstream = await upstreamFor(pool, parsed, vis);
@@ -417,11 +489,22 @@ async function handleAccess(pool, req, res) {
       return redirect(stuck ? next : withRetryMarker(next));
     }
     const checkUrl = (kind) => `${CALLBACK_PATH}?check=${kind}&next=${encodeURIComponent(next)}`;
+    // The bridge's "Continue with email" and "I have an account".
+    const account = query.get('account');
+    if (account === 'signup' || account === 'signin') {
+      return redirect(isProduction
+        ? accountUrl(account, host, next)
+        : `https://${USERNODE_DOMAIN}/`);
+    }
     const anon = query.get('anon');
     if (anon) {
       const ok = platformJwt.orNull(() => platformJwt.verifyEdgeAnon(anon));
       if (ok && ok.host === host && !vis.viewPrivate && signin) {
         res.cookie(names.anon, '1', cookieOptions(ANON_TTL_S));
+        if (await guestsEnabled(pool, vis.appId)) {
+          // Readable on purpose: it only tells the bridge to show its strip.
+          res.cookie(names.guest, '1', { ...cookieOptions(GUEST_HINT_TTL_S), httpOnly: false });
+        }
         return redirect(checkUrl('anon'));
       }
       // Never bounce again from here: a loop-breaker, not a dead end.
@@ -445,6 +528,7 @@ async function handleAccess(pool, req, res) {
       });
       res.cookie(names.access, cookie, cookieOptions(platformJwt.EDGE_COOKIE_TTL_S));
       res.clearCookie(names.anon, { path: '/', secure: secureCookies(), sameSite: 'lax' });
+      res.clearCookie(names.guest, { path: '/', secure: secureCookies(), sameSite: 'lax' });
       return redirect(checkUrl('access'));
     }
     if (claims) {
@@ -461,8 +545,17 @@ async function handleAccess(pool, req, res) {
 
   // ── View-public apps ──────────────────────────────────────────────────
   if (!vis.viewPrivate) {
-    // The app authenticates a token the request already carries.
-    if (ownToken || queryToken) return allow();
+    const guests = signin && await guestsEnabled(pool, vis.appId);
+    // The app authenticates a token the request already carries. Where
+    // guests are welcome, only a person's token counts as one: a guest
+    // token (or anything else) carried by the request is a guest.
+    if (ownToken || queryToken) {
+      if (!guests) return allow();
+      const person = platformJwt.orNull(
+        () => platformJwt.verifyAppIdentityToken(queryToken || ownToken, { appId: vis.appId })
+      );
+      if (person && Number.isInteger(person.id)) return allow();
+    }
     if (signin && cookie?.sid
         && await appAccess.isViewMember(pool, vis.appId, cookie.uid)
         && await sessionLive(pool, cookie.sid, cookie.uid)) {
@@ -471,6 +564,13 @@ async function handleAccess(pool, req, res) {
     }
     if (signin && topNav && !anonMarked(req) && query.get(RETRY_MARKER) !== '1') {
       return redirect(authorizeUrl(host, safeNext(uri)));
+    }
+    if (guests) {
+      // Every write needs an account.
+      if (WRITE_METHODS.has(method) && browserRequest(req.headers)) {
+        return res.status(401).type('application/json').send(JSON.stringify(ACCOUNT_REQUIRED));
+      }
+      return allow({ guest: identityAllowed({ method, headers: req.headers, host }) });
     }
     return allow();
   }
@@ -573,6 +673,7 @@ module.exports = {
   RETRY_MARKER,
   ANON_TTL_S,
   CAPTURE_USERNAME,
+  ACCOUNT_REQUIRED,
   cookieNames,
   signinEnabled,
   sha256Hex,
@@ -586,6 +687,8 @@ module.exports = {
   sessionLive,
   redeemOnce,
   mintIdentity,
+  guestsEnabled,
+  accountUrl,
   upstreamFor,
   handleAccess,
   handleAuthorize,

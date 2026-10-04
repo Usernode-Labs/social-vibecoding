@@ -1,6 +1,7 @@
 // This app's API: a feed of posts, each a caption and an optional photo,
 // with likes and a way to report a post. server.js mounts it after the
-// sign-in check, so every route here has req.user ({ id, username }).
+// sign-in check: a write always has req.user ({ id, username }); a read may
+// come from a guest with no account (req.guest, no req.user).
 //
 // Photos are uploaded from the browser through Homeroom's file storage
 // (usernode.uploadFile() in public/app.js). This server only ever stores the
@@ -105,13 +106,14 @@ function routes(app, pool) {
             AND (SELECT COUNT(*) FROM post_reports r WHERE r.post_id = p.id) < $3
           ORDER BY p.created_at DESC, p.id DESC
           LIMIT $4`,
-        [req.user.id, Number.isInteger(before) && before > 0 ? before : null, HIDE_AT_REPORTS, PAGE_SIZE]
+        // A guest (no account) has liked and reported nothing.
+        [req.user ? req.user.id : null, Number.isInteger(before) && before > 0 ? before : null, HIDE_AT_REPORTS, PAGE_SIZE]
       );
       res.json({
         posts: rows.map((p) => ({
           id: p.id,
           by: p.username,
-          mine: p.user_id === req.user.id,
+          mine: !!req.user && p.user_id === req.user.id,
           caption: p.caption,
           imageUrl: p.image_url,
           at: p.created_at,
