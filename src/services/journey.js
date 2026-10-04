@@ -1418,8 +1418,9 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
 //                           (a `change_live` event naming them)
 //
 // against three targets: the first version ready within two minutes, their
-// own project viewable within five, and a change they asked for live within
-// ten. Running has none.
+// own project running within five, and a change they asked for live within
+// ten. Preview opened has none: it waits on them opening it, not on the
+// platform.
 //
 // People, not projects: a person counts once for a step when any project
 // they created in the window reached it, with the shortest time any of
@@ -1430,7 +1431,7 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
 // window is that recent. Never a zero for something nobody recorded.
 
 const CREATION_STEPS = Object.freeze(['created', 'running', 'first_version', 'preview', 'change_live']);
-const CREATION_TARGETS = Object.freeze({ first_version: 120, preview: 300, change_live: 600 });
+const CREATION_TARGETS = Object.freeze({ running: 300, first_version: 120, change_live: 600 });
 // The steps whose record started with its own event; the rest are read
 // from rows the platform has always kept.
 const CREATION_EVENT_STEPS = Object.freeze({ running: 'app_running', preview: 'preview_opened', change_live: 'change_live' });

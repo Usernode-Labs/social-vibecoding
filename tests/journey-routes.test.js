@@ -126,7 +126,7 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
   }
   const creation = (await get('/api/admin/journey/creation')).json;
   assert.deepEqual(creation.steps.map((x) => x.key), ['created', 'running', 'first_version', 'preview', 'change_live']);
-  assert.deepEqual(creation.targets, { first_version: 120, preview: 300, change_live: 600 });
+  assert.deepEqual(creation.targets, { running: 300, first_version: 120, change_live: 600 });
 
   for (const bad of ['/api/admin/journey/stages?week=2026-10-06', '/api/admin/journey/summary?week=monday',
     '/api/admin/journey/stages?cohort=yesterday', '/api/admin/journey/loops?cohort=2026-02-30',

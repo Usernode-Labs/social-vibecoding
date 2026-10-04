@@ -198,9 +198,9 @@ test('the creation path: people per step, times from creation, targets, and what
   assert.equal(path.finished, true);
   assert.deepEqual(path.steps.map((s) => [s.key, s.reached, s.of, s.medianSeconds, s.targetSeconds, s.withinTarget]), [
     ['created', 3, 3, null, null, null],
-    ['running', 2, 3, 90, null, null],
+    ['running', 2, 3, 90, 300, 2],
     ['first_version', 1, 3, 100, 120, 1],
-    ['preview', 2, 3, 300, 300, 1],
+    ['preview', 2, 3, 300, null, null],
     ['change_live', 1, 3, 700, 600, 0],
   ]);
   assert.deepEqual(path.recordedFrom, {

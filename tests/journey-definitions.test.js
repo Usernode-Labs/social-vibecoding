@@ -203,7 +203,7 @@ test('creation path: people once each, the shortest time, and an absent record b
     'a step nothing recorded yet reads "not recorded", never 0');
   assert.equal(steps.preview.of, 0);
   assert.deepEqual(journey.creationSteps([]).map((s) => s.reached), [0, 0, 0, 0, 0], 'nobody made anything: zeros are true');
-  assert.deepEqual(journey.CREATION_TARGETS, { first_version: 120, preview: 300, change_live: 600 });
+  assert.deepEqual(journey.CREATION_TARGETS, { running: 300, first_version: 120, change_live: 600 });
 });
 
 test('pairs: both active is the aha, and inside the 7 days a no is still open', () => {
