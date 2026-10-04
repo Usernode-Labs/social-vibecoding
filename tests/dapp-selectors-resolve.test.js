@@ -236,9 +236,11 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // standalone status page, never index.html.
   // /api/me/staking/context is authenticated JSON from routes/staking.js.
   // The #1551 check intentionally exercises real preview configuration.
+  // /pixora/ is the static PIXORA dashboard (public/pixora/): a standalone
+  // document with its own shell, served by express.static, never index.html.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
     '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/',
-    '/waitlist/connect/', '/api/me/staking/context'];
+    '/waitlist/connect/', '/api/me/staking/context', '/pixora/'];
 
   const unroutable = [];
   for (const t of declared) {

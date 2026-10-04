@@ -112,6 +112,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
   },
   {
+    matches: (route) => route.source === 'server.js'
+      && (route.path === '/pixora' || route.path === '/pixora/:page'),
+    reason: 'the static PIXORA mini-app document and its in-document routes, an interface of its own rather than a Classic control',
+  },
+  {
     matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
     reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
   },

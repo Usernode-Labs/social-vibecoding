@@ -446,6 +446,22 @@
     {
       "source": "server.js",
       "method": "GET",
+      "path": "/pixora",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the static PIXORA mini-app document and its in-document routes, an interface of its own rather than a Classic control"
+    },
+    {
+      "source": "server.js",
+      "method": "GET",
+      "path": "/pixora/:page",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the static PIXORA mini-app document and its in-document routes, an interface of its own rather than a Classic control"
+    },
+    {
+      "source": "server.js",
+      "method": "GET",
       "path": "*",
       "expression": null,
       "status": "exempt",

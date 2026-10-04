@@ -5481,6 +5481,54 @@
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "id": "pixora.dashboard",
+      "name": "PIXORA: the dashboard renders with the dark sidebar and the five tool cards",
+      "path": "/pixora/",
+      "expectSelector": ".pixora-feature-grid",
+      "expectText": "AI Creative Toolkit for Microstock",
+      "allowConsoleErrors": false,
+      "visual": true,
+      "impact": [
+        "public/pixora/**"
+      ]
+    },
+    {
+      "name": "PIXORA: the Creative workspace opens from its own route",
+      "path": "/pixora/creative",
+      "expectText": "Negative Prompt",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Upscale Image workspace opens from its own route",
+      "path": "/pixora/upscale",
+      "expectText": "Output resolution",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Remove Background workspace opens from its own route",
+      "path": "/pixora/remove-background",
+      "expectText": "Processed result",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Metadata AI workspace opens with example stock metadata",
+      "path": "/pixora/metadata",
+      "expectText": "Generate Metadata",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Prompt Generator workspace opens with its generated prompt",
+      "path": "/pixora/prompt-generator",
+      "expectText": "Generated Prompt",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: Settings sits at the bottom of the sidebar and opens its own page",
+      "path": "/pixora/settings",
+      "expectText": "Marketplace accounts",
+      "allowConsoleErrors": false
     }
   ],
   "governance": {
