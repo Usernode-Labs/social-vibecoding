@@ -92,20 +92,28 @@ async function sendInvite(pool, { app, target, inviterId }) {
  * Accept `user`'s pending invite into app `appId`. Two callers: the
  * notification's Accept (POST /api/invites/:appId/accept) and the first-run
  * join screen, where a new account ticks the group it was invited into
- * (services/onboarding.js). Idempotent: accepting when already a member is
+ * (services/onboarding.js). An invite sent by email arrives here too, once
+ * the address is claimed (services/email-invites.js turns it into this
+ * pending row). Idempotent: accepting when already a member is
  * `{ ok: true, alreadyMember: true }`, for two-tab races.
+ *
+ * Accepting pins the app to Home, as an invite link does
+ * (apply_community_invite in src/db/schema.sql) and as Join does
+ * (communities.join). The pin is not decoration: the daily vote digest
+ * (services/vote-digest.js) finds people only through app_favorites and
+ * the creator, and the per-proposal notification reads the same rows
+ * beside the members active lately, so a member added by name without a
+ * pin would not hear about a vote until they had been active.
+ * `hidden = FALSE` clears an earlier opt-out, as the link path does. The
+ * pin is written in the same transaction as the membership, so an accept
+ * never lands without it; the already-member answer writes nothing, so a
+ * second tab cannot undo a later opt-out.
  *
  * Returns `{ ok: true, appSlug }` or `{ ok: false, status, error }`; the
  * inviter's notification, the chat line and the event are best-effort.
  */
 async function acceptInvite(pool, { appId, user }) {
-  const { rows: updated } = await pool.query(
-    `UPDATE app_collaborators
-        SET status = 'member', accepted_at = NOW()
-      WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
-      RETURNING invited_by`,
-    [appId, user.id]
-  );
+  const updated = await acceptAndPin(pool, appId, user.id);
 
   const { rows: appRows } = await pool.query(
     'SELECT id, slug, name FROM apps WHERE id = $1', [appId]
@@ -152,6 +160,36 @@ async function acceptInvite(pool, { appId, user }) {
 
   log.info('collab', 'Invite accepted', { appId, userId: user.id });
   return { ok: true, appSlug: app.slug };
+}
+
+// The membership and the Home pin, together or not at all. Returns the
+// accepted rows (`invited_by`), empty when there was no pending invite.
+async function acceptAndPin(pool, appId, userId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE app_collaborators
+          SET status = 'member', accepted_at = NOW()
+        WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
+        RETURNING invited_by`,
+      [appId, userId]
+    );
+    if (rows.length) {
+      await client.query(
+        `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
+         ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
+        [appId, userId]
+      );
+    }
+    await client.query('COMMIT');
+    return rows;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = { acceptInvite, hydrateAndPush, sendInvite };

@@ -2177,7 +2177,7 @@ function voteRoutes(config) {
   // (promote / vote / votes / undo / admin-merge): collab-level access,
   // 404 on deny. Admins always pass inside the guard.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
-  // Proposing and voting are for the community's members
+  // Proposing, voting and undoing a merge are for the community's members
   // (services/communities.js). Mounted per route rather than beside the
   // collab guard: the guard covers every session write, and building a
   // change, archiving one or giving kudos stay open to anyone who may
@@ -2192,7 +2192,8 @@ function voteRoutes(config) {
   // production rebuild) that must not be started by a process seconds from
   // exiting — a half-run rebuild leaves the app down until the next heal
   // sweep. 503 here is honest and the client retries against the new
-  // container. Read-only vote/undo paths stay ungated.
+  // container. Undo is gated the same way: it is not a read, it clones,
+  // pushes and opens a revert PR in the background.
   router.post('/api/sessions/:id/promote', drainGuard, requireMembership, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — auto sessions are never
@@ -4763,7 +4764,17 @@ function voteRoutes(config) {
   //
   // The caller becomes the revert session's owner (user_id) so they
   // "own" the resulting PR for chat / status purposes.
-  router.post('/api/sessions/:id/undo', sameOriginBrowserOnly, async (req, res) => {
+  //
+  // Undo is a write, not a read: it clones the repo, pushes a branch, opens
+  // a PR and inserts a promoted session owned by the caller. So it takes
+  // the same gates as promote. drainGuard keeps a process about to exit
+  // from starting that background work, and requireMembership keeps it to
+  // the community's members: on a public community the collab guard above
+  // lets every signed-in person through, and only membership stops a
+  // passer-by from putting a revert up for a vote. A non-member's 403
+  // `join_required` becomes the Join prompt in the client's fetch wrapper
+  // (frontend/src/lib/join-required.ts), which sends the undo again on a yes.
+  router.post('/api/sessions/:id/undo', drainGuard, requireMembership, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.repo_url
