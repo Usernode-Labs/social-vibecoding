@@ -80,7 +80,7 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
 });
 
 // The local test run is scoped to the change, and the whole suite is the
-// platform's job. Without the rule an agent runs all 13,000+ tests before
+// platform's job. Without the rule an agent runs all 19,000+ tests before
 // every push, minutes at a time, and one hung test held such a run open for
 // an hour with no failure in it; the script it names is what makes the rule
 // cheap to follow, and the timeout is what makes a hang a failure.

@@ -10,8 +10,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 
 // End-to-end coverage section of the admin console (#admin/e2e).
 //
-// The platform has 300+ unit tests and 365 declared dapp tests, and both
-// answer the same question: "does this component still behave?" Neither
+// The platform's unit suite and its declared dapp.json checks both answer
+// the same question: "does this component still behave?" Neither
 // answers the question an operator actually asks before a release —
 // "has anyone walked the product end to end, on production, recently,
 // and what did they find?" That evidence has historically lived in a

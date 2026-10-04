@@ -11,7 +11,7 @@
 //
 // Homeroom runs the whole unit suite and every declared check against a
 // commit when it is submitted, in a clean container. A local run of all
-// 13,000+ tests duplicates that, minutes at a time, and it is not what a
+// 19,000+ tests duplicates that, minutes at a time, and it is not what a
 // change needs before submission: that is to know, quickly, whether the
 // files it touched still satisfy the suites that read them. AGENTS.md
 // carries the rule; this is the mechanism.

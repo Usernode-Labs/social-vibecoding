@@ -78,8 +78,8 @@
  * That second view is gated on `created`, which starts null. The prerender
  * pass has no user to submit the form, so it renders the form and nothing
  * else — the progress subtree contributes no ids to public/index.html and
- * therefore nothing to the shell-markup baseline, the id inventory, or the
- * 338 declared dapp.json selectors. A separate tenth shell dialog would have
+ * therefore nothing to the shell-markup baseline, the id inventory, or
+ * dapp.json's declared selectors. A separate tenth shell dialog would have
  * needed an entry in all three; this needs none, which is the whole reason
  * the progress view lives inside this card rather than beside it.
  *

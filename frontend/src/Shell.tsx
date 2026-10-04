@@ -43,7 +43,7 @@
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
 //    semantics, same data-*/aria-* attributes — public/js/** looks these up by
-//    getElementById and dapp.json's 315 declared tests select against these
+//    getElementById and dapp.json's declared checks select against these
 //    exact structures. tests/baselines/shell-markup.json is the frozen
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,

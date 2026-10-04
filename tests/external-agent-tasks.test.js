@@ -2847,7 +2847,7 @@ test('the work order says to install dependencies before running anything', () =
 // says what to run BEFORE it — the suites that read the changed files, with
 // the base commit it already names filled into the command — and when the
 // whole suite is still the right call. Without this an agent runs all
-// 13,000+ tests before every push, minutes at a time.
+// 19,000+ tests before every push, minutes at a time.
 test('the work order scopes the local test run to the files the change touched', () => {
   const block = orderFor('ready');
   assert.match(block, /run the tests that cover the files you changed, not the\nwhole suite/);
