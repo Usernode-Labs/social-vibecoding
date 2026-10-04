@@ -5382,6 +5382,19 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
     }
 
+    // The admin Journey's change_live record: who asked for this change,
+    // whether it was a project's first version, and whether the project
+    // answered its health check on what was deployed (the reading the DM
+    // above says "live now" on, which until this lived only in that DM).
+    // Recorded for every merged change, not only the bot's. Never awaited,
+    // and never a reason the merge fails.
+    try {
+      require('../services/journey-events').recordChangeLive(pool, { config, session, sha: deployedSha })
+        ?.catch?.((err) => log.warn('votes', 'Journey change_live record failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Journey change_live record threw', { sessionId: session.id, err: err.message });
+    }
+
     // WP1 (#2): and nothing else of the bot's on the same request goes on: a
     // build waiting or under way is stopped, another proposal of its for the
     // request is withdrawn, and the request leaves the bot's queue. Never a

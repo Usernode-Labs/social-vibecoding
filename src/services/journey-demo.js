@@ -282,4 +282,123 @@ function leftOut() {
   return { demo: true, people: [{ userId: 900199, username: 'qa_phone', reason: 'test', note: 'QA phone', addedBy: 'admin', addedAt: '2026-10-02T10:00:00Z' }] };
 }
 
-module.exports = { cohorts, firstMile, stages, activeGroups, trustChecks, coverage, loops, nextSteps, person, summary, leftOut };
+// ── Creation path and pairs ────────────────────────────────────────────
+//
+// Eight demo weeks, 10 Aug to 28 Sep, read the way journey.creationPath and
+// journey.pairs read the real rows (their own step and week arithmetic), so
+// a cohort narrows the demo exactly as it narrows the real page. Running,
+// Preview opened and Requested change live are recorded from 22 Sep in the
+// demo, so the weeks before show "not recorded".
+
+const DEMO_WEEK = '2026-09-28';
+const DEMO_RECORDED_FROM = '2026-09-22T09:00:00Z';
+const DEMO_WEEKS = Array.from({ length: journey.TREND_WEEKS }, (_, i) => {
+  const start = new Date(Date.UTC(2026, 7, 10 + i * 7));
+  return { start, end: new Date(start.getTime() + journey.WEEK_MS), label: start.toISOString().slice(0, 10) };
+});
+
+// [person, slug, project, created at, seconds to running, first version,
+// preview opened, requested change live]; null is not reached.
+const DEMO_PROJECTS = [
+  [P.okafor, 'seed-swap', 'Seed Swap', '2026-08-12T10:00:00Z', null, 150, null, null],
+  [P.jun, 'tide-times', 'Tide Times', '2026-08-26T15:00:00Z', null, 210, null, null],
+  [P.sable, 'trail-log', 'Trail Log', '2026-09-02T09:30:00Z', null, 175, null, null],
+  [P.rafa, 'gear-list', 'Gear List', '2026-09-09T19:00:00Z', null, null, null, null],
+  [P.okafor, 'chore-wheel', 'Chore Wheel', '2026-09-16T08:00:00Z', null, 125, null, null],
+  [P.sable, 'bird-count', 'Bird Count', '2026-09-21T11:00:00Z', null, 140, null, null],
+  [P.jun, 'pantry', 'Pantry', '2026-09-24T12:00:00Z', 97, 160, 410, null],
+  [P.rafa, 'run-club', 'Run Club', '2026-09-28T09:00:00Z', 120, null, null, null],
+  [P.jun, 'reading-pile', 'Reading Pile', '2026-09-29T08:00:00Z', 91, 160, 330, null],
+  [P.okafor, 'bird-log', 'Bird Log', '2026-09-29T17:00:00Z', 95, 118, 205, null],
+  [P.tobi, 'tally', 'Tally', '2026-09-30T09:00:00Z', 102, null, null, null],
+  [P.mira, 'book-swap', 'Book Swap', '2026-10-01T18:00:00Z', 88, 131, 240, 770],
+].map(([p, slug, project, createdAt, running, firstVersion, preview, changeLive]) => {
+  const recorded = Date.parse(createdAt) >= Date.parse(DEMO_RECORDED_FROM);
+  const ev = (seconds) => ({ counted: recorded || seconds != null, seconds });
+  return {
+    appId: 0, slug, project, userId: p.userId, name: p.name, createdAt,
+    steps: {
+      created: { counted: true, seconds: 0 },
+      running: ev(running),
+      first_version: { counted: true, seconds: firstVersion },
+      preview: ev(preview),
+      change_live: ev(changeLive),
+    },
+  };
+});
+
+const inDemoSpan = (iso, span) => Date.parse(iso) >= span.start.getTime() && Date.parse(iso) < span.end.getTime();
+const demoWindow = (all) => (all
+  ? { start: new Date('2020-01-01T00:00:00Z'), end: new Date('2026-10-05T00:00:00Z') }
+  : DEMO_WEEKS[DEMO_WEEKS.length - 1]);
+
+function creation(day, all = false) {
+  const ids = members(day);
+  const projects = DEMO_PROJECTS.filter((p) => !ids || ids.has(p.userId));
+  const window = demoWindow(all);
+  const inWeek = projects.filter((p) => inDemoSpan(p.createdAt, window));
+  return {
+    demo: true,
+    week: all ? 'all' : DEMO_WEEK,
+    finished: !all,
+    steps: journey.creationSteps(inWeek),
+    targets: journey.CREATION_TARGETS,
+    recordedFrom: { running: DEMO_RECORDED_FROM, preview: DEMO_RECORDED_FROM, change_live: DEMO_RECORDED_FROM },
+    weeks: DEMO_WEEKS.map((w) => ({
+      week: w.label,
+      steps: journey.creationSteps(projects.filter((p) => inDemoSpan(p.createdAt, w)))
+        .map((s) => ({ key: s.key, reached: s.reached, medianSeconds: s.medianSeconds })),
+    })),
+    examples: [...inWeek].reverse().slice(0, 6).map((p) => ({
+      userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: p.createdAt,
+      steps: journey.CREATION_STEPS.filter((key) => key !== 'created')
+        .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+    })),
+  };
+}
+
+// [project slug, name, the pair, via, the second joined at, hours until both
+// were active (null: not both), still inside its 7 days].
+const DEMO_PAIRS = [
+  ['seed-swap', 'Seed Swap', [P.okafor, P.jun], 'members', '2026-08-14T10:00:00Z', null, false],
+  ['tide-times', 'Tide Times', [P.jun, P.sable], 'invite', '2026-08-19T10:00:00Z', 30, false],
+  ['gear-list', 'Gear List', [P.rafa, P.mira], 'members', '2026-08-27T10:00:00Z', null, false],
+  ['trail-log', 'Trail Log', [P.sable, P.okafor], 'invite', '2026-09-03T10:00:00Z', 6, false],
+  ['bird-count', 'Bird Count', [P.sable, P.lena], 'members', '2026-09-04T10:00:00Z', null, false],
+  ['chore-wheel', 'Chore Wheel', [P.okafor, P.jun], 'invite', '2026-09-10T10:00:00Z', 44, false],
+  ['pantry', 'Pantry', [P.jun, P.tobi], 'members', '2026-09-17T10:00:00Z', 70, false],
+  ['run-club', 'Run Club', [P.rafa, P.sable], 'invite', '2026-09-23T10:00:00Z', 18, false],
+  ['reading-pile', 'Reading Pile', [P.jun, P.lena], 'members', '2026-09-24T10:00:00Z', null, false],
+  ['bird-log', 'Bird Log', [P.okafor, P.sable], 'invite', '2026-09-29T20:00:00Z', 20, false],
+  ['tally', 'Tally', [P.tobi, P.lena], 'members', '2026-09-30T10:00:00Z', null, false],
+  ['book-swap', 'Book Swap', [P.mira, P.tobi], 'invite', '2026-10-01T19:00:00Z', 26, false],
+  ['tide-chart', 'Tide Chart', [P.jun, P.mira], 'members', '2026-10-03T08:00:00Z', null, true],
+].map(([slug, name, pair, via, secondJoinedAt, hoursToBoth, open]) => ({
+  slug, name, pair, via, secondJoinedAt, bothActive: hoursToBoth != null, hoursToBoth, open,
+}));
+
+function pairs(day, all = false) {
+  const ids = members(day);
+  const list = DEMO_PAIRS.filter((p) => !ids || p.pair.some((x) => ids.has(x.userId)));
+  const window = demoWindow(all);
+  const inWeek = list.filter((p) => inDemoSpan(p.secondJoinedAt, window));
+  return {
+    demo: true,
+    week: all ? 'all' : DEMO_WEEK,
+    finished: !all,
+    days: journey.PAIR_DAYS,
+    count: inWeek.filter((p) => p.bothActive).length,
+    of: inWeek.length,
+    open: inWeek.filter((p) => p.open).length,
+    trend: DEMO_WEEKS.map((w) => {
+      const span = list.filter((p) => inDemoSpan(p.secondJoinedAt, w));
+      return { week: w.label, count: span.filter((p) => p.bothActive).length, of: span.length };
+    }),
+    examples: [...inWeek].reverse().slice(0, 6),
+  };
+}
+
+module.exports = {
+  cohorts, firstMile, stages, activeGroups, trustChecks, coverage, loops, nextSteps, person, summary, leftOut,
+  creation, pairs,
+};

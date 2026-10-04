@@ -56,6 +56,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
+const journeyEvents = require('../services/journey-events');
 const modelFallback = require('../services/model-fallback');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -6213,6 +6214,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      // The admin Journey's creation path: a preview answered as ready is
+      // a preview opened, once per viewer per change. Never awaited.
+      if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       return res.json(result.status === 'missing'
         ? { status: 'unavailable', reason: 'missing' }
         : result);
@@ -6260,6 +6264,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // reason to churn the app or its database, but it is a reason not to
       // navigate the reviewer to stale/current/error content.
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
+      // As in preview-status: a ready answer is a preview opened. A rebuild
+      // is not, until the client asks again once it is up.
+      if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.

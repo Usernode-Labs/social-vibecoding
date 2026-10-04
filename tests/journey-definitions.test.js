@@ -175,3 +175,55 @@ test('a change the Homeroom bot built is credited to the person who asked for it
     'Activate (a change), Belong (a yes, kudos or a comment on somebody else\'s change) and Use');
   assert.doesNotMatch(stages, /<> cs\.user_id/);
 });
+
+test('creation path: people once each, the shortest time, and an absent record before recording is not a no', () => {
+  const recordedFrom = { running: new Date('2026-09-22T00:00:00Z'), preview: null, change_live: new Date('2026-09-22T00:00:00Z') };
+  const row = (userId, createdAt, extra = {}) => ({
+    app_id: userId * 10, slug: `p${userId}`, name: `P${userId}`, user_id: userId, username: `u${userId}`, created_at: createdAt,
+    running_at: null, first_version_at: null, preview_at: null, change_live_at: null, ...extra,
+  });
+  const plus = (iso, s) => new Date(new Date(iso).getTime() + s * 1000);
+  const T = '2026-09-29T10:00:00Z';
+  const projects = [
+    row(1, T, { running_at: plus(T, 90), first_version_at: plus(T, 100) }),
+    row(1, '2026-09-30T10:00:00Z', { running_at: plus('2026-09-30T10:00:00Z', 30) }),
+    row(2, T, { running_at: plus(T, 200), change_live_at: plus(T, 500) }),
+    row(3, '2026-09-20T10:00:00Z', { running_at: plus('2026-09-20T10:00:00Z', 50) }),
+  ].map((r) => journey.creationProject(r, recordedFrom));
+  assert.equal(projects[3].steps.running.counted, true, 'a record from before recording began is still a fact');
+  assert.equal(projects[3].steps.change_live.counted, false, 'its absence is not a no');
+  const steps = Object.fromEntries(journey.creationSteps(projects).map((s) => [s.key, s]));
+  assert.deepEqual(journey.CREATION_STEPS, ['created', 'running', 'first_version', 'preview', 'change_live']);
+  assert.deepEqual([steps.created.reached, steps.created.of], [3, 3], 'people, not projects');
+  assert.deepEqual([steps.running.reached, steps.running.medianSeconds], [3, 50], 'person 1 counts once, with 30 s');
+  assert.deepEqual([steps.first_version.reached, steps.first_version.withinTarget, steps.first_version.targetSeconds], [1, 1, 120]);
+  assert.deepEqual([steps.change_live.reached, steps.change_live.of, steps.change_live.withinTarget], [1, 2, 1]);
+  assert.deepEqual(steps.preview.reached, journey.notRecorded('Not recorded for projects created before this step was first recorded.'),
+    'a step nothing recorded yet reads "not recorded", never 0');
+  assert.equal(steps.preview.of, 0);
+  assert.deepEqual(journey.creationSteps([]).map((s) => s.reached), [0, 0, 0, 0, 0], 'nobody made anything: zeros are true');
+  assert.deepEqual(journey.CREATION_TARGETS, { first_version: 120, preview: 300, change_live: 600 });
+});
+
+test('pairs: both active is the aha, and inside the 7 days a no is still open', () => {
+  const now = at('2026-10-07T12:00:00Z');
+  const base = { slug: 'duo', name: 'Duo', via_invite: true, host_id: 1, host: 'ana', second_id: 2, second: 'ben' };
+  const both = journey.pairReading({
+    ...base, second_at: '2026-09-29T10:00:00Z', host_active_at: '2026-09-28T00:00:00Z', second_active_at: '2026-09-30T08:00:00Z',
+  }, now);
+  assert.deepEqual([both.bothActive, both.hoursToBoth, both.via, both.open], [true, 22, 'invite', false],
+    'the clock starts when the second one joined, even when the first was active that morning');
+  const missed = journey.pairReading({ ...base, second_at: '2026-09-29T10:00:00Z', host_active_at: null, second_active_at: '2026-09-30T08:00:00Z' }, now);
+  assert.deepEqual([missed.bothActive, missed.open], [false, false]);
+  const waiting = journey.pairReading({ ...base, via_invite: false, second_at: '2026-10-05T10:00:00Z', host_active_at: null, second_active_at: null }, now);
+  assert.deepEqual([waiting.bothActive, waiting.open, waiting.via], [false, true, 'members']);
+  assert.equal(journey.PAIR_DAYS, 7);
+  assert.match(journey.PAIRS_SQL, /INTERVAL '7 days'/, 'the SQL window is the same 7 days');
+  assert.doesNotMatch(journey.PAIRS_SQL.replace(/INTERVAL '7 days'/g, ''), /INTERVAL/, 'and no other');
+  for (const sql of [journey.PAIRS_SQL, journey.CREATION_PATH_SQL]) {
+    assert.ok(sql.includes(journey.REAL_PERSON_SQL), 'real people only');
+    assert.match(sql, /self_hosted IS NOT TRUE/, 'Homeroom\'s own project is left out');
+  }
+  assert.match(journey.PAIRS_SQL, /cmb\.source IN \('creator', 'collaborator', 'favorite', 'joined'\)/,
+    'the one-time backfill rows are not joins');
+});

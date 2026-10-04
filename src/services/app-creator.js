@@ -15,6 +15,7 @@ const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = re
 const appTemplates = require('./app-templates');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
+const journeyEvents = require('./journey-events');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
 
 // Record which step of creation is running, and tell the connected
@@ -449,6 +450,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
        mainSha || null, build.imageRef, build.buildRef, deployed.runtimeKind,
        deployed.runtimeName, appId]
     );
+
+    // The first time this project runs, for the admin Journey's creation
+    // path: last_deploy_at above moves again on every merge, so it cannot
+    // say when that was. Once only, and never a reason creation fails.
+    await journeyEvents.markFirstRunning(pool, appId);
 
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
