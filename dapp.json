@@ -1112,9 +1112,9 @@
       "expectText": "Set priority"
     },
     {
-      "name": "Issue detail metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "name": "Request detail metadata chips keep their compiled utility styling (no console error from the cascade self-check); the category chip's dot, now that an empty assignee chip is not drawn (B10c)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
+      "expectSelector": "button.attr-chip[data-attr-field=\"category\"] .attr-dot"
     },
     {
       "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
@@ -1681,10 +1681,10 @@
       "expectText": "Read the build"
     },
     {
-      "name": "A published chat opens read-only on the dev session’s own page, keeping its author attribution",
+      "name": "A published chat opens read-only on the agent session’s own page, keeping its author attribution (B10e)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
       "expectSelector": "#dev-section .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
-      "expectText": "Dev chat by staging-demo-user"
+      "expectText": "Agent session by staging-demo-user"
     },
     {
       "name": "The published chat renders its messages on the session page, and no composer with them",
@@ -4714,10 +4714,10 @@
       "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
-      "name": "Sorting by activity shows what it sorted on (#1383)",
+      "name": "Sorting by activity shows what it sorted on (#1383), in live words (B10d)",
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
-      "expectText": "merged in 30d"
+      "expectText": "live in 30d"
     },
     {
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
@@ -5208,7 +5208,7 @@
       "name": "#2813: on a desktop a dev session opens in the pane beside the Messages list, not on a screen of its own",
       "path": "/?demo=1#messages/session/usernode-2d5619/990002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-pane + .messages-thread-session[data-agent-session=\"usernode-2d5619/990002\"] .messages-session-host .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
-      "expectText": "Dev chat by staging-demo-user"
+      "expectText": "Agent session by staging-demo-user"
     },
     {
       "name": "#2813: the session pane links to the session's full view in the app",
@@ -5254,7 +5254,7 @@
       "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
       "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
-      "expectText": "14 merged"
+      "expectText": "14 live"
     },
     {
       "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",
