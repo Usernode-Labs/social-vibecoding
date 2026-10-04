@@ -346,6 +346,17 @@ const STOPPED_DETAIL = Object.freeze({
   preview_failed: 'stopped_preview',
 });
 
+// WP-E: the notification kind each moment rings as, in the "Your builds" push
+// category (mobile-push-preferences.js), so turning Messages off does not
+// silence them. An answer to what somebody wrote ('reply') is a message.
+const BUILD_KINDS = Object.freeze({
+  question: 'build_needs_you',
+  ready: 'build_ready',
+  stopped: 'build_stopped',
+  held: 'build_stopped',
+  live: 'build_live',
+});
+
 /** Pure: the moment a message of the bot's rings at, by its kind, or null. */
 function momentOf(metadata) {
   return MOMENTS[metadata?.kind] || null;
@@ -416,7 +427,10 @@ async function sendDm(pool, {
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
-    { metadata: metadata ? { [META]: metadata } : null, notify: !!rings, notificationDetail: detail });
+    {
+      metadata: metadata ? { [META]: metadata } : null, notify: !!rings, notificationDetail: detail,
+      notificationKind: (rings && BUILD_KINDS[rings]) || null,
+    });
   let result = await send(cards);
   if (!result && cards.length) {
     log.info('homeroom-bot-dm', 'Cards refused; sending the message without them', { userId, cards: cards.length });
@@ -425,6 +439,13 @@ async function sendDm(pool, {
   if (!result || result.error) {
     log.warn('homeroom-bot-dm', 'DM refused', { userId, error: result?.error || 'refused' });
     return null;
+  }
+  if (!result.duplicate && rings === 'ready') {
+    // WP-E: "ready to try" by email when no phone can take the push.
+    void require('./activity-mail').emailIfNoPush(pool, {
+      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+      conversationId: opened.conversationId,
+    });
   }
   if (!result.duplicate) {
     try {
@@ -2206,6 +2227,19 @@ async function typicalMinutes(pool) {
   return Math.min(60, Math.max(2, Math.round(Number(row.minutes))));
 }
 
+// WP-E: the same answer for a screen that asks every few seconds while a
+// first version is built (GET /api/apps/:slug), read at most every five
+// minutes per process. It is a median over thirty days; it does not move
+// faster than that.
+const TYPICAL_CACHE_MS = 5 * 60 * 1000;
+let typicalCache = null;
+async function typicalMinutesCached(pool, now = Date.now()) {
+  if (typicalCache && now - typicalCache.at < TYPICAL_CACHE_MS) return typicalCache.minutes;
+  const minutes = await typicalMinutes(pool);
+  typicalCache = { at: now, minutes };
+  return minutes;
+}
+
 /**
  * B8: a request somebody filed through Ask for a change (routes/feedback.js),
  * told to the bot the way its own filing from a DM is (homeroom-bot-mayor.js
@@ -2785,12 +2819,14 @@ module.exports = {
   QUESTION_KINDS,
   MIRRORED_KINDS,
   MOMENTS,
+  BUILD_KINDS,
   momentOf,
   notificationDetail,
   askedLine,
   hasOthers,
   TYPICAL_BUILD_MINUTES,
   typicalMinutes,
+  typicalMinutesCached,
   noteRequestFiled,
   botDoorFor,
   askBotToBuild,

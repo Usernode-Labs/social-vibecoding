@@ -1469,7 +1469,13 @@ function mentionsUsername(content, username) {
 // bell and sends no push (the Homeroom bot's progress, which is not news on
 // its own). `notificationDetail` rides on each notification it does make, as
 // notifications.detail, for the push and the bell to word it by.
-async function sendMessage(pool, user, conversationId, input, { metadata = null, notify = true, notificationDetail = null } = {}) {
+// WP-E: `notificationKind` names the kind of every notification a DIRECT
+// message makes, in place of the message kinds (the Homeroom bot's build
+// moments, homeroom-bot-dm.js BUILD_KINDS); it must be one of
+// notifications.CONVERSATION_NOTIFICATION_KINDS. A group or channel ignores it.
+async function sendMessage(pool, user, conversationId, input, {
+  metadata = null, notify = true, notificationDetail = null, notificationKind = null,
+} = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
   if (!Array.isArray(refsRaw) || refsRaw.length > MAX_OBJECTS || !attachmentIds) return null;
@@ -1646,7 +1652,8 @@ async function sendMessage(pool, user, conversationId, input, { metadata = null,
       if (!notify) break;
       const mentioned = mentionsUsername(content, member.username);
       let kind = 'conversation_message';
-      if (membership.kind === 'channel') {
+      if (membership.kind === 'direct' && notificationKind) kind = notificationKind;
+      else if (membership.kind === 'channel') {
         // A channel is everybody (#2783): anything but an @mention there
         // rings bells nobody asked for (#3188). An ordinary message, a reply
         // to yours and a thread you are in stay silent; a reply or thread
@@ -2120,7 +2127,8 @@ async function setBlock(pool, userId, targetId, blocked) {
         WHERE user_id = $1 AND source_user_id = $2
           AND (kind IN ('conversation_invite', 'conversation_message',
                         'conversation_mention', 'conversation_reply', 'conversation_reaction',
-                        'conversation_thread_reply')
+                        'conversation_thread_reply',
+                        'build_ready', 'build_needs_you', 'build_stopped', 'build_live')
                OR chat_message_id IS NOT NULL)`,
       [userId, targetId]
     );

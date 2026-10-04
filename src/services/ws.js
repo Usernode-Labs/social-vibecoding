@@ -1007,6 +1007,13 @@ async function handleMessage(pool, client, msg) {
           appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
         });
       }
+      // WP-E: somebody an invite brought, writing here for the first time:
+      // the link's maker hears they said hi (services/invite-activity.js).
+      if (postedVia !== 'agent') {
+        void require('./invite-activity').noteFirstMessage(pool, {
+          appId: client.appId, userId: client.user.id, chatMessageId: rows[0].id,
+        });
+      }
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');

@@ -99,6 +99,16 @@ function botMomentCopy(detail, message) {
   return words ? { title: 'Homeroom bot', body: words } : null;
 }
 
+// WP-E: the bot's build moments as their own kinds ("Your builds"). Worded
+// by the moment the detail names, like its messages above; these are what a
+// row without one says.
+const BUILD_FALLBACK = Object.freeze({
+  build_ready: 'Your change is ready to try',
+  build_needs_you: 'I have a question',
+  build_stopped: 'Your change stopped. I said why in our chat',
+  build_live: 'Your change is live',
+});
+
 function truncate(value, max) {
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1).trimEnd()}…`;
@@ -182,6 +192,9 @@ function buildCopy(kind, context, now) {
     && (kind === 'conversation_message' || kind === 'conversation_reply' || kind === 'conversation_mention')) {
     const bot = botMomentCopy(detail, message);
     if (bot) return bot;
+  }
+  if (Object.prototype.hasOwnProperty.call(BUILD_FALLBACK, kind)) {
+    return botMomentCopy(detail, message) || { title: 'Homeroom bot', body: BUILD_FALLBACK[kind] };
   }
   // #971 preference order, same as the in-app dropdown renderers — except
   // that a machine-generated branch name is worse than no label at all.
@@ -272,6 +285,24 @@ function buildCopy(kind, context, now) {
         title: withApp(quotedTitle
           ? `@${actor} gave you kudos for ${quotedTitle}` : `@${actor} gave you kudos`),
         body: 'Your work is getting noticed',
+      };
+    // WP-E: what an invite link brought back to its maker
+    // (services/invite-activity.js). A push is only ever the day's first of
+    // each; the bell counts the rest. An open is never anybody's name.
+    case 'invite_opened':
+      return {
+        title: app ? `Someone opened your invite to ${app}` : 'Someone opened your invite',
+        body: 'You hear when they join',
+      };
+    case 'member_joined':
+      return actor && {
+        title: app ? `@${actor} joined ${app}` : `@${actor} joined`,
+        body: 'They came in through your invite. Say hello',
+      };
+    case 'first_message':
+      return actor && {
+        title: app ? `@${actor} said hi in ${app}` : `@${actor} said hi`,
+        body: message,
       };
     case 'collab_invite':
       return {

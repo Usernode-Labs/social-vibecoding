@@ -111,7 +111,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // 33 → 34: #3181's session_stalled (developer_sessions).
   // 34 → 35: platform_limit (server-wide cap alerts, app_alerts).
   // 35 → 36: B7's change_ready (proposal_alerts).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 36);
+  // 36 → 43: WP-E's four build moments (builds) and three invite kinds
+  // (invite_activity).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 43);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

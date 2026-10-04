@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const inviteActivity = require('../services/invite-activity');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
@@ -164,11 +165,29 @@ function communityInviteRoutes(config) {
     }
   });
 
+  // WP-E: a live link opened in a browser counts once per browser for its
+  // maker (services/invite-activity.js), never by name. Counted from the
+  // page's own reads below, not from the HTML route a link unfurler fetches.
+  // An HttpOnly cookie per link remembers that this browser was counted.
+  const countOpen = (req, res, token, viewerId = null) => {
+    const name = `hr_io_${token.slice(0, 12)}`;
+    if (req.cookies?.[name]) return;
+    res.cookie(name, '1', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/api',
+    });
+    void inviteActivity.noteOpened(pool, { token, viewerId });
+  };
+
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
   // here, and the answer is the same whoever asks.
   router.get('/api/public/invites/:token', invitePreviewLimiter, async (req, res) => {
     try {
       const preview = await invites.preview(pool, req.params.token);
+      if (preview.live) countOpen(req, res, req.params.token);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(preview.reason === 'unknown' ? 404 : 200).json(preview);
     } catch (err) {
@@ -216,6 +235,9 @@ function communityInviteRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const standing = await invites.standing(pool, req.params.token, req.user);
+      // Somebody signed in who is not in it yet (invite-activity.noteOpened
+      // leaves out the maker and anybody already a member).
+      if (standing.live && !standing.mine) countOpen(req, res, req.params.token, req.user.id);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(standing.reason === 'unknown' ? 404 : 200).json(standing);
     } catch (err) {

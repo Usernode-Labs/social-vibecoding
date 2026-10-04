@@ -195,7 +195,8 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   assert.deepEqual(rang.map((r) => r.detail), [
     'hrbot:question:Plant Pal', 'hrbot:ready:Plant Pal', 'hrbot:live_first:Plant Pal',
   ], 'needs your answer, ready, live: nothing else');
-  assert.ok(rang.every((r) => r.kind === 'conversation_message'));
+  // WP-E: each as its build moment's own kind, in the "Your builds" category.
+  assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you', 'build_ready', 'build_live']);
   const { rows: [{ unread }] } = await pool.query(
     `SELECT COUNT(*)::int AS unread FROM conversation_messages m
        JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1

@@ -51,6 +51,10 @@ const CURRENT_KINDS = [
   // A server-wide cap nearing its ceiling, for full admins only. Joins
   // app_alerts beside app_health (services/platform-limit-alerts.js).
   'platform_limit',
+  // WP-E: the Homeroom bot's build moments ("Your builds"), and what an
+  // invite link brings back to its maker ("Your invites").
+  'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
+  'invite_opened', 'member_joined', 'first_message',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {
@@ -76,6 +80,8 @@ test('category defaults match the product contract', () => {
       proposal_alerts: true,
       app_alerts: true,
       lightweight_activity: false,
+      builds: true,
+      invite_activity: true,
     }
   );
   assert.equal(isKindEnabled('mention'), true);
@@ -178,9 +184,10 @@ test('preferences are account-scoped and never mutate device registrations', asy
     'account updates do not delete, recreate, or update phone registrations');
 
   const defaults = serializePreferences();
-  // 7 → 8 with #1374's app_alerts. Every category must serialize, or one
-  // silently loses its Settings row while still gating pushes.
-  assert.equal(defaults.length, 8);
+  // 7 → 8 with #1374's app_alerts, 8 → 10 with WP-E's builds and
+  // invite_activity. Every category must serialize, or one silently loses its
+  // Settings row while still gating pushes.
+  assert.equal(defaults.length, 10);
   assert.ok(defaults.every((row) => typeof row.enabled === 'boolean'));
 });
 

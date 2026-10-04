@@ -84,6 +84,15 @@ export function madeLine(preview: InvitePreview): string {
   return invitedLine(preview);
 }
 
+/**
+ * WP-E: the link's maker hears when somebody joins through it
+ * (src/services/invite-activity.js), so the page says so before they do.
+ */
+export function seenLine(preview: InvitePreview): string {
+  const who = preview.inviterName || (preview.inviter ? `@${preview.inviter}` : '');
+  return who ? `${who} will see that you joined.` : '';
+}
+
 /** "12 people are in it." or '' for none. */
 export function membersLine(count: number | undefined): string {
   if (!count) return '';
@@ -174,6 +183,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
 }) {
   const project = preview.project!;
   const under = underLine(preview);
+  const seen = seenLine(preview);
   // An anchor to the email-code screen, so it still works before the
   // script that opens the sheet has; the sheet takes the tap once it has.
   const join = (
@@ -186,6 +196,9 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
       {`Join ${project.name}`}
     </a>
   );
+  const seenNote = seen
+    ? <p data-landing-invite-seen="" className="mt-2 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{seen}</p>
+    : null;
   return (
     <>
       <section data-landing-invite="live" className={`${CARD} mt-4`}>
@@ -205,9 +218,10 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
             {` “${preview.note}”`}
           </p>
           <div className="mt-4">{join}</div>
+          {seenNote}
         </section>
       ) : (
-        <div data-landing-invite-join="" className="mx-4 mt-4">{join}</div>
+        <div data-landing-invite-join="" className="mx-4 mt-4">{join}{seenNote}</div>
       )}
     </>
   );

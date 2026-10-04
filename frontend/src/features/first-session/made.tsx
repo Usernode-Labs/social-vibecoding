@@ -38,9 +38,15 @@ import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
+
 import type { Made } from './make';
 
-type FirstVersion = { step?: number; of?: number; stepName?: string | null; ready?: boolean } | null;
+type FirstVersion = {
+  step?: number; of?: number; stepName?: string | null; ready?: boolean;
+  /** WP-E: about how many minutes a build takes, while this one is not ready. */
+  typicalMinutes?: number;
+} | null;
 
 /** "Step 2 of 7: Read the description", or what to say without a build. */
 export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
@@ -50,11 +56,15 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
   return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
 }
 
-/** The line under the build's: who tells them, or who builds it. */
-export function buildNote(botBuilds: boolean): string {
-  return botBuilds
-    ? 'Homeroom bot messages you when it\'s ready to try.'
-    : 'You or anyone you invite can build it from there.';
+/**
+ * The line under the build's: who tells them, or who builds it. WP-E: and,
+ * while it is building, about how long that usually takes.
+ */
+export function buildNote(botBuilds: boolean, minutes: number | null = null): string {
+  if (!botBuilds) return 'You or anyone you invite can build it from there.';
+  return minutes && minutes > 0
+    ? `Homeroom bot messages you when it's ready to try, usually in about ${minutes} minutes.`
+    : 'Homeroom bot messages you when it\'s ready to try.';
 }
 
 export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
@@ -107,13 +117,14 @@ function useSketch(slug: string): SketchState {
   return state;
 }
 
-function SketchCard({ made, tile, sketch, line, botBuilds, busy }: {
+function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes }: {
   made: Made;
   tile: string;
   sketch: 'pending' | 'ready';
   line: string;
   botBuilds: boolean;
   busy: boolean;
+  minutes: number | null;
 }) {
   const dark = useDarkClass();
   return (
@@ -149,7 +160,7 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy }: {
         <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
       </div>
       <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
-        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds)}
+        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds, minutes)}
       </p>
     </div>
   );
@@ -357,6 +368,11 @@ export function MadeScreen({ made, me, onContinue }: {
   }, [made.slug]);
 
   const botBuilds = made.conversationId != null;
+  // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
+  // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
+  // nothing on the web, or once the phone's answer is decided).
+  useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
+  const minutes = fv && !fv.ready && typeof fv.typicalMinutes === 'number' ? fv.typicalMinutes : null;
   const sketch = useSketch(made.slug);
   const line = buildLine(fv, appStatus, botBuilds);
   // Something is under way: the project being set up, or the bot's build.
@@ -375,7 +391,7 @@ export function MadeScreen({ made, me, onContinue }: {
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
         {sketch === 'pending' || sketch === 'ready' ? (
-          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} />
+          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} minutes={minutes} />
         ) : (
           <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
@@ -385,7 +401,7 @@ export function MadeScreen({ made, me, onContinue }: {
               {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
               <span data-first-session-build="">{line}</span>
             </div>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds)}</p>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds, minutes)}</p>
           </div>
         )}
         <div className="mt-6">

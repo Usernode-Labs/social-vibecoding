@@ -44,6 +44,14 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_reaction',
   // #2387: a reply in a thread you started or replied in.
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's message at one of its build moments, in your DM
+  // with it (homeroom-bot-dm.js BUILD_KINDS). A conversation row like any
+  // other message of the bot's; only its push category ("Your builds") is its
+  // own, so turning Messages off does not silence it.
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
@@ -1450,7 +1458,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 
 // App-chat kinds whose row is about ONE message, and so has a Messages
 // address of its own (#2387).
-const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply',
+  // WP-E: somebody your invite brought said hi; it opens on what they said.
+  'first_message']);
 
 // Where an app-chat message notification opens, in the client's Messages
 // addresses: a reply-thread message opens its thread

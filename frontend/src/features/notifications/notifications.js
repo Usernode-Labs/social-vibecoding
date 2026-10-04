@@ -1594,6 +1594,13 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_reaction',
   // #2387: a reply in a thread the viewer started or replied in.
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's message at one of its build moments
+  // (src/services/notifications.js); its own kinds only so the push
+  // category can be its own. It opens the bot's chat like any message.
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 
 // #2387: where a conversation row opens. A thread alert opens its thread; a
@@ -2054,6 +2061,11 @@ function rowView(n) {
       conversation_reply: headline('Replied', conversation),
       conversation_thread_reply: headline('Replied in thread', conversation),
       conversation_reaction: headline('Reacted', conversation),
+      // WP-E: a build moment without its detail (botMomentLine words the rest).
+      build_ready: headline('Homeroom bot', 'Your change is ready to try'),
+      build_needs_you: headline('Homeroom bot', 'I have a question'),
+      build_stopped: headline('Homeroom bot', 'Your change stopped. I said why in our chat'),
+      build_live: headline('Homeroom bot', 'Your change is live'),
     }[n.kind];
     const icons = {
       conversation_invite: '✉️',
@@ -2062,6 +2074,10 @@ function rowView(n) {
       conversation_reply: '↩️',
       conversation_thread_reply: '🧵',
       conversation_reaction: n.detail || '❤️',
+      build_ready: '💬',
+      build_needs_you: '💬',
+      build_stopped: '💬',
+      build_live: '💬',
     };
     // B4: one of the bot's moments says what happened, in its own words,
     // from "Homeroom bot". The name leads, so the meta line drops the
@@ -2563,6 +2579,33 @@ function rowView(n) {
         'Spec shared',
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
+    };
+  }
+
+  // WP-E: what an invite link brought back to its maker
+  // (src/services/invite-activity.js). A day's moments of one kind fold into
+  // one row, `detail` counting them, the newest person its `by`. An open is
+  // never anybody's name.
+  if (n.kind === 'invite_opened' || n.kind === 'member_joined' || n.kind === 'first_message') {
+    const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
+    const more = count > 1 ? `, with ${count - 1} ${count === 2 ? 'other' : 'others'}` : '';
+    if (n.kind === 'invite_opened') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F517}',
+        by: null,
+        ...headline(count > 1 ? `${count} people opened your invite` : 'Someone opened your invite', null),
+      };
+    }
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F44B}',
+      by: n.sourceUsername || null,
+      ...(n.kind === 'member_joined'
+        ? headline(`Joined through your invite${more}`, null)
+        : headline(`Said hi${more}`, (n.messageContent || '').slice(0, 140))),
     };
   }
 

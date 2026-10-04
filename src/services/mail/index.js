@@ -106,10 +106,14 @@ async function readHistory(pool, { kind, to }) {
           LIMIT 50`,
         [to, kind]
       ),
+      // WP-E: activity mail and everything else are two budgets, each
+      // counted on its own (rate-limit.js ACTIVITY_KINDS).
       pool.query(
         `SELECT COUNT(*)::int AS n FROM mail_deliveries
           WHERE status IN ('sent', 'skipped_staging')
-            AND created_at > NOW() - INTERVAL '1 hour'`
+            AND created_at > NOW() - INTERVAL '1 hour'
+            AND (kind = ANY($1::text[])) = $2`,
+        [[...rateLimit.ACTIVITY_KINDS], rateLimit.ACTIVITY_KINDS.has(kind)]
       ),
     ]);
     return {
@@ -193,7 +197,7 @@ async function send(config, { kind, to, ...payload } = {}) {
       now: Date.now(),
       recipientHistory,
       globalCount,
-      maxPerHour: maxPerHour(config),
+      maxPerHour: rateLimit.ACTIVITY_KINDS.has(kind) ? rateLimit.ACTIVITY_MAX_PER_HOUR : maxPerHour(config),
     });
     if (!decision.allowed) {
       await record(pool, {
