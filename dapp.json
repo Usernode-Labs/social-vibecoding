@@ -5481,6 +5481,30 @@
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "id": "pixora.dashboard",
+      "name": "PIXORA: the dashboard renders with the sidebar and the Creative page",
+      "path": "/pixora/",
+      "expectSelector": ".pixora-sidebar",
+      "expectText": "AI Creative Tools",
+      "allowConsoleErrors": false,
+      "visual": true,
+      "impact": [
+        "public/pixora/**"
+      ]
+    },
+    {
+      "name": "PIXORA: the Upscale Image page opens from its own route",
+      "path": "/pixora/#/upscale",
+      "expectText": "Increase the resolution of an image while keeping details sharp.",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Prompt Generator page opens from its own route",
+      "path": "/pixora/#/prompt",
+      "expectText": "Turn a rough idea into a detailed, reusable prompt.",
+      "allowConsoleErrors": false
     }
   ],
   "governance": {

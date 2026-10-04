@@ -288,6 +288,15 @@ const MANIFEST_FILENAME = 'dapp.json';
 // by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
 // 29 slots over the 831 declared here.
 //
+// 860 → 880 (the PIXORA app shell): main stood at 840 exactly, the 20-slot
+// floor, and the static PIXORA dashboard (public/pixora/) declares three
+// checks on routes nothing else shares: the dashboard itself, and two deep
+// links proving each tool page opens from its own route. Same arithmetic:
+// 880 checks at ~3.9s over the pool of 16 is ~215s of ideal work, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~221s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 37 slots
+// over the 843 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -299,7 +308,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 860;
+const MAX_DECLARED_TESTS = 880;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

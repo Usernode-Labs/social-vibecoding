@@ -1,0 +1,399 @@
+/* PIXORA design system.
+ *
+ * One light SaaS look with a dark fallback: a plain canvas, white cards
+ * with one hairline border, a single violet accent for the active tool and
+ * primary actions. Every component reads these tokens, so retuning the app
+ * means editing this block, not the components.
+ */
+
+:root {
+  --px-bg: #fafafa;
+  --px-surface: #ffffff;
+  --px-border: #e4e4e7;
+  --px-border-strong: #d4d4d8;
+  --px-ink: #18181b;
+  --px-muted: #52525b;
+  --px-faint: #a1a1aa;
+  --px-accent: #7c3aed;
+  --px-accent-ink: #ffffff;
+  --px-accent-soft: #f3f0ff;
+  --px-accent-line: #ddd3fb;
+  --px-radius: 12px;
+  --px-radius-lg: 16px;
+  --px-shadow: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --px-sidebar-width: 264px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --px-bg: #101013;
+    --px-surface: #1a1a1f;
+    --px-border: #2a2a31;
+    --px-border-strong: #3f3f46;
+    --px-ink: #f4f4f5;
+    --px-muted: #a1a1aa;
+    --px-faint: #71717a;
+    --px-accent: #a78bfa;
+    --px-accent-ink: #17101f;
+    --px-accent-soft: rgba(167, 139, 250, 0.12);
+    --px-accent-line: rgba(167, 139, 250, 0.35);
+    --px-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--px-ink);
+  background: var(--px-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--px-accent);
+  outline-offset: 2px;
+}
+
+/* ── App frame ─────────────────────────────────────────────────────────── */
+
+.pixora-app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.pixora-main {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 48px 64px;
+}
+
+.pixora-content {
+  max-width: 880px;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────── */
+
+.pixora-sidebar {
+  width: var(--px-sidebar-width);
+  flex-shrink: 0;
+  background: var(--px-surface);
+  border-right: 1px solid var(--px-border);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+  gap: 28px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.pixora-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 12px;
+}
+
+.pixora-brand-name {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.pixora-brand-sub {
+  font-size: 12px;
+  color: var(--px-faint);
+  font-weight: 550;
+}
+
+.pixora-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pixora-nav-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--px-faint);
+  padding: 0 12px;
+  margin-bottom: 4px;
+}
+
+.pixora-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--px-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.pixora-nav-item .pixora-icon {
+  color: var(--px-faint);
+  transition: color 120ms ease;
+}
+
+.pixora-nav-item:hover {
+  background: var(--px-bg);
+  color: var(--px-ink);
+}
+
+.pixora-nav-item:hover .pixora-icon {
+  color: var(--px-muted);
+}
+
+.pixora-nav-item[aria-current="page"] {
+  background: var(--px-accent-soft);
+  color: var(--px-accent);
+  font-weight: 650;
+}
+
+.pixora-nav-item[aria-current="page"] .pixora-icon {
+  color: var(--px-accent);
+}
+
+.pixora-sidebar-foot {
+  margin-top: auto;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--px-faint);
+}
+
+/* ── Mobile top bar and drawer ─────────────────────────────────────────── */
+
+.pixora-topbar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--px-surface);
+  border-bottom: 1px solid var(--px-border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.pixora-topbar-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.pixora-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--px-muted);
+}
+
+.pixora-icon-btn:hover {
+  background: var(--px-bg);
+  color: var(--px-ink);
+}
+
+.pixora-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 24, 27, 0.45);
+  z-index: 30;
+}
+
+.pixora-sidebar-close {
+  display: none;
+  position: absolute;
+  top: 14px;
+  right: 10px;
+}
+
+@media (max-width: 860px) {
+  .pixora-main {
+    padding: 24px 20px 48px;
+  }
+
+  .pixora-topbar {
+    display: flex;
+  }
+
+  .pixora-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    height: 100dvh;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+    box-shadow: var(--px-shadow);
+    padding-top: 56px;
+  }
+
+  .pixora-sidebar.pixora-open {
+    transform: translateX(0);
+  }
+
+  .pixora-sidebar-close {
+    display: inline-flex;
+  }
+
+  .pixora-backdrop.pixora-open {
+    display: block;
+  }
+}
+
+@media (max-width: 420px) {
+  .pixora-main {
+    padding: 20px 16px 40px;
+  }
+}
+
+/* ── Page header ───────────────────────────────────────────────────────── */
+
+.pixora-page-head {
+  margin-bottom: 28px;
+}
+
+.pixora-page-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.pixora-page-desc {
+  margin: 6px 0 0;
+  font-size: 15px;
+  color: var(--px-muted);
+  max-width: 56ch;
+}
+
+/* ── Card ──────────────────────────────────────────────────────────────── */
+
+.pixora-card {
+  background: var(--px-surface);
+  border: 1px solid var(--px-border);
+  border-radius: var(--px-radius-lg);
+  box-shadow: var(--px-shadow);
+}
+
+/* ── Tool placeholder (empty state) ────────────────────────────────────── */
+
+.pixora-placeholder {
+  padding: 72px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.pixora-placeholder-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--px-accent-soft);
+  border: 1px solid var(--px-accent-line);
+  color: var(--px-accent);
+}
+
+.pixora-placeholder-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.pixora-placeholder-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--px-muted);
+  max-width: 46ch;
+}
+
+/* ── Button ────────────────────────────────────────────────────────────── */
+
+.pixora-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 650;
+  border: 1px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.pixora-btn-primary {
+  background: var(--px-accent);
+  color: var(--px-accent-ink);
+}
+
+.pixora-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.pixora-btn-secondary {
+  background: var(--px-surface);
+  border-color: var(--px-border-strong);
+  color: var(--px-ink);
+}
+
+.pixora-btn-secondary:hover {
+  background: var(--px-bg);
+}
+
+/* ── Icon ──────────────────────────────────────────────────────────────── */
+
+.pixora-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.pixora-icon svg {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixora-sidebar,
+  .pixora-nav-item,
+  .pixora-nav-item .pixora-icon,
+  .pixora-btn {
+    transition: none;
+  }
+}

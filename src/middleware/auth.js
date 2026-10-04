@@ -174,10 +174,13 @@ const GATE_OPEN_PATHS = [
 // retains the existing redirect-to-root behaviour.
 // An invite link (`/invite/<token>`, routes/community-invites.js) is one
 // too: a visitor with no account is exactly who it is for.
+// `/pixora` is the static PIXORA app shell (public/pixora/): no data
+// behind it, so it boots with or without a session like the shell does.
 function isSpaDocumentPath(pathname) {
   return pathname === '/' || pathname === '/index.html'
     || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname)
-    || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname);
+    || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname)
+    || pathname === '/pixora' || pathname.startsWith('/pixora/');
 }
 
 // Returns true when it handled the response (caller must return).

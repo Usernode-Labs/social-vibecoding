@@ -1456,9 +1456,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check on it to fold into. 840 leaves 20 slots against
   // MAX_DECLARED_TESTS (860), exactly the floor.
   //
+  // 840 → 843: +3 (the PIXORA app shell). The static PIXORA dashboard
+  // (public/pixora/) declares its own check on /pixora/, plus two deep-link
+  // checks proving the Upscale Image and Prompt Generator pages open from
+  // their own routes. Nothing on the platform shares those routes, so there
+  // was nothing to fold into, and 843 crossed the 20-slot floor at 860 —
+  // MAX_DECLARED_TESTS moved to 880 in the same change (see the arithmetic
+  // in services/app-manifest.js).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 840);
+  checkCap.assertPinned(DAPP.tests.length, 843);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
