@@ -358,8 +358,34 @@ const HomePanels = {
     panelsStore.set({
       painted: true,
       discover: viewFor('discover', HomePanels.discoverView),
-      challenges: viewFor('challenges', HomePanels.challengesView),
+      challenges: viewFor('challenges', (panel) => (
+        HomePanels.inFirstWeek(panel) ? null : HomePanels.challengesView(panel)
+      )),
     });
+  },
+
+  // THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS (first-session plan,
+  // 2026-10-04). An account's first seven days are for meeting the people and
+  // the projects it came for, so Home draws no Challenges block until week
+  // two: no season progress, no point rewards, no "Not started" beside the
+  // things they are only beginning to do. The Challenges screen
+  // (#leaderboard/challenges) stays as it is, and nothing about scoring
+  // changes.
+  //
+  // The SERVER decides it (GET /api/auth/me `firstWeek`: the row's own
+  // created_at against the database's clock), so a device with its date set
+  // wrong cannot show or hide it. A null block is what render() already
+  // means by "nothing to show": ./panels/sections.tsx keeps the section host,
+  // its id, `data-panel-slot` and heading in the DOM and marks it `hidden`.
+  //
+  // The staging demo payload (`panel.demo`, ?demo=1) is drawn whatever the
+  // account's age. It is a reviewer's view of every state of the block, and
+  // the seeded check account (src/db/migrate.js) is days old in every preview,
+  // so the declared checks that select on the block would otherwise find it
+  // hidden.
+  inFirstWeek(panel) {
+    if (panel && panel.demo) return false;
+    return !!(window.App && App.user && App.user.firstWeek === true);
   },
 
   // `_stampState` and `STATE_ATTRS` lived here. They mirrored a block's own
@@ -1028,3 +1054,15 @@ const HomePanels = {
 // Home calls this module through the legacy global. Guard the
 // publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;
+
+// A boot paints from the device's snapshot of the session and verifies it
+// afterwards (App._reconcileSession). Repaint once the verified user lands,
+// so `firstWeek` (HomePanels.inFirstWeek) is the server's current answer
+// rather than the snapshot's: the week can end between two visits. Only once
+// there is something to paint; before the first read, render() would mark
+// the sections settled with nothing in them.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('sv:session', () => {
+    if (HomePanels._data) HomePanels.render();
+  });
+}

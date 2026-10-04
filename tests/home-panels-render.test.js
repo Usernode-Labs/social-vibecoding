@@ -1573,6 +1573,69 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
   }
 });
 
+// ── The first week (first-session plan, 2026-10-04) ───────────────
+//
+// The first week is the first chapter, without points: while GET
+// /api/auth/me says `firstWeek` (an account under seven days old, by the
+// server's clock), Home draws no Challenges block. The host, its id, its slot
+// and its heading stay in the DOM, hidden, as for any block with nothing to
+// show; Discover is not part of it, and neither is the staging demo payload.
+
+const FIRST_WEEK_DATA = () => ({
+  registry: [{ key: 'challenges', title: 'Challenges' }, { key: 'discover', title: 'Discover' }],
+  hidden: [],
+  panels: [panel({ challenges: [challenge({ goal: 'Join a community', label: 'ONBOARDING', reward: '500 pts' })] })],
+});
+
+test('the first week: no Challenges block, its host kept in the DOM and hidden', () => {
+  const out = renderWith(FIRST_WEEK_DATA(), { user: { id: 7, isAdmin: false, firstWeek: true } });
+  const host = out.host('challenges');
+  assert.equal(out.sandbox.panelsStore.get().challenges, null, 'no view model for the block');
+  assert.ok(host._classes.has('hidden'), 'the section is hidden');
+  assert.equal(host.attrs.id, 'home-challenges-section', 'its id stays for the checks and the tour');
+  assert.equal(host.attrs['data-panel-slot'], 'challenges');
+  assert.match(host.innerHTML, /home-area-label/, 'the heading stays in the DOM, hidden with its section');
+  assert.equal(blocksOf(host.innerHTML), '', 'nothing under the heading');
+  assert.doesNotMatch(host.innerHTML, /Join a community|home-challenge-card|home-panel-season|500 pts/,
+    'no cards, no season progress, no points');
+  assert.ok(!out.host('discover')._classes.has('hidden'), 'Discover still draws');
+  assert.match(out.host('discover').innerHTML, /data-panel="discover"/);
+});
+
+test('week two, or no flag at all, draws the block as before', () => {
+  for (const user of [{ id: 7, firstWeek: false }, { id: 7 }]) {
+    const out = renderWith(FIRST_WEEK_DATA(), { user });
+    assert.ok(!out.host('challenges')._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
+    assert.match(out.host('challenges').innerHTML, /home-challenge-card[\s\S]*Join a community/);
+  }
+});
+
+test('the staging demo payload is drawn whatever the account\'s age', () => {
+  // ?demo=1 is a reviewer's view of every state, and the seeded check account
+  // is days old in every preview: the declared Challenges checks select on it.
+  const data = FIRST_WEEK_DATA();
+  data.panels[0].demo = true;
+  const out = renderWith(data, { user: { id: 900130, firstWeek: true } });
+  assert.ok(!out.host('challenges')._classes.has('hidden'));
+  assert.match(out.host('challenges').innerHTML, /home-challenge-card/);
+});
+
+test('the first week is the server\'s answer, and a verified session repaints it', () => {
+  const auth = read('src/routes/auth.js');
+  // Computed in the users read /api/auth/me already makes, by the database's
+  // clock against the row's own created_at, never the device's.
+  assert.match(auth, /\(u\.created_at > NOW\(\) - INTERVAL '7 days'\) AS first_week,/);
+  assert.match(auth, /firstWeek = rows\[0\]\?\.first_week === true;/);
+  assert.match(auth, /let firstWeek = false;/, 'unreadable means the block as it was');
+  assert.match(auth, /\n\s+firstWeek,\n\s+hasApiKey,/, 'reported on the user');
+  // The client reads only that flag, and exempts the demo payload.
+  assert.match(PANELS_RAW, /inFirstWeek\(panel\) \{\s+if \(panel && panel\.demo\) return false;\s+return !!\(window\.App && App\.user && App\.user\.firstWeek === true\);/);
+  assert.match(PANELS_RAW, /HomePanels\.inFirstWeek\(panel\) \? null : HomePanels\.challengesView\(panel\)/);
+  assert.match(PANELS_RAW, /THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS/);
+  // A boot paints from the snapshot; the verified user repaints, once loaded.
+  assert.match(PANELS_RAW, /document\.addEventListener\('sv:session', \(\) => \{\s+if \(HomePanels\._data\) HomePanels\.render\(\);\s+\}\);/);
+});
+
 // ── Container shape: one bordered block PER SECTION ───────────────
 //
 // The core of the per-block-container requirement: each area is its own
