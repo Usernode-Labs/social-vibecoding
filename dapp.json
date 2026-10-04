@@ -4901,7 +4901,7 @@
       "name": "A proposal's own Discussion keeps the line that put it up for a vote: a message from whoever proposed it, name and stamp on the header line, and one box with a glyph and a line of text that is no door, because the proposal is the page",
       "path": "/?demo=1#app/staging-demo-quiet/dev/proposals/900110",
       "expectSelector": "[data-change-discussion] .gc-event[data-event=\"submitted\"][data-here][data-msg-id=\"900118\"]:has(div.gc-event-box > .dev-card-icon + .gc-event-text) span:has(> [data-event-sender]) + span > .gc-msg-time[title]",
-      "expectText": "Proposed this change for a vote",
+      "expectText": "Asked for approval",
       "visual": true,
       "impact": [
         "frontend/src/features/group-chat/**",

@@ -501,7 +501,7 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
   // is a div, not a door: the proposal is the page.
   assert.match(visual.expectSelector, /^\[data-change-discussion\] \.gc-event\[data-event="submitted"\]\[data-here\]\[data-msg-id="900118"\]:has\(div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
-  assert.equal(visual.expectText, 'Proposed this change for a vote');
+  assert.equal(visual.expectText, 'Asked for approval', 'B10d: the words every screen uses');
   const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
   assert.ok(sender && /\[data-msg-id="900118"\] \[data-event-sender\]/.test(sender.expectSelector));
   // The channel, in the project and in Messages: the quiet card and nothing
