@@ -9210,6 +9210,36 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/suggest-back.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/suggest-back",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.suggest.back.e7e8912e",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/suggest-back.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/suggest-back",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.suggest.back.00f8ca9d",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
       "source": "src/routes/test-accounts.js",
       "method": "POST",
       "path": "/api/test-accounts",

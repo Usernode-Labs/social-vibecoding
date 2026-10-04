@@ -47,14 +47,15 @@ test('the row shell borrows the chip menu’s geometry', () => {
 test('every action row has a glyph, and every glyph is decoration', () => {
   const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
   const rows = menu.match(/<PlusRow\b/g) || [];
-  // Eleven calls for ten rows: the members row is written as two, one per
+  // Twelve calls for eleven rows: the members row is written as two, one per
   // label pair, because tests/dev-plus-menu.test.js reads the two branches
   // separately to prove the self-hosted wording never leaks into the other.
   // "Make it private" (a public community's, on the hub) left the hero for
   // this menu in the UI overhaul's follow-up, and "Start a new change" left
-  // the foot of the hub for its top (#852 review).
-  assert.equal(rows.length, 11,
-    'new-change, issue, import-pr, make-private, app-settings, featured-illustration, members x2, rename, secrets, fork');
+  // the foot of the hub for its top (#852 review). "Suggest this back" is a
+  // remix owner's (./suggest-back-dialog.tsx).
+  assert.equal(rows.length, 12,
+    'new-change, issue, import-pr, make-private, app-settings, featured-illustration, members x2, rename, secrets, suggest-back, fork');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written

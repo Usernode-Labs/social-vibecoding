@@ -56,13 +56,14 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon, PencilSparklesIcon,
-  PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, ArrowUpTrayIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon,
+  PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
 import { Improve } from '../improve/improve-controller.js';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
+import { SuggestBackDialog, suggestBackTarget } from './suggest-back-dialog';
 
 export interface DevActionsRowProps {
   illustrationApp?: any;
@@ -242,9 +243,18 @@ export function DevPlusMenu({
   onMakePrivate = null,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   useEffect(() => {
     callAppView('_rewirePlusMenu');
   }, []);
+  // "Suggest this back": on a remix, for its owner, the copy's changes sent
+  // to the app it came from as a proposal (./suggest-back-dialog.tsx). The
+  // open app's payload is `illustrationApp` (AppView.appData), which carries
+  // the resolved `forked_from` and `created_by`.
+  const viewerId = typeof window === 'undefined'
+    ? null
+    : ((window as unknown as { App?: { user?: { id?: number } } }).App?.user?.id ?? null);
+  const suggestTarget = selfHosted ? null : suggestBackTarget(illustrationApp, viewerId);
   /*
       #2478 — ONE string for the "+" button's tooltip and its accessible
       name. The button's only child is a glyph, so a screen reader announced
@@ -268,6 +278,7 @@ export function DevPlusMenu({
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
   {editingIllustration && illustrationApp ? createPortal(<FeaturedIllustrationEditor key={illustrationApp.slug} app={illustrationApp} onClose={() => setEditingIllustration(false)} />, document.body) : null}
+  {suggesting && suggestTarget && illustrationApp ? createPortal(<SuggestBackDialog key={illustrationApp.slug} slug={illustrationApp.slug} copyName={illustrationApp.name || illustrationApp.slug} original={suggestTarget} onClose={() => setSuggesting(false)} />, document.body) : null}
     {/*
         The wrapper is the menu's containing block (`.dev-ws-plus` is
         `position: relative` in app.css). Hidden outright for a read-only
@@ -436,6 +447,17 @@ export function DevPlusMenu({
             />
           </>
         )}
+        {suggestTarget ? (
+          <PlusRow
+            data-plus="suggest-back"
+            icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+            title="Suggest this back"
+            sub={`Send your changes to ${suggestTarget.name} as a proposal`}
+            dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
+            onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
+          />
+        ) : null}
+
         {selfHosted ? null : (
           <PlusRow
             data-plus="fork"
