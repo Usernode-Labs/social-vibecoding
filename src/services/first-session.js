@@ -7,13 +7,13 @@
  * story ("On Homeroom, communities make apps together.") and asks them to
  * get started, instead of pitching the waitlist.
  *
- * THE STORY LANDING IS A SWITCH, off unless an admin turns it on (Admin →
+ * THE STORY LANDING IS A SWITCH, ON unless an admin turns it off (Admin →
  * Waitlist), stored as the `first_session_story` platform setting and read
  * through a short cache like the invite tree's. It belongs with the
  * waitlist: "Get started" makes an account here, and while the waitlist is
- * the valve that account waits in the queue, so the landing should only
- * stop pointing at the waitlist when the waitlist stops being the way in.
- * The setting's value reaches the landing through
+ * the valve that account waits in the queue; turning the story off points
+ * the landing back at the waitlist. No row, or a read that fails, is the
+ * default: on. The setting's value reaches the landing through
  * GET /api/public/waitlist/options (`story_landing`).
  */
 
@@ -26,7 +26,7 @@ const STORY_DESCRIPTION = 'Whether the signed-out landing tells the first-sessio
   + 'Switched from Admin → Waitlist.';
 const caches = new WeakMap();
 
-/** The stored switch: { enabled, updatedAt, updatedBy }. Cached per pool; off when unreadable. */
+/** The stored switch: { enabled, updatedAt, updatedBy }. Cached per pool; on when unset or unreadable. */
 async function readStorySetting(pool) {
   const cached = caches.get(pool);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.setting;
@@ -40,15 +40,15 @@ async function readStorySetting(pool) {
     );
     const row = rows[0];
     const setting = {
-      enabled: row ? row.value === 'true' : false,
+      enabled: row ? row.value !== 'false' : true,
       updatedAt: row ? row.updated_at || null : null,
       updatedBy: row ? row.updated_by || null : null,
     };
     caches.set(pool, { at: Date.now(), setting });
     return setting;
   } catch (err) {
-    log.warn('first-session', 'Story landing setting read failed; showing the waitlist landing', { err: err.message });
-    return { enabled: false, updatedAt: null, updatedBy: null };
+    log.warn('first-session', 'Story landing setting read failed; showing the story', { err: err.message });
+    return { enabled: true, updatedAt: null, updatedBy: null };
   }
 }
 

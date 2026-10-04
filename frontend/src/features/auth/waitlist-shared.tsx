@@ -188,7 +188,8 @@ export interface WaitlistOptions {
   marketing_url?: string;
   /** The first session's switch (src/services/first-session.js): the landing
    *  tells the story and asks people to get started, instead of pointing at
-   *  the waitlist. Absent or false keeps the waitlist landing. */
+   *  the waitlist. Only false keeps the waitlist landing; absent (the options
+   *  not loaded yet, or an older server) is the story, the default. */
   story_landing?: boolean;
 }
 

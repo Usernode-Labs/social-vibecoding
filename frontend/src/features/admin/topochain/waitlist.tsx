@@ -966,11 +966,10 @@ function InviteTreePanel() {
 
 // ── The story landing: what a signed-out visitor is asked to do ─────────
 //
-// Off, the landing points at the waitlist ("Join the waitlist"). On, it
-// tells the first-session story and asks them to get started: an account is
-// made on the spot (services/first-session.js). It belongs beside the
-// invite setting because it is the same valve: switch it on when the
-// waitlist stops being the way in.
+// On (the default), the landing tells the first-session story and asks them
+// to get started: an account is made on the spot (services/first-session.js).
+// Off, it points at the waitlist ("Join the waitlist"). It belongs beside the
+// invite setting because it is the same valve.
 
 type StoryLanding = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
 

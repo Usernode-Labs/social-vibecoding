@@ -1,7 +1,7 @@
 /**
  * The signed-out story: what Homeroom is, for somebody who arrived on their
- * own, in place of the waitlist pitch (./landing.tsx shows it when the
- * first session's switch is on, `story_landing` in the waitlist options).
+ * own, in place of the waitlist pitch (./landing.tsx shows it unless the
+ * first session's switch is off, `story_landing` in the waitlist options).
  *
  * A small illustration so the brand carries over, one line of what this is
  * and one of the loop, three examples of what groups make (to show, not to

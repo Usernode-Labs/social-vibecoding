@@ -749,7 +749,7 @@ function waitlistAdminRoutes(config) {
   // ── GET / PUT /api/v4/admin/story-landing ────────────────────────────
   // Whether the signed-out landing tells the first-session story and asks
   // people to get started, instead of pointing at the waitlist
-  // (services/first-session.js). Off unless switched on here.
+  // (services/first-session.js). On unless switched off here.
   const formatStory = (s) => ({ enabled: s.enabled, updated_at: iso(s.updatedAt), updated_by: s.updatedBy });
   router.get('/api/v4/admin/story-landing', async (req, res) => {
     try {

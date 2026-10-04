@@ -32,17 +32,17 @@ function fakePool(rowsByCall) {
   };
 }
 
-test('the story landing is off unless switched on, and off when the setting cannot be read', async () => {
+test('the story landing is on unless switched off, and on when the setting cannot be read', async () => {
   assert.equal(firstSession.STORY_KEY, 'first_session_story');
-  assert.equal(await firstSession.storyLandingEnabled(fakePool([[]])), false, 'no row is off');
-  assert.equal(await firstSession.storyLandingEnabled(fakePool([[{ value: 'true' }]])), true);
-  assert.equal(await firstSession.storyLandingEnabled(fakePool([new Error('relation does not exist')])), false);
+  assert.equal(await firstSession.storyLandingEnabled(fakePool([[]])), true, 'no row is the default: on');
+  assert.equal(await firstSession.storyLandingEnabled(fakePool([[{ value: 'false' }]])), false);
+  assert.equal(await firstSession.storyLandingEnabled(fakePool([new Error('relation does not exist')])), true);
   // A save forgets the cached read.
-  const pool = fakePool([[{ value: 'false' }], [], [{ value: 'true' }]]);
-  assert.equal(await firstSession.storyLandingEnabled(pool), false);
-  await firstSession.setStoryLanding(pool, { enabled: true, actorId: 9 });
+  const pool = fakePool([[{ value: 'true' }], [], [{ value: 'false' }]]);
   assert.equal(await firstSession.storyLandingEnabled(pool), true);
-  assert.deepEqual(pool.calls[1].params.slice(0, 2), ['first_session_story', 'true']);
+  await firstSession.setStoryLanding(pool, { enabled: false, actorId: 9 });
+  assert.equal(await firstSession.storyLandingEnabled(pool), false);
+  assert.deepEqual(pool.calls[1].params.slice(0, 2), ['first_session_story', 'false']);
 });
 
 test('the options carry the switch, and the admin switches it beside the invite setting', () => {
@@ -68,9 +68,11 @@ test('making something, or starting from the story, answers the join screen with
   assert.match(read('src/middleware/auth.js'), /'\/api\/me\/first-session\/started',\s+\];/);
 });
 
-test('the landing: the story in place of the pitch, only when switched on, for nobody signed in and no invite', () => {
+test('the landing: the story in place of the pitch unless switched off, for nobody signed in and no invite', () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
-  assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing === true && !onInvitePath && !session;/);
+  // The default, so it is drawn before the options arrive, and when they fail.
+  assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
+  assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/);
   assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn;/);
   assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
   // A new account from its sheet is asked what to make, not which communities to join.

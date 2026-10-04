@@ -520,12 +520,17 @@ export function LandingScreen() {
   const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
-  // THE STORY (./story.tsx), when the first session's switch is on: what
+  // THE STORY (./story.tsx), unless the first session's switch is off: what
   // Homeroom is and "Get started", in place of the waitlist pitch, for a
-  // visitor with no session who did not come by an invite link. Read in
-  // effects like everything else here, so the first commit is the pitch the
-  // prerender shipped.
-  const [onInvitePath, setOnInvitePath] = useState(false);
+  // visitor with no session who did not come by an invite link. It is the
+  // default, so it is what this interior's first render draws, before the
+  // options say otherwise: the interior mounts on reveal
+  // (lib/mount-on-reveal.ts), so there is no prerendered pitch to match and
+  // no reason to flash one. The invite path is read in that first render
+  // too, for the same reason; the prerender pass has no location.
+  const [onInvitePath, setOnInvitePath] = useState(
+    () => typeof location !== 'undefined' && !!inviteTokenFrom(location.pathname),
+  );
   useEffect(() => { setOnInvitePath(!!inviteTokenFrom(location.pathname)); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
@@ -561,7 +566,7 @@ export function LandingScreen() {
   const refreshHeader = useCallback(() => {
     setSession(hasSession());
   }, []);
-  const storyOn = waitlistPayload?.story_landing === true && !onInvitePath && !session;
+  const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn;
   // A new account made from the story is asked what to make next
   // (../first-session/make.tsx), not which communities to join.
