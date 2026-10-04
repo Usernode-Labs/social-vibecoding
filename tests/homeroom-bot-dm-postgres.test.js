@@ -383,7 +383,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     await setting('homeroom_bot_dm_chat', 'on');
   });
 
-  await t.test('the weekly allowance sums each requester\'s runs this week', async () => {
+  await t.test('the weekly building time sums the runs each person pays for this week', async () => {
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, build_cost_usd)
        VALUES ($1, 7, 'live', 'ready', 0.40, 12.10), ($1, 7, 'live', 'question', 0.50, NULL)`,
@@ -399,6 +399,26 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200 }, ada.id), true);
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 0 }, ada.id), false, '0 is no cap');
     assert.equal(await dm.weeklySpentCents(pool, sam.id), 0);
+
+    // What the bot caused itself (a restart's look, fixing its own checks) is
+    // nobody's building time; a look Sam asked for on Ada's request is his.
+    const { rows: extra } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, charged, payer_user_id)
+       VALUES ($1, 7, 'live', 'ready', 3.00, FALSE, NULL), ($1, 7, 'live', 'ready', 2.00, TRUE, $2)
+       RETURNING id`,
+      [app.id, sam.id],
+    );
+    // And chatting is not building: her DM's answers never count.
+    const { rows: [turn] } = await pool.query(
+      `INSERT INTO homeroom_bot_dm_turns (user_id, cost_usd) VALUES ($1, 7.00) RETURNING id`,
+      [ada.id],
+    );
+    assert.equal(await dm.weeklySpentCents(pool, ada.id), 1300, 'unchanged: neither the free run, his run nor her chat');
+    assert.equal(await dm.weeklySpentCents(pool, sam.id), 200, 'whoever asks pays');
+    assert.equal(await dm.allowanceLow(pool, { userWeeklyCents: 1500 }, ada.id), true, 'under a fifth of the week left');
+    assert.equal(await dm.allowanceLow(pool, { userWeeklyCents: 5000 }, ada.id), false);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [extra.map((r) => r.id)]);
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id = $1', [turn.id]);
   });
 
   await t.test('a project\'s description is filed as its first version once it runs, under its creator', async () => {

@@ -511,3 +511,13 @@ test('WP1: the model reads what each activity card shows now, beside the card\'s
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /cardsOf: \(\) => activityModule\(deps\)\.cardsFor\(pool, \{ user, settings, config \}\),/);
 });
+
+test('B2: the chat never runs out with building time, and allows 120 messages an hour', () => {
+  assert.equal(mayor.MAX_TURNS_PER_HOUR, 120);
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const answerFn = src.slice(src.indexOf('async function answer('), src.indexOf('const ctx = {', src.indexOf('async function answer(')));
+  assert.doesNotMatch(answerFn, /overWeeklyAllowance/, 'used-up building time holds requests, not the chat');
+  // Nothing the bot says or is told to say names an amount of money.
+  assert.doesNotMatch(src, /dollars\(/);
+  assert.match(src, /Never name an amount of money\./);
+});

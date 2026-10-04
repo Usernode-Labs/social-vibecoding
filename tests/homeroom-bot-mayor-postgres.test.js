@@ -265,7 +265,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
     // #3772: said only when asked, or when little is left.
-    assert.deepEqual(work.allowance, { usedThisWeek: '$0.10', weeklyAllowance: '$50.00', left: '$49.90', low: false });
+    // A share of her week's building time, never an amount of money.
+    assert.deepEqual(work.buildingTime, { usedThisWeek: '0%', low: false, usedUp: false, resets: 'Monday' });
     assert.equal(work.botIsOn, true);
 
     // #3685: the pipeline as it runs. A request leaves the queue once it has
@@ -416,7 +417,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(sent)).content, 'I could not open that picture.');
   });
 
-  await t.test('"what are you working on?" gets an answer from my_work, with its cards, and costs her allowance', async () => {
+  await t.test('"what are you working on?" gets an answer from my_work, with its cards, and costs no building time', async () => {
     const seen = [];
     const chat = scripted([
       [['my_work']],
@@ -454,9 +455,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT rounds, tools, input_tokens, output_tokens, cost_usd::float8 AS cost, error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1',
     );
     assert.deepEqual(row, { rounds: 2, tools: ['my_work', 'reply'], input_tokens: 2000, output_tokens: 200, cost: 0.0042, error: null });
-    assert.equal(await dm.weeklySpentCents(pool, ada.id), before + 0, 'under a cent rounds away');
+    assert.equal(await dm.weeklySpentCents(pool, ada.id), before);
     await pool.query('UPDATE homeroom_bot_dm_turns SET cost_usd = 1.25 WHERE id = (SELECT MAX(id) FROM homeroom_bot_dm_turns)');
-    assert.equal(await dm.weeklySpentCents(pool, ada.id), before + 125, 'a DM turn counts in her week');
+    assert.equal(await dm.weeklySpentCents(pool, ada.id), before, 'chatting is not building time: her week is untouched');
   });
 
   await t.test('an answer in her own words is passed on: posted on the request, and the request goes first', async () => {
@@ -1285,16 +1286,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], ...extra,
     }, { proposal: proposal.id, change: 'Drop the pins.', ...args });
 
-    // Her week's allowance is spent: the follow-up would be paid from it.
+    // Her week's building time is spent: the follow-up would be paid from it.
     const spent = await ask({ settings: { ...settings, userWeeklyCents: 1 } });
     assert.equal(spent.ok, false);
-    assert.match(spent.error, /^Their weekly allowance for your work \(\$0\.01\) is used up, so you cannot change it this week\. Nothing was sent or queued\./);
-    // Somebody else asking spends the requester's allowance, which is spent.
+    assert.match(spent.error, /^Their building time for this week is used up, so you cannot change it this week\. Nothing was sent or queued\./);
+    assert.doesNotMatch(spent.error, /\$/, 'no amount of money');
+    // Somebody else asking pays from their own week: refused only when theirs is spent too.
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const { rows: [samRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, charged, payer_user_id)
+       VALUES ($1, 99, 'live', 'ready', 0.05, TRUE, $2) RETURNING id`,
+      [notes.id, sam.id],
+    );
     const forHer = await mayor.reviseProposal(pool, {
       bot, user: { ...sam, isAdmin: false }, settings: { ...settings, userWeeklyCents: 1 }, deps: {}, userText: 'drop the pins', cards: [],
     }, { proposal: proposal.id, change: 'Drop the pins.' });
-    assert.match(forHer.error, /^The weekly allowance this request is paid from is used up/);
+    assert.match(forHer.error, /^Their building time for this week is used up/);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [samRun.id]);
     await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
 
     // It has already revised this proposal as many times as it may.
@@ -1461,6 +1469,38 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 999 })).error, /^Note board has no request #999\./);
     assert.match((await mayor.startRequest(pool, ctx({ started: 'x' }), { project: 'note-board', number: 6 })).error, /^One start per turn\.$/);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+  });
+
+  await t.test('B2: whoever asks pays: a member can start her held request on his own building time', async () => {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    // Ada's week is used up, and her request waits for Monday.
+    const tight = { ...settings, userWeeklyCents: 1 };
+    const { rows: [adaRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, charged, payer_user_id)
+       VALUES ($1, 98, 'live', 'ready', 0.05, TRUE, $2) RETURNING id`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, held_until)
+       VALUES ($1, 6, 1, 'new', NOW() + INTERVAL '2 days')`,
+      [notes.id],
+    );
+    const ctx = (who, extra = {}) => ({ bot, user: who, settings: tight, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
+    const hers = await mayor.startRequest(pool, ctx(ada), { project: 'note-board', number: 6 });
+    assert.equal(hers.ok, false);
+    assert.match(hers.error, /^Their building time for this week is used up/);
+    assert.doesNotMatch(hers.error, /\$/);
+    // Sam, a member with time left, asks for it: it starts, and it is his.
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const his = await mayor.startRequest(pool, ctx({ ...sam, isAdmin: false }), { project: 'note-board', number: 6 });
+    assert.equal(his.ok, true, his.error);
+    const { rows: [q] } = await pool.query(
+      'SELECT payer_user_id, held_until, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
+    );
+    assert.deepEqual(q, { payer_user_id: sam.id, held_until: null, reason: 'dm_start' });
+    await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [adaRun.id]);
   });
 
   await t.test('a request filed from "Ask for a change" is a request: the bot can post on it, start it and name it', async () => {

@@ -504,6 +504,16 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
 }
 
+/** A person, as hasBot and noteOverAllowance read them, by id; null when there is none. */
+async function personOf(pool, userId) {
+  if (!userId) return null;
+  const { rows } = await pool.query(
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    [userId],
+  );
+  return rows[0] ? requesterFrom(rows[0]) : null;
+}
+
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
     `SELECT q.user_id, q.first_version, q.issue_title, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
@@ -535,26 +545,35 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
 // ── The weekly allowance ─────────────────────────────────────────────────
 
 /**
- * What one person's requests have cost the bot this week, in cents: its
- * triage, spec, build and follow-up turns on every request recorded as
- * theirs. The week is the platform's (date_trunc('week'), as limits.js).
+ * What one person's building time has cost the bot this week, in cents: the
+ * triage, spec, build and follow-up turns they paid for. A run is theirs
+ * when they are its payer (the person whose action started it), or, with no
+ * payer recorded, when the request is theirs. A run the bot caused itself is
+ * not charged (homeroom_bot_runs.charged) and counts for nobody, and the
+ * bot's answers in their DM are not building time at all: chatting never
+ * runs out. The week starts Monday 00:00 UTC, as every weekly limit on the
+ * platform does (limits.weekStartUtc) and as weekKey reads it.
  */
 async function weeklySpentCents(pool, userId) {
-  // #3624 stage 2: and what the bot's answers in their DM cost.
   const { rows } = await pool.query(
-    `SELECT (
-       SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
-         FROM homeroom_bot_runs r
-         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-        WHERE q.user_id = $1 AND r.created_at >= date_trunc('week', NOW())
-     ) + (
-       SELECT COALESCE(SUM(t.cost_usd), 0)
-         FROM homeroom_bot_dm_turns t
-        WHERE t.user_id = $1 AND t.created_at >= date_trunc('week', NOW())
-     ) AS usd`,
-    [userId],
+    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0) AS usd
+       FROM homeroom_bot_runs r
+       LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,
+    [userId, require('./limits').weekStartUtc()],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);
+}
+
+// The share of a week's building time left under which the next start card
+// says so (activity.js), and the bot's own status answer calls it low.
+const ALLOWANCE_LOW_SHARE = 0.2;
+
+/** Whether this person has less than ALLOWANCE_LOW_SHARE of their week left. False with no cap. */
+async function allowanceLow(pool, settings, userId) {
+  const cap = Number(settings?.userWeeklyCents);
+  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  return cap - await weeklySpentCents(pool, userId) < cap * ALLOWANCE_LOW_SHARE;
 }
 
 /** Whether this person's requests have used their week's allowance. 0 means no cap. */
@@ -564,27 +583,50 @@ async function overWeeklyAllowance(pool, settings, userId) {
   return (await weeklySpentCents(pool, userId)) >= cap;
 }
 
-function dollars(cents) {
-  return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2).replace(/\.00$/, '')}`;
-}
-
 function weekKey(now = new Date()) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
-/** Said once a week, to somebody on the list, when their allowance holds a request back. */
-async function noteOverAllowance(pool, { settings, requester, app, issueNumber, bot }) {
-  if (!requester || !hasBot(settings, requester)) return null;
+/**
+ * Pure: what the person whose building time is used up hears about the
+ * request it holds. No amount: the limit is building time, not money, and
+ * on a project with others in it, somebody else can ask for it on theirs
+ * (homeroom-bot-mayor.js start_request).
+ */
+function overAllowanceText({ title, appName, group = false }) {
+  const what = clip(title, 80) || 'this request';
+  return group
+    ? `You've used this week's building time. I'll start ${what} on Monday, or someone else in ${appName} can ask me for it.`
+    : `You've used this week's building time. I'll start ${what} on Monday.`;
+}
+
+/**
+ * Said once a week, to the person whose building time holds a request back
+ * (its payer; the requester unless somebody else asked for it), when the bot
+ * talks to them.
+ */
+async function noteOverAllowance(pool, { settings, requester, payer = null, app, issueNumber, bot }) {
+  const who = payer || requester;
+  if (!who || !hasBot(settings, who)) return null;
+  const { rows } = await pool.query(
+    `SELECT (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members
+       FROM apps a WHERE a.id = $1`,
+    [app.id],
+  ).catch(() => ({ rows: [] }));
+  const appName = app.name || app.slug;
   return sendDm(pool, {
     bot,
-    userId: requester.userId,
-    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    idempotencyKey: `hrbot-allowance-${requester.userId}-${weekKey()}`,
-    content: `You've used this week's ${dollars(settings.userWeeklyCents)} Homeroom bot allowance, so I'm holding `
-      + `${app.name || app.slug} request #${issueNumber} for now. I'll pick it up again when the week resets on Monday.`,
-    metadata: { kind: 'allowance', appSlug: app.slug, appName: app.name || app.slug, issueNumber },
+    userId: who.userId,
+    replyToId: await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
+    idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
+    content: overAllowanceText({
+      title: requester?.issueTitle || `${appName} request #${issueNumber}`,
+      appName,
+      group: (Number(rows[0]?.members) || 0) > 1,
+    }),
+    metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
   });
 }
 
@@ -1176,7 +1218,7 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
  * reply is read after it), and null when it could not be put first: the
  * post still wakes the bot, as any reply there does.
  */
-async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {} }) {
+async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {}, payerId = null }) {
   const ws = deps.ws || require('./ws');
   const posted = await ws.handleMessage(
     pool,
@@ -1196,6 +1238,8 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
   try {
     queued = !!(await settingsModule().enqueueFront(pool, {
       appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: 'dm_revise',
+      // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
+      payerId,
     }));
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not put the proposal\'s follow-up first', { app: app.slug, err: err.message });
@@ -1606,9 +1650,13 @@ module.exports = {
   whileTyping,
   recordRequester,
   requesterOf,
+  personOf,
   weeklySpentCents,
   overWeeklyAllowance,
   noteOverAllowance,
+  overAllowanceText,
+  allowanceLow,
+  ALLOWANCE_LOW_SHARE,
   notePausedForWeek,
   PAUSED_FOR_WEEK_TEXT,
   weekKey,

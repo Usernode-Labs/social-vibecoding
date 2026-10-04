@@ -109,16 +109,21 @@ function proposalHref(slug, sessionId) {
  * started by filing the request (#3767) says it was filed, not that the
  * work began: it may wait in the queue first, and the card says so.
  */
-function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, { joined = false, filed = false, queued = false } = {}) {
+function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
+  joined = false, filed = false, queued = false, lowAllowance = false,
+} = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
-  if (filed) return `${line}\n\nFiled. This card follows it from here.`;
+  // The one place the weekly limit is mentioned before it is reached: under
+  // a fifth of the week's building time left (dm.allowanceLow).
+  const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
+  if (filed) return `${line}\n\nFiled. This card follows it from here.${low}`;
   // Started when the request is queued, before anything has begun on it
   // (homeroom-bot.js refreshApp): waiting is said, not left silent.
-  if (queued) return `${line}\n\nWaiting for a free builder. This card follows it from here.`;
+  if (queued) return `${line}\n\nWaiting for a free builder. This card follows it from here.${low}`;
   const it = firstVersion ? 'the first version' : 'this';
   return joined
     ? `${line}\n\nI started on ${it} earlier and I'm still working on it. This card updates as I go.`
-    : `${line}\n\nI'm working on ${it} now. This card updates as I go.`;
+    : `${line}\n\nI'm working on ${it} now. This card updates as I go.${low}`;
 }
 
 /** The key the card that follows one queue row's look is sent with. */
@@ -132,7 +137,9 @@ function jobCardKey(jobKey) {
  * work already under way, is when that work began: the card is read from
  * then (cardRows). Resolves what sendDm did, or null.
  */
-async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, dm }) {
+async function sendCard(pool, {
+  app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false, dm,
+}) {
   const context = {
     appName: app.name || app.slug,
     issueNumber,
@@ -142,7 +149,7 @@ async function sendCard(pool, { app, issueNumber, requester, bot, key, startedAt
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
-    content: cardText(context, dm, { joined: !!startedAt, filed, queued }),
+    content: cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance }),
     metadata: {
       kind: KIND,
       appSlug: app.slug,
@@ -189,7 +196,11 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.hasBot(s, requester)) return null;
-    const sent = await sendCard(pool, { app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, dm });
+    const lowAllowance = typeof dm.allowanceLow === 'function'
+      ? await dm.allowanceLow(pool, s, requester.userId).catch(() => false) : false;
+    const sent = await sendCard(pool, {
+      app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm,
+    });
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
     log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed, queued });

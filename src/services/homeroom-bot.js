@@ -1480,6 +1480,7 @@ async function releaseStaleClaims(pool, settings, { keepIds = [] } = {}) {
 async function recordThrownTriage(pool, { app, item, settings, err }) {
   try {
     await insertRun(pool, {
+      ...billingOf(item, live.isLiveFor(settings, app) ? 'live' : settings.mode),
       appId: app.id, issueNumber: item.issue_number,
       mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
       verdict: 'failed', error: `threw: ${err?.message || err}`,
@@ -1714,14 +1715,33 @@ async function ensureBotSession(pool, config, bot, app) {
   return session;
 }
 
+// Turns the bot queued for itself (SELF_QUEUED_REASONS), and a turn its own
+// clock stopped and queued again, are its own doing: nobody's building time
+// pays for them.
+const UNCHARGED_REASONS = Object.freeze([...SELF_QUEUED_REASONS, 'budget_retry']);
+
+/**
+ * Pure: whose weekly building time a run on `item` counts toward
+ * (homeroom-bot-dm.js weeklySpentCents). Charged when it is live and asked
+ * for by somebody, not caused by the bot itself; paid by whoever asked the
+ * bot to start it when that was somebody other than the requester (the
+ * queue row's payer), else by the requester, whom the ledger already knows.
+ */
+function billingOf(item, runMode) {
+  return {
+    charged: runMode === 'live' && !UNCHARGED_REASONS.includes(String(item?.reason || '')),
+    payerUserId: Number(item?.payer_user_id) || null,
+  };
+}
+
 async function insertRun(pool, run) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        checks_head_sha, charged, payer_user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -1731,7 +1751,10 @@ async function insertRun(pool, run) {
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
       run.budgetStop || null, run.proposalSessionId || null,
       // The failing head a checks follow-up looked at, so it looks once.
-      run.checksHeadSha || null],
+      run.checksHeadSha || null,
+      // Whose week it counts toward, if anybody's (billingOf): a shadow run
+      // never does.
+      run.charged ?? run.mode === 'live', run.payerUserId || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -2163,6 +2186,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // A platform fault the current streak already recorded gets no second
     // row (#3122); the retry is still logged below.
     const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
@@ -2210,13 +2234,26 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       log.warn('homeroom-bot', 'Could not record who a request is for', { app: app.slug, issueNumber, err: err.message });
       return null;
     });
-    if (requester && await dm.overWeeklyAllowance(pool, settings, requester.userId)) {
-      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
-      await dm.noteOverAllowance(pool, { settings, requester, app, issueNumber, bot }).catch((err) => {
+    // Whose week pays for this look (billingOf): the one who asked the bot
+    // to start it, else the requester. A look the bot caused itself is free.
+    const billing = billingOf(item, runMode);
+    const payerId = billing.payerUserId || requester?.userId || null;
+    if (requester && billing.charged && await dm.overWeeklyAllowance(pool, settings, payerId)) {
+      // Held, not dropped: the row keeps its place (enqueued_at) and waits
+      // for the week to reset, so it goes first then, and the refresh does
+      // not drop and queue it again every five minutes meanwhile.
+      // liveCandidates leaves a held row alone until then.
+      await pool.query(
+        'UPDATE homeroom_bot_queue SET started_at = NULL, held_until = $2 WHERE id = $1',
+        // The platform's week (limits.js), not a fake's: it is only a date.
+        [item.id, require('./limits').weeklyResetAt()],
+      );
+      const payer = payerId === requester.userId ? null : await dm.personOf(pool, payerId).catch(() => null);
+      await dm.noteOverAllowance(pool, { settings, requester, payer, app, issueNumber, bot }).catch((err) => {
         log.warn('homeroom-bot', 'Could not say the allowance is spent', { app: app.slug, issueNumber, err: err.message });
       });
-      log.info('homeroom-bot', 'Request held: its requester\'s weekly allowance is spent', {
-        app: app.slug, issueNumber, userId: requester.userId,
+      log.info('homeroom-bot', 'Request held until the week resets: its payer\'s building time is used up', {
+        app: app.slug, issueNumber, userId: payerId,
       });
       return { ran: false, reason: 'user_allowance' };
     }
@@ -2509,6 +2546,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (budgetHit) {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
@@ -2573,6 +2611,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
   const runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
@@ -4140,6 +4179,7 @@ async function runFollowUp(pool, config, {
       : mode === 'build' && result.pushOk === false
         ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
@@ -4167,6 +4207,7 @@ async function runFollowUp(pool, config, {
 
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
     appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
     question: action === 'ask' ? reply : null,
     questionAnswers: askAnswers,
@@ -4367,6 +4408,7 @@ async function runChecksFix(pool, config, {
   let runId = null;
   const handOff = async ({ why, verdict, extra = {} }) => {
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict,
       reason: why, error: verdict === 'failed' ? `checks: ${why}` : null,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -4462,6 +4504,7 @@ async function runChecksFix(pool, config, {
     await reconcileRevision({ config, pool, session, app, issueNumber, deps });
     const summary = parsed?.summary || parsed?.reply || 'It changed the proposal so its checks pass.';
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -4900,6 +4943,7 @@ async function liveCandidates(pool, {
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
+            q.payer_user_id,
             COALESCE(r.user_id, i.created_by) AS person_id,
             fu.id AS follow_up_session_id
        FROM homeroom_bot_queue q
@@ -4919,6 +4963,8 @@ async function liveCandidates(pool, {
        ) fu ON TRUE
       WHERE q.started_at IS NULL
         AND (CASE WHEN $9::boolean THEN NOT (a.slug = ANY($10::text[])) ELSE a.slug = ANY($1::text[]) END)
+        -- Held until its payer's week resets (runTriage): its turn then.
+        AND (q.held_until IS NULL OR q.held_until <= NOW())
         -- An app backed off after its session refused a turn holds back
         -- what runs on that session; a follow-up runs on its proposal's, and
         -- is backed off on its own.
@@ -4967,7 +5013,7 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
-            r.build_spec_md, r.build_cost_usd,
+            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -5438,12 +5484,18 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         seen.add(`build:${Number(pick.id)}`);
-        // Its requester's week is spent: it waits for the week to reset,
-        // as a request waiting to be read does (runTriage), and says so once.
-        if (pick.person_id && await dm.overWeeklyAllowance(pool, settings, pick.person_id).catch(() => false)) {
+        // Its payer's week is spent (the run's payer, else its requester):
+        // it waits for the week to reset, as a request waiting to be read
+        // does (runTriage), and says so once. A build the bot owes nobody
+        // for (an uncharged run) is never held.
+        const payerId = Number(pick.payer_user_id) || pick.person_id;
+        if (pick.charged !== false && payerId
+            && await dm.overWeeklyAllowance(pool, settings, payerId).catch(() => false)) {
           const requester = await dm.requesterOf(pool, app.id, Number(pick.issue_number)).catch(() => null);
           if (requester) {
-            await dm.noteOverAllowance(pool, { settings, requester, app, issueNumber: Number(pick.issue_number), bot })
+            const payer = Number(payerId) === Number(requester.userId) ? null
+              : await dm.personOf(pool, payerId).catch(() => null);
+            await dm.noteOverAllowance(pool, { settings, requester, payer, app, issueNumber: Number(pick.issue_number), bot })
               .catch(() => {});
           }
           continue;
@@ -5505,7 +5557,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         const item = {
           id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
           reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
-          followUp: !!pick.followUp,
+          payer_user_id: pick.payer_user_id || null, followUp: !!pick.followUp,
         };
         started.push(track(pool, pick.followUp ? `followup:${Number(pick.id)}` : Number(app.id), {
           lane: 'live', appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
@@ -6469,18 +6521,22 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
  * request on the platform. A row already being worked on is left alone:
  * that run ends first, and the wake re-queues the issue after it.
  */
-async function enqueueFront(pool, { appId, issueNumber, userId = null, reason = 'dm_answer' }) {
+async function enqueueFront(pool, { appId, issueNumber, userId = null, reason = 'dm_answer', payerId = null }) {
   const id = Number(appId);
   const n = Number(issueNumber);
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return null;
+  // Somebody acted on it, so a hold for its last payer's week is lifted: the
+  // look this starts is paid by `payerId` (whoever asked the bot to start it,
+  // when that is not its requester), else by its requester (billingOf).
   const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by)
-     VALUES ($1, $2, 0, $3, $4)
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, payer_user_id)
+     VALUES ($1, $2, 0, $3, $4, $5)
      ON CONFLICT (app_id, issue_number) DO UPDATE
-       SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by, enqueued_at = NOW()
+       SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by, enqueued_at = NOW(),
+           payer_user_id = EXCLUDED.payer_user_id, held_until = NULL
      WHERE homeroom_bot_queue.started_at IS NULL
      RETURNING id`,
-    [id, n, String(reason).slice(0, 40), userId || null],
+    [id, n, String(reason).slice(0, 40), userId || null, payerId || null],
   );
   noteIssueActivity({ appId: id, issueNumber: n, reason });
   return rows[0] || null;
@@ -6677,6 +6733,7 @@ module.exports = {
   pickLive,
   personKeyOf,
   enqueueFront,
+  billingOf,
   liveCandidates,
   workingNow,
   dmChatSummary,
