@@ -75,6 +75,40 @@ export function signInProvidersFrom(options: WaitlistOptions | null): SignInProv
   return (['apple', 'google'] as const).filter((p) => list.includes(p));
 }
 
+// The capability an app build advertises for each provider's own sheet
+// (NATIVE-BRIDGE.md, Native sign-in).
+const NATIVE_SIGN_IN_CAPABILITY: Record<SignInProvider, string> = {
+  apple: 'signInWithApple',
+  google: 'signInWithGoogle',
+};
+
+/**
+ * Inside the Homeroom app: those the server lists for the app's own sheets
+ * (an admin saved the app's client IDs) and this build of the app can show.
+ */
+export function nativeSignInProvidersFrom(options: WaitlistOptions | null, capabilities: readonly unknown[]): SignInProvider[] {
+  const list = Array.isArray(options?.native_sign_in_providers) ? options!.native_sign_in_providers! : [];
+  return (['apple', 'google'] as const)
+    .filter((p) => list.includes(p) && capabilities.includes(NATIVE_SIGN_IN_CAPABILITY[p]));
+}
+
+/** nativeSignInProvidersFrom, with this build's capabilities read once the page is up; none outside the app. */
+export function useNativeSignInProviders(options: WaitlistOptions | null): SignInProvider[] {
+  const [capabilities, setCapabilities] = useState<readonly unknown[]>([]);
+  useEffect(() => {
+    if (!isNative()) return undefined;
+    let live = true;
+    const read = legacy().usernode?.getBridgeInfo;
+    if (typeof read === 'function') {
+      read().then((info) => {
+        if (live && Array.isArray(info?.capabilities)) setCapabilities(info!.capabilities as unknown[]);
+      }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, []);
+  return useMemo(() => nativeSignInProvidersFrom(options, capabilities), [options, capabilities]);
+}
+
 // The way back from a provider (routes/sign-in-providers.js) leaves its
 // outcome in a short-lived cookie the page can read, never in the URL. Read
 // once and cleared, so a reload does not reopen the sheet.
@@ -600,7 +634,10 @@ export function LandingScreen() {
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn;
-  const providers = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
+  const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
+  const nativeProviders = useNativeSignInProviders(waitlistPayload);
+  const nativeSignIn = nativeProviders.length > 0;
+  const providers = nativeSignIn ? nativeProviders : webProviders;
   // Back from a provider without a session: reopen the sheet the trip left,
   // the invite's Join on its link, the story's otherwise.
   useEffect(() => {
@@ -1611,6 +1648,7 @@ export function LandingScreen() {
             : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
           providers={providers}
+          native={nativeSignIn}
           from="invite"
           returnTo={location.pathname}
           resume={resume}
@@ -1626,6 +1664,7 @@ export function LandingScreen() {
             ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
             : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
           providers={providers}
+          native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}
           returnTo="/"
           resume={resume}

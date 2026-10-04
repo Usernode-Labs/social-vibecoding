@@ -15,14 +15,17 @@
  *            when the account has none, which mints the session.
  *
  * Continue with Apple and Continue with Google come first when an admin has
- * set them up (`providers`, from the waitlist options; never inside the
- * Homeroom app, whose web view the providers' pages refuse). Either leaves
+ * set them up (`providers`, from the waitlist options). Either leaves
  * the page for the provider (GET /api/auth/oauth/:provider/start) and comes
  * back to it signed in, or (`resume`) to this sheet: at
  *
  *   username POST /api/auth/oauth/finish, when the provider's sign-in made
  *            an account that has no username yet, which mints the session;
  *   or the first step again, with what went wrong.
+ *
+ * Inside the Homeroom app the providers' pages refuse its web view, so
+ * (`native`) the buttons ask the app for its own sheet instead and never
+ * leave the page (signInNatively): the same outcomes, answered in place.
  *
  * Every success ends in finishLogin(), so where the person lands is the
  * shell's decision (AuthScreens.finishLogin, then the invite link's path).
@@ -48,6 +51,7 @@ import {
   fetchSessionMint,
   finishLogin,
   HANDLE_FIELD,
+  legacy,
   sessionMintFailureMessage,
   USERNAME_RULE,
 } from './shared';
@@ -87,6 +91,58 @@ export function providerStartUrl(provider: SignInProvider, { from, followInvite,
   return `/api/auth/oauth/${provider}/start?${params.toString()}`;
 }
 
+/** What a sign-in from the app's own sheet came to. `error: null` is a sheet the person closed. */
+export type NativeSignInOutcome =
+  | { next: 'signed-in'; created: boolean }
+  | { next: 'username' }
+  | { error: string | null };
+
+function nativeError(code: unknown): string {
+  return resumeError(`error-${typeof code === 'string' && code ? code : 'failed'}`) || RESUME_FALLBACK;
+}
+
+/**
+ * Inside the Homeroom app: a state and a nonce from the server, the app's
+ * own sheet with that nonce (the bridge's signInWithProvider), and the ID
+ * token it returns back to the server (routes/sign-in-providers.js).
+ */
+export async function signInNatively(provider: SignInProvider, { from, followInvite }: {
+  from: 'invite' | 'story' | 'signin';
+  followInvite: boolean;
+}): Promise<NativeSignInOutcome> {
+  const bridge = legacy().usernode;
+  if (!bridge || typeof bridge.signInWithProvider !== 'function') return { error: RESUME_FALLBACK };
+  const started = await fetch(`/api/auth/oauth/${provider}/native/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ from, follow: followInvite }),
+  });
+  const start = await started.json().catch(() => ({}));
+  if (!started.ok || typeof start.state !== 'string' || typeof start.nonce !== 'string') {
+    return { error: nativeError(start.code) };
+  }
+  let idToken: unknown = null;
+  try {
+    const answer = await bridge.signInWithProvider({ provider, nonce: start.nonce });
+    idToken = answer?.idToken;
+  } catch (err) {
+    if ((err as { usernodeCode?: unknown } | null)?.usernodeCode === 'cancelled') return { error: null };
+    return { error: RESUME_FALLBACK };
+  }
+  if (typeof idToken !== 'string' || !idToken) return { error: RESUME_FALLBACK };
+  const res = await fetchSessionMint(`/api/auth/oauth/${provider}/native`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ state: start.state, idToken }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.next === 'signed-in') return { next: 'signed-in', created: data.created === true };
+  if (res.ok && data.next === 'username') return { next: 'username' };
+  return { error: nativeError(data.code) };
+}
+
 const PROVIDER_LABEL: Record<SignInProvider, string> = { apple: 'Apple', google: 'Google' };
 // Apple's button is solid black (white on dark), Google's is white with a
 // hairline, as their sign-in guidelines draw them; both the sheet's pill shape.
@@ -114,8 +170,10 @@ export type SignInSheetProps = {
   intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
-  /** Apple and Google, when an admin has set them up; empty inside the app. */
+  /** Apple and Google, when an admin has set them up (inside the app, those its build can show). */
   providers?: readonly SignInProvider[];
+  /** Inside the Homeroom app: the providers sign in with the app's own sheet. */
+  native?: boolean;
   /** Which screen opened it, carried across a provider's trip. */
   from?: 'invite' | 'story' | 'signin';
   /** Where a provider's trip comes back to: Home, or the invite link. */
@@ -133,7 +191,7 @@ export type SignInSheetProps = {
 };
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], from = 'signin', returnTo = '/', resume = null,
+  open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
   beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const firstStep: Step = providers.length ? 'choose' : 'email';
@@ -313,12 +371,33 @@ export function SignInSheet({
   }, [needsUsername, beforeFinish]);
 
   // Off to the provider. The page leaves, so busy stays on until it does.
-  const continueWith = useCallback((provider: SignInProvider) => {
+  // Inside the app it stays: the app's own sheet answers in place.
+  const continueWith = useCallback(async (provider: SignInProvider) => {
     setError(null);
     if (blockedOffline(setError)) return;
     setBusy(true);
-    window.location.assign(providerStartUrl(provider, { from, followInvite, returnTo }));
-  }, [from, followInvite, returnTo]);
+    if (!native) {
+      window.location.assign(providerStartUrl(provider, { from, followInvite, returnTo }));
+      return;
+    }
+    try {
+      const outcome = await signInNatively(provider, { from, followInvite });
+      if ('next' in outcome && outcome.next === 'signed-in') {
+        await beforeFinish?.(outcome.created ? 'new' : 'existing');
+        await finishLogin();
+        return;
+      }
+      if ('next' in outcome && outcome.next === 'username') {
+        setStep('username');
+        return;
+      }
+      if ('error' in outcome) setError(outcome.error);
+    } catch (err) {
+      setError(sessionMintFailureMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [native, from, followInvite, returnTo, beforeFinish]);
 
   const finishProviderAccount = useCallback(async () => {
     setError(null);

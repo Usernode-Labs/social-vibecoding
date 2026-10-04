@@ -261,6 +261,48 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Native sign-in (additive; `signInWithProvider`)
+
+#### `signInWithProvider({ provider, nonce })` → `{ idToken }`
+
+Privileged top-frame action. Inside the app the sign-in sheet's Continue
+with Apple and Continue with Google cannot use the providers' web pages
+(Google refuses an embedded web view outright), so the page asks the app
+for its own sheet and sends the ID token it returns to the server:
+
+1. The page calls `POST /api/auth/oauth/:provider/native/start` and gets
+   `{ state, nonce }` (a single-use state bound to this web view by an
+   HttpOnly cookie).
+2. The page calls `signInWithProvider({ provider, nonce })`. The app shows
+   the provider's native sheet with that nonce: **Apple gets the nonce's
+   SHA-256 (lowercase hex)**, as Apple's documentation asks; Google gets it
+   as given where the SDK takes one.
+3. The page sends `{ state, idToken }` to
+   `POST /api/auth/oauth/:provider/native`, which verifies the token
+   (signature, issuer, an audience among the app's client IDs saved in
+   Admin → Sign-in providers, the nonce, used once) and signs in, or asks
+   for a username, exactly as the web sign-in does.
+
+Producer requirements for a build that advertises the capability:
+
+- **Advertise `signInWithApple` and/or `signInWithGoogle`** for the
+  providers this build can actually sign in with (Apple: iOS with the
+  Sign in with Apple entitlement; Google: a build configured with its
+  client IDs). The page offers a provider only when both the server lists it
+  (`native_sign_in_providers` in `/api/public/waitlist/options`) and the
+  build advertises it.
+- **Resolve `{ idToken }`** (the provider's JWT, untouched). Nothing else is
+  needed; the server reads the address and subject from the token.
+- **Reject with `errorInfo.code: "cancelled"`** when the person closes the
+  sheet, so the page says nothing; any other failure is a plain English
+  sentence (code `failed` or omitted).
+- **Do not hold the lifecycle queue**: this waits on the person, so it is
+  not a lifecycle method, and it neither establishes nor ends a native
+  session. The page's ordinary session mint follows the server's answer.
+
+Builds without the capability lose nothing: the sheet offers the email code
+inside the app, as before.
+
 ### Native history gestures (additive; `setBackNavigationEnabled`)
 
 `setBackNavigationEnabled({ enabled: boolean })` enables WebKit's native

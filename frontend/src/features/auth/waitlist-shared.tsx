@@ -195,6 +195,9 @@ export interface WaitlistOptions {
    *  code (src/services/sign-in-providers.js): those an admin set up and
    *  switched on. Absent or empty, the email code only. */
   sign_in_providers?: string[];
+  /** The same, from the Homeroom app's own sheets: those whose app client
+   *  IDs are saved too. The app offers one only when its build can. */
+  native_sign_in_providers?: string[];
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

@@ -40,6 +40,7 @@ class FakeDb {
   constructor() {
     this.providers = new Map();
     this.states = new Map();
+    this.tokens = new Map();
     this.sql = [];
   }
 
@@ -49,10 +50,10 @@ class FakeDb {
       return { rows: [...this.providers.values()].map((r) => ({ ...r, updated_by: null })) };
     }
     if (/^\s*INSERT INTO sign_in_providers/.test(sql)) {
-      const [provider, enabled, clientId, teamId, keyId, secretEnc] = params;
+      const [provider, enabled, clientId, teamId, keyId, appClientIds, secretEnc] = params;
       const prior = this.providers.get(provider);
       this.providers.set(provider, {
-        provider, enabled, client_id: clientId, team_id: teamId, key_id: keyId,
+        provider, enabled, client_id: clientId, team_id: teamId, key_id: keyId, app_client_ids: appClientIds,
         secret_enc: secretEnc || (prior ? prior.secret_enc : null), updated_at: new Date(),
       });
       return { rows: [] };
@@ -61,21 +62,34 @@ class FakeDb {
       this.providers.delete(params[0]);
       return { rows: [] };
     }
+    if (/^\s*INSERT INTO oauth_sign_in_states/.test(sql) && /\bnative\b/.test(sql)) {
+      const [stateHash, provider, binderHash, nonce, follow, from, expiresAt] = params;
+      this.states.set(stateHash, {
+        provider, binder_hash: binderHash, nonce, code_verifier: null, follow_invite: follow,
+        started_from: from, return_to: '/', expires_at: expiresAt, native: true,
+      });
+      return { rows: [] };
+    }
     if (/^\s*INSERT INTO oauth_sign_in_states/.test(sql)) {
       const [stateHash, provider, binderHash, nonce, verifier, follow, from, returnTo, expiresAt] = params;
       this.states.set(stateHash, {
         provider, binder_hash: binderHash, nonce, code_verifier: verifier, follow_invite: follow,
-        started_from: from, return_to: returnTo, expires_at: expiresAt,
+        started_from: from, return_to: returnTo, expires_at: expiresAt, native: false,
       });
       return { rows: [] };
     }
     if (/DELETE FROM oauth_sign_in_states\s+WHERE state_hash/.test(sql)) {
       const row = this.states.get(params[0]);
-      if (!row || row.provider !== params[1]) return { rows: [] };
+      if (!row || row.provider !== params[1] || row.native !== params[2]) return { rows: [] };
       this.states.delete(params[0]);
       return { rows: [row] };
     }
-    if (/DELETE FROM oauth_(sign_in_states|signup_sessions) WHERE expires_at/.test(sql)) return { rows: [] };
+    if (/^\s*INSERT INTO native_sign_in_tokens/.test(sql)) {
+      if (this.tokens.has(params[0])) return { rows: [] };
+      this.tokens.set(params[0], { provider: params[1], expires_at: params[2] });
+      return { rows: [{ token_hash: params[0] }] };
+    }
+    if (/DELETE FROM (oauth_sign_in_states|oauth_signup_sessions|native_sign_in_tokens) WHERE expires_at/.test(sql)) return { rows: [] };
     throw new Error(`FakeDb: unexpected SQL ${sql.slice(0, 80)}`);
   }
 }
@@ -270,6 +284,98 @@ test('the ID token is checked: signature, issuer, audience and nonce', async () 
   await assert.rejects(providers.verifyIdToken('google', 'com.example.web', apple, 'n2', { jwks }), { code: 'bad_token' });
 });
 
+async function setUpNative(db, config = CONFIG) {
+  await setUpGoogle(db, config);
+  await providers.saveProvider(db, config, 'google', { appClientIds: '123-ios.apps.googleusercontent.com' }, 1);
+  const { pem } = appleKeyPem();
+  await providers.saveProvider(db, config, 'apple', {
+    clientId: 'com.example.web', teamId: 'ABCDE12345', keyId: 'XYZ9876543', secret: pem,
+    appClientIds: ['com.onhomeroom.app'], enabled: true,
+  }, 1);
+}
+
+test('the app\'s client IDs: a list, checked, and offered to the app only beside a complete setup', async () => {
+  const db = new FakeDb();
+  await setUpGoogle(db);
+  assert.deepEqual(await providers.offeredNativeProviders(db, CONFIG), [], 'no app client IDs yet');
+  let view = await providers.saveProvider(db, CONFIG, 'google', { appClientIds: ' 123-ios.apps.googleusercontent.com\n\n123-ios.apps.googleusercontent.com, ' }, 1);
+  let google = view.providers.find((p) => p.provider === 'google');
+  assert.deepEqual(google.appClientIds, ['123-ios.apps.googleusercontent.com'], 'split, trimmed, once');
+  assert.equal(google.nativeOffered, true);
+  assert.deepEqual(await providers.offeredNativeProviders(db, CONFIG), ['google']);
+  // Left out keeps them; a save that switches the provider off stops the app too.
+  view = await providers.saveProvider(db, CONFIG, 'google', { enabled: false }, 1);
+  google = view.providers.find((p) => p.provider === 'google');
+  assert.deepEqual(google.appClientIds, ['123-ios.apps.googleusercontent.com']);
+  assert.equal(google.nativeOffered, false);
+  assert.deepEqual(await providers.offeredNativeProviders(db, CONFIG), []);
+  await assert.rejects(providers.saveProvider(db, CONFIG, 'apple', { appClientIds: 'com.onhomeroom.app with spaces/' }, 1),
+    { code: 'invalid_app_client_ids' });
+  await assert.rejects(providers.saveProvider(db, CONFIG, 'google', { appClientIds: ['a', 'b', 'c', 'd', 'e', 'f'] }, 1),
+    { code: 'invalid_app_client_ids' });
+  await assert.rejects(providers.saveProvider(db, CONFIG, 'google', { appClientIds: 5 }, 1), { code: 'invalid_app_client_ids' });
+  // Google's native tokens may also carry the web client (Android); Apple's carry the app alone.
+  assert.deepEqual(providers.nativeAudiences('google', { clientId: 'web', appClientIds: ['ios'] }), ['ios', 'web']);
+  assert.deepEqual(providers.nativeAudiences('apple', { clientId: 'com.example.web', appClientIds: ['com.onhomeroom.app'] }), ['com.onhomeroom.app']);
+});
+
+test('a native sign-in\'s state: hashed, single use, and spent only by the native route', async () => {
+  const db = new FakeDb();
+  await setUpGoogle(db);
+  await assert.rejects(providers.beginNativeSignIn(db, CONFIG, 'google', {}), { code: 'not_offered' });
+  await setUpNative(db);
+  const begun = await providers.beginNativeSignIn(db, CONFIG, 'apple', { from: 'invite', followInvite: true });
+  assert.match(begun.state, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(begun.nonce, /^[A-Za-z0-9_-]{22}$/);
+  const row = db.states.get(sha256(begun.state));
+  assert.deepEqual([row.native, row.follow_invite, row.started_from, row.nonce], [true, true, 'invite', begun.nonce]);
+  assert.equal(await providers.consumeState(db, 'apple', begun.state, begun.binder), null, 'the web callback cannot spend it');
+  const spent = await providers.consumeState(db, 'apple', begun.state, begun.binder, { native: true });
+  assert.equal(spent.nonce, begun.nonce);
+  assert.equal(await providers.consumeState(db, 'apple', begun.state, begun.binder, { native: true }), null, 'once');
+  const web = await providers.beginSignIn(db, CONFIG, 'google', {});
+  const webState = new URL(web.url).searchParams.get('state');
+  assert.equal(await providers.consumeState(db, 'google', webState, web.binder, { native: true }), null, 'nor the other way round');
+});
+
+test('the native ID token: an app audience, the nonce as given or hashed, and spent once', async () => {
+  const db = new FakeDb();
+  await setUpNative(db);
+  const { jwks, sign } = await idTokenKit();
+  const state = { nonce: 'raw-nonce-1' };
+  const apple = (claims, audience = 'com.onhomeroom.app') => sign(
+    { sub: '000.abc', email: 'x@privaterelay.appleid.com', email_verified: 'true', ...claims },
+    { issuer: 'https://appleid.apple.com', audience });
+  // Apple: the SHA-256 of the nonce, as the app's sheet passes it.
+  const good = await apple({ nonce: sha256('raw-nonce-1') });
+  const claims = await providers.verifyNativeIdToken(db, CONFIG, 'apple', good, state, { jwks });
+  assert.deepEqual(claims, { subject: '000.abc', email: 'x@privaterelay.appleid.com', emailVerified: true, name: null });
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', good, state, { jwks }), { code: 'bad_token' },
+    'the same token twice');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', await apple({ nonce: 'raw-nonce-2' }), state, { jwks }),
+    { code: 'bad_token' }, 'another nonce');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', await apple({}), state, { jwks }),
+    { code: 'bad_token' }, 'Apple always carries the nonce');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', await apple({ nonce: 'raw-nonce-1' }, 'com.example.web'), state, { jwks }),
+    { code: 'bad_token' }, 'the web Services ID is not the app');
+  // Google: the iOS client or the web client (Android), the nonce as given.
+  const google = (claims, audience = '123-ios.apps.googleusercontent.com') => sign(
+    { sub: 'g-1', email: 'ada@example.com', email_verified: true, ...claims }, { audience });
+  assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'raw-nonce-1' }), state, { jwks })).subject, 'g-1');
+  assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google',
+    await google({ nonce: 'raw-nonce-1' }, '123-abc.apps.googleusercontent.com'), state, { jwks })).subject, 'g-1');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'x' }), state, { jwks }), { code: 'bad_token' });
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}, 'someone-else'), state, { jwks }), { code: 'bad_token' });
+  // A Google sheet that carried no nonce: only while the token is fresh.
+  const plain = await google({});
+  assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google', plain, state, { jwks })).subject, 'g-1');
+  const later = Date.now() + (providers.NATIVE_FRESH_S + 30) * 1000;
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}), state, { jwks, now: later }),
+    { code: 'bad_token' }, 'too old to take without a nonce');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'not.a.token', state, { jwks }), { code: 'bad_token' });
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'x'.repeat(9000), state, { jwks }), { code: 'bad_token' });
+});
+
 test('the exchange sends the code, the verifier and the client secret, and returns the verified claims', async () => {
   const db = new FakeDb();
   await setUpGoogle(db);
@@ -328,15 +434,27 @@ test('the routes: public, guarded against a live session, admin-gated, and Apple
   const mint = /const SESSION_MINT_PATHS = \[([\s\S]*?)\];/.exec(read('src/routes/auth.js'))[1];
   assert.match(mint, /'\/api\/auth\/oauth\/finish',/);
   assert.match(read('src/routes/public-api.js'), /sign_in_providers: await signInProviders\.offeredProviders\(pool, config\),/);
+  // Inside the app: a state to start, the ID token to finish, which mints a
+  // session like the email code, behind the same live-session refusal.
+  assert.match(routes, /router\.post\('\/api\/auth\/oauth\/:provider\/native\/start', oauthSignInLimiter,/);
+  assert.match(routes, /if \(typeof req\.body\?\.from !== 'string'\) return res\.status\(400\)/,
+    'a form another site posts cannot start one');
+  assert.match(routes, /router\.post\('\/api\/auth\/oauth\/:provider\/native', oauthSignInLimiter,/);
+  assert.match(routes, /providers\.consumeState\(pool, provider, req\.body\?\.state, binder, \{ native: true \}\)/);
+  assert.match(routes, /await afterSignIn\(req, res, provider, state, result\);/);
+  assert.equal((routes.match(/await afterSignIn\(req, res, provider, state, result\);/g) || []).length, 2,
+    'the web callback and the app do the same once the account is found or made');
+  assert.match(mint, /'\/api\/auth\/oauth\/:provider\/native',/);
+  assert.match(read('src/routes/public-api.js'), /native_sign_in_providers: await signInProviders\.offeredNativeProviders\(pool, config\),/);
 });
 
 test('the secrets stay out of the debug role, the SQL console, staging and a merge', () => {
   const schema = read('src/db/schema.sql');
-  for (const table of ['sign_in_providers', 'user_oauth_identities', 'oauth_sign_in_states', 'oauth_signup_sessions']) {
+  for (const table of ['sign_in_providers', 'user_oauth_identities', 'oauth_sign_in_states', 'oauth_signup_sessions', 'native_sign_in_tokens']) {
     assert.match(schema, new RegExp(`COMMENT ON TABLE ${table} IS 'staging:private';`));
   }
   const debugAccess = require('../src/services/debug-access');
-  for (const table of ['sign_in_providers', 'oauth_sign_in_states', 'oauth_signup_sessions']) {
+  for (const table of ['sign_in_providers', 'oauth_sign_in_states', 'oauth_signup_sessions', 'native_sign_in_tokens']) {
     assert.ok(debugAccess.DENIED_TABLES.has(table), table);
   }
   assert.match(read('src/services/topochain/db-console-scope.js'), /sign_in_providers: \['secret_enc'\],/);
@@ -373,6 +491,58 @@ test('the landing offers what the options list, never inside the app, and reopen
   assert.match(landing, /setSheet\(inviteTokenFrom\(location\.pathname\) \? 'join' : 'start'\);/);
   assert.match(landing, /from="invite"\s+returnTo=\{location\.pathname\}/);
   assert.match(landing, /from=\{sheet === 'signin' \? 'signin' : 'story'\}\s+returnTo="\/"/);
+});
+
+test('inside the app: the app\'s own sheet, offered where the server lists it and the build can show it', async () => {
+  const landing = loadTsx('frontend/src/features/auth/landing.tsx');
+  const options = { sign_in_providers: ['apple', 'google'], native_sign_in_providers: ['apple', 'google'] };
+  assert.deepEqual(landing.nativeSignInProvidersFrom(options, ['signInWithApple', 'signInWithGoogle']), ['apple', 'google']);
+  assert.deepEqual(landing.nativeSignInProvidersFrom(options, ['signInWithGoogle']), ['google'], 'only what this build can show');
+  assert.deepEqual(landing.nativeSignInProvidersFrom({ native_sign_in_providers: ['google'] }, ['signInWithApple', 'signInWithGoogle']), ['google'],
+    'only what the server lists');
+  assert.deepEqual(landing.nativeSignInProvidersFrom(null, ['signInWithApple']), []);
+  const src = read('frontend/src/features/auth/landing.tsx');
+  assert.match(src, /const providers = nativeSignIn \? nativeProviders : webProviders;/);
+  assert.equal((src.match(/native=\{nativeSignIn\}/g) || []).length, 2, 'both sheets');
+
+  // The sheet's native path: start, the app's sheet with the nonce, the token back.
+  const sheet = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
+  const calls = [];
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  let bridgeAnswer = async () => ({ idToken: 'id.token.here' });
+  globalThis.window = { usernode: { isNative: false, signInWithProvider: (o) => { calls.push(['bridge', o]); return bridgeAnswer(); } } };
+  const replies = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push(['fetch', url, JSON.parse(init.body)]);
+    const [status, body] = replies.shift();
+    return { ok: status < 400, status, json: async () => body };
+  };
+  try {
+    replies.push([200, { state: 's1', nonce: 'n1' }], [200, { next: 'signed-in', created: false }]);
+    assert.deepEqual(await sheet.signInNatively('apple', { from: 'invite', followInvite: true }), { next: 'signed-in', created: false });
+    assert.deepEqual(calls, [
+      ['fetch', '/api/auth/oauth/apple/native/start', { from: 'invite', follow: true }],
+      ['bridge', { provider: 'apple', nonce: 'n1' }],
+      ['fetch', '/api/auth/oauth/apple/native', { state: 's1', idToken: 'id.token.here' }],
+    ]);
+    replies.push([200, { state: 's2', nonce: 'n2' }], [200, { next: 'username', created: true }]);
+    assert.deepEqual(await sheet.signInNatively('google', { from: 'story', followInvite: false }), { next: 'username' });
+    replies.push([200, { state: 's3', nonce: 'n3' }], [422, { code: 'no_verified_email' }]);
+    assert.match((await sheet.signInNatively('google', { from: 'story', followInvite: false })).error, /no verified email/);
+    // Closing the app's sheet says nothing.
+    bridgeAnswer = async () => { const err = new Error('closed'); err.usernodeCode = 'cancelled'; throw err; };
+    replies.push([200, { state: 's4', nonce: 'n4' }]);
+    assert.deepEqual(await sheet.signInNatively('apple', { from: 'story', followInvite: false }), { error: null });
+    replies.push([409, { code: 'logout_required' }]);
+    assert.match((await sheet.signInNatively('apple', { from: 'story', followInvite: false })).error, /already signed in/);
+  } finally {
+    globalThis.window = priorWindow;
+    globalThis.fetch = priorFetch;
+  }
+  const sheetSrc = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  assert.match(sheetSrc, /if \(!native\) \{\n\s+window\.location\.assign\(providerStartUrl/);
+  assert.match(sheetSrc, /await beforeFinish\?\.\(outcome\.created \? 'new' : 'existing'\);/);
 });
 
 test('the console section is registered like its neighbours', () => {

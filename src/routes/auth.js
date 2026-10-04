@@ -125,6 +125,9 @@ const SESSION_MINT_PATHS = [
   // (routes/sign-in-providers.js). Its callback mints a session too, by GET,
   // and makes the same check itself.
   '/api/auth/oauth/finish',
+  // The same sign-in inside the Homeroom app, with the ID token its own
+  // sheet returned.
+  '/api/auth/oauth/:provider/native',
 ];
 
 function createSessionCookie(res, token, expiresAt) {

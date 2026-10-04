@@ -21,6 +21,11 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //
 // The callback address is text, not a link: it is for pasting into the
 // provider's console, and an API-supplied URL is never rendered as an anchor.
+//
+// IN THE HOMEROOM APP the app signs in with its own Apple or Google sheet
+// (NATIVE-BRIDGE.md, Native sign-in), whose ID tokens name the app, not the
+// web client: its client IDs go in "App client IDs", and the app offers a
+// provider only once they are saved beside a complete, switched-on setup.
 
 type Provider = 'apple' | 'google';
 type Tone = 'ok' | 'err';
@@ -28,8 +33,8 @@ interface Status { text: string; tone: Tone }
 
 interface ProviderView {
   provider: Provider; label: string;
-  enabled: boolean; complete: boolean; offered: boolean; missing: string[];
-  clientId: string | null; teamId: string | null; keyId: string | null;
+  enabled: boolean; complete: boolean; offered: boolean; nativeOffered: boolean; missing: string[];
+  clientId: string | null; teamId: string | null; keyId: string | null; appClientIds: string[];
   secretSaved: boolean; secretUnreadable: boolean;
   callbackUrl: string | null;
   updatedAt: string | null; updatedBy: string | null;
@@ -38,6 +43,11 @@ interface Payload { callbackOrigin: string | null; providers: ProviderView[] }
 
 const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
 const HELP = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+
+const APP_IDS_HELP: Record<Provider, string> = {
+  apple: 'The app\'s bundle ID (com.onhomeroom.app), with Sign in with Apple switched on for its App ID. One per line.',
+  google: 'The app\'s iOS OAuth client ID. Android sign-ins carry the Client ID above, so it needs nothing here. One per line.',
+};
 
 const WHERE: Record<Provider, string> = {
   google: 'Google Cloud console → APIs & Services → Credentials: an OAuth client ID of type Web application. Add the address below as an Authorized redirect URI.',
@@ -75,6 +85,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
   const [clientId, setClientId] = useState(view.clientId || '');
   const [teamId, setTeamId] = useState(view.teamId || '');
   const [keyId, setKeyId] = useState(view.keyId || '');
+  const [appClientIds, setAppClientIds] = useState((view.appClientIds || []).join('\n'));
   const [secret, setSecret] = useState('');
   const [enabled, setEnabled] = useState(view.enabled);
   const [busy, setBusy] = useState(false);
@@ -87,6 +98,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
     setClientId(view.clientId || '');
     setTeamId(view.teamId || '');
     setKeyId(view.keyId || '');
+    setAppClientIds((view.appClientIds || []).join('\n'));
     setEnabled(view.enabled);
   }, [view]);
 
@@ -108,7 +120,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
   };
 
   const save = () => run(async () => {
-    const body: Record<string, unknown> = { clientId, enabled };
+    const body: Record<string, unknown> = { clientId, enabled, appClientIds };
     if (apple) { body.teamId = teamId; body.keyId = keyId; }
     if (secret.trim()) body.secret = secret;
     const next = await sendJson('PUT', `/api/admin/sign-in-providers/${view.provider}`, body);
@@ -117,7 +129,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
     const saved = (next.providers || []).find((p: ProviderView) => p.provider === view.provider);
     return {
       text: saved?.offered
-        ? `Saved. The sign-in sheet offers Continue with ${view.label}.`
+        ? `Saved. The sign-in sheet offers Continue with ${view.label}${saved?.nativeOffered ? ', in the app too' : ''}.`
         : `Saved. Continue with ${view.label} is not offered${saved?.enabled ? ' yet' : ' while this is off'}.`,
       tone: 'ok',
     };
@@ -227,6 +239,20 @@ function ProviderCard({ view, canWrite, onSaved }: {
             />
           )}
           {secretHint ? <p id={`${id}-secret-hint`} className={HELP}>{secretHint}</p> : null}
+        </label>
+
+        <label className="block" htmlFor={`${id}-app-client-ids`}>
+          <span className={LABEL}>App client IDs</span>
+          <textarea
+            id={`${id}-app-client-ids`} rows={2} autoComplete="off" spellCheck={false}
+            className={`${AdminUI.textarea} mt-1 font-mono text-xs disabled:opacity-60`}
+            placeholder={apple ? 'com.onhomeroom.app' : '1234567890-ios.apps.googleusercontent.com'}
+            disabled={dis} value={appClientIds} onChange={(e) => setAppClientIds(e.target.value)}
+          />
+          <p className={HELP}>{APP_IDS_HELP[view.provider]}</p>
+          <p id={`${id}-native`} className={HELP}>{view.nativeOffered
+            ? `The Homeroom app offers Continue with ${view.label}, on builds that can show its sheet.`
+            : `The Homeroom app does not offer Continue with ${view.label}.`}</p>
         </label>
 
         <label className="flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100" htmlFor={`${id}-enabled`}>
