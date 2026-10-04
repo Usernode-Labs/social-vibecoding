@@ -197,6 +197,7 @@ function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
   const pool = { async query(sql, params) { queries.push([String(sql), params]); return { rows: [] }; } };
   const dm = {
     isDmUser: dmSvc.isDmUser,
+    hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     async requestStart() { return 77; },
     async sendDm(_pool, args) {
@@ -356,7 +357,7 @@ test('catching up gives nobody else\'s work a card, and does nothing for somebod
     async connect() { throw new Error('no lock is taken when there is nothing to do'); },
   };
   const deps = (over = {}) => ({
-    dm: { isDmUser: dmSvc.isDmUser },
+    dm: { isDmUser: dmSvc.isDmUser, hasBot: dmSvc.hasBot },
     liveSvc: { isStaging: () => false, isLiveFor: () => true, ...over.liveSvc },
     botSvc: { APP_AGAIN_REASON: 'app_again', async readSettings() { throw new Error('settings were passed'); } },
   });

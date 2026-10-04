@@ -104,11 +104,48 @@ function isDmUser(settings, username) {
   return !!username && list.includes(lower(username));
 }
 
+/**
+ * Whether the bot works for this person: builds the projects they describe,
+ * brings their requests' news to their DM, and answers them there. Under the
+ * bot's audience (homeroom-bot.js KEY_AUDIENCE):
+ *   - `list`: being on the list is the whole gate (isDmUser);
+ *   - `everyone`: anybody who may use the platform (platform access, which
+ *     an admin always has), and never a synthetic account.
+ * `person` is the signed-in user (req.user), or a requester (requesterFrom):
+ * { username, isSynthetic, hasPlatformAccess, isAdmin }.
+ * Pure. Whether the bot is switched on at all is its Mode's, not this.
+ */
+function hasBot(settings, person) {
+  if (!settings || !person?.username) return false;
+  if (settings.audience === 'everyone') {
+    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin);
+  }
+  return isDmUser(settings, person.username);
+}
+
 /** Whether this signed-in person builds through the bot's DM (the create dialog asks). */
 async function isEnabledFor(pool, user) {
   if (!user || user.isSynthetic) return false;
   const settings = await settingsModule().readSettings(pool);
-  return isDmUser(settings, user.username);
+  return hasBot(settings, user);
+}
+
+/**
+ * A requester row, read with what hasBot needs about the person (u.username,
+ * u.is_synthetic, u.has_platform_access, u.is_admin), as the rest of this
+ * module passes it.
+ */
+function requesterFrom(row, overrides = {}) {
+  return {
+    userId: row.user_id,
+    username: row.username,
+    firstVersion: !!row.first_version,
+    issueTitle: row.issue_title,
+    isSynthetic: !!row.is_synthetic,
+    hasPlatformAccess: !!row.has_platform_access,
+    isAdmin: !!row.is_admin,
+    ...overrides,
+  };
 }
 
 async function botAccount(pool) {
@@ -166,7 +203,7 @@ async function firstVersionAppSlugs(pool, settings) {
 async function noteProjectMade(pool, { app, user, origin }) {
   if (!app?.id || !user?.id || !PROJECT_ORIGINS.includes(origin)) return false;
   const settings = await settingsModule().readSettings(pool);
-  if (!isDmUser(settings, user.username)) return false;
+  if (!hasBot(settings, user)) return false;
   const { rowCount } = await pool.query(
     `INSERT INTO homeroom_bot_dm_projects (app_id, user_id, origin) VALUES ($1, $2, $3)
      ON CONFLICT (app_id) DO NOTHING`,
@@ -432,7 +469,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, u.username
+    `SELECT q.user_id, q.first_version, q.issue_title, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -445,7 +482,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
         [app.id, issueNumber, title],
       ).catch(() => {});
     }
-    return { userId: row.user_id, username: row.username, firstVersion: !!row.first_version, issueTitle: title || row.issue_title };
+    return requesterFrom(row, { issueTitle: title || row.issue_title });
   }
   const live = require('./homeroom-bot-live');
   const poster = await live.issuePoster(pool, { app, repo, issueNumber, issue });
@@ -459,18 +496,32 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
     [app.id, issueNumber, poster, title],
   );
   if (!rows.length) return null;
-  return { userId: rows[0].user_id, username: poster, firstVersion: !!rows[0].first_version, issueTitle: rows[0].issue_title };
+  // Who they are, as hasBot reads it.
+  const { rows: who } = await pool.query(
+    'SELECT u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    [rows[0].user_id],
+  );
+  return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
+}
+
+/** A person, as hasBot and noteOverAllowance read them, by id; null when there is none. */
+async function personOf(pool, userId) {
+  if (!userId) return null;
+  const { rows } = await pool.query(
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    [userId],
+  );
+  return rows[0] ? requesterFrom(rows[0]) : null;
 }
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, u.username
+    `SELECT q.user_id, q.first_version, q.issue_title, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
   );
-  const row = rows[0];
-  return row ? { userId: row.user_id, username: row.username, firstVersion: !!row.first_version, issueTitle: row.issue_title } : null;
+  return rows[0] ? requesterFrom(rows[0]) : null;
 }
 
 /**
@@ -494,26 +545,35 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
 // ── The weekly allowance ─────────────────────────────────────────────────
 
 /**
- * What one person's requests have cost the bot this week, in cents: its
- * triage, spec, build and follow-up turns on every request recorded as
- * theirs. The week is the platform's (date_trunc('week'), as limits.js).
+ * What one person's building time has cost the bot this week, in cents: the
+ * triage, spec, build and follow-up turns they paid for. A run is theirs
+ * when they are its payer (the person whose action started it), or, with no
+ * payer recorded, when the request is theirs. A run the bot caused itself is
+ * not charged (homeroom_bot_runs.charged) and counts for nobody, and the
+ * bot's answers in their DM are not building time at all: chatting never
+ * runs out. The week starts Monday 00:00 UTC, as every weekly limit on the
+ * platform does (limits.weekStartUtc) and as weekKey reads it.
  */
 async function weeklySpentCents(pool, userId) {
-  // #3624 stage 2: and what the bot's answers in their DM cost.
   const { rows } = await pool.query(
-    `SELECT (
-       SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
-         FROM homeroom_bot_runs r
-         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-        WHERE q.user_id = $1 AND r.created_at >= date_trunc('week', NOW())
-     ) + (
-       SELECT COALESCE(SUM(t.cost_usd), 0)
-         FROM homeroom_bot_dm_turns t
-        WHERE t.user_id = $1 AND t.created_at >= date_trunc('week', NOW())
-     ) AS usd`,
-    [userId],
+    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0) AS usd
+       FROM homeroom_bot_runs r
+       LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,
+    [userId, require('./limits').weekStartUtc()],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);
+}
+
+// The share of a week's building time left under which the next start card
+// says so (activity.js), and the bot's own status answer calls it low.
+const ALLOWANCE_LOW_SHARE = 0.2;
+
+/** Whether this person has less than ALLOWANCE_LOW_SHARE of their week left. False with no cap. */
+async function allowanceLow(pool, settings, userId) {
+  const cap = Number(settings?.userWeeklyCents);
+  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  return cap - await weeklySpentCents(pool, userId) < cap * ALLOWANCE_LOW_SHARE;
 }
 
 /** Whether this person's requests have used their week's allowance. 0 means no cap. */
@@ -523,27 +583,76 @@ async function overWeeklyAllowance(pool, settings, userId) {
   return (await weeklySpentCents(pool, userId)) >= cap;
 }
 
-function dollars(cents) {
-  return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2).replace(/\.00$/, '')}`;
-}
-
 function weekKey(now = new Date()) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
-/** Said once a week, to somebody on the list, when their allowance holds a request back. */
-async function noteOverAllowance(pool, { settings, requester, app, issueNumber, bot }) {
-  if (!requester || !isDmUser(settings, requester.username)) return null;
+/**
+ * Pure: what the person whose building time is used up hears about the
+ * request it holds. No amount: the limit is building time, not money, and
+ * on a project with others in it, somebody else can ask for it on theirs
+ * (homeroom-bot-mayor.js start_request).
+ */
+function overAllowanceText({ title, appName, group = false }) {
+  const what = clip(title, 80) || 'this request';
+  return group
+    ? `You've used this week's building time. I'll start ${what} on Monday, or someone else in ${appName} can ask me for it.`
+    : `You've used this week's building time. I'll start ${what} on Monday.`;
+}
+
+/**
+ * Said once a week, to the person whose building time holds a request back
+ * (its payer; the requester unless somebody else asked for it), when the bot
+ * talks to them.
+ */
+async function noteOverAllowance(pool, { settings, requester, payer = null, app, issueNumber, bot }) {
+  const who = payer || requester;
+  if (!who || !hasBot(settings, who)) return null;
+  const { rows } = await pool.query(
+    `SELECT (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members
+       FROM apps a WHERE a.id = $1`,
+    [app.id],
+  ).catch(() => ({ rows: [] }));
+  const appName = app.name || app.slug;
   return sendDm(pool, {
     bot,
-    userId: requester.userId,
-    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    idempotencyKey: `hrbot-allowance-${requester.userId}-${weekKey()}`,
-    content: `You've used this week's ${dollars(settings.userWeeklyCents)} Homeroom bot allowance, so I'm holding `
-      + `${app.name || app.slug} request #${issueNumber} for now. I'll pick it up again when the week resets on Monday.`,
-    metadata: { kind: 'allowance', appSlug: app.slug, appName: app.name || app.slug, issueNumber },
+    userId: who.userId,
+    replyToId: await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
+    idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
+    content: overAllowanceText({
+      title: requester?.issueTitle || `${appName} request #${issueNumber}`,
+      appName,
+      group: (Number(rows[0]?.members) || 0) > 1,
+    }),
+    metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
+  });
+}
+
+// What the person hears when the bot's own weekly budget (its users row,
+// limits.checkBudget) stops work of theirs that was about to start.
+const PAUSED_FOR_WEEK_TEXT = 'I\'ve paused for the rest of the week. Your request is saved and I\'ll pick it up on Monday.';
+
+/**
+ * The bot's own weekly budget is spent (homeroom-bot.js pauseOnBudget), and
+ * work of this person's was next: they hear it once a week, whichever
+ * request it was, rather than finding the bot quiet. Resolves what sendDm
+ * did, or null for somebody the bot does not talk to.
+ */
+async function notePausedForWeek(pool, { settings, bot, userId }) {
+  if (!bot?.id || !userId) return null;
+  const { rows } = await pool.query(
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    [userId],
+  );
+  if (!rows[0] || !hasBot(settings, requesterFrom(rows[0]))) return null;
+  return sendDm(pool, {
+    bot,
+    userId,
+    idempotencyKey: `hrbot-paused-${userId}-${weekKey()}`,
+    content: PAUSED_FOR_WEEK_TEXT,
+    metadata: { kind: 'paused' },
   });
 }
 
@@ -561,7 +670,7 @@ async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
   if (!app?.id || !runId) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !isDmUser(settings, requester.username)) return null;
+  if (!requester || !hasBot(settings, requester)) return null;
   const bot = await botAccount(pool);
   if (!bot) return null;
   const context = {
@@ -633,6 +742,15 @@ function dmText(kind, dm, context) {
     case 'empty':
       return `${line}\n\nI couldn't find anything to build in this yet. Reply to this message with what you'd like `
         + 'changed and I\'ll look again.';
+    // A cap on how many changes the bot keeps waiting for approval held a
+    // request it would build (homeroom-bot.js actOnVerdict). The cap's own
+    // refresh brings it back when there is room, so nothing is asked of them.
+    case 'held_proposals_per_app':
+      return `${line}\n\nI can't start ${it} yet because ${context.appName} already has ${Number(dm.limit) || 'several'} `
+        + 'changes waiting. I\'ll start when one is done.';
+    case 'held_proposals_total':
+      return `${line}\n\nI can't start ${it} yet because I already have ${Number(dm.limit) || 'many'} changes waiting `
+        + 'across Homeroom. I\'ll start when one is done.';
     default:
       return null;
   }
@@ -661,9 +779,9 @@ async function closeOpenQuestions(pool, { userId, appId, issueNumber, ws = null 
  */
 async function dmRecipient(pool, appId, issueNumber) {
   const settings = await settingsModule().readSettings(pool);
-  if (!settings.dmUsers?.length) return null;
+  if (settings.audience !== 'everyone' && !settings.dmUsers?.length) return null;
   const requester = await requesterOf(pool, appId, issueNumber);
-  return requester && isDmUser(settings, requester.username)
+  return requester && hasBot(settings, requester)
     ? { userId: requester.userId, username: requester.username }
     : null;
 }
@@ -772,7 +890,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
   if (!dm || !bot?.id) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !isDmUser(settings, requester.username)) return null;
+  if (!requester || !hasBot(settings, requester)) return null;
   const context = {
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -953,7 +1071,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
   const settings = await settingsModule().readSettings(pool);
-  if (!requester || !isDmUser(settings, requester.username)) return null;
+  if (!requester || !hasBot(settings, requester)) return null;
   const bot = await botAccount(pool);
   if (!bot) return null;
   await closeOpenQuestions(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
@@ -1100,7 +1218,7 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
  * reply is read after it), and null when it could not be put first: the
  * post still wakes the bot, as any reply there does.
  */
-async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {} }) {
+async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {}, payerId = null }) {
   const ws = deps.ws || require('./ws');
   const posted = await ws.handleMessage(
     pool,
@@ -1120,6 +1238,8 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
   try {
     queued = !!(await settingsModule().enqueueFront(pool, {
       appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: 'dm_revise',
+      // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
+      payerId,
     }));
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not put the proposal\'s follow-up first', { app: app.slug, err: err.message });
@@ -1182,7 +1302,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!bot || bot.id === user.id) return null;
   if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
   const settings = await settingsModule().readSettings(pool);
-  if (!isDmUser(settings, user.username)) {
+  if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
@@ -1249,7 +1369,7 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
-  const bot = isDmUser(settings, user.username) ? await settingsModule().ensureBotUser(pool, config) : null;
+  const bot = hasBot(settings, user) ? await settingsModule().ensureBotUser(pool, config) : null;
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
      VALUES ($1, $2, $3, $4)
@@ -1515,6 +1635,7 @@ module.exports = {
   HELP_TEXT,
   NOT_ENABLED_TEXT,
   isDmUser,
+  hasBot,
   isEnabledFor,
   botAccount,
   PROJECT_ORIGINS,
@@ -1529,9 +1650,15 @@ module.exports = {
   whileTyping,
   recordRequester,
   requesterOf,
+  personOf,
   weeklySpentCents,
   overWeeklyAllowance,
   noteOverAllowance,
+  overAllowanceText,
+  allowanceLow,
+  ALLOWANCE_LOW_SHARE,
+  notePausedForWeek,
+  PAUSED_FOR_WEEK_TEXT,
   weekKey,
   dmText,
   dmRecipient,

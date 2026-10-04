@@ -9685,6 +9685,22 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS live_build_waiting_at TIM
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
   ON homeroom_bot_runs(live_build_waiting_at) WHERE live_build_waiting_at IS NOT NULL;
 
+-- Weekly building time (homeroom-bot-dm.js weeklySpentCents). A run counts
+-- toward one person's week only when it is `charged`, and against its
+-- `payer`: the person whose action started it (the requester unless
+-- somebody else asked the bot to start or change it). A run the bot caused
+-- itself (a restart's re-read, a resumed plan, fixing its own failing
+-- checks, a shadow run) is not charged. A run with no payer is the
+-- requester's, as every run was before.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS charged BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS payer_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+-- A queued request whose payer's week is used up is held until the week
+-- resets, keeping its place (enqueued_at), rather than dropped and queued
+-- again by every refresh. Who will pay for it, when somebody other than its
+-- requester asked for it (the DM's start_request).
+ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS held_until TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS payer_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 -- #3654: the Homeroom bot's benchmark (services/bench/). A SUITE is a set of
 -- tasks drawn from real runs; it is a version (name + version), and freezing
 -- it makes its tasks immutable (services/bench/suites.js refuses every write

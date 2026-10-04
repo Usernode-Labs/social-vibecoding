@@ -67,9 +67,9 @@
 // It never blocks the chat. routes/conversations.js calls this after the
 // person's message is saved and answered, and a person's turns run one
 // after another, never side by side. What it costs is recorded per turn
-// (homeroom_bot_dm_turns, no words) and counted in their weekly allowance
-// with their requests' runs; it stops answering when that is spent, while
-// the bot is off, or past MAX_TURNS_PER_HOUR.
+// (homeroom_bot_dm_turns, no words). It is not building time: a person who
+// has used their week's building time can still talk to the bot. It stops
+// answering only while the bot is off, or past MAX_TURNS_PER_HOUR.
 //
 // Why not the Mayor of an agent session (services/mayor/)? That Mayor reads
 // the platform as its user does, and the bot's proposals are the BOT's:
@@ -131,7 +131,9 @@ const MAX_FAILURES_RECORDED = 20;
 // A message that asks how their work is going. Read only when the model
 // could not answer, so the records are said instead.
 const PROGRESS_QUESTION = /\b(how far|progress|status|how('s| is| are) (it|things|that|my \w+) going|how long|(done|ready|finished|built|live) yet|eta|what are you (doing|working on|up to)|where are (you|we|things)|any (news|updates?)|still (working|building|setting))\b/i;
-const MAX_TURNS_PER_HOUR = 30;
+// Generous: a back-and-forth about a plan runs to dozens of messages, and
+// running out of building time never stops the chat (answer).
+const MAX_TURNS_PER_HOUR = 120;
 // #3772: the share of a weekly allowance left under which it is worth saying.
 const ALLOWANCE_LOW_SHARE = 0.2;
 const MAX_CARDS = 3;
@@ -204,10 +206,6 @@ const PLAIN_NOTE = [
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-function dollars(cents) {
-  return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
 }
 
 // #3769: "[about Ear Trainer request #14] " opened replies. It was the label
@@ -307,8 +305,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- You build only on projects an admin has turned you on for, and on projects you are building a first version',
     '  of for this person (botBuildsHere in my_work and my_projects). On any other project their requests wait for',
     '  the group, or for someone to start a change; say so when they ask why nothing is happening.',
-    '- Their weekly allowance pays for your work on their requests and for these answers (allowance in my_work).',
-    '  Mention it only when they ask about it, or when my_work marks it low.',
+    '- Their weekly building time pays for your work on their requests, not for these answers (buildingTime in',
+    '  my_work). Mention it only when they ask about it, or when my_work marks it low. Never name an amount of money.',
+    '  When it is used up, their requests wait until Monday, and someone else in the project can ask you to start one.',
     '- Homeroom tells them itself, in this chat, when a request is filed, when a proposal is ready to vote on and',
     '  when it goes live. Those messages start with "[Homeroom posted this automatically]" in this conversation.',
     '  Never write a message like them, and never start a reply with a note in brackets. A proposal that is being',
@@ -363,7 +362,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'my_work',
-      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute; and their weekly allowance, used and left.',
+      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute; and how much of this week\'s building time they have used.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -573,7 +572,9 @@ function statusOf(row) {
   if (row.started_at) return 'looking at it now';
   if (row.open_question) return 'waiting for their answer to your question';
   if (proposal === 'promoted') return 'proposal up for the group\'s vote';
-  if (row.enqueued_at) return row.queue_position ? `waiting in your queue (number ${row.queue_position})` : 'waiting in your queue';
+  // A place in the queue across every project was not when it would start:
+  // per-project and per-person limits decide that (progress.js queuedWait).
+  if (row.enqueued_at) return 'waiting for a free builder';
   switch (row.verdict) {
     case 'person': return 'left for the group to decide';
     case 'empty': return 'nothing to build in it yet';
@@ -620,7 +621,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
   // platform's own requests as "reading them, not mine to build". As
   // `progress` already does (#3734), only a project it acts on has a queue
   // for them, and only its acted-on ('live') looks are its verdicts.
-  const acts = new Set([...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])]);
+  const scope = liveModule(deps).appsScope(settings);
   const { rows: found } = await pool.query(
     `WITH mine AS (
        SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded
@@ -664,17 +665,17 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
   const rows = found
     // Waiting in a queue only on a project it acts on, and a request that
     // was only ever in the background queue is not theirs to hear about.
-    .map((row) => (acts.has(row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
+    .map((row) => (liveModule(deps).inScope(scope, row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
     .filter((row) => row.recorded || row.queue_id);
   // Where each waiting request is in the live queue.
-  const liveSlugs = [...new Set([...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])])];
   const position = new Map();
-  if (liveSlugs.length && rows.some((r) => r.queue_id && !r.started_at)) {
+  if (!liveModule(deps).scopeIsEmpty(scope) && rows.some((r) => r.queue_id && !r.started_at)) {
     const { rows: queue } = await pool.query(
       `SELECT q.id FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-        WHERE q.started_at IS NULL AND a.slug = ANY($1::text[])
+        WHERE q.started_at IS NULL
+          AND (CASE WHEN $2::boolean THEN NOT (a.slug = ANY($3::text[])) ELSE a.slug = ANY($1::text[]) END)
         ORDER BY q.priority, q.enqueued_at LIMIT 500`,
-      [liveSlugs],
+      [scope.slugs, scope.all, scope.except],
     );
     queue.forEach((q, i) => position.set(Number(q.id), i + 1));
   }
@@ -724,7 +725,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
     : (await bot.workingNow(pool, settings, { userId }))
       .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
   const cap = Number(settings?.userWeeklyCents) || 0;
-  const spent = await dmModule(deps).weeklySpentCents(pool, userId);
+  const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   return {
     workingOnNow,
     requests,
@@ -739,13 +740,16 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
     }),
     atOnce: `You work on up to ${settings?.perPerson || 2} of their projects at a time, one request per project.`,
     // #3772: said only when they ask, or when little is left; every status
-    // answer used to end with it.
-    allowance: cap > 0
+    // answer used to end with it. A share of the week, never an amount: the
+    // bot says "building time", not money.
+    buildingTime: cap > 0
       ? {
-        usedThisWeek: dollars(spent), weeklyAllowance: dollars(cap), left: dollars(Math.max(0, cap - spent)),
+        usedThisWeek: `${Math.min(100, Math.round((spent / cap) * 100))}%`,
         low: cap - spent < cap * ALLOWANCE_LOW_SHARE,
+        usedUp: spent >= cap,
+        resets: 'Monday',
       }
-      : { usedThisWeek: dollars(spent), weeklyAllowance: 'no limit', low: false },
+      : { usedThisWeek: 'no limit', low: false, usedUp: false },
     botIsOn: settings?.mode !== 'off',
   };
 }
@@ -1667,7 +1671,7 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
   if (newer.length) return null;
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
-  if (!dm.isDmUser(settings, user.username)) return null;
+  if (!dm.hasBot(settings, user)) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   const run = () => runDmTurn(pool, config, {
     bot, user, settings, conversationId, message, deps: { ...deps, deferAttempt: attempt },
@@ -1757,9 +1761,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const dm = dmModule(deps);
   if (settings.mode === 'off') return say(OFF_TEXT);
   if (await turnsLastHour(pool, user.id) >= MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
-  if (await dm.overWeeklyAllowance(pool, settings, user.id)) {
-    return say(`You've used this week's allowance for my work on your requests (${dollars(settings.userWeeklyCents)}). I'll be back on them next week.`);
-  }
+  // Used-up building time holds their requests (runTriage), never the chat.
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
     cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
@@ -2175,7 +2177,11 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
       // runTriage) and it follows the request from "waiting" to the end.
       const card = await activityModule(deps).startCard(pool, {
         app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true,
-        requester: { userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false },
+        requester: {
+          userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false,
+          // What dm.hasBot reads, from the signed-in person who tapped File it.
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+        },
         deps: { dm },
       });
       if (card?.messageId) return card;
@@ -2432,9 +2438,11 @@ async function startRequest(pool, ctx, args) {
     return { ok: false, error: `You do not build on ${name}, so its requests wait for the group or for someone to start a change. Nothing was started.` };
   }
   if (settings?.mode === 'off') return { ok: false, error: 'You are switched off, so nothing can start. Nothing was started.' };
-  const payer = requester ? requester.userId : user.id;
+  // Whoever asks pays: this person, on their own building time, whether or
+  // not the request is theirs.
+  const payer = user.id;
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
-    return { ok: false, error: `The weekly allowance (${dollars(settings.userWeeklyCents)}) this request is paid from is used up, so it cannot start this week. Nothing was started. It resets on Monday.` };
+    return { ok: false, error: 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.' };
   }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
@@ -2449,7 +2457,11 @@ async function startRequest(pool, ctx, args) {
     ctx.started = name;
     return { ok: true, already: `You are on it now: ${before.doing}.` };
   }
-  const queued = await botModule(deps).enqueueFront(pool, { appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_start' });
+  const queued = await botModule(deps).enqueueFront(pool, {
+    appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_start',
+    // Its requester pays for their own; anybody else asking pays for theirs.
+    payerId: theirs ? null : user.id,
+  });
   const { rows: lastLook } = await pool.query(
     `SELECT verdict, reason FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
@@ -2561,18 +2573,18 @@ async function reviseProposal(pool, ctx, args) {
       error: `You have already changed this proposal ${revisions.n} times, as many as you may on your own, so you cannot change it again. Nothing was sent or queued. A person can make the change, or they can say what they want in the proposal's discussion for the group.`,
     };
   }
-  const payer = requester ? requester.userId : user.id;
+  // Whoever asks pays: the change is made on this person's building time.
+  const payer = user.id;
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
     return {
       ok: false,
-      error: theirs || !requester
-        ? `Their weekly allowance for your work (${dollars(settings.userWeeklyCents)}) is used up, so you cannot change it this week. Nothing was sent or queued. It resets on Monday.`
-        : 'The weekly allowance this request is paid from is used up, so you cannot change it this week. Nothing was sent or queued. It resets on Monday.',
+      error: 'Their building time for this week is used up, so you cannot change it this week. Nothing was sent or queued. It resets on Monday.',
     };
   }
   const text = revisionText(ctx.userText, change);
   const posted = await dm.postOnProposal(pool, {
     user, app, sessionId: session.id, issueNumber, text, deps,
+    payerId: theirs || !requester ? null : user.id,
   });
   if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
   ctx.revised = true;

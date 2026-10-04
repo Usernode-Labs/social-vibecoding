@@ -134,6 +134,29 @@ test('it is live only on a listed app, with the mode on, and never on a staging 
     'a staging copy starts from production\'s settings and must never post on real issues');
 });
 
+test('with the everyone audience it is live on every app but a paused one and the platform\'s own', (t) => {
+  const everyone = { mode: 'shadow', audience: 'everyone', liveApps: [], pausedApps: ['quiet'], platformSlugs: ['usernode-2d5619'] };
+  assert.equal(live.isLiveFor(everyone, APP), true, 'no list needed');
+  assert.equal(live.isLiveFor(everyone, { slug: 'anything-else' }), true);
+  assert.equal(live.isLiveFor(everyone, { slug: 'quiet' }), false, 'paused stays paused');
+  assert.equal(live.isLiveFor(everyone, { slug: 'usernode-2d5619' }), false, 'the platform\'s own project has its own switch');
+  assert.equal(live.isLiveFor({ ...everyone, livePlatform: true }, { slug: 'usernode-2d5619' }), true);
+  assert.equal(live.isLiveFor({ ...everyone, mode: 'off' }, APP), false, 'off means off for everyone too');
+  assert.deepEqual(live.liveScope(everyone), { all: true, slugs: [], except: ['quiet', 'usernode-2d5619'] });
+  // The list audience reads as it always did, paused apps and all.
+  const list = { mode: 'shadow', liveApps: ['a', 'b'], firstVersionApps: ['b', 'c'], pausedApps: ['a'] };
+  assert.deepEqual(live.liveScope(list), { all: false, slugs: ['a', 'b', 'c'], except: [] });
+  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'shadow', liveApps: [] })), true);
+  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), false);
+  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
+  assert.deepEqual(live.appsScope({ ...everyone, mode: 'off' }), live.liveScope(everyone));
+  const prior = process.env.USERNODE_ENV;
+  t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  process.env.USERNODE_ENV = 'staging';
+  assert.equal(live.isLiveFor(everyone, APP), false, 'never on a staging copy');
+  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), true);
+});
+
 test('the live list is a validated setting that ships empty', () => {
   assert.deepEqual(bot.parseSettings([]).liveApps, []);
   assert.deepEqual(bot.parseSettings([{ key: bot.KEY_LIVE_APPS, value: '["rss-reader-4113da", 3]' }]).liveApps, ['rss-reader-4113da']);

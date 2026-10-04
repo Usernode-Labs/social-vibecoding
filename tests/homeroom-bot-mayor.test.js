@@ -170,7 +170,8 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({ started_at: 'x', open_question: 1 }), 'looking at it now');
   assert.equal(mayor.statusOf({ open_question: 1, proposal_status: 'promoted' }), 'waiting for their answer to your question');
   assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
-  assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting in your queue (number 4)');
+  // Not its number across every project's queue: what decides when it starts is not that.
+  assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting for a free builder');
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false }), 'you could not build it');
   // WP1: a build that was not needed stopped; it did not fail.
   assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
@@ -509,4 +510,14 @@ test('WP1: the model reads what each activity card shows now, beside the card\'s
   // The turn hands it the person's own cards.
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /cardsOf: \(\) => activityModule\(deps\)\.cardsFor\(pool, \{ user, settings, config \}\),/);
+});
+
+test('B2: the chat never runs out with building time, and allows 120 messages an hour', () => {
+  assert.equal(mayor.MAX_TURNS_PER_HOUR, 120);
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const answerFn = src.slice(src.indexOf('async function answer('), src.indexOf('const ctx = {', src.indexOf('async function answer(')));
+  assert.doesNotMatch(answerFn, /overWeeklyAllowance/, 'used-up building time holds requests, not the chat');
+  // Nothing the bot says or is told to say names an amount of money.
+  assert.doesNotMatch(src, /dollars\(/);
+  assert.match(src, /Never name an amount of money\./);
 });

@@ -624,7 +624,9 @@ test('the live list also shows the projects people on the DM list made, and whos
 
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /builtFor: await builtForList\(pool, settings\),/);
-  assert.match(src, /if \(!\[\.\.\.\(settings\.liveApps \|\| \[\]\), \.\.\.\(settings\.firstVersionApps \|\| \[\]\)\]\.includes\(slug\)\) \{/,
+  // The live list and the DM list's projects are one scope (live.liveScope),
+  // read whether or not the bot is on yet.
+  assert.match(src, /if \(!live\.inScope\(live\.liveScope\(\{ \.\.\.settings, mode: 'shadow' \}\), slug\)\) \{/,
     'Triage again works on them too');
 });
 

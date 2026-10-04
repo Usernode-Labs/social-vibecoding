@@ -111,6 +111,21 @@ test('the bot talks in a DM only to people on the list', () => {
   assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
 });
 
+test('hasBot: the list is the gate, until everyone with platform access has the bot', () => {
+  const list = { mode: 'shadow', dmUsers: ['evan'] };
+  const evan = { username: 'Evan', hasPlatformAccess: true };
+  const ada = { username: 'ada', hasPlatformAccess: true };
+  assert.equal(dm.hasBot(list, evan), true);
+  assert.equal(dm.hasBot(list, ada), false, 'not on the list');
+  const everyone = { mode: 'shadow', audience: 'everyone', dmUsers: [] };
+  assert.equal(dm.hasBot(everyone, ada), true, 'an empty list silences nobody');
+  assert.equal(dm.hasBot(everyone, { username: 'waiting', hasPlatformAccess: false }), false, 'still on the waitlist');
+  assert.equal(dm.hasBot(everyone, { username: 'boss', hasPlatformAccess: false, isAdmin: true }), true, 'an admin always has access');
+  assert.equal(dm.hasBot(everyone, { username: 'homeroom_bot', hasPlatformAccess: true, isSynthetic: true }), false);
+  assert.equal(dm.hasBot(everyone, null), false);
+  assert.equal(dm.hasBot(null, ada), false);
+});
+
 test('a first version gets the longer build clocks', () => {
   const app = { repo_url: 'https://github.com/usernode-bot/x' };
   const plain = bot.buildBudgets(app, {}, 60_000);
@@ -365,8 +380,42 @@ test('a request whose requester spent the week\'s allowance is held, said once, 
   });
   assert.deepEqual(out, { ran: false, reason: 'user_allowance' });
   assert.equal(held.length, 1);
-  assert.ok(queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s) && q.p[0] === 31));
+  // Held, not dropped: the row keeps its place and waits for Monday.
+  const hold = queries.find((q) => /SET started_at = NULL, held_until = \$2 WHERE id = \$1/.test(q.s));
+  assert.ok(hold && hold.p[0] === 31, 'the row is held');
+  const reset = new Date(hold.p[1]);
+  assert.equal(reset.getUTCDay(), 1, 'until the week resets on Monday');
+  assert.equal(reset.getUTCHours(), 0);
+  assert.ok(!queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'never dropped');
   assert.ok(!queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no run, nothing spent');
+
+  // A look the bot queued for itself (a restart's) is free: nobody's week holds it.
+  queries.length = 0;
+  held.length = 0;
+  const free = await bot.runTriage(pool, {}, {
+    bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
+    item: { id: 32, issue_number: 7, reason: 'restart' }, mode: 'shadow',
+    settings: { mode: 'shadow', liveApps: ['seed-swap'], userWeeklyCents: 100 }, deps,
+  }).catch(() => null);
+  assert.notDeepEqual(free, { ran: false, reason: 'user_allowance' });
+  assert.equal(held.length, 0);
+});
+
+test('billing: whoever asked pays, and what the bot caused itself is charged to nobody', () => {
+  assert.deepEqual(bot.billingOf({ reason: 'new' }, 'live'), { charged: true, payerUserId: null }, 'the requester, by default');
+  assert.deepEqual(bot.billingOf({ reason: 'dm_start', payer_user_id: 12 }, 'live'), { charged: true, payerUserId: 12 });
+  for (const reason of ['restart', 'checks_failing', 'budget_retry']) {
+    assert.equal(bot.billingOf({ reason }, 'live').charged, false, reason);
+  }
+  assert.equal(bot.billingOf({ reason: 'new' }, 'shadow').charged, false, 'a shadow run is never charged');
+});
+
+test('the held message names no amount, and offers the group when there is one', () => {
+  const solo = dm.overAllowanceText({ title: 'Sunday watering reminder', appName: 'Plant Pal' });
+  assert.equal(solo, 'You\'ve used this week\'s building time. I\'ll start Sunday watering reminder on Monday.');
+  const group = dm.overAllowanceText({ title: 'Sunday host reminder', appName: 'Supper Club', group: true });
+  assert.equal(group, 'You\'ve used this week\'s building time. I\'ll start Sunday host reminder on Monday, or someone else in Supper Club can ask me for it.');
+  assert.doesNotMatch(solo + group, /\$/);
 });
 
 // ── The create dialog and the DM screen ──────────────────────────────────

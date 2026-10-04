@@ -128,11 +128,33 @@ const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // (homeroom-bot-mayor.js). On by default for the people on the DM list; the
 // switch is there to stop it without taking anybody off the list.
 const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
+// Who has the bot: `list`, the people on KEY_DM_USERS and the projects they
+// made (everything above), or `everyone`: every person with platform
+// access, and every project but a paused one and the platform's own
+// (live.liveScope). It ships as `list`, and switching it is the decision to
+// turn the bot on for everybody, so it is an admin's alone; `list` stays a
+// working way back. When it is switched to `everyone` the moment is kept
+// (KEY_AUDIENCE_SINCE): a request nobody has touched since, older than that,
+// is not picked up on its own (refreshApp), or the first refresh would read
+// and build every open request on every app at once.
+const AUDIENCES = Object.freeze(['list', 'everyone']);
+const KEY_AUDIENCE = 'homeroom_bot_audience';
+const KEY_AUDIENCE_SINCE = 'homeroom_bot_audience_since';
+// With the `everyone` audience, whether the bot also acts for real on the
+// platform's own project. Off: its requests stay in shadow, as they do on
+// any project not in the live list today.
+const KEY_LIVE_PLATFORM = 'homeroom_bot_live_platform';
+// The most proposals the bot may have up for a vote at once, across every
+// app (botProposalCeiling). Unset (0) is automatic: 5 per live app with the
+// list audience, as before, and EVERYONE_PROPOSAL_CEILING with `everyone`,
+// where "per live app" would be every app there is.
+const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_DM_USERS, KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_AUDIENCE, KEY_AUDIENCE_SINCE, KEY_LIVE_PLATFORM, KEY_PROPOSAL_CEILING,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_DM_USERS = 50;
@@ -161,10 +183,18 @@ const DEFAULTS = Object.freeze({
   liveAtOnce: 6,
   perPerson: 2,
   dmChat: true,
+  audience: 'list',
+  audienceSince: null,
+  livePlatform: false,
+  proposalCeiling: 0,
   // Not a stored setting: the projects somebody on the DM list made
   // (homeroom-bot-dm.js projectsMadeFor), live like the apps in liveApps.
-  // readSettings fills it in.
+  // readSettings fills it in, with the list audience only.
   firstVersionApps: [],
+  // Not a stored setting either: the slugs of the platform's own project,
+  // which the `everyone` audience leaves out unless livePlatform is on.
+  // readSettings fills it in, with that audience only.
+  platformSlugs: [],
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
@@ -172,6 +202,11 @@ const MAX_BUILD_CONCURRENCY = 4;
 // use, so the ceiling stays well under it.
 const MAX_LIVE_AT_ONCE = 16;
 const MAX_PER_PERSON = 4;
+const MAX_PROPOSAL_CEILING = 1000;
+// The automatic ceiling with the `everyone` audience: what twenty live apps
+// had under "5 per live app", and well past what 16 builds at once can fill
+// in the days a vote takes.
+const EVERYONE_PROPOSAL_CEILING = 100;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
@@ -436,12 +471,54 @@ function parseSettings(rows) {
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
+  const audience = AUDIENCES.includes(map.get(KEY_AUDIENCE)) ? map.get(KEY_AUDIENCE) : DEFAULTS.audience;
+  // Written with the switch (writeSettings); readSettings fills in a switch
+  // made some other way.
+  const sinceMs = Date.parse(map.get(KEY_AUDIENCE_SINCE) || '');
+  const audienceSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
+  const livePlatform = map.get(KEY_LIVE_PLATFORM) === 'on';
+  const proposalCeiling = clampInt(map.get(KEY_PROPOSAL_CEILING), DEFAULTS.proposalCeiling, 0, MAX_PROPOSAL_CEILING);
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
     liveAtOnce, perPerson, dmChat, models,
+    audience, audienceSince, livePlatform, proposalCeiling,
     firstVersionApps: [],
+    platformSlugs: [],
   };
+}
+
+// The platform's own project, by slug, for the `everyone` audience to leave
+// out (live.liveScope): its self-hosted row (config.js SELF_APP_SLUG, never
+// renamed), and any app on the platform's repository. Read at most once a
+// minute: readSettings runs on every pass and every DM, and which app is
+// the platform's does not change. A read that fails keeps the last answer,
+// and the fixed slug is left out even before the first one.
+const PLATFORM_SELF_APP_SLUG = 'usernode-2d5619';
+const PLATFORM_SLUGS_TTL_MS = 60 * 1000;
+let platformSlugsCache = null;
+
+async function platformAppSlugs(pool) {
+  if (platformSlugsCache && platformSlugsCache.until > Date.now()) return platformSlugsCache.slugs;
+  // readSettings is handed no config: the same variables config.js reads
+  // for platformRepoUrl, in its order.
+  const platformRepoUrl = process.env.USERNODE_PLATFORM_REPO || process.env.USERNODE_REPO_URL || DEFAULT_PLATFORM_REPO_URL;
+  const platform = parseRepo(platformRepoUrl);
+  try {
+    const { rows } = await pool.query(
+      "SELECT slug, repo_url, self_hosted FROM apps WHERE self_hosted = TRUE OR repo_url ILIKE '%' || $1 || '%'",
+      [platform ? `${platform.owner}/${platform.repo}` : PLATFORM_SELF_APP_SLUG],
+    );
+    const slugs = [...new Set([
+      PLATFORM_SELF_APP_SLUG,
+      ...rows.filter((r) => r.self_hosted || isPlatformRepo(r, { platformRepoUrl })).map((r) => r.slug),
+    ])];
+    platformSlugsCache = { slugs, until: Date.now() + PLATFORM_SLUGS_TTL_MS };
+    return slugs;
+  } catch (err) {
+    log.warn('homeroom-bot', 'platform app read failed', { err: err.message });
+    return platformSlugsCache?.slugs || [PLATFORM_SELF_APP_SLUG];
+  }
 }
 
 /**
@@ -468,6 +545,23 @@ async function readSettings(pool) {
       [SETTING_KEYS],
     );
     const settings = parseSettings(rows);
+    if (settings.audience === 'everyone') {
+      // Every project is live but these (live.liveScope), so the projects
+      // made by somebody on the list below need no reading: they are live
+      // already, and that list is unbounded.
+      settings.platformSlugs = await platformAppSlugs(pool);
+      // A switch to everyone made without writeSettings (a hand edit) has no
+      // moment of its own: it counts from when the audience row last changed
+      // (never null: the row was just read), not from no time at all, which
+      // would read every old request.
+      if (!settings.audienceSince) {
+        const { rows: at } = await pool.query(
+          'SELECT updated_at FROM platform_settings WHERE key = $1', [KEY_AUDIENCE],
+        ).catch(() => ({ rows: [] }));
+        if (at[0]?.updated_at) settings.audienceSince = new Date(at[0].updated_at).toISOString();
+      }
+      return settings;
+    }
     // #3624: a project somebody on the DM list made (one the bot builds
     // from its description, or one they imported, forked or created
     // without one) is live while that person is still on the list.
@@ -525,6 +619,21 @@ function validateSettingsPatch(patch) {
   if (body.dmChat !== undefined) {
     if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
     updates.push([KEY_DM_CHAT, body.dmChat ? 'on' : 'off']);
+  }
+  if (body.audience !== undefined) {
+    if (!AUDIENCES.includes(body.audience)) return { ok: false, error: 'audience must be list or everyone' };
+    updates.push([KEY_AUDIENCE, body.audience]);
+  }
+  if (body.livePlatform !== undefined) {
+    if (typeof body.livePlatform !== 'boolean') return { ok: false, error: 'livePlatform must be true or false' };
+    updates.push([KEY_LIVE_PLATFORM, body.livePlatform ? 'on' : 'off']);
+  }
+  if (body.proposalCeiling !== undefined) {
+    const n = Number(body.proposalCeiling);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_PROPOSAL_CEILING) {
+      return { ok: false, error: `proposalCeiling must be an integer from 0 (automatic) to ${MAX_PROPOSAL_CEILING}` };
+    }
+    updates.push([KEY_PROPOSAL_CEILING, String(n)]);
   }
   if (body.turnSeconds !== undefined) {
     const n = Number(body.turnSeconds);
@@ -625,8 +734,19 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   const valid = validateSettingsPatch(patch);
   if (!valid.ok) return valid;
   let modeBefore = null;
-  if (valid.updates.some(([key]) => key === KEY_MODE)) {
-    try { modeBefore = (await readSettings(pool)).mode; } catch {}
+  let audienceBefore = null;
+  if (valid.updates.some(([key]) => key === KEY_MODE || key === KEY_AUDIENCE)) {
+    try {
+      const before = await readSettings(pool);
+      modeBefore = before.mode;
+      audienceBefore = before.audience;
+    } catch {}
+  }
+  const audienceAfter = valid.updates.find(([key]) => key === KEY_AUDIENCE)?.[1];
+  // The moment the bot was given to everyone: what is older than it, and
+  // untouched since, is not picked up on its own (refreshApp).
+  if (audienceAfter === 'everyone' && audienceBefore !== 'everyone') {
+    valid.updates.push([KEY_AUDIENCE_SINCE, new Date().toISOString()]);
   }
   for (const [key, value] of valid.updates) {
     await pool.query(
@@ -653,8 +773,11 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       limits.invalidate();
     } catch {}
   }
-  // More room for live work is used now, not on the next idle pass.
-  if (valid.updates.some(([key]) => key === KEY_LIVE_AT_ONCE || key === KEY_PER_PERSON || key === KEY_CONCURRENCY)) {
+  // More room for live work is used now, not on the next idle pass. A new
+  // audience, or the platform's project in or out of it, changes which
+  // queue rows are live: the whole queue is rebuilt before the next pick, so
+  // a row queued for the background lane is not taken live untouched.
+  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY, KEY_AUDIENCE, KEY_LIVE_PLATFORM].includes(key))) {
     wakeAll();
   }
   const modeAfter = valid.updates.find(([key]) => key === KEY_MODE)?.[1];
@@ -1103,7 +1226,7 @@ function latestOf(a, b) {
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at,
+    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building
@@ -1128,7 +1251,10 @@ async function lastRunsByIssue(pool, appId) {
  * for, so a merged proposal brings back one held build rather than all of
  * them at once.
  */
-async function refreshApp(pool, app, { github = require('./github'), capRoom = null, bot = null, ws = null, notifications = null } = {}) {
+async function refreshApp(pool, app, {
+  github = require('./github'), capRoom = null, bot = null, ws = null, notifications = null, everyoneSince = null,
+  settings = null, dm = null,
+} = {}) {
   const repo = parseRepo(app.repo_url);
   const out = { app: app.slug, queued: 0, removed: 0, skipped: null };
   if (!repo) { out.skipped = 'no_repo'; return out; }
@@ -1152,6 +1278,14 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
+  // The `everyone` audience (KEY_AUDIENCE_SINCE), on a live app: what the
+  // bot had not read live before the switch is judged as if it had read it
+  // then, as an import's backlog is just above. A request nobody has touched
+  // since waits for somebody to (a comment, an answer, "Ask Homeroom bot to
+  // build this"); one the bot only read in the background is read again only
+  // when something new happens on it. Without this, the first refresh after
+  // the switch would read, and build, every open request on every app.
+  const everyoneMs = capRoom ? toMs(everyoneSince) : 0;
   // #3751: on a live app, a mention of the bot on a request a person holds
   // is answered (who holds it, and how to ask it to go ahead anyway), and a
   // go-ahead lets the bot take the request up after all.
@@ -1169,8 +1303,14 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   const quiet = [];
   for (const issue of issues) {
     const n = Number(issue.number);
-    const lastRun = lastRuns.get(n)
+    let lastRun = lastRuns.get(n)
       || (backlogUntil && toMs(issue.createdAt) <= backlogUntil ? { thread_seen_at: importedAt } : null);
+    if (everyoneMs && (!lastRun || lastRun.mode !== 'live') && toMs(issue.createdAt) <= everyoneMs) {
+      const floor = new Date(everyoneMs).toISOString();
+      lastRun = lastRun
+        ? { ...lastRun, thread_seen_at: toMs(lastRun.thread_seen_at) > everyoneMs ? lastRun.thread_seen_at : floor }
+        : { thread_seen_at: floor };
+    }
     const verdict = classifyIssue({
       issue,
       threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
@@ -1193,8 +1333,9 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
     }
   }
 
+  const byNumber = new Map(issues.map((issue) => [Number(issue.number), issue]));
   for (const item of eligible) {
-    await pool.query(
+    const { rows: queued } = await pool.query(
       `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (app_id, issue_number) DO UPDATE
@@ -1203,10 +1344,17 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
              reason = CASE WHEN homeroom_bot_queue.priority = 0
                              OR homeroom_bot_queue.reason = ANY($6::text[])
                            THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END
-       WHERE homeroom_bot_queue.started_at IS NULL`,
+       WHERE homeroom_bot_queue.started_at IS NULL
+       RETURNING id, (xmax = 0) AS inserted`,
       [app.id, item.n, item.priority, item.reason, item.threadSeenAt, SELF_QUEUED_REASONS],
     );
     out.queued += 1;
+    // A new request on a live app: the person it is for gets its card now,
+    // under the key the read will start from (runTriage), so the wait for a
+    // free builder is on the card rather than silent. Best-effort.
+    if (capRoom && bot && item.reason === 'new' && queued[0]?.inserted) {
+      await noteQueued(pool, { app, repo, issue: byNumber.get(item.n), queueId: queued[0].id, bot, settings, dm });
+    }
   }
   // Rows the refresh no longer wants (closed, claimed, unchanged) leave the
   // queue; an admin's "run now" (priority 0) is kept until it runs, and a
@@ -1223,6 +1371,31 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   return out;
 }
 
+/** When the bot was given to everyone, while it is (refreshApp), else null. */
+function everyoneSinceOf(settings) {
+  return settings?.audience === 'everyone' ? settings.audienceSince || null : null;
+}
+
+/**
+ * A new request was queued on a live app (refreshApp): record who it is for
+ * and start their activity card (homeroom-bot-activity.js startCard, which
+ * sends nothing to somebody the bot does not talk to). Never throws.
+ */
+async function noteQueued(pool, { app, repo, issue, queueId, bot, settings = null, dm = null }) {
+  if (!issue) return null;
+  try {
+    const dmSvc = dm || require('./homeroom-bot-dm');
+    const requester = await dmSvc.recordRequester(pool, { app, repo, issueNumber: Number(issue.number), issue });
+    if (!requester) return null;
+    return await activity().startCard(pool, {
+      app, issueNumber: Number(issue.number), requester, bot, jobKey: queueId, settings, queued: true, deps: { dm: dmSvc },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not start the card for a queued request', { app: app.slug, issueNumber: issue.number, err: err.message });
+    return null;
+  }
+}
+
 async function refreshQueue(pool, settings, deps = {}) {
   const apps = await listApps(pool);
   const paused = new Set(settings?.pausedApps || []);
@@ -1233,7 +1406,7 @@ async function refreshQueue(pool, settings, deps = {}) {
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
         ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
-      const r = await refreshApp(pool, app, { ...deps, capRoom });
+      const r = await refreshApp(pool, app, { ...deps, capRoom, everyoneSince: everyoneSinceOf(settings), settings });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -1256,7 +1429,7 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
         ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
-      const r = await refreshApp(pool, app, { ...deps, capRoom });
+      const r = await refreshApp(pool, app, { ...deps, capRoom, everyoneSince: everyoneSinceOf(settings), settings });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -1307,6 +1480,7 @@ async function releaseStaleClaims(pool, settings, { keepIds = [] } = {}) {
 async function recordThrownTriage(pool, { app, item, settings, err }) {
   try {
     await insertRun(pool, {
+      ...billingOf(item, live.isLiveFor(settings, app) ? 'live' : settings.mode),
       appId: app.id, issueNumber: item.issue_number,
       mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
       verdict: 'failed', error: `threw: ${err?.message || err}`,
@@ -1320,19 +1494,19 @@ async function recordThrownTriage(pool, { app, item, settings, err }) {
   }
 }
 
-async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [], liveSlugs = [] }) {
-  // #3624 stage 2: an app the bot acts on for real is the live lane's, and
-  // is left out here like a paused one.
+async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [], scope = null }) {
+  // #3624 stage 2: an app the bot acts on for real (live.liveScope) is the
+  // live lane's, and is left out here like a paused one.
   const { rows: head } = await pool.query(
     `SELECT q.app_id
        FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
       WHERE q.started_at IS NULL
         AND NOT (q.app_id = ANY($1::int[]))
         AND NOT (a.slug = ANY($2::text[]))
-        AND NOT (a.slug = ANY($3::text[]))
+        AND NOT (CASE WHEN $4::boolean THEN NOT (a.slug = ANY($5::text[])) ELSE a.slug = ANY($3::text[]) END)
       ORDER BY q.priority, q.enqueued_at
       LIMIT 1`,
-    [excludeAppIds, pausedApps, liveSlugs],
+    [excludeAppIds, pausedApps, scope?.slugs || [], !!scope?.all, scope?.except || []],
   );
   if (!head.length) return null;
   const appId = head[0].app_id;
@@ -1541,14 +1715,33 @@ async function ensureBotSession(pool, config, bot, app) {
   return session;
 }
 
+// Turns the bot queued for itself (SELF_QUEUED_REASONS), and a turn its own
+// clock stopped and queued again, are its own doing: nobody's building time
+// pays for them.
+const UNCHARGED_REASONS = Object.freeze([...SELF_QUEUED_REASONS, 'budget_retry']);
+
+/**
+ * Pure: whose weekly building time a run on `item` counts toward
+ * (homeroom-bot-dm.js weeklySpentCents). Charged when it is live and asked
+ * for by somebody, not caused by the bot itself; paid by whoever asked the
+ * bot to start it when that was somebody other than the requester (the
+ * queue row's payer), else by the requester, whom the ledger already knows.
+ */
+function billingOf(item, runMode) {
+  return {
+    charged: runMode === 'live' && !UNCHARGED_REASONS.includes(String(item?.reason || '')),
+    payerUserId: Number(item?.payer_user_id) || null,
+  };
+}
+
 async function insertRun(pool, run) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        checks_head_sha, charged, payer_user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -1558,7 +1751,10 @@ async function insertRun(pool, run) {
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
       run.budgetStop || null, run.proposalSessionId || null,
       // The failing head a checks follow-up looked at, so it looks once.
-      run.checksHeadSha || null],
+      run.checksHeadSha || null,
+      // Whose week it counts toward, if anybody's (billingOf): a shadow run
+      // never does.
+      run.charged ?? run.mode === 'live', run.payerUserId || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -1581,6 +1777,10 @@ async function insertRun(pool, run) {
  * promote only (promoteAsBot); the bot checks it before it builds.
  */
 function botProposalCeiling(settings) {
+  // An admin's number, when there is one (KEY_PROPOSAL_CEILING).
+  const fixed = Number(settings?.proposalCeiling);
+  if (Number.isInteger(fixed) && fixed > 0) return fixed;
+  if (settings?.audience === 'everyone') return EVERYONE_PROPOSAL_CEILING;
   const apps = (settings?.liveApps || []).length + (settings?.firstVersionApps || []).length;
   return PROPOSALS_PER_APP_CAP * Math.max(1, apps);
 }
@@ -1986,6 +2186,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // A platform fault the current streak already recorded gets no second
     // row (#3122); the retry is still logged below.
     const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
@@ -2033,13 +2234,26 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       log.warn('homeroom-bot', 'Could not record who a request is for', { app: app.slug, issueNumber, err: err.message });
       return null;
     });
-    if (requester && await dm.overWeeklyAllowance(pool, settings, requester.userId)) {
-      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
-      await dm.noteOverAllowance(pool, { settings, requester, app, issueNumber, bot }).catch((err) => {
+    // Whose week pays for this look (billingOf): the one who asked the bot
+    // to start it, else the requester. A look the bot caused itself is free.
+    const billing = billingOf(item, runMode);
+    const payerId = billing.payerUserId || requester?.userId || null;
+    if (requester && billing.charged && await dm.overWeeklyAllowance(pool, settings, payerId)) {
+      // Held, not dropped: the row keeps its place (enqueued_at) and waits
+      // for the week to reset, so it goes first then, and the refresh does
+      // not drop and queue it again every five minutes meanwhile.
+      // liveCandidates leaves a held row alone until then.
+      await pool.query(
+        'UPDATE homeroom_bot_queue SET started_at = NULL, held_until = $2 WHERE id = $1',
+        // The platform's week (limits.js), not a fake's: it is only a date.
+        [item.id, require('./limits').weeklyResetAt()],
+      );
+      const payer = payerId === requester.userId ? null : await dm.personOf(pool, payerId).catch(() => null);
+      await dm.noteOverAllowance(pool, { settings, requester, payer, app, issueNumber, bot }).catch((err) => {
         log.warn('homeroom-bot', 'Could not say the allowance is spent', { app: app.slug, issueNumber, err: err.message });
       });
-      log.info('homeroom-bot', 'Request held: its requester\'s weekly allowance is spent', {
-        app: app.slug, issueNumber, userId: requester.userId,
+      log.info('homeroom-bot', 'Request held until the week resets: its payer\'s building time is used up', {
+        app: app.slug, issueNumber, userId: payerId,
       });
       return { ran: false, reason: 'user_allowance' };
     }
@@ -2332,6 +2546,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (budgetHit) {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
@@ -2396,6 +2611,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
   const runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
@@ -3963,6 +4179,7 @@ async function runFollowUp(pool, config, {
       : mode === 'build' && result.pushOk === false
         ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
@@ -3990,6 +4207,7 @@ async function runFollowUp(pool, config, {
 
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
     appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
     question: action === 'ask' ? reply : null,
     questionAnswers: askAnswers,
@@ -4190,6 +4408,7 @@ async function runChecksFix(pool, config, {
   let runId = null;
   const handOff = async ({ why, verdict, extra = {} }) => {
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict,
       reason: why, error: verdict === 'failed' ? `checks: ${why}` : null,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -4285,6 +4504,7 @@ async function runChecksFix(pool, config, {
     await reconcileRevision({ config, pool, session, app, issueNumber, deps });
     const summary = parsed?.summary || parsed?.reply || 'It changed the proposal so its checks pass.';
     runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
       appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -4457,12 +4677,13 @@ async function actOnVerdict({
       app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already && !quietHold,
     });
     if (!already && !quietHold) {
-      await say(kind, live.heldText({
-        cap: capSuppressed,
-        verdict: parsed.verdict,
-        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
-          : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY,
-      }));
+      const limit = capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
+        : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY;
+      // A build a proposal cap holds is said in the requester's DM too, so
+      // waiting is never a mystery (homeroom-bot-dm.js dmText). A question
+      // the daily tripwire holds is not: there is nothing to tell them yet.
+      const toDm = capSuppressed === 'proposals_per_app' || capSuppressed === 'proposals_total';
+      await say(kind, live.heldText({ cap: capSuppressed, verdict: parsed.verdict, limit }), toDm ? { dm: { limit } } : undefined);
     }
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
@@ -4715,11 +4936,14 @@ function pickLive(candidates, {
  * session.
  */
 async function liveCandidates(pool, {
-  liveSlugs, excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200, excludeFollowUps = [],
+  scope: given = null, liveSlugs = [], excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200, excludeFollowUps = [],
 }) {
-  if (!liveSlugs.length) return [];
+  // A scope from live.liveScope; a bare list of slugs reads as the list audience.
+  const scope = given || { all: false, slugs: liveSlugs, except: [] };
+  if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
+            q.payer_user_id,
             COALESCE(r.user_id, i.created_by) AS person_id,
             fu.id AS follow_up_session_id
        FROM homeroom_bot_queue q
@@ -4738,7 +4962,9 @@ async function liveCandidates(pool, {
           ORDER BY cs.id DESC LIMIT 1
        ) fu ON TRUE
       WHERE q.started_at IS NULL
-        AND a.slug = ANY($1::text[])
+        AND (CASE WHEN $9::boolean THEN NOT (a.slug = ANY($10::text[])) ELSE a.slug = ANY($1::text[]) END)
+        -- Held until its payer's week resets (runTriage): its turn then.
+        AND (q.held_until IS NULL OR q.held_until <= NOW())
         -- An app backed off after its session refused a turn holds back
         -- what runs on that session; a follow-up runs on its proposal's, and
         -- is backed off on its own.
@@ -4760,7 +4986,8 @@ async function liveCandidates(pool, {
         )
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
-    [liveSlugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS],
+    [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
+      scope.all, scope.except],
   );
   return rows;
 }
@@ -4780,11 +5007,13 @@ async function liveCandidates(pool, {
  * on projects the bot acts on and has not paused. A run a newer verdict on
  * the same issue replaced waits for nothing.
  */
-async function liveBuildCandidates(pool, { liveSlugs, pausedApps = [], limit = 50 }) {
-  if (!liveSlugs.length) return [];
+async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], pausedApps = [], limit = 50 }) {
+  // As liveCandidates: a scope, or a bare list of slugs.
+  const scope = given || { all: false, slugs: liveSlugs, except: [] };
+  if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
-            r.build_spec_md, r.build_cost_usd,
+            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -4796,14 +5025,14 @@ async function liveBuildCandidates(pool, { liveSlugs, pausedApps = [], limit = 5
        ) i ON TRUE
       WHERE r.live_build_waiting_at IS NOT NULL AND r.mode = 'live' AND r.verdict = 'ready'
         AND r.build_ok IS NULL AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL
-        AND a.slug = ANY($1::text[]) AND NOT (a.slug = ANY($2::text[]))
+        AND (CASE WHEN $4::boolean THEN NOT (a.slug = ANY($5::text[])) ELSE a.slug = ANY($1::text[]) END) AND NOT (a.slug = ANY($2::text[]))
         AND NOT EXISTS (
           SELECT 1 FROM homeroom_bot_runs n
            WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id
         )
       ORDER BY r.live_build_waiting_at, r.id
       LIMIT $3`,
-    [liveSlugs, pausedApps, limit],
+    [scope.slugs, pausedApps, limit, scope.all, scope.except],
   );
   return rows;
 }
@@ -5138,6 +5367,24 @@ function outcomeOf(r, { app, item }) {
   return o;
 }
 
+/**
+ * The bot's own weekly budget (its users row, limits.checkBudget) is spent:
+ * nothing more is dispatched until the idle pass looks again, and the people
+ * whose work was next hear it once a week (dm.notePausedForWeek) rather than
+ * finding the bot quiet. Only the weekly cap is a pause "for the rest of the
+ * week"; any other refusal is said by nobody, as before. Never throws.
+ */
+async function pauseOnBudget(pool, { settings, bot, reason = null, people = [], deps = {} }) {
+  budgetPausedUntil = Date.now() + IDLE_PASS_DELAY_MS;
+  if (reason !== 'weekly_limit') return;
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  for (const userId of [...new Set(people.map(Number).filter((n) => Number.isInteger(n) && n > 0))]) {
+    await dm.notePausedForWeek(pool, { settings, bot, userId }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not say the bot paused for the week', { userId, err: err.message });
+    });
+  }
+}
+
 /** One issue through runTriage, a throw recorded rather than lost. */
 async function triageOne(pool, config, { bot, app, item, deps }) {
   const settings = await readSettings(pool);
@@ -5196,10 +5443,9 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   if (stopped || settings.mode === 'off') return [];
   if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
   const started = [];
-  // A staging copy never acts (live.isLiveFor), so there every app is the
+  // A staging copy never acts (live.liveScope), so there every app is the
   // background lane's.
-  const liveSlugs = isStagingLoop() ? []
-    : [...new Set([...(settings.liveApps || []), ...(settings.firstVersionApps || [])])];
+  const scope = live.liveScope(settings);
   const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
   const perPerson = settings.perPerson || DEFAULTS.perPerson;
 
@@ -5207,14 +5453,26 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   // anything still to be read. One per project, in a slot of its own, so
   // the project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
-  if (buildSlots && liveSlugs.length) {
+  if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
-    const waiting = (await liveBuildCandidates(pool, { liveSlugs, pausedApps: settings.pausedApps || [] }))
+    const waiting = (await liveBuildCandidates(pool, { scope, pausedApps: settings.pausedApps || [] }))
       .filter((row) => !seen.has(`build:${Number(row.id)}`) && !liveBuildsInFlight.has(Number(row.id)));
     const picks = pickLiveBuilds(waiting, {
       buildingAppIds: running.filter((e) => e.build).map((e) => Number(e.appId)),
       active: running.filter((e) => e.lane === 'live'), slots: buildSlots, perPerson,
     });
+    if (picks.length) {
+      // A build spends from the bot's weekly budget like a read does, and
+      // more: it is checked here, before any starts, as runTriage checks it
+      // before a read. It used to be checked before reads alone, so builds
+      // waiting their turn went on past a spent budget.
+      const budget = await (deps.limits || require('./limits')).checkBudget(pool, bot.id);
+      if (budget.error) {
+        log.info('homeroom-bot', 'Builds paused on budget', { reason: budget.reason || null });
+        await pauseOnBudget(pool, { settings, bot, reason: budget.reason, people: picks.map((p) => p.person_id), deps });
+        return started;
+      }
+    }
     if (picks.length) {
       const { rows: apps } = await pool.query(
         'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = ANY($1::int[])',
@@ -5226,12 +5484,18 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         seen.add(`build:${Number(pick.id)}`);
-        // Its requester's week is spent: it waits for the week to reset,
-        // as a request waiting to be read does (runTriage), and says so once.
-        if (pick.person_id && await dm.overWeeklyAllowance(pool, settings, pick.person_id).catch(() => false)) {
+        // Its payer's week is spent (the run's payer, else its requester):
+        // it waits for the week to reset, as a request waiting to be read
+        // does (runTriage), and says so once. A build the bot owes nobody
+        // for (an uncharged run) is never held.
+        const payerId = Number(pick.payer_user_id) || pick.person_id;
+        if (pick.charged !== false && payerId
+            && await dm.overWeeklyAllowance(pool, settings, payerId).catch(() => false)) {
           const requester = await dm.requesterOf(pool, app.id, Number(pick.issue_number)).catch(() => null);
           if (requester) {
-            await dm.noteOverAllowance(pool, { settings, requester, app, issueNumber: Number(pick.issue_number), bot })
+            const payer = Number(payerId) === Number(requester.userId) ? null
+              : await dm.personOf(pool, payerId).catch(() => null);
+            await dm.noteOverAllowance(pool, { settings, requester, payer, app, issueNumber: Number(pick.issue_number), bot })
               .catch(() => {});
           }
           continue;
@@ -5262,9 +5526,9 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
 
   // Live: one issue per start.
   const liveSlots = Math.max(0, liveAtOnce - liveActive.length);
-  if (liveSlots && liveSlugs.length) {
+  if (liveSlots && !live.scopeIsEmpty(scope)) {
     const candidates = (await liveCandidates(pool, {
-      liveSlugs, excludeAppIds: backedOff, busyAppIds: sessionTaken, botId: bot?.id ?? null,
+      scope, excludeAppIds: backedOff, busyAppIds: sessionTaken, botId: bot?.id ?? null,
       pausedApps: settings.pausedApps || [], excludeFollowUps: followUpsBackedOff(now),
     })).filter((row) => !seen.has(Number(row.id)));
     const picks = pickLive(candidates, {
@@ -5293,7 +5557,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         const item = {
           id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
           reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
-          followUp: !!pick.followUp,
+          payer_user_id: pick.payer_user_id || null, followUp: !!pick.followUp,
         };
         started.push(track(pool, pick.followUp ? `followup:${Number(pick.id)}` : Number(app.id), {
           lane: 'live', appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
@@ -5303,6 +5567,9 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
             const r = await triageOne(pool, config, { bot, app, item, deps });
             const o = outcomeOf(r, { app, item });
             if (['budget', 'refused', 'mode_off', NOT_FOLLOW_UP].includes(r?.reason)) await releaseClaim(pool, item.id);
+            if (r?.reason === 'budget') {
+              await pauseOnBudget(pool, { settings, bot, reason: r.detail, people: [pick.person_id], deps });
+            }
             return o;
           } finally {
             tray().noteWorkChanged(pick.person_id, deps);
@@ -5318,7 +5585,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     const batch = await nextBatch(pool, {
       batchSize: settings.batchSize,
       excludeAppIds: [...new Set([...inFlight.values()].map((e) => Number(e.appId))), ...backedOff],
-      pausedApps: settings.pausedApps || [], liveSlugs,
+      pausedApps: settings.pausedApps || [], scope,
     });
     if (!batch || !batch.app) break;
     const items = (batch.items || []).filter((it) => !seen.has(Number(it.id)));
@@ -5363,8 +5630,7 @@ function isStagingLoop() {
  * from the database, so any Pod can answer, not only the one running it.
  */
 async function workingNow(pool, settings, { userId = null } = {}) {
-  const liveSlugs = new Set(isStagingLoop() ? []
-    : [...(settings?.liveApps || []), ...(settings?.firstVersionApps || [])]);
+  const scope = live.liveScope(settings);
   const { rows } = await pool.query(
     `SELECT q.app_id, q.issue_number, q.started_at, q.reason, a.slug, a.name,
             COALESCE(r.user_id, i.created_by) AS person_id, u.username AS person
@@ -5388,7 +5654,7 @@ async function workingNow(pool, settings, { userId = null } = {}) {
     appName: row.name,
     issueNumber: Number(row.issue_number),
     since: row.started_at,
-    lane: liveSlugs.has(row.slug) ? 'live' : 'background',
+    lane: live.inScope(scope, row.slug) ? 'live' : 'background',
     person: row.person || null,
   }));
 }
@@ -5435,8 +5701,9 @@ async function runOnce(pool, config, deps = {}) {
     const bot = await ensureBotUser(pool, config);
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
-      // missed it is filed here, before the refresh that queues it.
-      if (settings.dmUsers?.length) {
+      // missed it is filed here, before the refresh that queues it. With the
+      // `everyone` audience there is no list to be empty.
+      if (settings.dmUsers?.length || settings.audience === 'everyone') {
         try {
           const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
           if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
@@ -6188,8 +6455,9 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
   }
   const settings = await readSettings(pool);
   // #3624: a project somebody on the DM list made is live too, and an
-  // import's backlog waits for exactly this.
-  if (![...(settings.liveApps || []), ...(settings.firstVersionApps || [])].includes(slug)) {
+  // import's backlog waits for exactly this. Off, or on a staging copy,
+  // nothing is (live.liveScope), but the queue still holds what it is told.
+  if (!live.inScope(live.liveScope({ ...settings, mode: 'shadow' }), slug)) {
     return { ok: false, status: 409, error: 'The bot does not act on this app for real: add it to the live apps first' };
   }
   if ((settings.pausedApps || []).includes(slug)) {
@@ -6253,18 +6521,22 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
  * request on the platform. A row already being worked on is left alone:
  * that run ends first, and the wake re-queues the issue after it.
  */
-async function enqueueFront(pool, { appId, issueNumber, userId = null, reason = 'dm_answer' }) {
+async function enqueueFront(pool, { appId, issueNumber, userId = null, reason = 'dm_answer', payerId = null }) {
   const id = Number(appId);
   const n = Number(issueNumber);
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return null;
+  // Somebody acted on it, so a hold for its last payer's week is lifted: the
+  // look this starts is paid by `payerId` (whoever asked the bot to start it,
+  // when that is not its requester), else by its requester (billingOf).
   const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by)
-     VALUES ($1, $2, 0, $3, $4)
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, payer_user_id)
+     VALUES ($1, $2, 0, $3, $4, $5)
      ON CONFLICT (app_id, issue_number) DO UPDATE
-       SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by, enqueued_at = NOW()
+       SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by, enqueued_at = NOW(),
+           payer_user_id = EXCLUDED.payer_user_id, held_until = NULL
      WHERE homeroom_bot_queue.started_at IS NULL
      RETURNING id`,
-    [id, n, String(reason).slice(0, 40), userId || null],
+    [id, n, String(reason).slice(0, 40), userId || null, payerId || null],
   );
   noteIssueActivity({ appId: id, issueNumber: n, reason });
   return rows[0] || null;
@@ -6452,9 +6724,16 @@ module.exports = {
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
   KEY_DM_CHAT,
+  AUDIENCES,
+  KEY_AUDIENCE,
+  KEY_AUDIENCE_SINCE,
+  KEY_LIVE_PLATFORM,
+  KEY_PROPOSAL_CEILING,
+  EVERYONE_PROPOSAL_CEILING,
   pickLive,
   personKeyOf,
   enqueueFront,
+  billingOf,
   liveCandidates,
   workingNow,
   dmChatSummary,
@@ -6469,7 +6748,7 @@ module.exports = {
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
     appBackoff.clear(); followUpBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
-    inFlight.clear(); budgetPausedUntil = 0;
+    inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     liveBuildsInFlight.clear();
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;

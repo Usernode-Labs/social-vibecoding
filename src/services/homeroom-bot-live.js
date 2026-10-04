@@ -85,16 +85,64 @@ function isStaging() {
 }
 
 /**
- * Whether the bot acts for real on this app, in this process: an app in
- * the live list, or (#3624) a project it is building for somebody it talks
- * to in a DM (settings.firstVersionApps, homeroom-bot-dm.js).
+ * The apps the bot acts on for real, in this process, as one value every
+ * caller (and every query) reads the same way:
+ *
+ *   - `{ all: false, slugs }`: today's list audience: the apps in the live
+ *     list, and (#3624) the projects it is building for somebody it talks
+ *     to in a DM (settings.firstVersionApps, homeroom-bot-dm.js);
+ *   - `{ all: true, except }`: the `everyone` audience (homeroom-bot.js
+ *     KEY_AUDIENCE): every app but a paused one and the platform's own,
+ *     which has a switch of its own (settings.livePlatform). Named by what
+ *     it leaves out, so no query is handed a list of every app's slug.
+ *
+ * Off, or on a staging copy, it is nothing at all.
  */
-function isLiveFor(settings, app) {
-  if (!settings || settings.mode === 'off' || isStaging()) return false;
+function liveScope(settings) {
+  if (!settings || settings.mode === 'off' || isStaging()) return { all: false, slugs: [], except: [] };
+  return appsScope(settings);
+}
+
+/**
+ * The same apps whether or not the bot is on, or this is a staging copy:
+ * what a person's own requests are measured against when the answer says
+ * apart whether the bot is working (homeroom-bot-progress.js botIsOn).
+ */
+function appsScope(settings) {
+  if (!settings) return { all: false, slugs: [], except: [] };
+  if (settings.audience === 'everyone') {
+    const paused = Array.isArray(settings.pausedApps) ? settings.pausedApps : [];
+    const platform = settings.livePlatform ? [] : (Array.isArray(settings.platformSlugs) ? settings.platformSlugs : []);
+    return { all: true, slugs: [], except: [...new Set([...paused, ...platform])] };
+  }
   const live = Array.isArray(settings.liveApps) ? settings.liveApps : [];
   const built = Array.isArray(settings.firstVersionApps) ? settings.firstVersionApps : [];
-  return !!app && (live.includes(app.slug) || built.includes(app.slug));
+  return { all: false, slugs: [...new Set([...live, ...built])], except: [] };
 }
+
+/** Pure: whether a scope from liveScope takes in any app at all. */
+function scopeIsEmpty(scope) {
+  return !scope || (!scope.all && !(scope.slugs || []).length);
+}
+
+/** Pure: whether `slug` is inside a scope from liveScope. */
+function inScope(scope, slug) {
+  if (!scope || !slug) return false;
+  return scope.all ? !(scope.except || []).includes(slug) : (scope.slugs || []).includes(slug);
+}
+
+/** Whether the bot acts for real on this app, in this process (liveScope). */
+function isLiveFor(settings, app) {
+  return !!app && inScope(liveScope(settings), app.slug);
+}
+
+// A query reads a scope as three parameters: the slug list where a query
+// read the live list before, then whether it is every app and the slugs it
+// leaves out, appended after the query's own:
+//   (CASE WHEN $all::boolean THEN NOT (a.slug = ANY($except::text[]))
+//         ELSE a.slug = ANY($slugs::text[]) END)
+// written out in each query, so the query stays one static string the SQL
+// check can read.
 
 const MAX_QUOTED_CHARS = 1500;
 
@@ -1770,6 +1818,10 @@ module.exports = {
   BOT_USERNAME,
   isOwnMessage,
   isLiveFor,
+  liveScope,
+  appsScope,
+  scopeIsEmpty,
+  inScope,
   isStaging,
   lookingText,
   questionText,
