@@ -311,6 +311,24 @@ appending `'?path=' + encodeURIComponent(req.originalUrl)` to their clean
 chromeless redirect (see the current scaffold's `server.js` for the
 attribute-safe character check used on the landing-page anchor).
 
+### Signed in at the app's own address
+
+Someone signed in to Homeroom who opens the app's own address is signed
+in there too: the platform's edge adds the same identity token as the
+`x-usernode-token` request header on the page load, the app's own
+`fetch` and form requests, and WebSocket handshakes from the app's page.
+So the middleware above sets `req.user` with no `?token=` in the URL.
+Three consequences:
+
+- **Ask the server who is signed in** (for example a `GET /api/me`), not
+  the page URL: at the app's own address there is no `?token=` for the
+  frontend to read, and nothing to forward.
+- **WebSocket auth reads the header too**, not only a `?token=` query on
+  the socket URL.
+- **Writes are POST/PUT/PATCH/DELETE from the app's own page.** The edge
+  adds identity to a write only when its Origin is the app's own address,
+  so a sibling app cannot make a visitor's browser act as them.
+
 ## Database
 
 - Each app gets its own Postgres DB. Schema is applied idempotently

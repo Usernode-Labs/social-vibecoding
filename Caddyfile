@@ -235,6 +235,10 @@ import /etc/caddy/active/platform-upstream.caddy
 	# the same blue/green cutover as the apex, with the #711 hold-and-retry.
 	@platform_assets path /usernode-bridge/* /usernode-native/* /usernode-tailwind/*
 	@not_platform_assets not path /usernode-bridge/* /usernode-native/* /usernode-tailwind/*
+	# The gate signed this visitor in (#3657, services/edge-gate.js): its
+	# 2xx carried an app identity token, which the platform_gate snippet's
+	# copy_headers put on the request as X-Usernode-Identity.
+	@edge_identity header X-Usernode-Identity *
 
 	handle @platform_assets {
 		import platform_upstream
@@ -268,6 +272,18 @@ import /etc/caddy/active/platform-upstream.caddy
 	# subdomain for the boot window.
 	handle @not_platform_assets {
 		import platform_gate
+		# Hand the app the identity the way it already reads one: as the
+		# x-usernode-token header. Only when the gate sent one, so a token
+		# the request carried itself (the shell's frames forward theirs) is
+		# never touched. request_header runs after forward_auth (Caddy's
+		# directive order), so the copied header is already there.
+		#
+		# WHY A HEADER OF ITS OWN in copy_headers, not X-Usernode-Token
+		# itself: copy_headers first deletes the header it copies into. The
+		# snippet is written by scripts/rollback.sh too, which can pair it
+		# with an OLDER platform that never answers with it; copying into
+		# x-usernode-token there would strip every app's own token.
+		request_header @edge_identity X-Usernode-Token {http.request.header.X-Usernode-Identity}
 	}
 
 	# Chromeless-view rescue for direct/shared links (issue: bare
@@ -306,6 +322,12 @@ import /etc/caddy/active/platform-upstream.caddy
 		# sands keep many such sockets open. Same rationale as the
 		# platform proxies in caddy/active/platform-upstream.caddy.
 		stream_close_delay 5s
+		# The app never sees the gate's own material: the identity's
+		# carrier header (it already has it as x-usernode-token) and the
+		# app-host cookies, which are the visitor's sign-in at this host
+		# and could be replayed by whoever reads them.
+		header_up -X-Usernode-Identity
+		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon)=[^;]*;?\s*` ""
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {

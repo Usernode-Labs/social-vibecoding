@@ -352,3 +352,52 @@ Self-app merges trigger the normal GitHub workflow. The cluster does not use
 the host's `deploy-status.json`, deploy-nudge file, systemd poller, Caddy reload
 or Compose blue/green scripts. Rollback is a reviewed GitOps/image revision
 change; the single-server `rollback.sh` is not a cluster rollback mechanism.
+
+## App-host gate
+
+Cilium's Envoy has no forward-auth hook, so on this runtime nothing
+platform-owned sat in front of app and preview hosts: a view-private app was
+gated only by its own code, and an app opened at its own address could not
+sign anyone in. `APP_GATE=on` (chart `config.appGate`) puts a small proxy in
+front of every managed app and preview Ingress: the `usernode-app-gate`
+Deployment in the app namespace (two replicas, `maxUnavailable: 0`, the
+platform's own image running `scripts/app-gate.js`). It asks the platform's
+`/__caddy/access` about each request, exactly as Caddy does on the standalone
+deployment, and proxies what is allowed to the app's Service. The three asset
+prefixes keep going straight to `usernode-platform-assets`.
+
+The gate holds no keys and reads no database. It fails closed: if the platform
+cannot be asked for 15 seconds, the visitor gets 503.
+
+Before turning it on:
+
+1. The app namespace's network policy (foundation repository) must allow the
+   ingress controller to reach pods labelled
+   `app.kubernetes.io/name=usernode-app-gate` on 3000, those pods to reach
+   generated app and preview pods on 3000, and those pods to reach the
+   platform Service (`PLATFORM_INTERNAL_URL`). The platform's own policy
+   already admits the app namespace (`networkPolicy.internalCallerNamespaces`).
+2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
+   `config.internalUrl`).
+
+Turning it on: set `config.appGate: "on"` and sync. The platform leader brings
+the gate up, waits for it to be ready, and only then repoints every managed
+Ingress's catch-all path at it. If the gate does not come up, no Ingress is
+touched. New deploys follow the same rule.
+
+Check: `kubectl -n social-apps get deploy usernode-app-gate`, then open a
+private app's own address signed out (expect the platform's view of the app)
+and signed in (expect the app, signed in).
+
+Turning it off, the fallback: set `config.appGate: "off"` and sync. The
+leader repoints every Ingress straight back to its own Service on boot. In an
+incident, without waiting for a sync:
+
+```sh
+kubectl -n social-platform exec deploy/social-vibecoding -- node scripts/app-gate-switch.js off
+```
+
+This applies at once. Then set `config.appGate: "off"` too, or the next boot
+or app deploy routes through the gate again. `config.appHostSignin: "off"`
+(`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
+address, on both runtimes; the gate still keeps private apps members-only.

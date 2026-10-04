@@ -1055,6 +1055,12 @@ async function becomeLeader() {
     require('./src/services/kubernetes').ensurePlatformAssetBackend(config)
       .then((name) => log.info('server', 'Hosted-asset backend reconciled', { name }))
       .catch((err) => log.warn('server', 'Hosted-asset backend reconcile deferred', { err: err.message }));
+    // The app-host gate follows APP_GATE on every boot, in both directions:
+    // on brings it up and routes every app through it, off routes them all
+    // straight back (services/kubernetes.js reconcileAppGateIngresses).
+    require('./src/services/kubernetes').reconcileAppGateIngresses(config)
+      .then((r) => log.info('server', 'App-host gate routing reconciled', r))
+      .catch((err) => log.warn('server', 'App-host gate routing reconcile deferred', { err: err.message }));
   }
 
   // Credential rows deliberately outlive their active period for settings
