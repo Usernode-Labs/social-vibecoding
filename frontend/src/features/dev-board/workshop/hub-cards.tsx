@@ -269,6 +269,10 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         data-ws-channel-send=""
         aria-label="Send"
         disabled={busy || !text.trim()}
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the people list, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); }}
       >
         <ArrowUpIcon className="w-4 h-4" aria-hidden="true" />
       </button>

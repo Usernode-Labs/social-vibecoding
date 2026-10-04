@@ -367,6 +367,8 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
       <div id="dc-spec-share-error" className={pop.error ? ERR.on : ERR.off}>{pop.error}</div>
       <button
         id="dc-spec-share-send" className="dc-spec-action-btn dc-spec-share-send"
+        // The username keeps focus through the press (lib/keyboard-open.ts).
+        onMouseDown={(event) => event.preventDefault()}
         disabled={pop.sending} onClick={pop.send}
       >{pop.sending ? 'Sending…' : 'Send'}</button>
     </div>

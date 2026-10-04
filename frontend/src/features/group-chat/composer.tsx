@@ -219,7 +219,18 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
           hint="muted"
           ring="bare"
         />
-        <button type="submit" className="gc-send shrink-0" aria-label="Send" title="Send">
+        {/* A press on Send must not take focus from the field. The blur would
+            drop the keyboard, the tab bar and the Resume strip would come back
+            (lib/keyboard-open.ts), the composer would fall by the keyboard's
+            height, and the click would land on nothing: the message stayed
+            in the box (5 Oct 2026, the iOS app). Messages' Send does the same. */}
+        <button
+          type="submit"
+          className="gc-send shrink-0"
+          aria-label="Send"
+          title="Send"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           <ArrowUpIcon aria-hidden="true" />
         </button>
       </form>
@@ -249,7 +260,8 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         hint="muted"
         ring="seamless"
       />
-      <Button type="submit" size="sm" className="shrink-0">
+      {/* Keeps the field focused through the press, as the card's Send above. */}
+      <Button type="submit" size="sm" className="shrink-0" onMouseDown={(event) => event.preventDefault()}>
         Send
       </Button>
     </form>

@@ -2869,6 +2869,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       className="dc-send-btn dc-circle-send dev-ws-ask-send"
       aria-label="Ask"
       disabled={!draft.trim() || !target || inFlight}
+      // The field keeps focus through the press (lib/keyboard-open.ts).
+      onMouseDown={(event) => event.preventDefault()}
     ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
   );
 
