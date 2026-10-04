@@ -1585,7 +1585,7 @@ test('WP2: a build that lands while the app is parked behind its Workshop loads 
   const a = openApp(h, 'app-a');
   const win = a.contentWindow;
   // App → its Workshop: the frame is parked, the router still has the app
-  // open. This is where "✓ Deployed" is watched.
+  // open. This is where "✓ Live" is watched.
   h.AppView._parkAppFrame();
   landed('app-a', 'sha-new');
   assert.deepEqual(h.bridge.liveSlugs(), [], 'the parked old build is let go');

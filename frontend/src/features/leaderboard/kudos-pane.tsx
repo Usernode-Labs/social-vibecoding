@@ -309,7 +309,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
             {`@${view.who}`}
           </h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            All PRs this user has proposed, newest first.
+            All changes this user has proposed, newest first.
           </p>
         </div>
         {/*
@@ -457,12 +457,12 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           {row.unmergedNote ? (
             <span
               className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
-              title="Kudos on PRs that haven’t merged yet, not counted toward ranking"
+              title="Kudos on changes that aren’t live yet, not counted toward ranking"
             >
               {row.unmergedNote}
             </span>
           ) : null}
-          <div className={KUDOS_PILL} title="Kudos earned on merged PRs">
+          <div className={KUDOS_PILL} title="Kudos earned on live changes">
             <span aria-hidden="true">{CLAP}</span>
             <span>{row.mergedKudos}</span>
           </div>
@@ -536,7 +536,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title="Kudos earned on merged PRs: the leaderboard ranking score"
+          title="Kudos earned on live changes: the leaderboard ranking score"
         >
           <span aria-hidden="true">{CLAP}</span>
           <span>{view.stats.kudosMerged}</span>
@@ -553,7 +553,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       </div>
       {view.rows
         ? <ProfileRows rows={view.rows} />
-        : <div className={HINT}>No PRs proposed yet.</div>}
+        : <div className={HINT}>No changes proposed yet.</div>}
       <More more={view.more} />
     </>
   );

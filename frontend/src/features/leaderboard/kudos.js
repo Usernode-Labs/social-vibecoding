@@ -82,13 +82,13 @@ const Kudos = {
       : opts.disabled
         ? opts.disabledReason || ''
         : isSelf
-          ? 'You can\u2019t give kudos to your own PR'
+          ? 'You can\u2019t give kudos to your own change'
           : mine && !direct
-            ? 'Credited via an issue bounty award \u2014 can\u2019t be retracted'
+            ? 'Credited via a bounty award, so it can\u2019t be retracted'
             : '';
     const disabled = !!disabledReason;
     const tip = disabledReason || (mine && direct
-      ? 'You gave kudos to this PR \u2014 click again to retract'
+      ? 'You gave kudos to this change. Click again to retract'
       : '');
 
     // Locked = disabled for a reason no later state change can lift
@@ -306,11 +306,11 @@ const Kudos = {
       } else if (res.status === 429) {
         Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
       } else if (res.status === 403) {
-        Kudos._toast('You can\u2019t give kudos to your own PR.');
+        Kudos._toast('You can\u2019t give kudos to your own change.');
       } else if (res.status === 409) {
-        Kudos._toast('You already gave kudos to this PR.');
+        Kudos._toast('You already gave kudos to this change.');
       } else if (res.status === 404) {
-        Kudos._toast(data.error || 'This PR isn\u2019t eligible for kudos.');
+        Kudos._toast(data.error || 'This change isn\u2019t eligible for kudos.');
       } else {
         Kudos._toast('Failed to give kudos. Try again?');
       }
@@ -429,13 +429,13 @@ const Kudos = {
         btn.classList.add('gc-vote-active');
         btn.classList.remove('opacity-60', 'cursor-not-allowed');
         btn.disabled = false;
-        btn.setAttribute('title', 'You gave kudos to this PR. Click again to retract');
+        btn.setAttribute('title', 'You gave kudos to this change. Click again to retract');
       } else if (entry.my_kudos) {
         // Bounty-derived credit: shows as the viewer's but isn't a
         // pr_kudos row, so there's nothing to retract here.
         btn.classList.add('gc-vote-active', 'opacity-60', 'cursor-not-allowed');
         btn.disabled = true;
-        btn.setAttribute('title', 'Credited via an issue bounty award, so it can’t be retracted');
+        btn.setAttribute('title', 'Credited via a bounty award, so it can’t be retracted');
       } else {
         // No kudos from the viewer (incl. just-retracted): back to the
         // plain give state.

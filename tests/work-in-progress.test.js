@@ -64,6 +64,11 @@ test('each Agent sessions row says the app it is on and where it stands, under i
   assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · waiting for approval', 'In progress'],
     'the change\'s app, else the one it started from; alone, where it stands');
   assert.equal(model.agentSub('Notes', 'Agent session'), 'Notes · agent session');
+  // A change that went live says so in the newcomer's word, not "merged".
+  const [live] = model.continueRows([conversation({
+    activeChange: { appSlug: 'run', appName: 'Run Club', status: 'merged', title: 'x' },
+  })]).rows;
+  assert.equal(live.sub, 'Run Club · live');
 });
 
 test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whether there are more', () => {
@@ -162,7 +167,10 @@ test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sess
     && at('app-menu-sessions') < at('improve-row-new-session')
     && at('improve-row-new-session') < at('app-menu-continue'),
     'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
-  assert.match(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/, 'it was "Continue"');
+  // A plain word since the first-session run-through (4 Oct 2026): it was
+  // "Continue", then "Agent sessions", a term a newcomer does not have.
+  assert.match(sheet, /<div className=\{SECTION\}>More<\/div>/, 'it was "Continue", then "Agent sessions"');
+  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/);
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);

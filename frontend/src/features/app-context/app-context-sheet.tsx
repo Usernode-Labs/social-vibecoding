@@ -827,9 +827,13 @@ export function AppsSwitcherSheet(): ReactNode {
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
           {/*
-              AGENT SESSIONS (it was "Continue", #2779 follow-up), BELOW the
-              app's own rows: your agent sessions, on every app, under their
-              own heading. See the comment on `continuing` above.
+              MORE (it was "Continue", #2779 follow-up, then "Agent
+              sessions"), BELOW the app's own rows: your agent sessions, on
+              every app, under their own heading. See the comment on
+              `continuing` above. The heading is a plain word since the
+              first-session run-through (4 Oct 2026): Ask for a change, above,
+              is the front door, and "agent sessions" is a term a newcomer
+              does not have. The rows say what each one is.
 
               IT LEADS WITH "START A NEW CHANGE", which was the "New change"
               button beside Give feedback. People read that button as a way to
@@ -841,7 +845,7 @@ export function AppsSwitcherSheet(): ReactNode {
               sessions have loaded; the sessions arrive after mount.
           */}
           <div id="app-menu-sessions">
-            <div className={SECTION}>Agent sessions</div>
+            <div className={SECTION}>More</div>
             {readOnly ? null : (
               <button
                 id="improve-row-new-session"

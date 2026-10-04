@@ -550,7 +550,7 @@ const Leaderboard = {
       // /api/me/kudos-budget lands (or when it failed).
       // #3230: the weekly reset is named in the viewer's own clock.
       : `${window.Kudos?.Budget?.state?.limit || 20} kudos per week, resets ${
-        window.ResetTime ? window.ResetTime.resetWhen('weekly') : 'Monday 00:00 UTC'}. Give them to PRs you appreciate.`;
+        window.ResetTime ? window.ResetTime.resetWhen('weekly') : 'Monday 00:00 UTC'}. Give them to changes you appreciate.`;
 
     // No <h2> of our own: the Leaderboard screen shell already titles the
     // page and the section tab above says "Kudos". The subtitle stays —
@@ -883,7 +883,7 @@ const Leaderboard = {
         // Footnote on the kudos badge: how many additional kudos sit on
         // PRs that haven't landed yet (and so don't count toward the
         // ranking score). Only meaningful when > 0.
-        unmergedNote: kudosOnUnmerged > 0 ? `+${kudosOnUnmerged} on unmerged` : null,
+        unmergedNote: kudosOnUnmerged > 0 ? `+${kudosOnUnmerged} not live yet` : null,
         // Headline score = kudos earned on MERGED PRs. This is what the
         // leaderboard now ranks by (issue #59), so the big badge shows it
         // rather than total kudos across all PRs.

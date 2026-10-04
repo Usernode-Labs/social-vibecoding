@@ -449,7 +449,7 @@ test('every step done reads as merging, not as an empty checklist', () => {
   t.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active');
   t.revise('github', 'done', { note: 'merged' });
   const s = requirements.summarize(requirements.describe(t.toRecord()), {});
-  assert.equal(s.headline, 'Merged');
+  assert.equal(s.headline, 'Live');
   assert.equal(s.detail, null);
   assert.equal(s.done, 5);
   assert.equal(s.total, 5);

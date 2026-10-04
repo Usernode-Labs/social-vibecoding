@@ -1530,7 +1530,7 @@
       "expectText": "Ask for a change"
     },
     {
-      "name": "Build it yourself leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul, B8)",
+      "name": "Build it yourself leads the menu's More section (once Agent sessions), where New change went (#1490, #2718 review, UI overhaul, B8)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
       "expectText": "Build it yourself"
@@ -2313,7 +2313,7 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries Build it yourself under Agent sessions (Streamlined Concept, UI overhaul, B8)",
+      "name": "The app-context sheet carries Build it yourself under More, once Agent sessions (Streamlined Concept, UI overhaul, B8)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
@@ -3316,7 +3316,7 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu, and it lists the app's own options, then Agent sessions, with no discussion or invite row (#2718, #3362)",
+      "name": "The mark opens the menu, and it lists the app's own options, then More (once Agent sessions), with no discussion or invite row (#2718, #3362)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions"
     },
@@ -3327,10 +3327,10 @@
       "expectText": "Go to community"
     },
     {
-      "name": "Agent sessions leads with Build it yourself, sessions or none (UI overhaul; it was Continue; B8)",
+      "name": "More leads with Build it yourself, sessions or none (UI overhaul; it was Continue, then Agent sessions; B8; first-session plain words)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
-      "expectText": "Agent sessions"
+      "expectText": "Build it yourself"
     },
     {
       "id": "workshop.all-apps",

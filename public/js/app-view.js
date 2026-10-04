@@ -4803,10 +4803,16 @@ const AppView = {
   _topicHeroView(kind, item) {
     const underway = ['active', 'paused'].includes(item.status);
     const n = parseInt(item.pr_number, 10) || 0;
+    // A merged change is LIVE, in the words the pill uses (statusPillState
+    // tier 0); while its rollout is still pending or has failed, the eyebrow
+    // does not claim it.
+    const dep = item.deployment_state;
+    const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
+      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet' : 'Live';
     const status = underway
       ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
       : item.status === 'promoted' ? AppView._waitingWords(item)
-        : ({ merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
+        : ({ merging: 'Going live', merged: settled, closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
@@ -4926,7 +4932,7 @@ const AppView = {
 
     const merged = item.status === 'merged';
     return {
-      headline: req ? req.headline : (merged ? 'Merged' : 'Where it stands'),
+      headline: req ? req.headline : (merged ? 'Live' : 'Where it stands'),
       detail: req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
@@ -13314,7 +13320,7 @@ const AppView = {
       // "nothing left to check" for the second is exactly the misreading this
       // whole feature exists to stop.
       if (total && done === total) {
-        return { headline: 'Merged', detail: null, done, total, needsViewer: false, current: null };
+        return { headline: 'Live', detail: null, done, total, needsViewer: false, current: null };
       }
       return { headline: 'Checking what this needs', detail: null, done, total, needsViewer: false, current: null };
     }
@@ -13523,14 +13529,14 @@ const AppView = {
       const mineKudos = !!entry.my_kudos;
       const direct = !!entry.my_kudos_direct;
       const reason = isSelf
-        ? 'You can’t give kudos to your own PR'
-        : (mineKudos && !direct ? 'Credited via an issue bounty award, can’t be retracted' : '');
+        ? 'You can’t give kudos to your own change'
+        : (mineKudos && !direct ? 'Credited via a bounty award, so it can’t be retracted' : '');
       const count = entry.count || 0;
       items.push({
         label: (mineKudos && direct ? 'Retract kudos' : 'Give kudos') + (count ? ` (${count})` : ''),
         icon: 'kudos',
         title: reason || (mineKudos && direct
-          ? 'You gave kudos to this PR. This retracts it'
+          ? 'You gave kudos to this change. This retracts it'
           : 'Thank the author of this change'),
         disabled: !!reason,
         act: reason ? null : () => {
@@ -18632,8 +18638,8 @@ const AppView = {
   // console-errors badge, an advisory chip and an explicit-approval chip.
   // They collapse into ONE pill, chosen by a strict precedence:
   //
-  //   0 settled        ✓ Merged
-  //   1 in flight      Merging… / Resolving conflicts…      (spinner)
+  //   0 settled        ✓ Live (grey: a done state is quiet)
+  //   1 in flight      Going live… / Resolving conflicts…   (spinner)
   //   2 blocked        Checks failing · N / Checks couldn't run /
   //                    Preview won't boot / Merge conflict /
   //                    Conflict resolution failed / Behind main · N
@@ -19167,41 +19173,47 @@ const AppView = {
     };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
-    // derived answer from /merged. Missing/unknown is deliberately the old
-    // label so legacy history never makes a claim it cannot support.
+    // derived answer from /merged. The words are the plain ones a newcomer
+    // has (first-session run-through, 4 Oct 2026): a change goes LIVE, it is
+    // not "merged" or "deployed". The keys keep the precise state.
+    //
+    // A finished change is QUIET: tone `neutral`, grey with a check, the way
+    // "Joined" is drawn (AGENTS.md, "a state that is already done gets no
+    // fill"). It was a green wash, which made the settled card the loudest
+    // one in the column. The card's edge follows the tone (edgeFor).
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: '✓ Deployed', tone: 'ok', lock: false, advisory: 0,
-          title: 'This change is live in production.' };
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0,
+          title: 'This change is live in the app.' };
       }
       if (p.deployment_state === 'deploying') {
-        return { ...base, tier: 0, key: 'deploying', label: 'Merged · deploying…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: 'This change has merged, but production is still running an earlier revision.' };
+        return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: 'This change was approved. The app is still running the version before it.' };
       }
       if (p.deployment_state === 'stalled') {
-        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
-          title: 'This change has merged, but its production deployment is stalled.' };
+        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Stuck going live', tone: 'blocked', lock: false, advisory: 0,
+          title: 'This change was approved, but the update that makes it live is stuck.' };
       }
       if (p.deployment_kind === 'child') {
         if (p.deployment_state === 'pending') {
-          return { ...base, tier: 0, key: 'delivery_pending', label: 'Merged · awaiting deployment', tone: 'neutral', lock: false, advisory: 0,
-            title: 'This change has merged, but production is still serving an earlier revision.' };
+          return { ...base, tier: 0, key: 'delivery_pending', label: 'Going live…', tone: 'neutral', lock: false, advisory: 0,
+            title: 'This change was approved. The app is still running the version before it.' };
         }
         if (p.deployment_state === 'failed') {
-          return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, advisory: 0,
-            title: 'The production rebuild failed after this change merged.' };
+          return { ...base, tier: 0, key: 'delivery_failed', label: 'Couldn’t go live', tone: 'blocked', lock: false, advisory: 0,
+            title: 'This change was approved, but the app failed to rebuild with it.' };
         }
-        // `unknown` falls through to the plain merged pill below: without
+        // `unknown` falls through to the plain settled pill below: without
         // evidence of a pending or failed rollout there is nothing to warn
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
-      return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
-      return { ...base, tier: 1, key: 'merging', label: 'Merging…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-        title: 'This change is being merged into the app and production is rebuilding.' };
+      return { ...base, tier: 1, key: 'merging', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+        title: 'This change was approved and is going into the app now.' };
     }
     // opts.kind ∈ 'proposal' (default) | 'gov'. A governance proposal has no
     // branch, no staging build and no checks, so the block reasons below are
