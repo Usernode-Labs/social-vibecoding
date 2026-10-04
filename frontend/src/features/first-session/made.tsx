@@ -5,10 +5,19 @@
  *   what      The project, being built: its tile and name, Homeroom bot's
  *             step from GET /api/apps/:slug (`first_version`, "Step 2 of 7:
  *             Read the description"), read again every ten seconds.
+ *   plan      B6: once the bot has read the description it waits for its
+ *             plan's Build it (`first_version.plan`) and builds nothing
+ *             until then. The plan is drawn first, under "Needs you", as
+ *             the same card as in the chat and on the App tab: Build it is
+ *             decided here through the chat's own call, and Change
+ *             something leaves for the chat with the plan quoted
+ *             (./index.tsx). A plan built from here stays, chosen.
  *   invite    "Invite people to <name>": Share invite opens a short sheet
  *             (InviteSheet below). Once something has gone out, the line
  *             says so and "Invite people later" becomes "Go to the
- *             Homeroom app". Either starts the tour (./index.tsx).
+ *             Homeroom app". Either starts the tour (./index.tsx). While
+ *             it is out, the project's community is read again, and the
+ *             line says who has joined (joinedLine).
  *
  * The sheet is the first invite, not the project's full invite pane
  * (features/app-context/invite-pane.tsx, with live links and their limits,
@@ -41,14 +50,53 @@ import { XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
+import { decideBotAction, MessagesApiError } from '../messages/api';
+import { PlanCardView } from '../messages/bot-plan-view';
+import type { HomeroomBotPlanQuestion } from '../messages/types';
 
 import type { Made } from './make';
+
+/** B6: the plan Homeroom bot waits on before it builds anything. */
+export type WaitingPlan = {
+  bullets: string[];
+  questions: HomeroomBotPlanQuestion[];
+  actionId: number;
+  messageId: number | null;
+  conversationId: number | null;
+};
 
 type FirstVersion = {
   step?: number; of?: number; stepName?: string | null; ready?: boolean;
   /** WP-E: about how many minutes a build takes, while this one is not ready. */
   typicalMinutes?: number;
+  /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
+  plan?: Partial<WaitingPlan> | null;
 } | null;
+
+/**
+ * The plan waiting for Build it, or null: read the way the App tab's
+ * being-built screen reads it (AppView._firstVersionView), so the two agree
+ * on when there is one.
+ */
+export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
+  const plan = fv && !fv.ready ? fv.plan : null;
+  if (!plan || !Array.isArray(plan.bullets) || !plan.bullets.length || !Number.isInteger(plan.actionId)) return null;
+  return {
+    bullets: plan.bullets,
+    questions: Array.isArray(plan.questions) ? plan.questions : [],
+    actionId: Number(plan.actionId),
+    messageId: Number.isInteger(plan.messageId) ? Number(plan.messageId) : null,
+    conversationId: Number.isInteger(plan.conversationId) ? Number(plan.conversationId) : null,
+  };
+}
+
+/** Over the plan: it is the one thing on the screen that waits on them. */
+export const PLAN_LABEL = 'Needs you';
+
+/** Under the plan, until Build it is tapped. */
+export function planNote(name: string): string {
+  return `Homeroom bot starts building ${name} when you tap Build it.`;
+}
 
 /** "Step 2 of 7: Read the description", or what to say without a build. */
 export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
@@ -60,10 +108,12 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
 
 /**
  * The line under the build's: who tells them, or who builds it. WP-E: and,
- * while it is building, about how long that usually takes.
+ * while it is building, about how long that usually takes. B6: while its
+ * plan waits, that nothing happens until they say so.
  */
-export function buildNote(botBuilds: boolean, minutes: number | null = null): string {
+export function buildNote(botBuilds: boolean, minutes: number | null = null, planWaits = false): string {
   if (!botBuilds) return 'You or anyone you invite can build it from there.';
+  if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
   return minutes && minutes > 0
     ? `Homeroom bot messages you when it's ready to try, usually in about ${minutes} minutes.`
     : 'Homeroom bot messages you when it\'s ready to try.';
@@ -119,7 +169,7 @@ function useSketch(slug: string): SketchState {
   return state;
 }
 
-function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes }: {
+function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes, planWaits }: {
   made: Made;
   tile: string;
   sketch: 'pending' | 'ready';
@@ -127,6 +177,7 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes }: {
   botBuilds: boolean;
   busy: boolean;
   minutes: number | null;
+  planWaits: boolean;
 }) {
   const dark = useDarkClass();
   return (
@@ -162,7 +213,7 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes }: {
         <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
       </div>
       <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
-        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds, minutes)}
+        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds, minutes, planWaits)}
       </p>
     </div>
   );
@@ -359,17 +410,112 @@ function InviteSheet({ made, me, onClose, onSent }: {
   );
 }
 
-export function MadeScreen({ made, me, onContinue }: {
+/**
+ * B6: the plan, waiting for Build it, the same card as in the chat with
+ * Homeroom bot and on the App tab. Build it is decided once on the server,
+ * through the chat's own call (api.decideBotAction); Change something is
+ * the screen's owner's (./index.tsx: the chat, with the plan quoted).
+ */
+export function PlanSection({ name, plan, onBuilt, onGone, onChange }: {
+  name: string;
+  plan: WaitingPlan;
+  /** Built from here, with the answer each choice went with. */
+  onBuilt: (plan: WaitingPlan, choices: string[]) => void;
+  /** Decided somewhere else already, or replaced: read the project again. */
+  onGone: () => void;
+  onChange: () => void;
+}) {
+  const [pressed, setPressed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const build = useCallback(async (answers: Array<string | null>) => {
+    if (pressed) return;
+    setPressed(true);
+    setError(null);
+    try {
+      await decideBotAction(plan.actionId, 'build', answers.map((a) => a || ''));
+    } catch (err) {
+      if (err instanceof MessagesApiError && err.status === 409) { onGone(); return; }
+      setPressed(false);
+      setError('Couldn\'t start building just now. Try again.');
+      return;
+    }
+    onBuilt(plan, plan.questions.map((q, i) => answers[i] || q.answers[0] || ''));
+  }, [pressed, plan, onBuilt, onGone]);
+  return (
+    <section data-first-session-plan="open" aria-labelledby="first-session-plan-label" className="mt-4">
+      <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL}</p>
+      <PlanCardView
+        surface="app"
+        appName={name}
+        plan={{ bullets: plan.bullets, questions: plan.questions }}
+        state="open"
+        busy={pressed}
+        onBuild={(answers) => { void build(answers); }}
+        onChange={onChange}
+      />
+      {pressed ? null : <p className="px-1 pt-2 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{planNote(name)}</p>}
+      {error ? <p role="alert" className="px-1 pt-1 text-[13px] text-red-600 dark:text-red-400">{error}</p> : null}
+    </section>
+  );
+}
+
+type CommunityMember = { username?: string; display_name?: string | null; source?: string };
+type Community = { member_count?: number; members?: CommunityMember[] } | null;
+
+/**
+ * Who has joined since the invite went out, from GET /api/apps/:slug/community
+ * (`members` is the newest few, the maker first as 'creator'; `member_count`
+ * is everyone): "✓ Sam joined.", "✓ Sam and Alex joined.", "✓ 3 people
+ * joined.", or null while nobody has.
+ */
+export function joinedLine(community: Community): string | null {
+  const members = Array.isArray(community?.members) ? community!.members : [];
+  const others = members.filter((m) => m && m.source !== 'creator' && (m.display_name || m.username));
+  const counted = Number.isInteger(community?.member_count)
+    ? Number(community!.member_count) - (members.length > others.length ? 1 : 0) : 0;
+  const count = Math.max(others.length, counted);
+  if (count <= 0) return null;
+  const named = (m: CommunityMember) => m.display_name || m.username;
+  if (count === 1 && others.length === 1) return `✓ ${named(others[0])} joined.`;
+  if (count === 2 && others.length === 2) return `✓ ${named(others[0])} and ${named(others[1])} joined.`;
+  return `✓ ${count} people joined.`;
+}
+
+const JOINED_POLL_MS = 10000;
+
+/** The project's community, read again while an invite is out, so a join shows. */
+function useCommunity(slug: string, on: boolean): Community {
+  const [community, setCommunity] = useState<Community>(null);
+  useEffect(() => {
+    if (!on) return undefined;
+    let live = true;
+    const read = () => fetch(`/api/apps/${encodeURIComponent(slug)}/community`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (live && data) setCommunity(data); })
+      .catch(() => {});
+    read();
+    const t = window.setInterval(read, JOINED_POLL_MS);
+    return () => { live = false; window.clearInterval(t); };
+  }, [slug, on]);
+  return community;
+}
+
+export function MadeScreen({ made, me, onContinue, onChangePlan }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Go to the Homeroom app": `skipped` when nothing went out. */
   onContinue: (skipped: boolean) => void;
+  /** Change something, under the plan: its chat with Homeroom bot, and the plan's message. */
+  onChangePlan: (conversationId: number | null, messageId: number | null) => void;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  // B6: a plan built from here stays, chosen, so the screen says what was decided.
+  const [chosen, setChosen] = useState<{ plan: WaitingPlan; choices: string[] } | null>(null);
+  const readRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let live = true;
@@ -377,10 +523,22 @@ export function MadeScreen({ made, me, onContinue }: {
       .then((r) => (r.ok ? r.json() : null))
       .then((app) => { if (live && app) { setFv(app.first_version || null); setAppStatus(app.status || null); } })
       .catch(() => {});
+    readRef.current = read;
     read();
     const t = window.setInterval(read, 10000);
-    return () => { live = false; window.clearInterval(t); };
+    return () => { live = false; window.clearInterval(t); readRef.current = () => {}; };
   }, [made.slug]);
+
+  const community = useCommunity(made.slug, sent);
+  const joined = joinedLine(community);
+  const waiting = waitingPlan(fv);
+  // The plan to decide: one waiting that was not just built from here.
+  const plan = waiting && waiting.actionId !== chosen?.plan.actionId ? waiting : null;
+  const onBuilt = useCallback((built: WaitingPlan, choices: string[]) => {
+    setChosen({ plan: built, choices });
+    readRef.current();
+  }, []);
+  const onGone = useCallback(() => { readRef.current(); }, []);
 
   const botBuilds = made.conversationId != null;
   // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
@@ -390,8 +548,9 @@ export function MadeScreen({ made, me, onContinue }: {
   const minutes = fv && !fv.ready && typeof fv.typicalMinutes === 'number' ? fv.typicalMinutes : null;
   const sketch = useSketch(made.slug);
   const line = buildLine(fv, appStatus, botBuilds);
-  // Something is under way: the project being set up, or the bot's build.
-  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready));
+  // Something is under way: the project being set up, or the bot's build
+  // (not while its plan waits on them: then nothing is).
+  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan);
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div
@@ -405,8 +564,22 @@ export function MadeScreen({ made, me, onContinue }: {
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
+        {plan ? (
+          <PlanSection
+            key={plan.actionId}
+            name={made.name}
+            plan={plan}
+            onBuilt={onBuilt}
+            onGone={onGone}
+            onChange={() => onChangePlan(plan.conversationId ?? made.conversationId, plan.messageId)}
+          />
+        ) : chosen ? (
+          <div data-first-session-plan="built" className="mt-4">
+            <PlanCardView surface="app" appName={made.name} plan={chosen.plan} state="built" choices={chosen.choices} />
+          </div>
+        ) : null}
         {sketch === 'pending' || sketch === 'ready' ? (
-          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} minutes={minutes} />
+          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} minutes={minutes} planWaits={!!plan} />
         ) : (
           <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
@@ -416,15 +589,15 @@ export function MadeScreen({ made, me, onContinue }: {
               {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
               <span data-first-session-build="">{line}</span>
             </div>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds, minutes)}</p>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds, minutes, !!plan)}</p>
           </div>
         )}
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's built.</p>
           {sent ? (
-            <p data-first-session-sent="" className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
-              {`✓ Invite sent${sentTo ? ` to ${sentTo}` : ''}.`}
+            <p data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
+              {joined || `✓ Invite sent${sentTo ? ` to ${sentTo}` : ''}.`}
             </p>
           ) : null}
         </div>

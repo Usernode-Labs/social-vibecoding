@@ -2711,6 +2711,10 @@ async function sweepFirstVersions(pool, config, deps = {}) {
   return filed;
 }
 
+// What the first version's plan step is called while a plan its creator
+// asked to change is redone (firstVersionState below).
+const REPLAN_STEP_NAME = 'Updating the plan';
+
 /**
  * #15 (D9): whether the Homeroom bot is still building a project's first
  * version from its description, and where it is, for the App tab. While it
@@ -2777,9 +2781,15 @@ async function firstVersionState(pool, appId, deps = {}) {
     const plan = found.state.stage === 'plan'
       ? await waitingPlan(pool, { userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number }).catch(() => null)
       : null;
+    // A plan its creator asked to change is read again (changePlan puts it
+    // first in line as 'plan_change'). That read is the plan being redone,
+    // not the description being read for the first time, so it stays on the
+    // plan's step rather than going back one.
+    const replanning = found.row?.queue_reason === 'plan_change'
+      && (found.state.stage === 'queued' || found.state.stage === 'reading');
     return {
       ...base,
-      ...at(found.state.stage),
+      ...(replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME } : at(found.state.stage)),
       question: found.state.stage === 'question' && found.state.waitingOn === 'them',
       ready: found.state.stage === 'vote',
       ...(plan ? { plan } : {}),
