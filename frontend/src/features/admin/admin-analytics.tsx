@@ -1301,12 +1301,13 @@ const UI_ACTION_LABELS: Record<string, string> = {
   content_report_submit: 'Submit content report',
   change_create: 'Start a change',
   preview_open: 'Open preview',
+  push_permission: 'Allow notifications',
 };
 
 const UI_SCREEN_LABELS: Record<string, string> = {
   shell_boot: 'Shell boot', app_detail: 'App detail', app_discussion: 'App discussion',
   feedback_dialog: 'Feedback', report_dialog: 'Content report',
-  change_workspace: 'Change workspace', preview: 'Preview',
+  change_workspace: 'Change workspace', preview: 'Preview', ping_ask: 'Ping ask',
 };
 
 const UI_ERROR_LABELS: Record<string, string> = {

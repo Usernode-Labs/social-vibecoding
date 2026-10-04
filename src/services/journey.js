@@ -1590,6 +1590,182 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
   };
 }
 
+// ── First session ──────────────────────────────────────────────────────
+//
+// The first-session plan's measures, per person, for the week their first
+// session started:
+//
+//   make  somebody made a project from the first session's question
+//         (app_created with metadata.from = 'first-session'). The clock
+//         starts at Make it. First reward: their sketch shown to them
+//         (first_artefact_shown), target two minutes. The in-session aha:
+//         they sent an invite within the hour.
+//   join  somebody joined a project through an invite link (the first
+//         redemption that let them in). The clock starts at the join, the
+//         reward being the project they were invited to, shown at once. The
+//         in-session aha: they wrote in its chat or filed a request within
+//         the hour.
+//
+// Opens of invite links (invite_opened, never a name) are counted beside
+// them, for how many opens become joins. Three of these are events first
+// written with this reading; before each was first recorded it is "not
+// recorded", never a zero.
+
+// Written into the reading as minutes and seconds; the SQL takes no window.
+const FIRST_SESSION_MINUTES = 60;
+const FIRST_REWARD_TARGET = 120;
+const FIRST_SESSION_EXAMPLES = 6;
+
+// Each person's first session that started in [$1, $2). $3/$4 are the
+// real-person parameters. One row per person and path.
+const FIRST_SESSION_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), made AS (
+    SELECT DISTINCT ON (e.user_id) e.user_id, e.app_id, e.created_at AS intent_at
+      FROM events e
+     WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session'
+       AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+       AND e.user_id IN (SELECT r.id FROM real r)
+     ORDER BY e.user_id, e.created_at, e.id
+  ), joined AS (
+    SELECT DISTINCT ON (x.user_id) x.user_id, ci.app_id, COALESCE(x.applied_at, x.created_at) AS intent_at
+      FROM community_invite_redemptions x
+      JOIN community_invites ci ON ci.id = x.invite_id
+     WHERE x.status = 'joined'
+       AND COALESCE(x.applied_at, x.created_at) >= $1::timestamptz
+       AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
+       AND x.user_id IN (SELECT r.id FROM real r)
+     ORDER BY x.user_id, COALESCE(x.applied_at, x.created_at), x.id
+  )
+  SELECT 'make' AS path, m.user_id, u.username, m.app_id, ap.slug, ap.name, m.intent_at,
+         (SELECT MIN(e.created_at) FROM events e
+           WHERE e.event_type = 'first_artefact_shown' AND e.app_id = m.app_id) AS reward_at,
+         (SELECT MIN(ci.created_at) FROM community_invites ci
+           WHERE ci.app_id = m.app_id AND ci.created_by = m.user_id) AS invited_at,
+         ap.first_running_at AS running_at,
+         NULL::timestamptz AS said_at,
+         NULL::timestamptz AS suggested_at
+    FROM made m
+    JOIN users u ON u.id = m.user_id
+    JOIN apps ap ON ap.id = m.app_id
+  UNION ALL
+  SELECT 'join' AS path, j.user_id, u.username, j.app_id, ap.slug, ap.name, j.intent_at,
+         NULL::timestamptz AS reward_at,
+         NULL::timestamptz AS invited_at,
+         NULL::timestamptz AS running_at,
+         (SELECT MIN(cm.created_at) FROM chat_messages cm
+           WHERE cm.app_id = j.app_id AND cm.user_id = j.user_id AND cm.msg_type = 'message'
+             AND cm.created_at >= j.intent_at) AS said_at,
+         (SELECT MIN(i.created_at) FROM issues i
+           WHERE i.app_id = j.app_id AND i.created_by = j.user_id
+             AND i.created_at >= j.intent_at) AS suggested_at
+    FROM joined j
+    JOIN users u ON u.id = j.user_id
+    JOIN apps ap ON ap.id = j.app_id
+   ORDER BY intent_at, user_id`;
+
+// Opens of live invite links in [$1, $2), and when each first-session event
+// was first recorded at all.
+const FIRST_SESSION_OPENS_SQL = `SELECT
+    (SELECT COUNT(*)::int FROM events e
+      WHERE e.event_type = 'invite_opened'
+        AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz) AS opened,
+    (SELECT MIN(e.created_at) FROM events e
+      WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session') AS make,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens`;
+
+function secondsBetween(fromIso, toIso) {
+  if (!fromIso || !toIso) return null;
+  return Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 1000));
+}
+
+/** One first-session row, as the seconds from its start to each step. */
+function firstSessionPerson(row) {
+  const intent = row.intent_at;
+  const out = {
+    path: row.path, userId: Number(row.user_id), name: row.username,
+    slug: row.slug, project: row.name, startedAt: intent ? new Date(intent).toISOString() : null,
+  };
+  if (row.path === 'make') {
+    out.steps = {
+      reward: secondsBetween(intent, row.reward_at),
+      invited: secondsBetween(intent, row.invited_at),
+      running: secondsBetween(intent, row.running_at),
+    };
+  } else {
+    out.steps = {
+      said: secondsBetween(intent, row.said_at),
+      suggested: secondsBetween(intent, row.suggested_at),
+    };
+  }
+  return out;
+}
+
+/** Per step: people who reached it, in the first session, and the median. */
+function firstSessionStep(people, key, { target = null } = {}) {
+  const times = people.map((p) => p.steps[key]).filter((s) => s != null);
+  const session = FIRST_SESSION_MINUTES * 60;
+  return {
+    key,
+    reached: times.length,
+    inSession: times.filter((s) => s <= session).length,
+    medianSeconds: median(times),
+    targetSeconds: target,
+    withinTarget: target == null ? null : times.filter((s) => s <= target).length,
+  };
+}
+
+/** Pure: the reading, from rows of FIRST_SESSION_SQL and FIRST_SESSION_OPENS_SQL. */
+function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
+  const people = rows.map(firstSessionPerson);
+  const make = people.filter((p) => p.path === 'make');
+  const join = people.filter((p) => p.path === 'join');
+  const ahaJoin = join.filter((p) => [p.steps.said, p.steps.suggested]
+    .some((s) => s != null && s <= FIRST_SESSION_MINUTES * 60)).length;
+  const iso = (v) => (v ? new Date(v).toISOString() : null);
+  const recorded = (since, reason) => (since ? null : notRecorded(reason));
+  return {
+    week: week.label,
+    finished: week.finished,
+    sessionMinutes: FIRST_SESSION_MINUTES,
+    make: {
+      people: make.length,
+      notRecorded: recorded(recordedFrom.make, 'Not recorded before projects made from the first session were marked.'),
+      steps: [
+        firstSessionStep(make, 'reward', { target: FIRST_REWARD_TARGET }),
+        firstSessionStep(make, 'invited'),
+        firstSessionStep(make, 'running'),
+      ],
+      aha: make.filter((p) => p.steps.invited != null && p.steps.invited <= FIRST_SESSION_MINUTES * 60).length,
+    },
+    join: {
+      people: join.length,
+      steps: [firstSessionStep(join, 'said'), firstSessionStep(join, 'suggested')],
+      aha: ahaJoin,
+    },
+    opens: {
+      opened: recordedFrom.opens ? Number(opens || 0) : notRecorded('Not recorded before invite opens were counted.'),
+      joined: join.length,
+    },
+    recordedFrom: { make: iso(recordedFrom.make), reward: iso(recordedFrom.reward), opens: iso(recordedFrom.opens) },
+    examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
+  };
+}
+
+/** The first session for `week` (or all time); `memberIds` narrows to one cohort. */
+async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = {}) {
+  const [{ rows }, { rows: [rec] }] = await Promise.all([
+    pool.query(FIRST_SESSION_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
+    pool.query(FIRST_SESSION_OPENS_SQL, [week.start, week.end]),
+  ]);
+  const mine = rows.filter((row) => !memberIds || memberIds.has(Number(row.user_id)));
+  const r = rec || {};
+  return firstSessionReading(mine, r.opened, {
+    week, recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null },
+  });
+}
+
 // ── Pairs ──────────────────────────────────────────────────────────────
 //
 // The "aha": a project where two real people were both active within 7 days
@@ -1805,6 +1981,10 @@ module.exports = {
   CREATION_RECORDED_SQL,
   CREATION_STEPS,
   CREATION_TARGETS,
+  FIRST_SESSION_SQL,
+  FIRST_SESSION_OPENS_SQL,
+  FIRST_SESSION_MINUTES,
+  FIRST_REWARD_TARGET,
   PAIRS_SQL,
   PAIR_DAYS,
   COVERAGE_SQL,
@@ -1855,6 +2035,8 @@ module.exports = {
   newcomerNextSteps,
   nextStepCounts,
   firstMile,
+  firstSession,
+  firstSessionReading,
   firstMileCounts,
   firstMileSteps,
   groupLifecycle,

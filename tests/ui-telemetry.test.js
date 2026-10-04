@@ -46,6 +46,16 @@ test('collector accepts only the fixed content-free vocabulary', () => {
   ]));
   assert.equal(parsed.events[0].appSlug, 'a', 'one-character valid slugs are accepted');
   assert.equal(parsed.events[1].errorCode, 'not_found');
+  // The first session's ping ask (NativeChrome.askForPing): its answer.
+  const asked = id('attempt');
+  const ping = telemetry.parseBatch(batch([
+    event({ kind: 'action_attempt', action: 'push_permission', screen: 'ping_ask', attemptId: asked }),
+    event({ kind: 'action_outcome', action: 'push_permission', screen: 'ping_ask', attemptId: asked,
+      outcome: 'failure', errorCode: 'access_denied', durationMs: 900, sequence: 2 }),
+  ]));
+  assert.deepEqual(ping.events.map((e) => [e.action, e.screen, e.outcome || null]),
+    [['push_permission', 'ping_ask', null], ['push_permission', 'ping_ask', 'failure']]);
+  assert.equal(telemetry.JOURNEY_SCREENS.has('ping_ask'), true);
 
   for (const forbidden of [
     { rawUrl: 'https://example.test/?token=secret' },

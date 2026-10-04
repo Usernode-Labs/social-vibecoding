@@ -2935,6 +2935,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_preview_opened_once
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
   ON events (session_id)
   WHERE event_type = 'change_live';
+-- The admin Journey's first session (services/journey-events.js): a
+-- project's sketch is its maker's first artefact once, however often the
+-- made screen frames it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_first_artefact_once
+  ON events (app_id)
+  WHERE event_type = 'first_artefact_shown';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging

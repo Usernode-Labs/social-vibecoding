@@ -23,6 +23,7 @@
 // Everything here is best-effort and never throws: a join, a page view or a
 // message must not fail because telling somebody about it did.
 
+const events = require('./events');
 const log = require('./logger');
 
 const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message']);
@@ -128,7 +129,7 @@ async function noteJoined(pool, { inviteId, user }) {
 async function noteOpened(pool, { token, viewerId = null }) {
   try {
     const { rows } = await pool.query(
-      `SELECT ci.created_by, ci.app_id, ci.community_id,
+      `SELECT ci.id, ci.created_by, ci.app_id, ci.community_id,
               ($2::int IS NOT NULL AND EXISTS (
                 SELECT 1 FROM community_members m WHERE m.community_id = ci.community_id AND m.user_id = $2
               )) AS viewer_is_member
@@ -141,6 +142,13 @@ async function noteOpened(pool, { token, viewerId = null }) {
     const invite = rows[0];
     if (!invite || invite.created_by == null) return null;
     if (viewerId != null && (Number(viewerId) === Number(invite.created_by) || invite.viewer_is_member)) return null;
+    // The admin Journey's first session reads it too (journey.js firstSession).
+    events.record(pool, {
+      type: events.EVENT_TYPES.INVITE_OPENED,
+      userId: viewerId ?? undefined,
+      appId: invite.app_id,
+      metadata: { inviteId: invite.id, signedIn: viewerId != null },
+    });
     return await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'invite_opened' });
   } catch (err) {
     log.warn('invite-activity', 'Could not count an invite opened', { err: err.message });

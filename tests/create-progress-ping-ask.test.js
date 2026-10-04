@@ -375,6 +375,31 @@ test('an unknown reason asks nothing, and a failed request never throws', async 
   assert.deepEqual(failing.calls.errors, [], 'console.warn at most: a console.error fails proposal checks');
 });
 
+test('how the ask is answered is measured: allowed, refused, "Not now", or failed', async () => {
+  const answered = async (opts, prepare) => {
+    const h = boot(opts);
+    const seen = [];
+    h.sandbox.UITelemetry = {
+      attempt(action, detail) { seen.push(['attempt', action, detail.screen]); return 'a1'; },
+      outcome(id, outcome, detail) { seen.push(['outcome', id, outcome, (detail && detail.errorCode) || null]); return true; },
+    };
+    if (prepare) prepare(h);
+    await h.NativeChrome.askForPing({ reason: 'app-building' });
+    return seen;
+  };
+  const asked = ['attempt', 'push_permission', 'ping_ask'];
+  assert.deepEqual(await answered({}), [asked, ['outcome', 'a1', 'success', null]]);
+  assert.deepEqual(await answered({ answer: 'not-now' }), [asked, ['outcome', 'a1', 'cancelled', null]]);
+  assert.deepEqual(await answered({
+    requestResult: { granted: false, permissions: { ...IOS, notificationPermission: 'denied' } },
+  }), [asked, ['outcome', 'a1', 'failure', 'access_denied']]);
+  assert.deepEqual(await answered({}, (h) => {
+    h.sandbox.usernode.requestPermissions = async () => { throw new Error('not supported'); };
+  }), [asked, ['outcome', 'a1', 'failure', 'unknown']]);
+  assert.deepEqual(await answered({ permissions: { ...IOS, notificationPermission: 'denied' } }), [],
+    'nothing is measured when nothing is asked');
+});
+
 // ── 3. Nothing happens on mount ────────────────────────────────────────
 
 test('loading the shell asks nothing', async () => {

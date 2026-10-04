@@ -145,6 +145,15 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(rows[0].source_user_id, null, 'an open is never a name');
     const after = (await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n;
     assert.equal(after - before, 1, 'one push for three opens');
+    // Each open is also an event for the admin Journey's first session,
+    // with no name on it when nobody is signed in.
+    const opened = async () => (await pool.query(
+      `SELECT user_id, app_id, metadata FROM events
+        WHERE event_type = 'invite_opened' AND (metadata->>'inviteId')::int = $1`, [invite.id])).rows;
+    for (let i = 0; i < 40 && (await opened()).length < 3; i += 1) await new Promise((r) => setTimeout(r, 50));
+    const recorded = await opened();
+    assert.equal(recorded.length, 3);
+    assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]), Array(3).fill([null, app.id, false]));
   });
 
   await t.test('an open by the maker, a member or a dead link counts nothing', async () => {
@@ -155,6 +164,10 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query('UPDATE community_invites SET revoked_at = NOW() WHERE id = $1', [invite.id]);
     assert.equal(await activity.noteOpened(pool, { token: invite.token }), null);
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM events WHERE event_type = 'invite_opened' AND (metadata->>'inviteId')::int = $1`,
+      [invite.id])).rows[0].n, 0, 'and records no open');
   });
 
   await t.test('a first message from somebody the link brought is a hello; the second is not', async () => {
