@@ -886,10 +886,11 @@ const Notifications = {
     // Admin → Limits (services/app-limit.js), which works on every deploy;
     // the session cap opens Health & status, whose capacity meter shows the
     // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
+    // GitHub's budget opens Limits too, where its GitHub requests card is.
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
       const limit = parsePlatformLimitDetail(item.detail);
-      const section = limit?.limit === 'apps' ? 'limits' : 'status';
+      const section = limit?.limit === 'sessions' ? 'status' : 'limits';
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
         App.navigateToAdminConsole(section);
       } else {
@@ -1620,7 +1621,7 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
@@ -2189,8 +2190,27 @@ function rowView(n) {
       return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
         ...headline('Platform limit', 'the server is nearing one of its limits') };
     }
-    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
     const full = limit.level === 'full';
+    // GitHub's hourly budget (services/github-budget.js): the bot token's,
+    // or the GitHub App's. The card under Admin → Limits has the figures.
+    if (limit.limit === 'github' || limit.limit === 'github_app') {
+      const app = limit.limit === 'github_app';
+      const noun = app ? 'GitHub App requests' : 'GitHub requests';
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: full ? `${noun} used up` : `${noun} running low`,
+        segments: [
+          { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} used this hour.` },
+          { t: 'text', v: app ? ' It resets within the hour.'
+            : (full ? ' Work that needs GitHub fails until the hour resets.'
+              : ' Background work waits so people\'s work keeps the rest.') },
+        ],
+      };
+    }
+    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
     const consequence = limit.limit === 'apps'
       ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
         : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')

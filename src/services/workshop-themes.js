@@ -67,6 +67,7 @@
 // grouping the board already has — computed per request and never cached.
 const crypto = require('crypto');
 const github = require('./github');
+const githubBudget = require('./github-budget');
 const topicAttrs = require('./topic-attributes');
 const issueProgress = require('./issue-progress');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
@@ -1679,6 +1680,11 @@ async function sweep({ pool, isShuttingDown }) {
   let discovered = 0;
   for (const app of rows) {
     if (typeof isShuttingDown === 'function' && isShuttingDown()) break;
+    // Each reconcile reads the app's open issues from GitHub. The sweep is
+    // background work, so it stops while GitHub's hourly budget is nearly
+    // used up (services/github-budget.js); a board change or a page view
+    // still reconciles on its own trigger.
+    if (!githubBudget.budgetAllows('background')) return { apps, discovered, held: true };
     const r = await reconcile({ pool, app, reason: 'sweep' });
     apps += 1;
     if (r && r.discovered) discovered += 1;

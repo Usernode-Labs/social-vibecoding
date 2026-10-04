@@ -1726,8 +1726,15 @@ async function auditExistingRepoPrivacy(pool) {
   let privateCount = 0;
   let errorCount = 0;
 
+  // One read per app on every boot, and only a log line comes of it, so it
+  // is the first thing to give way when GitHub's hourly budget is nearly
+  // used up (services/github-budget.js): a rollout right after the budget
+  // ran out must not spend what is left on an audit.
+  const githubBudget = require('./src/services/github-budget');
+  let held = false;
   async function worker() {
     while (queue.length) {
+      if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
       const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
       if (!m) continue;
@@ -1757,6 +1764,7 @@ async function auditExistingRepoPrivacy(pool) {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
   log.info('server', 'Private-repo audit complete', {
     total: rows.length, private: privateCount, errors: errorCount,
+    ...(held ? { heldForGithubBudget: queue.length } : {}),
   });
 }
 
@@ -5399,8 +5407,12 @@ function startSessionAutoPauseSweeper(config) {
       );
       const MAX_HEAD_SYNCS_PER_SWEEP = 10;
       let synced = 0;
+      const githubBudget = require('./src/services/github-budget');
       for (const session of rows) {
         if (synced >= MAX_HEAD_SYNCS_PER_SWEEP) break;
+        // A getPR per imported proposal: background work, held while
+        // GitHub's hourly budget is nearly used up (services/github-budget.js).
+        if (!githubBudget.budgetAllows('background')) break;
         if (worker.isInFlight(session.id)) continue;
         const last = importedHeadSyncAttempts.get(session.id) || 0;
         if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
@@ -5978,7 +5990,9 @@ function startAppStorageCapSweeper(config) {
 // Early warning for the server-wide caps (services/platform-limit-alerts.js):
 // every few minutes the leader counts live apps against MAX_APPS and active
 // sessions against MAX_GLOBAL_SESSIONS, and tells the full admins once when
-// either crosses PLATFORM_LIMIT_WARN_PERCENT and once when it is full.
+// either crosses PLATFORM_LIMIT_WARN_PERCENT and once when it is full. It
+// reads GitHub's hourly budget the same way (the bot token's, and the App's),
+// warning at a fifth left and again when it is used up.
 // Leader-only so two colors don't each measure the same crossing (the row
 // lock would stop a double notification anyway, but not the double work).
 // The app-create routes nudge the apps check between sweeps. The first run

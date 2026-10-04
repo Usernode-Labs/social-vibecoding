@@ -315,6 +315,20 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.equal(sessionsFull.label, 'Session limit reached');
   assert.match(sessionsFull.subject, /MAX_GLOBAL_SESSIONS/);
 
+  // GitHub's hourly budget, the bot token's and the App's.
+  const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
+    appName: null, sourceUsername: null });
+  assert.equal(github.label, 'GitHub requests running low');
+  assert.match(github.subject, /^4000 of 5000 GitHub requests used this hour\. +Background work waits so people's work keeps the rest\.$/);
+  const githubFull = await lines({ kind: 'platform_limit', detail: 'github_full:5000:5000',
+    appName: null, sourceUsername: null });
+  assert.equal(githubFull.label, 'GitHub requests used up');
+  assert.match(githubFull.subject, /Work that needs GitHub fails until the hour resets\.$/);
+  const githubApp = await lines({ kind: 'platform_limit', detail: 'github_app_full:12500:12500',
+    appName: null, sourceUsername: null });
+  assert.equal(githubApp.label, 'GitHub App requests used up');
+  assert.match(githubApp.subject, /^12500 of 12500 GitHub App requests used this hour\./);
+
   // A token this build cannot read still says what kind of alert it is.
   const odd = await lines({ kind: 'platform_limit', detail: 'disk_warn:1:2',
     appName: null, sourceUsername: null });

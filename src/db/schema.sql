@@ -11389,10 +11389,12 @@ END $$;
 -- The last level each server-wide cap reached (services/platform-limit-
 -- alerts.js): 'ok', 'warn' (at PLATFORM_LIMIT_WARN_PERCENT of the cap) or
 -- 'full'. One row per cap ('apps' for MAX_APPS, 'sessions' for
--- MAX_GLOBAL_SESSIONS), read and written under a row lock in the same
--- transaction that notifies the full admins, so a crossing is announced
--- once however many evaluators race it. used / cap / measured_at are the
--- figures behind the last decision, kept for anybody reading the row.
+-- MAX_GLOBAL_SESSIONS, 'github' and 'github_app' for GitHub's hourly
+-- request budget, which warns at a fifth left), read and written under a
+-- row lock in the same transaction that notifies the full admins, so a
+-- crossing is announced once however many evaluators race it. used / cap /
+-- measured_at are the figures behind the last decision, kept for anybody
+-- reading the row.
 --
 -- Operational state, not a secret, so it is not tagged staging:private.
 CREATE TABLE IF NOT EXISTS platform_limit_alerts (

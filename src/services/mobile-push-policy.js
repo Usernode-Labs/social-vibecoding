@@ -119,7 +119,7 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
@@ -130,6 +130,22 @@ function platformLimitCopy(detail) {
     };
   }
   const [, limit, level, used, cap] = m;
+  // GitHub's hourly budget (services/github-budget.js): the bot token's,
+  // which nearly every GitHub call spends, or the GitHub App's.
+  if (limit === 'github') {
+    return level === 'full'
+      ? { title: 'GitHub requests used up',
+        body: `All ${cap} of this hour's GitHub requests are used. Proposals and shots that need GitHub fail until the hour resets` }
+      : { title: 'GitHub requests running low',
+        body: `${used} of ${cap} GitHub requests used this hour. Background work waits so people's work keeps the rest` };
+  }
+  if (limit === 'github_app') {
+    return level === 'full'
+      ? { title: 'GitHub App requests used up',
+        body: `All ${cap} of this hour's GitHub App requests are used. It resets within the hour` }
+      : { title: 'GitHub App requests running low',
+        body: `${used} of ${cap} GitHub App requests used this hour` };
+  }
   if (limit === 'apps') {
     return level === 'full'
       ? { title: 'App limit reached',

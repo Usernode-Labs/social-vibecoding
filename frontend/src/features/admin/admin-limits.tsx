@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Limits (#admin/limits) — the server's app limit, the platform's LLM budget
-// dials, and the Anthropic credit balance the remaining-credit figure is
-// derived from.
+// Limits (#admin/limits): the server's app limit, GitHub's hourly request
+// budget (read-only), the platform's LLM budget dials, and the Anthropic
+// credit balance the remaining-credit figure is derived from.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
@@ -191,6 +191,127 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// GitHub's hourly REST budget per credential (services/github-budget.js),
+// read-only: what GitHub reported on the last response with each one. Its
+// own card under the app limit because it is the other server-wide ceiling
+// an admin is told about (the GitHub platform-limit alert opens this
+// section), though nothing here can raise it: GitHub sets it.
+//
+// The bar fills as the hour's requests are used: amber from the alert line
+// (a fifth left), red once background work is held (under the reserve the
+// server reports, 15%). A preview has no GitHub token and is answered with
+// labelled sample figures (routes/admin.js).
+const GITHUB_BAR_TONE = {
+  ok: 'bg-violet-500',
+  low: 'bg-amber-500',
+  held: 'bg-red-500',
+} as const;
+
+interface GithubBudgetRow {
+  credential: string;
+  kind: 'pat' | 'installation' | 'anonymous';
+  owner: string | null;
+  resource: string;
+  limit: number;
+  remaining: number;
+  used: number;
+  resetInSeconds: number;
+  expired: boolean;
+  held: boolean;
+}
+
+interface GithubBudgetPayload {
+  reservePercent: number;
+  credentials: GithubBudgetRow[];
+  configured?: { botToken: boolean; app: boolean };
+  demo?: boolean;
+}
+
+function githubCredentialLabel(row: GithubBudgetRow): string {
+  if (row.kind === 'pat') return 'Bot token';
+  if (row.kind === 'installation') return row.owner ? `GitHub App (${row.owner})` : 'GitHub App';
+  return 'Reads without a token';
+}
+
+function githubResetLine(row: GithubBudgetRow): string {
+  if (row.expired) return 'The hour has reset since the last request, so the whole budget is available.';
+  const left = `${row.remaining.toLocaleString('en-US')} left`;
+  const minutes = Math.max(1, Math.ceil(row.resetInSeconds / 60));
+  const reset = minutes === 1 ? 'resets in about a minute' : `resets in about ${minutes} minutes`;
+  return `${left}, ${reset}.${row.held ? ' Background work is waiting for the reset.' : ''}`;
+}
+
+function GithubBudgetCard() {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<GithubBudgetPayload | null>(null);
+  const [failed, setFailed] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/github-budget');
+      if (!alive.current) return;
+      if (next && typeof next === 'object' && Array.isArray(next.credentials)) setData(next);
+      else setFailed(true);
+    })();
+  }, []);
+
+  const rows = data ? data.credentials.filter((r) => r.resource === 'core') : [];
+  const reserve = data ? data.reservePercent : 15;
+  let empty = '';
+  if (data && !rows.length) {
+    empty = data.configured && !data.configured.botToken && !data.configured.app
+      ? 'GitHub is not configured on this server.'
+      : 'No GitHub response since this server started. The figures appear after its next request.';
+  }
+
+  return (
+    <div id="admin-github-budget" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>GitHub requests</h2>
+        {data && data.demo ? <span className={AdminUI.badge.outline}>Sample figures</span> : null}
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        GitHub allows each of Homeroom's credentials a number of requests an hour, and these are
+        the figures it sent with the last response on each one. Background work, such as checking
+        apps for new commits, waits when less than {reserve}% is left, so what people start keeps
+        the rest. Full admins are notified when a fifth is left and again when it runs out.
+      </p>
+      {!data && !failed ? <p className={AdminUI.loading}>Loading…</p> : null}
+      {failed ? <p className="text-xs text-red-400">Couldn’t load the GitHub figures.</p> : null}
+      {empty ? <p id="admin-github-budget-empty" className={AdminUI.muted}>{empty}</p> : null}
+      {rows.length ? (
+        <ul id="admin-github-budget-rows" className="space-y-3">
+          {rows.map((row) => {
+            const pct = row.limit > 0 ? Math.min(100, Math.round((row.used / row.limit) * 100)) : 0;
+            const tone = row.held ? 'held' : (row.remaining <= row.limit * 0.2 && !row.expired ? 'low' : 'ok');
+            return (
+              <li key={row.credential} data-credential={row.credential}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{githubCredentialLabel(row)}</span>
+                  <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                    {(row.expired ? 0 : row.used).toLocaleString('en-US')} of {row.limit.toLocaleString('en-US')} used
+                  </span>
+                </div>
+                <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+                  <div className={`h-full ${GITHUB_BAR_TONE[tone]}`} style={{ width: `${row.expired ? 0 : pct}%` }} />
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{githubResetLine(row)}</p>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {data && data.demo ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
+          This preview has no GitHub token, so these are sample figures.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function LimitsSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -339,6 +460,8 @@ function LimitsSection() {
     <>
       <AppLimitCard canWrite={canWrite} />
 
+      <GithubBudgetCard />
+
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
@@ -446,5 +569,6 @@ const AdminLimits = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
-// AppLimitCard is exported for tests/app-limit.test.js, which renders it.
-export { AdminLimits, AppLimitCard };
+// AppLimitCard is exported for tests/app-limit.test.js, which renders it,
+// and GithubBudgetCard for tests/github-budget.test.js.
+export { AdminLimits, AppLimitCard, GithubBudgetCard };

@@ -29,6 +29,7 @@ const { getPool } = require('../db/pool');
 const { AGENT_SCOPE } = require('../services/cli-auth-constants');
 const localAgent = require('../services/local-agent');
 const github = require('../services/github');
+const githubBudget = require('../services/github-budget');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 
@@ -400,7 +401,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
         log.warn('cli-agent', 'Local agent commit upload failed', {
           sessionId: Number(session.id), status: detail.status, message: detail.message,
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
 
       const advanced = await localAgent.recordTurnHead(pool, {

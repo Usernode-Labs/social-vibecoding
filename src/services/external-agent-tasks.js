@@ -58,6 +58,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const githubService = require('./github');
+const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
 // Only `branchHomeOf` is used from here, and only as a definition: one
@@ -1732,6 +1733,7 @@ async function prepareWork(deps, params) {
   // already under review, so this is the one value the work order most needs
   // to be right about.
   let baseSha;
+  let baseErr = null;
   if (update) {
     if (update.branchHome === 'user_fork') {
       // The head of an imported proposal is a branch in the author's own
@@ -1745,6 +1747,7 @@ async function prepareWork(deps, params) {
         log.warn('external-agent-tasks', 'proposal head lookup failed', {
           app: app.slug, sessionId: update.proposalId, err: err.message,
         });
+        baseErr = err;
         baseSha = null;
       }
     }
@@ -1753,6 +1756,7 @@ async function prepareWork(deps, params) {
       baseSha = await gh.getBranchSha(owner, repo, DEFAULT_BASE_BRANCH);
     } catch (err) {
       log.warn('external-agent-tasks', 'base sha lookup failed', { app: app.slug, err: err.message });
+      baseErr = err;
       baseSha = null;
     }
   }
@@ -1766,6 +1770,12 @@ async function prepareWork(deps, params) {
   if (!baseSha || !BASE_SHA_RE.test(String(baseSha).trim())) {
     if (baseSha) {
       log.warn('external-agent-tasks', 'base sha is not a 40-char hex id', { app: app.slug });
+    }
+    // GitHub refusing because Homeroom's hourly budget is used up is not
+    // "try again shortly": say so, and when it resets.
+    const limited = githubBudget.rateLimitNotice(baseErr);
+    if (limited) {
+      return fail('platform_unavailable', `Homeroom could not read the app's current code. ${limited}`, { retryable: true });
     }
     return fail('platform_unavailable', 'Homeroom could not read the app\'s current code. Try again shortly.', { retryable: true });
   }

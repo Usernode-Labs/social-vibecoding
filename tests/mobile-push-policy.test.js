@@ -431,6 +431,20 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
   assert.match(copy('sessions_full:75:75').body, /MAX_GLOBAL_SESSIONS/);
+  // GitHub's hourly budget (services/github-budget.js).
+  assert.deepEqual(copy('github_warn:4000:5000'), {
+    title: 'GitHub requests running low',
+    body: "4000 of 5000 GitHub requests used this hour. Background work waits so people's work keeps the rest",
+  });
+  assert.deepEqual(copy('github_full:5000:5000'), {
+    title: 'GitHub requests used up',
+    body: "All 5000 of this hour's GitHub requests are used. Proposals and shots that need GitHub fail until the hour resets",
+  });
+  assert.equal(copy('github_app_warn:10000:12500').title, 'GitHub App requests running low');
+  assert.equal(copy('github_app_full:12500:12500').title, 'GitHub App requests used up');
+  for (const d of ['github_warn:4000:5000', 'github_full:5000:5000', 'github_app_full:12500:12500']) {
+    assert.ok(!/\u2014/.test(JSON.stringify(copy(d))), d);
+  }
   // An unreadable token still says what kind of alert it is.
   assert.equal(copy('disk_warn:1:2').title, 'Platform limit');
   assert.equal(copy(undefined).title, 'Platform limit');
