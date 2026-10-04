@@ -138,3 +138,8 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
+
+test('the admin Journey page says which first session answered the join screen', () => {
+  assert.match(read('src/services/journey.js'),
+    /note: seen\.join_answer \? `not asked: \$\{seen\.join_answer\}` : 'not asked', weak: true/);
+});
