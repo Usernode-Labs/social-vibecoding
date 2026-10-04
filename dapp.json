@@ -614,7 +614,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "Come build the next version with us.",
+      "expectText": "On Homeroom, communities make apps together.",
       "allowConsoleErrors": true
     },
     {
