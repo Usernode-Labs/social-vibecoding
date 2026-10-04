@@ -278,7 +278,7 @@ test('provisional: a flagged row with only its author\'s Yes waits on another me
   assert.equal(explicit.detail.reason, 'visibility');
   assert.equal(explicit.detail.note, 'Changes to who can see this app need a Yes from another member.');
   const s = requirements.summarize(block.gates, { hasVoted: false });
-  assert.equal(s.headline, 'Waiting on your vote', 'a member who has not voted is who can clear it');
+  assert.equal(s.headline, 'Waiting for your approval', 'a member who has not voted is who can clear it (B10a)');
   assert.equal(s.current, 'explicit');
   assert.equal(requirements.summarize(block.gates, { isAuthor: true, hasVoted: true }).headline,
     'Waiting on the group');
