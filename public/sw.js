@@ -517,6 +517,10 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // callback URLs are document navigations too: serving index.html after
   // 200ms replaces their redirect with the app, even while the network
   // request creates an unfinished OAuth state (#1543).
+  // Hashed catalogs are shell-owned, demand-loaded assets. They use the
+  // release cache's integrity check and never belong to the install list.
+  if (/^\/locales\/[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(p)) return 'shell';
+
   if (mode === 'navigate') {
     if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
     if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';

@@ -32,6 +32,7 @@ const JS_OUTPUT = 'public/shell/assets/shell.js';
 const INPUT_PATHS = [
   'frontend/src',
   'frontend/@',
+  'frontend/locales',
   'frontend/vite.config.ts',
   'frontend/vite.ssr.config.ts',
   'frontend/tsconfig.json',
@@ -39,6 +40,7 @@ const INPUT_PATHS = [
   'frontend/package-lock.json',
   'frontend/scripts/build-shell.mjs',
   'scripts/shell-stamp.js',
+  'scripts/language-packs.js',
 ];
 
 const HTML_STAMP_PREFIX = '<!-- shell-build stamp: ';
@@ -49,6 +51,7 @@ const JS_STAMP_SUFFIX = ' */';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.ssr']);
 
 function walk(rel, out) {
+  if (rel === 'frontend/src/lib/i18n/catalogs.generated.json') return;
   const abs = path.join(ROOT, rel);
   let stat;
   try {

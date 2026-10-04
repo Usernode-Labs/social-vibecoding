@@ -8,6 +8,7 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+COPY scripts/language-packs.js ./scripts/language-packs.js
 # The ONE server-tree file the shell bundle imports:
 # frontend/src/features/admin/topochain/countries.ts reads the same ISO table
 # the server does rather than mirroring 249 names into a second copy that
@@ -79,6 +80,7 @@ COPY --from=shell /build/public/index.html ./public/index.html
 # chunk 404'd in the image while every test passed locally, where the build
 # output is simply on disk.
 COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/
+COPY --from=shell /build/public/locales/ ./public/locales/
 COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
@@ -88,6 +90,7 @@ RUN node scripts/build-shell-release.js
 # image copy that its startup helper can restore into that mount when missing.
 COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
 COPY --from=shell /build/public/shell/assets/ /opt/usernode-shell-assets/shell/assets/
+COPY --from=shell /build/public/locales/ /opt/usernode-shell-assets/locales/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
 RUN cp public/shell/release.json /opt/usernode-shell-assets/shell/release.json \
     && cp public/shell/worker.js /opt/usernode-shell-assets/shell/worker.js

@@ -1,0 +1,46 @@
+{
+  "language.title": {
+    "text": "언어",
+    "source": "a4fe65264ef7dbb38d104b1e81eb3350f3142f3d16f32bdec39b1d9b42c1b8d1"
+  },
+  "language.auto": {
+    "text": "자동: 기기 언어 사용",
+    "source": "69204d4929d65215798e7f69a38711b4c45eb3a7dd2df200d254936f8a15dec2"
+  },
+  "language.description": {
+    "text": "Homeroom의 언어를 선택하세요. 앱에도 이 설정이 전달되며, 앱에서 별도의 언어 설정을 제공할 수 있습니다.",
+    "source": "bc054864cc5dce26d1876531e2bd548be3088c85d1f6324cb90597190aa30023"
+  },
+  "language.loading": {
+    "text": "언어 불러오는 중…",
+    "source": "42609e39e159a0b8e43640ad10fdb568187b03b69a490d91f0209d9fbead00bd"
+  },
+  "language.saved": {
+    "text": "✓ 저장됨",
+    "source": "45edcc201b730f55b185fb07d06dd4aeadbacb41643537912152499d38a3e26f"
+  },
+  "language.loadFailed": {
+    "text": "이 언어를 불러올 수 없습니다. 현재 언어가 유지됩니다. 인터넷에 연결되면 다시 시도하세요.",
+    "source": "69d675e1630cece9aa12e84750515df982481cde61655012968751b2f370d25a"
+  },
+  "language.saveFailed": {
+    "text": "언어를 저장할 수 없습니다. 다시 시도해 주세요.",
+    "source": "703f8f77e838d3fe69e8ad71057b731812ed9737fe034eed0f8023fb19669d44"
+  },
+  "language.fallback": {
+    "text": "선택한 언어를 불러올 수 없습니다. Homeroom을 영어로 사용할 수 있으며 언어 설정에서 다시 시도할 수 있습니다.",
+    "source": "c6b78dd04e827ce733ea533617ef4c652e7884b78f1820153980c37e5e961062"
+  },
+  "common.retry": {
+    "text": "다시 시도",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "common.cancel": {
+    "text": "취소",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "common.close": {
+    "text": "닫기",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  }
+}

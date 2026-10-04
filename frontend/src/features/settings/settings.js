@@ -300,16 +300,7 @@
       { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
       { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
       { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
-      // #1556: GATED, and the gate is "this user already picked a language".
-      // The value is app-facing only (the iframe JWT `locale` claim and
-      // usernode.getUserLocale) and the platform shell is English-only, so a
-      // "Language" row in Preferences reads as a UI language switch that does
-      // nothing — which is exactly what the feedback reported. Hiding it from
-      // everyone who never set one, while keeping it for anyone who did, is
-      // what stops a stored preference becoming unreachable. The read paths
-      // are untouched; to re-launch the picker, drop this `gate` and the two
-      // gate lines in _renderLanguageSection.
-      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
+      { key: 'language', label: 'Language', group: 'Preferences' },
       { key: 'alerts', label: 'Notifications', group: 'Preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
@@ -1658,12 +1649,11 @@
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
-      // #1556 capability gate, read back by _visibleSections(). Offered only
-      // to a user who already has a preference saved — see the SECTIONS note.
+      // Language is now a platform preference, available even in Auto.
       const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
       if (section) {
-        if (!value) { section.classList.add('hidden'); return; }
+        // The platform now implements this preference, including Auto.
         section.classList.remove('hidden');
       }
       // A saved value outside the curated list (set via the API, or a
@@ -2676,40 +2666,35 @@
     async _saveLocale(value) {
       const select = document.getElementById('settings-locale');
       const status = document.getElementById('settings-locale-status');
-      const fail = (msg) => {
-        if (select) select.value = this.state.locale || '';
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
+      const language = window.PlatformI18n;
+      const request = this._localeSaveRequest = (this._localeSaveRequest || 0) + 1;
+      const show = (key, failed = false) => {
+        if (!status || request !== this._localeSaveRequest) return;
+        status.textContent = language.t(key);
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-red-700', 'dark:text-red-400');
+        status.classList.add(...(failed ? ['text-red-700', 'dark:text-red-400'] : ['text-emerald-700', 'dark:text-emerald-400']));
       };
+      let saving = false;
+      show('language.loading');
       try {
-        const r = await fetch('/api/me/locale', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ locale: value || null }),
+        const changed = await language.changeLanguage(value || null, async preference => {
+          saving = true;
+          const r = await fetch('/api/me/locale', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin', body: JSON.stringify({ locale: preference }),
+          });
+          if (!r.ok) throw new Error('language-save');
         });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.locale = j.locale || null;
-        // Keep the shell's cached user in sync so the bridge's
-        // getUserLocale answers (app-view.js) reflect the new value
-        // without a re-fetch. Bare `App` — app.js declares it with
-        // `const`, so `window.App` is undefined (see _renderAdminSection).
+        if (!changed || request !== this._localeSaveRequest) return;
+        this.state.locale = value || null;
         if (typeof App !== 'undefined' && App.user) App.user.locale = this.state.locale;
-        // Live-update any open app iframe (usernode:locale-changed).
-        if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
-          try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
-        }
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
+        if (typeof AppView !== 'undefined') AppView.notifyLocaleChanged?.(this.state.locale);
+        this._renderNav();
+        show('language.saved');
+      } catch {
+        if (request !== this._localeSaveRequest) return;
+        if (select) select.value = this.state.locale || '';
+        show(saving ? 'language.saveFailed' : 'language.loadFailed', true);
       }
     },
 

@@ -1,0 +1,13 @@
+{
+  "language.title": "Language",
+  "language.auto": "Auto: use device language",
+  "language.description": "Choose the language for Homeroom. Apps receive this preference and may offer their own language setting.",
+  "language.loading": "Loading language…",
+  "language.saved": "✓ Saved",
+  "language.loadFailed": "Could not load this language. Your current language has been kept. Try again when you are online.",
+  "language.saveFailed": "Could not save your language. Please try again.",
+  "language.fallback": "Your language could not be loaded. Homeroom is available in English; you can retry in Language settings.",
+  "common.retry": "Try again",
+  "common.cancel": "Cancel",
+  "common.close": "Close"
+}

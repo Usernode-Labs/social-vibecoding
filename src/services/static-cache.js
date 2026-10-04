@@ -53,6 +53,7 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 // Returns the Cache-Control value for a shell asset path, or null if the
 // path isn't a revalidate-every-load shell asset (let the default apply).
 function shellAssetCacheControl(filePath) {
+  if (/[\\/]locales[\\/][a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(String(filePath))) return IMMUTABLE;
   return /\.(?:html|js|css|webmanifest)$/i.test(String(filePath)) ? REVALIDATE : null;
 }
 

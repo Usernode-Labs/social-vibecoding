@@ -652,6 +652,7 @@ const App = {
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
+    await window.PlatformI18n?.useAccountLanguage?.(null);
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
     window.UITelemetry?.clearUser?.();

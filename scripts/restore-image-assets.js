@@ -21,6 +21,13 @@ const FILES = [
 // beside assets/shell.js, today the admin console's sections). A hard-coded
 // name here silently left a new chunk unrestored under the dev bind mount.
 const ASSET_DIR = 'shell/assets';
+function emittedLanguagePacks() {
+  try {
+    return fs.readdirSync(path.join(IMAGE_ASSETS, 'locales'))
+      .filter(name => /^[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(name))
+      .map(name => `locales/${name}`);
+  } catch { return []; }
+}
 function emittedShellAssets() {
   try {
     return fs.readdirSync(path.join(IMAGE_ASSETS, ASSET_DIR))
@@ -47,7 +54,7 @@ function createParentDirectories(destination) {
   for (const directory of missing) fs.chownSync(directory, owner.uid, owner.gid);
 }
 
-for (const relative of [...FILES, ...emittedShellAssets()]) {
+for (const relative of [...FILES, ...emittedShellAssets(), ...emittedLanguagePacks()]) {
   const source = path.join(IMAGE_ASSETS, relative);
   const destination = path.join(ROOT, 'public', relative);
   if (fs.existsSync(destination)) continue;

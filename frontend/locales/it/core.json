@@ -1,0 +1,46 @@
+{
+  "language.title": {
+    "text": "Lingua",
+    "source": "a4fe65264ef7dbb38d104b1e81eb3350f3142f3d16f32bdec39b1d9b42c1b8d1"
+  },
+  "language.auto": {
+    "text": "Automatico: usa la lingua del dispositivo",
+    "source": "69204d4929d65215798e7f69a38711b4c45eb3a7dd2df200d254936f8a15dec2"
+  },
+  "language.description": {
+    "text": "Scegli la lingua di Homeroom. Le app ricevono questa preferenza e possono offrire una propria impostazione della lingua.",
+    "source": "bc054864cc5dce26d1876531e2bd548be3088c85d1f6324cb90597190aa30023"
+  },
+  "language.loading": {
+    "text": "Caricamento della lingua…",
+    "source": "42609e39e159a0b8e43640ad10fdb568187b03b69a490d91f0209d9fbead00bd"
+  },
+  "language.saved": {
+    "text": "✓ Salvato",
+    "source": "45edcc201b730f55b185fb07d06dd4aeadbacb41643537912152499d38a3e26f"
+  },
+  "language.loadFailed": {
+    "text": "Impossibile caricare questa lingua. È stata mantenuta la lingua attuale. Riprova quando sei online.",
+    "source": "69d675e1630cece9aa12e84750515df982481cde61655012968751b2f370d25a"
+  },
+  "language.saveFailed": {
+    "text": "Impossibile salvare la lingua. Riprova.",
+    "source": "703f8f77e838d3fe69e8ad71057b731812ed9737fe034eed0f8023fb19669d44"
+  },
+  "language.fallback": {
+    "text": "Impossibile caricare la tua lingua. Homeroom è disponibile in inglese; puoi riprovare nelle impostazioni della lingua.",
+    "source": "c6b78dd04e827ce733ea533617ef4c652e7884b78f1820153980c37e5e961062"
+  },
+  "common.retry": {
+    "text": "Riprova",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "common.cancel": {
+    "text": "Annulla",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "common.close": {
+    "text": "Chiudi",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  }
+}

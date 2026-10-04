@@ -28,6 +28,14 @@ function buildShellRelease(root, { revision = process.env.GIT_SHA } = {}) {
   for (const name of fs.readdirSync(chunks)) {
     if (/\.(?:js|css)$/.test(name)) paths.add(`/shell/assets/${name}`);
   }
+  // Record exact pack identities for offline, verified demand loading. None
+  // belongs to SHELL_ASSETS: installing a worker must not fetch 20 languages.
+  const locales = path.join(publicDir, 'locales');
+  if (fs.existsSync(locales)) {
+    for (const name of fs.readdirSync(locales)) {
+      if (/^[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(name)) paths.add(`/locales/${name}`);
+    }
+  }
   const assets = [...paths].sort().map(url => ({
     path: url,
     hash: digest(fs.readFileSync(path.join(publicDir, url))),

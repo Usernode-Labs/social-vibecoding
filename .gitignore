@@ -59,3 +59,6 @@ public/__*.html
 
 # Local before/after shots dry runs (scripts/shots-dry-run.js)
 .shots-dry-run/
+# Generated language packs and the exact catalog manifest used by this build.
+public/locales/
+frontend/src/lib/i18n/catalogs.generated.json

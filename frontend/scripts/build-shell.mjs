@@ -35,6 +35,9 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
+// Catalog completeness is a build requirement, including preview builds.
+require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
+
 const {
   expectedStamp, formatHtmlStamp, formatJsStamp, formatBuildMeta, normalizeBuildSha,
   buildScopedAssetUrl, prefixShellAssetUrls,

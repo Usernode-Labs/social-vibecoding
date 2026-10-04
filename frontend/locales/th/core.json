@@ -1,0 +1,46 @@
+{
+  "language.title": {
+    "text": "ภาษา",
+    "source": "a4fe65264ef7dbb38d104b1e81eb3350f3142f3d16f32bdec39b1d9b42c1b8d1"
+  },
+  "language.auto": {
+    "text": "อัตโนมัติ: ใช้ภาษาของอุปกรณ์",
+    "source": "69204d4929d65215798e7f69a38711b4c45eb3a7dd2df200d254936f8a15dec2"
+  },
+  "language.description": {
+    "text": "เลือกภาษาสำหรับ Homeroom แอปจะได้รับการตั้งค่านี้และอาจมีการตั้งค่าภาษาของตนเอง",
+    "source": "bc054864cc5dce26d1876531e2bd548be3088c85d1f6324cb90597190aa30023"
+  },
+  "language.loading": {
+    "text": "กำลังโหลดภาษา…",
+    "source": "42609e39e159a0b8e43640ad10fdb568187b03b69a490d91f0209d9fbead00bd"
+  },
+  "language.saved": {
+    "text": "✓ บันทึกแล้ว",
+    "source": "45edcc201b730f55b185fb07d06dd4aeadbacb41643537912152499d38a3e26f"
+  },
+  "language.loadFailed": {
+    "text": "โหลดภาษานี้ไม่ได้ ระบบยังคงใช้ภาษาปัจจุบันของคุณ โปรดลองอีกครั้งเมื่อเชื่อมต่ออินเทอร์เน็ต",
+    "source": "69d675e1630cece9aa12e84750515df982481cde61655012968751b2f370d25a"
+  },
+  "language.saveFailed": {
+    "text": "บันทึกภาษาของคุณไม่ได้ โปรดลองอีกครั้ง",
+    "source": "703f8f77e838d3fe69e8ad71057b731812ed9737fe034eed0f8023fb19669d44"
+  },
+  "language.fallback": {
+    "text": "โหลดภาษาของคุณไม่ได้ Homeroom พร้อมใช้งานเป็นภาษาอังกฤษ คุณสามารถลองอีกครั้งในการตั้งค่าภาษา",
+    "source": "c6b78dd04e827ce733ea533617ef4c652e7884b78f1820153980c37e5e961062"
+  },
+  "common.retry": {
+    "text": "ลองอีกครั้ง",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "common.cancel": {
+    "text": "ยกเลิก",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "common.close": {
+    "text": "ปิด",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  }
+}

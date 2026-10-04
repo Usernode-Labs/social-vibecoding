@@ -63,6 +63,7 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  '/locales/', // Public static UI catalogs, including the sign-in language picker.
   // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
   // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
   // a deploy can serve them immutable (src/services/static-cache.js). Public

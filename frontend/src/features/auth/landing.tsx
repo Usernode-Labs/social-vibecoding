@@ -32,6 +32,7 @@
  *     is what the legacy module did for exactly the same reason.
  */
 
+import { LanguagePicker } from './language-picker';
 import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 
@@ -1639,6 +1640,7 @@ export function LandingScreen() {
           ) : null}
         </div>
       </div>
+      {!session && !openApp ? <LanguagePicker /> : null}
       <ViewerRegion />
       {/*
           The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
