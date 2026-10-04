@@ -62,7 +62,14 @@ async function connectPool() {
       view_visibility TEXT NOT NULL DEFAULT 'public',
       icon_emoji TEXT, icon_image_id TEXT,
       manifest_snapshot JSONB, featured_illustration JSONB,
+      approver_policy TEXT NOT NULL DEFAULT 'anyone', approvals_required INTEGER,
+      locked BOOLEAN NOT NULL DEFAULT FALSE,
       community_id INTEGER REFERENCES communities(id));
+    -- WP-D: the sketch a project still being built shows (pictureFor).
+    CREATE TABLE app_sketches (
+      app_id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'pending',
+      design JSONB, html TEXT, model TEXT, error TEXT, committed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ready_at TIMESTAMPTZ);
     -- What the page's picture reads (community-invites.js pictureFor).
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER, merged_at TIMESTAMPTZ,
@@ -151,7 +158,7 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.match(made.link.token, invites.TOKEN_RE);
       assert.equal(made.link.path, `/invite/${made.link.token}`);
       assert.equal((await invites.createInvite(pool, { app: arena, user: ADA, days: 31 })).status, 400, 'days past the limit');
-      assert.equal((await invites.createInvite(pool, { app: arena, user: ADA, maxUses: 0 })).status, 400, 'uses below it');
+      assert.equal((await invites.createInvite(pool, { app: arena, user: ADA, maxUses: -1 })).status, 400, 'uses below it');
       token = made.link.token;
       const preview = await invites.preview(pool, token);
       assert.deepEqual(
@@ -283,6 +290,72 @@ test('invite links against a real PostgreSQL', async (t) => {
       // Turning the link off turns its picture off too.
       await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
       assert.equal(await invites.pictureBytes(pool, made.link.token), null);
+    });
+
+    await t.test('WP-D: a link that works until it is turned off, for anyone it reaches', async () => {
+      const arena = await app('arena');
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (11, 'hal', TRUE), (12, 'ivy', TRUE)`);
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0, note: 'Come try it' });
+      assert.ok(made.ok);
+      assert.deepEqual([made.link.expiresAt, made.link.maxUses], [null, null]);
+      const { rows: [row] } = await pool.query('SELECT expires_at, max_uses FROM community_invites WHERE id = $1', [made.link.id]);
+      assert.deepEqual(row, { expires_at: null, max_uses: null });
+      // The event is written without waiting (events.record), so this link's
+      // own row is waited for, not whichever was newest a moment ago.
+      let created = null;
+      for (let i = 0; i < 40 && !created; i += 1) {
+        ({ rows: [created] } = await pool.query(
+          `SELECT metadata FROM events
+            WHERE event_type = 'invite_link_created' AND (metadata->>'inviteId')::int = $1`, [made.link.id]));
+        if (!created) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(created, 'the link\'s own event');
+      assert.deepEqual([created.metadata.days, created.metadata.maxUses], [null, null]);
+      assert.equal((await invites.preview(pool, made.link.token)).expiresAt, null);
+      assert.ok((await invites.listInvites(pool, { app: arena, user: ADA })).links.some((l) => l.id === made.link.id), 'listed as live');
+      for (const [id, name] of [[11, 'hal'], [12, 'ivy']]) {
+        assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(id, name, true) })).status, 'joined');
+      }
+      assert.equal((await invites.preview(pool, made.link.token)).live, true, 'still live after it is used');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked', 'until it is turned off');
+    });
+
+    await t.test('WP-D: a project with no shot yet shows its sketch through a live link, and only then', async () => {
+      const arena = await app('arena');
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null);
+      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'no sketch yet');
+      await pool.query(`INSERT INTO app_sketches (app_id, status, created_at) VALUES (1, 'pending', NOW())`);
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'one being drawn is not shown');
+      await pool.query(`UPDATE app_sketches SET status = 'ready', design = $1, html = $2 WHERE app_id = 1`,
+        [JSON.stringify({ job: 'Run the arena', accent: { light: '#c2410c', dark: '#fb923c' } }), '<h1 class="text-title">Arena</h1>']);
+      const preview = await invites.preview(pool, made.link.token);
+      assert.deepEqual(preview.project.picture, { kind: 'sketch', url: `/api/public/invites/${made.link.token}/sketch.html`, darkUrl: null });
+      const page = await invites.sketchPage(pool, made.link.token, { theme: 'dark' });
+      assert.match(page, /<title>Arena: a sketch<\/title>/);
+      assert.match(page, /<main class="sketch-screen">\n<h1 class="text-title">Arena<\/h1>/);
+      assert.match(page, /:root\{--ground:12 10 9;/, 'in the look it was asked for');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'a dead link shows nothing');
+    });
+
+    await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {
+      const governance = require('../src/services/governance');
+      const rule = async (patch = {}) => {
+        await pool.query(`UPDATE apps SET approver_policy = $1, approvals_required = $2, locked = $3 WHERE id = 1`,
+          [patch.policy || 'anyone', patch.n ?? null, !!patch.locked]);
+        governance.invalidateGovernance(1);
+        return invites.joiningRule(pool, { ...(await app('arena')), locked: !!patch.locked });
+      };
+      assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
+        + 'or 3 days after one of you says yes if the other doesn\'t answer.');
+      assert.equal(await rule({ locked: true }), 'With one other person using it, a change goes live when you both say yes, '
+        + 'or 3 days after one of you says yes if the other doesn\'t answer. An admin has to say yes too.');
+      assert.equal(await rule({ n: 2 }), 'A change goes live once it has 2 yes votes.');
+      assert.equal(await rule({ n: 1, policy: 'invited' }), 'A change goes live once it has a yes from its approvers.');
+      assert.equal(await rule({ policy: 'invited' }), 'A change goes live once its approvers back it.');
+      await rule();
     });
 
     await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {

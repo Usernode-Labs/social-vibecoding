@@ -73,7 +73,9 @@ function previewTags(preview, origin) {
     : preview.note
       || preview.project.description
       || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
-  const picture = live && preview.project.picture ? preview.project.picture.url : null;
+  // A sketch is a page, not an image: the preview shows the icon instead.
+  const picture = live && preview.project.picture && preview.project.picture.kind !== 'sketch'
+    ? preview.project.picture.url : null;
   const image = picture || (live ? preview.project.iconUrl : null);
   const tags = [
     `<meta property="og:type" content="website">`,
@@ -109,7 +111,7 @@ function requestOrigin(req) {
 function communityInviteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const appColumns = `${appAccess.ACCESS_COLUMNS}, community_id, name`;
+  const appColumns = `${appAccess.ACCESS_COLUMNS}, community_id, name, locked`;
 
   router.post('/api/apps/:slug/invite-links', drainGuard, inviteLinkCreateLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -133,10 +135,11 @@ function communityInviteRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
-      const [listed, canCreate, skipsLeft] = await Promise.all([
+      const [listed, canCreate, skipsLeft, joiningRule] = await Promise.all([
         invites.listInvites(pool, { app, user: req.user }),
         invites.canCreate(pool, app, req.user),
         invites.skipsLeft(pool, req.user),
+        invites.joiningRule(pool, app),
       ]);
       return res.json({
         links: listed.links,
@@ -145,7 +148,10 @@ function communityInviteRoutes(config) {
         grant: invites.grantFor(app),
         defaults: { days: invites.DEFAULT_DAYS, maxUses: invites.DEFAULT_USES },
         limits: invites.LIMITS,
+        // WP-D: 0 for days or maxUses asks for no limit (until turned off).
+        noLimit: invites.NO_LIMIT,
         skipsLeft,
+        joiningRule,
       });
     } catch (err) {
       log.error('invites', 'Listing invite links failed', { slug: req.params.slug, err: err.message });
@@ -218,6 +224,30 @@ function communityInviteRoutes(config) {
     } catch (err) {
       log.error('invites', 'Invite picture failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // WP-D: the sketch a live link's page frames while its project has no
+  // shot yet (invites.pictureFor). Anonymous like the picture, only while the
+  // link is live, and served like the project's own sketch page: sanitized
+  // static markup, sandboxed with no script and no network.
+  router.get('/api/public/invites/:token/sketch.html', invitePreviewLimiter, async (req, res) => {
+    try {
+      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
+      const page = invites.isToken(req.params.token)
+        ? await invites.sketchPage(pool, req.params.token, { theme })
+        : null;
+      if (!page) return res.status(404).type('text/plain').send('Not found');
+      res.set({
+        'Content-Security-Policy': require('../services/app-sketch').SKETCH_CSP,
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      });
+      return res.type('html').send(page);
+    } catch (err) {
+      log.error('invites', 'Invite sketch failed', { err: err.message });
+      return res.status(500).type('text/plain').send('Internal server error');
     }
   });
 

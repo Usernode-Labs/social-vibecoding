@@ -14,8 +14,10 @@
  * (features/app-context/invite-pane.tsx, with live links and their limits,
  * which stays where it is): what they'll get, with the note edited in place,
  * then Share link; a username sits behind one button. The link it makes
- * lasts the longest a link may (30 days, 100 people) — the project is the
- * gift, so the link should outlive a week. The first note shared is also
+ * works until it is turned off, for anyone it reaches (WP-D) — the project
+ * is the gift, so the link should outlive a week. Under it, one line on what
+ * joining means, from the project's real rule (GET .../invite-links
+ * `joiningRule`). The first note shared is also
  * the maker's first message in the group's chat (the sheet says so), so the
  * people it brings find it waiting there.
  *
@@ -167,8 +169,10 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes }: {
 }
 
 const NOTE_DEFAULT = 'Come try it with me!';
-const LINK_DAYS = 30;
-const LINK_USES = 100;
+// WP-D: the link works until it is turned off, for anyone it is sent to (0 is
+// no limit, services/community-invites.js NO_LIMIT): the project is the gift.
+const LINK_DAYS = 0;
+const LINK_USES = 0;
 
 /** The note, posted once per project as the maker's first chat message. */
 const postedKey = (slug: string) => `usernode:first-session:note-posted:${slug}`;
@@ -186,8 +190,18 @@ function InviteSheet({ made, me, onClose, onSent }: {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  const [rule, setRule] = useState<string | null>(null);
   const linkRef = useRef<string | null>(null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
+  // WP-D: what joining means here, said from the project's real rule.
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/apps/${encodeURIComponent(made.slug)}/invite-links`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (live && typeof data?.joiningRule === 'string') setRule(data.joiningRule); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [made.slug]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -338,7 +352,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
         </div>
         {status ? <p className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
-        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join.</p>
+        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join, until you turn it off.</p>
+        {rule ? <p data-first-session-rule="" className="mt-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{rule}</p> : null}
       </div>
     </div>
   );

@@ -43,7 +43,14 @@ test('why a link is dead: turned off, then expired, then used up', () => {
   // A link dies with its maker's standing: removed from the group, gone.
   assert.equal(invites.deadReason({ ...live, maker_holds: false }, now), 'revoked');
   assert.equal(invites.deadReason({ ...live, maker_holds: true }, now), null);
+  // WP-D: no end date and no cap: it works until it is turned off.
+  const forever = { ...live, expires_at: null, max_uses: null, uses: 5000 };
+  assert.equal(invites.deadReason(forever, now), null);
+  assert.equal(invites.deadReason({ ...forever, revoked_at: now }, now), 'revoked');
+  assert.equal(invites.deadReason({ ...forever, max_uses: 25, uses: 25 }, now), 'used_up');
+  assert.equal(invites.deadReason({ ...forever, expires_at: '2026-09-27T12:00:00Z' }, now), 'expired');
   const schema = read('src/db/schema.sql');
+  assert.match(schema, /ALTER TABLE community_invites ALTER COLUMN expires_at DROP NOT NULL;\nALTER TABLE community_invites ALTER COLUMN max_uses DROP NOT NULL;/);
   assert.match(schema, /CREATE OR REPLACE FUNCTION community_invite_maker_holds\(p_invite INTEGER\) RETURNS BOOLEAN/);
   assert.match(schema, /IF NOT community_invite_maker_holds\(\(SELECT invite_id FROM community_invite_redemptions WHERE id = r\.id\)\) THEN\s+RETURN FALSE;/,
     'checked again at release, for a queued person');
@@ -297,6 +304,18 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(pane.linkSentence({ ...fresh, uses: 24 }, 'collaborator', now),
     'Anyone with this link can join and build with you. It expires in 7 days and works for 1 more person.');
   assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
+  // WP-D: a link with no end date, or for anyone, says so.
+  const forever = { expiresAt: null, maxUses: null, uses: 0 };
+  assert.equal(pane.linkSentence(forever, 'member', now), 'Anyone with this link can join. It works until you turn it off.');
+  assert.equal(pane.linkSentence({ ...forever, maxUses: 25 }, 'member', now), 'Anyone with this link can join. It has no end date and works for 25 people.');
+  assert.equal(pane.linkSentence({ ...fresh, maxUses: null }, 'member', now), 'Anyone with this link can join. It expires in 7 days.');
+  assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
+  const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
+  assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
+  assert.match(paneSrc, /'Until you turn it off'/);
+  assert.match(paneSrc, /'Anyone with the link'/);
+  assert.match(paneSrc, /\{state\.joiningRule\}/);
   assert.equal(pane.newcomerLine(null), 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.');
   assert.equal(pane.newcomerLine(2), 'You can let 2 people new to Homeroom skip the waitlist.');
 
@@ -351,6 +370,11 @@ test(`the preview reads like the page: who made it for whom, their note, the pro
   const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example');
   assert.match(shot, /twitter:card" content="summary_large_image"/);
   assert.match(shot, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/t\/picture"/);
+  // WP-D: a sketch is a page, not an image: the preview keeps the icon.
+  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: '/api/public/invites/t/sketch.html' } } }, 'https://h.example');
+  assert.match(sketched, /og:image" content="https:\/\/h\.example\/app-icons\/abc"/);
+  assert.match(sketched, /twitter:card" content="summary"/);
+  assert.doesNotMatch(sketched, /sketch\.html/);
   // The note is escaped like everything else.
   assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
 });
@@ -362,6 +386,14 @@ test('the picture is served only through a live link, and only an after-shot of 
   const route = read('src/routes/community-invites.js');
   assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
   assert.match(route, /'X-Content-Type-Options': 'nosniff',/);
+  // WP-D: the sketch a project still being built shows, through a live link,
+  // sandboxed like the project's own sketch page.
+  assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/sketch\.html', invitePreviewLimiter,/);
+  assert.match(route, /'Content-Security-Policy': require\('\.\.\/services\/app-sketch'\)\.SKETCH_CSP,/);
+  assert.match(src, /async function sketchPage\(pool, token, \{ theme = null \} = \{\}\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  const card = read('frontend/src/features/auth/invite-card.tsx');
+  assert.match(card, /<iframe\s+title=\{`A sketch of \$\{project\.name\}`\}\s+src=\{`\$\{picture\.url\}\?theme=/);
+  assert.match(card, /sandbox=""/);
 });
 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {

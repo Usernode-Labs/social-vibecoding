@@ -9,8 +9,10 @@
  *            "@ada invited you to join …" when the sender did not make it),
  *            and how many people are in it;
  *   picture  the project itself: the after-shot of its latest change, else
- *            the Discover card's image, else a large tile with its one-line
- *            description (preview().project.picture);
+ *            the Discover card's image, else the sketch its maker was shown
+ *            while it is built (a sandboxed page: no script, its own origin),
+ *            else a large tile with its one-line description
+ *            (preview().project.picture);
  *   join     the sender's note, when they left one, and the one way in.
  *
  * Everything comes from GET /api/public/invites/:token, which discloses
@@ -31,7 +33,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type InvitePicture = { kind: 'shot' | 'illustration'; url: string; darkUrl: string | null };
+export type InvitePicture = { kind: 'shot' | 'illustration' | 'sketch'; url: string; darkUrl: string | null };
 
 export type InvitePreview = {
   live: boolean;
@@ -146,6 +148,23 @@ function Tile({ project, size }: { project: NonNullable<InvitePreview['project']
  */
 function Picture({ project }: { project: NonNullable<InvitePreview['project']> }) {
   const picture = project.picture;
+  if (picture && picture.kind === 'sketch') {
+    // WP-D: the page is drawn in this screen's look, read once: it is
+    // static, and the screen does not stay up long.
+    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+    return (
+      <div data-landing-invite-picture="sketch" className="relative mx-4 mt-3 h-[340px] overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
+        <iframe
+          title={`A sketch of ${project.name}`}
+          src={`${picture.url}?theme=${dark ? 'dark' : 'light'}`}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          className="h-full w-full border-0"
+        />
+        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+      </div>
+    );
+  }
   if (picture) {
     const img = 'block w-full h-[340px] object-cover object-top';
     return (
