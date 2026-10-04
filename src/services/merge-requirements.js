@@ -554,18 +554,24 @@ function provisional(session) {
   // chose not to start yet: the head conflicts with main, and the verdict
   // runs once it merges cleanly. Nobody has to act, and nothing is running.
   const deferred = check === 'pending' && s.check_phase === 'deferred';
+  // A red run that overlapped a platform rollout is an 'error' the platform
+  // runs again on its own (visuals.js settleCaptureRun), so nobody has to act.
+  const rolloutRetry = check === 'error'
+    && s.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
-    : (check === 'failing' || check === 'error') ? 'blocked'
-      : check === 'pending' ? 'active' : 'pending';
+    : rolloutRetry ? 'active'
+      : (check === 'failing' || check === 'error') ? 'blocked'
+        : check === 'pending' ? 'active' : 'pending';
   out.push({
     key: 'checks',
     label: 'Checks',
     actor: 'author',
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
-      : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
-        : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
-          : check === 'pending' ? { note: 'still running' } : null,
+      : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
+        : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+          : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
+            : check === 'pending' ? { note: 'still running' } : null,
   });
 
   if (s.shotsEnforced || s.shots_enforced) {

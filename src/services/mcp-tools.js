@@ -1043,6 +1043,13 @@ function shapeNextStep(session, checks) {
         + 'own fork and call submit_work with proposalId and that branch — every submission clears the votes it has '
         + 'collected, so only do it for a change worth re-reviewing.';
   }
+  // A red run that overlapped a platform rollout is recorded as an error the
+  // platform runs again on its own (visuals.js settleCaptureRun). Its failing
+  // rows are the rollout's, not the diff's, so there is nothing to fix yet.
+  if (rolloutRetry(session)) {
+    return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. There is nothing `
+      + 'to fix yet and nothing to push: poll get_proposal for the new verdict.';
+  }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
   // between fixing a test and fixing a Dockerfile.
@@ -1064,6 +1071,13 @@ function shapeNextStep(session, checks) {
     : `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push `
       + 'to a branch in your OWN fork, then call submit_work with proposalId '
       + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
+}
+
+// The 'error' a red run that overlapped a platform rollout is recorded as:
+// the platform runs it again on its own, so it asks nothing of the author.
+function rolloutRetry(session) {
+  return session.check_state === 'error'
+    && session.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
 }
 
 // Why a plain push does not move this proposal, in one clause, for the two
@@ -1280,6 +1294,10 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return checks.phase === 'deferred'
       ? `Checks on ${ref} are held back because it conflicts with main. ${words.deferred}${paused}`
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
+  }
+  if (rolloutRetry(session)) {
+    return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
+      + `Nothing to fix yet; call get_change again for the new verdict.${paused}`;
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)

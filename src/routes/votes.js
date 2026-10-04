@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
+const { ROLLOUT_RETRY_DETAIL } = require('../services/staging-recovery');
 const { governanceVoteLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const github = require('../services/github');
@@ -793,6 +794,20 @@ function stagingMockProposals(viewer) {
       check_error_detail: connectionExhaustionMessage(
         { max: 100, used: 98 }, { where: 'ran its checks' }
       ),
+      recheckable: true,
+      test_results: [],
+    },
+    // The other red badge that is not the author's to fix: a run that
+    // overlapped a platform rollout and came back red is stored as 'error'
+    // and runs again on its own. No ordinary staging steps can make a run
+    // overlap a rollout, so this row is how the sentence is reviewable. It
+    // reads the constant the settle path writes, so the copy cannot drift.
+    {
+      ...mk(9000046, 900146,
+        '[Mock] Checks-error test: the checks ran while Homeroom was updating',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: ROLLOUT_RETRY_DETAIL,
       recheckable: true,
       test_results: [],
     },
@@ -6289,12 +6304,18 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // staging preview that crashed on boot, e.g. a bad migration/seed) so
       // the block isn't an unexplained dead-end — the owner can act on it.
       const errorDetail = checkState === 'error' ? (checkRows[0]?.check_error_detail || null) : null;
+      // A red run that overlapped a platform rollout was recorded as an
+      // 'error' the stuck-checks reconcile runs again (visuals.js
+      // settleCaptureRun). Its preview started fine and nobody has to act.
+      const rolloutRetry = errorDetail === require('../services/staging-recovery').ROLLOUT_RETRY_DETAIL;
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
-          ? (errorDetail
-            ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
-            : "couldn't run its tests")
+          ? (rolloutRetry
+            ? 'ran its tests while Homeroom was updating, so they will run again on their own'
+            : errorDetail
+              ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
+              : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       // Said once. This gate runs on every vote and every check re-run, and
@@ -6319,17 +6340,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       // 'pending' is in flight and needs nobody; 'failing' and 'error' need
       // the author. The card tones them differently for exactly that reason.
+      // A rollout retry is an 'error' that needs nobody either.
       gateTrace.stop('checks',
-        (checkState === 'failing' || checkState === 'error') ? 'blocked' : 'active',
+        ((checkState === 'failing' || checkState === 'error') && !rolloutRetry) ? 'blocked' : 'active',
         {
           checkState: checkState || 'pending', failingCount,
           note: checkState === 'failing'
             ? `${failingCount || 'some'} failing. They re-run on the next push`
-            : checkState === 'error'
-              ? 'the staging preview could not start, so the tests could not run'
-              : checksDeferred
-                ? 'waited for the head to merge cleanly; running now'
-                : 'still running',
+            : rolloutRetry
+              ? 'they ran while Homeroom was updating and will run again'
+              : checkState === 'error'
+                ? 'the staging preview could not start, so the tests could not run'
+                : checksDeferred
+                  ? 'waited for the head to merge cleanly; running now'
+                  : 'still running',
         });
       gateSave();
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');

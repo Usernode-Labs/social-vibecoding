@@ -5125,8 +5125,10 @@ const AppView = {
     }
     if (!checks && !build && !unit && !fails.length && !note) return null;
     // Open by itself while a run is going, and when it failed: that is when
-    // the bars and the names are what a reader came for.
-    return { live, phase: item.check_phase || null, open: live || g.state === 'blocked', build, checks, unit, fails, note };
+    // the bars and the names are what a reader came for. A run that will go
+    // again on its own opens too, so its reason is read without a tap.
+    const retrying = g.state === 'active' && item.check_state === 'error';
+    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, note };
   },
 
   // One detail model for a change before and after it enters review.
@@ -5389,6 +5391,7 @@ const AppView = {
     if (state === 'pending') return { state: 'running', text: 'Testing it…' };
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
     if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
+    if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
     return { state: 'broken', text: 'Testing couldn’t finish' };
   },
 
@@ -13229,6 +13232,10 @@ const AppView = {
     }
     if (g.state === 'active') {
       if (!cs) return 'Starting';
+      // An error the gate still counts as in progress is a run that will go
+      // again on its own (a run that overlapped a platform update): nothing
+      // is running yet, so the line says what comes next.
+      if (cs === 'error') return 'Will run again';
       const prog = AppView._checksProgressView(p);
       if (prog && prog.build && !prog.build.done) {
         const steps = prog.build.steps || [];
@@ -13801,7 +13808,7 @@ const AppView = {
     // common one; it never had a box, only the pill and the reasons list.
     const covered = new Set(rows.map((r) => r.key));
     const saidByBox = {
-      checks_failing: 'checks', preview_failed: 'checks', checks_base_superseded: 'checks',
+      checks_failing: 'checks', preview_failed: 'checks', checks_base_superseded: 'checks', checks_retry: 'checks',
       mergeability_conflict: 'mergeability', merge_conflict: 'conflict', conflict_failed: 'conflict',
       console_errors: 'console',
     };
@@ -18733,6 +18740,17 @@ const AppView = {
     return g && (g.state === 'blocked' || g.state === 'active') && g.detail && g.detail.paused ? g.detail : null;
   },
 
+  // A checks error the merge gate still counts as in progress: the run
+  // overlapped a platform update and goes again on its own
+  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // Same reading as MergeStatus.checksWillRetry.
+  _checksWillRetry(pr) {
+    if (!pr || pr.check_state !== 'error') return false;
+    const mr = pr.mergeRequirements && typeof pr.mergeRequirements === 'object' ? pr.mergeRequirements : null;
+    const g = (mr && Array.isArray(mr.gates) ? mr.gates : []).find((x) => x && x.key === 'checks');
+    return !!g && g.state === 'active';
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
@@ -18813,6 +18831,14 @@ const AppView = {
         detail: p.staging_error
           ? `The staging preview failed to start, so automated checks can’t run: ${String(p.staging_error).slice(0, 300)}`
           : 'The staging preview failed to start, so automated checks couldn’t run.',
+      });
+    } else if (AppView._checksWillRetry(p)) {
+      // In flight and nobody need act, so it reads like a running check.
+      out.push({
+        key: 'checks_retry',
+        label: 'Checks will run again',
+        running: true,
+        detail: `${p.check_error_detail ? `${String(p.check_error_detail).slice(0, 300)} ` : ''}Merge is blocked until they pass.`,
       });
     } else if (p.check_state === 'error') {
       out.push({

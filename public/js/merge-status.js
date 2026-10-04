@@ -93,6 +93,19 @@
     return null;
   }
 
+  // A checks error the merge gate still counts as in progress: the run
+  // overlapped a platform update and goes again on its own
+  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  function checksWillRetry(p) {
+    if (!p || p.check_state !== 'error') return false;
+    var mr = (p.mergeRequirements && typeof p.mergeRequirements === 'object') ? p.mergeRequirements : null;
+    var gates = mr && Array.isArray(mr.gates) ? mr.gates : [];
+    for (var i = 0; i < gates.length; i++) {
+      if (gates[i] && gates[i].key === 'checks') return gates[i].state === 'active';
+    }
+    return false;
+  }
+
   // "measured 30 seconds ago" — the honest half of a cached number. A card
   // that states a figure without its age is making a claim about the present
   // that it cannot support, which is what every "the UI is out of sync"
@@ -331,6 +344,13 @@
           : 'The staging preview failed to start, so automated checks couldn\u2019t run. Merge is blocked until it boots cleanly.',
       });
     }
+    if (check === 'error' && checksWillRetry(p)) {
+      // In flight and nobody need act: the same treatment as a running check.
+      return descriptor('checks_running', 'Checks will run again', 'neutral', true, {
+        votes: votes,
+        title: (p.check_error_detail ? p.check_error_detail + ' ' : '') + 'Merge is blocked until they pass.',
+      });
+    }
     if (check === 'error') {
       return descriptor('checks_error', "Checks couldn't run", 'red', false, {
         glyph: '⚠', votes: votes,
@@ -545,6 +565,7 @@
     pillHtml: pillHtml,
     explicitApprovalCopy: explicitApprovalCopy,
     awaitingOtherMember: awaitingOtherMember,
+    checksWillRetry: checksWillRetry,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.
