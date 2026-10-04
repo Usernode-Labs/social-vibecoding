@@ -3257,7 +3257,7 @@
       "name": "A proposal notification names the proposal, not a sentence about it",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990204\"]",
-      "expectText": "Checks blocked"
+      "expectText": "Testing couldn't run"
     },
     {
       "name": "The notifications sheet offers a Messages tab",

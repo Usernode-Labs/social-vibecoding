@@ -235,7 +235,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(followUp.phase, 'follow_up_queued');
     assert.equal(followUp.href, `#app/note-board/dev/proposals/${proposal.id}`);
     assert.match(queued.progress.rightNow.find((item) => item.project === 'note-board' && item.number === 5).doing,
-      /^waiting for a free builder to follow up on the newest replies on its proposal$/);
+      /^waiting for a free builder to follow up on the newest replies on the change$/);
     assert.equal(queued.work.now[0].phase !== 'follow_up_queued', true, 'what it is doing this minute comes first');
     await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
     assert.equal((await both()).job('note-board#5').phase, 'following_up');

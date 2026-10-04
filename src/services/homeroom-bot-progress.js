@@ -67,10 +67,10 @@ const BOT_USERNAME = 'homeroom_bot';
 const BUSY_BUILD_HOURS = 4;
 
 const FIRST_VERSION_STEPS = Object.freeze([
-  'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Run its checks', 'Group vote', 'Live',
+  'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
 ]);
 const REQUEST_STEPS = Object.freeze([
-  'Read the request', 'Write a plan', 'Build it', 'Run its checks', 'Group vote', 'Live',
+  'Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
 ]);
 
 // Which step each stage is part of. A request's first step is "Read".
@@ -149,7 +149,7 @@ function checksWords({ check_state: state, check_phase: phase, checks_progress: 
   if (state === 'skipped') return 'not needed for this change';
   if (state === 'failing') {
     const n = Number(failedChecks);
-    return Number.isInteger(n) && n > 0 ? `failed (${plural(n, 'check')} did not pass)` : 'failed';
+    return Number.isInteger(n) && n > 0 ? `failed (${plural(n, 'test')} did not pass)` : 'failed';
   }
   if (state === 'error' || state === 'unknown') return 'could not run (the preview or the test run broke)';
   if (state === 'pending' || state === 'running') {
@@ -209,31 +209,31 @@ function stageOf(input, { now = new Date() } = {}) {
   if (proposalOpen) {
     if (row.started_at) {
       return row.queue_reason === 'checks_failing'
-        ? { stage: 'fixing', since: row.started_at, doing: 'fixing its failing checks' }
-        : { stage: 'revising', since: row.started_at, doing: 'reading the newest replies on its proposal' };
+        ? { stage: 'fixing', since: row.started_at, doing: 'fixing what its tests found' }
+        : { stage: 'revising', since: row.started_at, doing: 'reading the newest replies on the change' };
     }
     // #3734: a follow-up waiting its turn (a reply on the proposal, a change
     // asked for in the DM, its own failing checks). Only while it is up for
     // a vote: the loop does not follow up on a proposal being merged.
     if (row.queue_id && row.proposal_status === 'promoted') {
       return row.queue_reason === 'checks_failing'
-        ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix its failing checks' }
-        : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on its proposal' };
+        ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix what its tests found' }
+        : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on the change' };
     }
     if (row.question_at) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
     }
     if (row.proposal_status === 'merging') {
-      return { stage: 'merging', since: null, doing: 'approved; merging it now' };
+      return { stage: 'merging', since: null, doing: 'approved; making it live now' };
     }
     const checks = checksWords({ ...row, failed_checks: row.failed_checks ?? failedCount(row.test_results) });
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return { stage: 'vote', since: row.proposal_at, doing: 'its proposal is up for the group\'s vote', waitingOn: 'the group' };
+      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     if (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown') {
-      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `its proposal is up, and its checks ${checks}` };
+      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests ${checks}` };
     }
-    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `its proposal is up, and its checks are ${checks}` };
+    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests are ${checks}` };
   }
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
@@ -248,7 +248,7 @@ function stageOf(input, { now = new Date() } = {}) {
         stage: 'held',
         since: row.run_at,
         doing: row.cap_suppressed === 'proposals_per_app' || row.cap_suppressed === 'proposals_total'
-          ? 'ready to build, but held back until one of the open proposals is merged or closed (only so many may be open at once)'
+          ? 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)'
           : 'ready to build, but held back by the daily limit on questions and notes on this project',
       };
     }
@@ -272,7 +272,7 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     if (row.build_status === 'archived') return null;
     if (row.build_status === 'paused' || row.build_status === 'promoted') {
-      return { stage: 'proposing', since: row.build_last_activity || null, doing: 'the build finished; opening its proposal now' };
+      return { stage: 'proposing', since: row.build_last_activity || null, doing: 'the build finished; getting it ready to try now' };
     }
     // Building once its plan is posted, or once the build turn itself runs
     // (a plan that failed is not posted, and the build goes ahead without).
@@ -292,7 +292,7 @@ function stageOf(input, { now = new Date() } = {}) {
 /** Pure: what a request that is not in progress came to, or null. */
 function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
-  if (row.proposal_status === 'closed') return 'its proposal was closed without merging';
+  if (row.proposal_status === 'closed') return 'the change was closed without going live';
   if (row.mode !== 'live') return null;
   if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
     return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
@@ -430,8 +430,8 @@ function attemptOutcome(run) {
   if (run.proposal_session_id) {
     if (run.proposal_status === 'merged') return 'built; approved and live';
     if (run.proposal_status === 'promoted') return 'built; it\'s waiting for approval';
-    if (run.proposal_status === 'merging') return 'built; its proposal is being merged';
-    return 'built; its proposal was closed';
+    if (run.proposal_status === 'merging') return 'built; it\'s going live now';
+    return 'built; the change was closed';
   }
   if (run.build_ok === true) return 'built';
   if (run.build_ok === false) {
@@ -735,7 +735,7 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
   return {
     proposal: Number(s.id),
     title: s.session_title || s.pr_title || null,
-    status: { promoted: 'up for a vote', merging: 'being merged', merged: 'merged and live', closed: 'closed' }[s.status] || s.status,
+    status: { promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status,
     checks: checksWords({ ...s, failed_checks: failedCount(s.test_results) }),
     yesVotes: s.yes,
     noVotes: s.no,

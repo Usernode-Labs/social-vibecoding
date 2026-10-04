@@ -37,11 +37,21 @@ const MOMENT_WORDS = [
   ['hrbot:question:Plant Pal', 'Plant Pal: I have a question'],
   ['hrbot:ready:Plant Pal', 'Plant Pal is ready to try'],
   ['hrbot:ready_group:Supper Club', 'Your change to Supper Club is ready to try'],
-  ['hrbot:stopped:Plant Pal', 'Plant Pal: your change didn\'t finish'],
+  // WP-F: a stop says which one, and what is next; never a bare "didn't finish".
+  ['hrbot:stopped:Plant Pal', 'Plant Pal: your change stopped. I said why in our chat'],
+  ['hrbot:stopped_build:Plant Pal', 'Plant Pal: I couldn\'t finish building it. A person can pick it up'],
+  ['hrbot:stopped_blocked:Plant Pal', 'Plant Pal: I can\'t build it as written. Tell me more'],
+  ['hrbot:stopped_person:Plant Pal', 'Plant Pal: this needs a person to decide'],
+  ['hrbot:stopped_empty:Plant Pal', 'Plant Pal: I couldn\'t find anything to build. Tell me more'],
+  ['hrbot:stopped_first:Plant Pal', 'Plant Pal: I couldn\'t start building it. You can still post a request'],
+  ['hrbot:stopped_preview:Plant Pal', 'Plant Pal: the preview didn\'t start. I\'m trying again'],
   ['hrbot:held:Plant Pal', 'Plant Pal: I\'ll start it on Monday'],
   ['hrbot:held:', 'I\'ve paused until Monday'],
   ['hrbot:live:Plant Pal', 'Your change to Plant Pal is live'],
   ['hrbot:live_first:Plant Pal', 'Plant Pal is live'],
+  // WP-F: "live" only once the app answers on it.
+  ['hrbot:live_soon:Plant Pal', 'Your change to Plant Pal is going live'],
+  ['hrbot:live_first_soon:Plant Pal', 'Plant Pal is going live'],
 ];
 
 test('B4: each moment\'s push is from Homeroom bot and says what happened, in plain words', () => {
@@ -110,7 +120,7 @@ test('B4: the push and the bell keep one copy of the words', () => {
     const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
     return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
   };
-  assert.equal(words(server).length, 7);
+  assert.equal(words(server).length, 15);
   assert.deepEqual(words(client), words(server));
 });
 
@@ -261,6 +271,28 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     const { rows: [stuckMsg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [stuck.messageId]);
     assert.match(stuckMsg.content, /its preview didn't start, so it isn't ready to try yet/);
     const { rows: [last] } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id]);
-    assert.equal(last.detail, 'hrbot:stopped:Plant Pal');
+    assert.equal(last.detail, 'hrbot:stopped_preview:Plant Pal', 'WP-F: which stop it was, so it can say what is next');
   });
+});
+
+test('WP-F: a merged change is "live" only once the app answers on it, and a stop says which one', async () => {
+  const pool = { async query() { return { rows: [] }; } };
+  const detail = (moment, metadata) => dm.notificationDetail(pool, moment, { appName: 'Plant Pal', ...metadata });
+  assert.equal(await detail('live', { live: true }), 'hrbot:live:Plant Pal');
+  assert.equal(await detail('live', { live: false }), 'hrbot:live_soon:Plant Pal');
+  assert.equal(await detail('live', { live: true, firstVersion: true }), 'hrbot:live_first:Plant Pal');
+  assert.equal(await detail('live', { live: false, firstVersion: true }), 'hrbot:live_first_soon:Plant Pal');
+  assert.equal(await detail('live', {}), 'hrbot:live:Plant Pal', 'a message from before the field keeps its words');
+  for (const [kind, said] of [['build_failed', 'stopped_build'], ['blocked', 'stopped_blocked'], ['person', 'stopped_person'],
+    ['empty', 'stopped_empty'], ['first_version_failed', 'stopped_first'], ['preview_failed', 'stopped_preview']]) {
+    assert.equal(dm.momentOf({ kind }), 'stopped', kind);
+    assert.equal(await detail('stopped', { kind }), `hrbot:${said}:Plant Pal`, kind);
+  }
+  // Every token fits the detail's shape, which both readers parse.
+  for (const [token] of MOMENT_WORDS) assert.match(token, /^hrbot:[a-z_]{1,20}:/);
+  // The chat chip moves to Live after the app answers, not on the merge.
+  const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
+  const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
+  assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run)'));
+  assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);
 });

@@ -335,6 +335,17 @@ const MOMENTS = Object.freeze({
   chat: 'reply', confirm: 'reply',
 });
 
+// WP-F: which stop a 'stopped' moment was (mobile-push-policy.js
+// botMomentCopy and the bell's botMomentLine word each one).
+const STOPPED_DETAIL = Object.freeze({
+  build_failed: 'stopped_build',
+  blocked: 'stopped_blocked',
+  person: 'stopped_person',
+  empty: 'stopped_empty',
+  first_version_failed: 'stopped_first',
+  preview_failed: 'stopped_preview',
+});
+
 /** Pure: the moment a message of the bot's rings at, by its kind, or null. */
 function momentOf(metadata) {
   return MOMENTS[metadata?.kind] || null;
@@ -351,7 +362,15 @@ async function notificationDetail(pool, moment, metadata) {
   if (!moment) return null;
   const appName = clip(String(metadata?.appName || '').replace(/\s+/g, ' '), 80);
   let said = moment;
-  if (moment === 'live' && metadata?.firstVersion) said = 'live_first';
+  // WP-F: "live" only once the app answers on it (mergedText says the same);
+  // until then it is going live.
+  if (moment === 'live') {
+    const soon = metadata?.live === false;
+    if (metadata?.firstVersion) said = soon ? 'live_first_soon' : 'live_first';
+    else if (soon) said = 'live_soon';
+  }
+  // WP-F: a stop says which one, so it can say what happened and what is next.
+  if (moment === 'stopped' && STOPPED_DETAIL[metadata?.kind]) said = STOPPED_DETAIL[metadata.kind];
   if (moment === 'ready' && !metadata?.firstVersion && metadata?.appSlug) {
     if (await hasOthers(pool, null, metadata.appSlug)) said = 'ready_group';
   }
@@ -1813,6 +1832,36 @@ async function liveAfterMerge(config, app, { sha = null, deps = {} } = {}) {
   return false;
 }
 
+function noteChatLive(pool, run) {
+  return require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live' });
+}
+
+// WP-F: how often, and how far apart, a merged app that did not answer yet
+// is read again before its chat chip says Live. One that never answers keeps
+// the chip it had: it is not live.
+const LATE_LIVE_TRIES = 5;
+const LATE_LIVE_WAIT_MS = 60 * 1000;
+
+/** The chip's Live, later: read the app again a few times, a minute apart. Never throws. */
+function laterChatLive(pool, run, { config, sha, deps = {} }) {
+  if (!config || !sha) return;
+  const later = deps.later || ((fn, ms) => { setTimeout(fn, ms).unref?.(); });
+  let tries = 0;
+  const again = async () => {
+    tries += 1;
+    try {
+      if (await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps })) {
+        await noteChatLive(pool, run);
+        return;
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-dm', 'Could not read a merged app again', { app: run.slug, err: err.message });
+    }
+    if (tries < LATE_LIVE_TRIES) later(again, LATE_LIVE_WAIT_MS);
+  };
+  later(again, LATE_LIVE_WAIT_MS);
+}
+
 /**
  * A proposal the bot built is merged: its requester hears it in their DM.
  * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
@@ -1831,8 +1880,14 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   );
   if (!rows.length) return null;
   const run = rows[0];
-  // B9: the chat message it was asked in, if it was, says it is live.
-  await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live' });
+  const platform = !!run.self_hosted;
+  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
+  // B9: the chat message it was asked in, if it was, says it is live, once
+  // it is (WP-F): an app that did not answer yet is asked again a little
+  // later. The platform's own app has no health check to read here, so its
+  // chip moves on the merge, as it always did.
+  if (live || platform) await noteChatLive(pool, run);
+  else laterChatLive(pool, run, { config, sha, deps });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
@@ -1845,8 +1900,6 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
     appName: run.name || run.slug, issueNumber: run.issue_number,
     issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
   };
-  const platform = !!run.self_hosted;
-  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   return sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -2295,6 +2348,60 @@ function memberHello(appName) {
   return `Hi, I'm Homeroom bot. I build the changes people in ${appName || 'this project'} ask for. Here's yours:`;
 }
 
+// WP-F: somebody who joins a community through an invite link meets the
+// bot there too, once, if it builds for them: what it is and what to ask it.
+const JOINER_PROMPTS = Object.freeze(['What can I ask for?', 'How does the group decide?']);
+
+/** Pure: the hello somebody hears when they join `appName` by an invite link. */
+function joinerHello(appName) {
+  const name = appName || 'this project';
+  return `Hi, I'm Homeroom bot, the AI that builds things for the groups on Homeroom. Welcome to ${name}! `
+    + `When you'd like something in ${name} to change, tell me here or tap Ask for a change on its page. `
+    + 'I\'ll build it, and the group tries it and decides whether it goes live.';
+}
+
+/**
+ * WP-F: greet somebody who just joined a community through an invite link
+ * (community-invites.js redeem), once ever, and only when the bot builds for
+ * them and is switched on: a hello offering what it cannot do would be a
+ * false claim. Quiet: it rings nothing. Never throws.
+ */
+async function greetJoiner(pool, { user, app }) {
+  try {
+    if (!user?.id || !app?.id) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (settings.mode === 'off') return null;
+    const { rows } = await pool.query(
+      'SELECT id, username, is_synthetic, has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
+    );
+    const person = rows[0];
+    if (!person || !hasBot(settings, {
+      username: person.username, isSynthetic: !!person.is_synthetic,
+      hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
+    })) return null;
+    const bot = await botAccount(pool);
+    if (!bot) return null;
+    if (!await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'joiner' })) return null;
+    const name = app.name || app.slug;
+    const hello = joinerHello(name);
+    const sent = await sendDm(pool, {
+      bot,
+      userId: user.id,
+      idempotencyKey: `hrbot-joiner-${user.id}`,
+      content: hello,
+      metadata: {
+        kind: 'hello_joiner', appSlug: app.slug, appName: name,
+        hello, actions: promptActions(JOINER_PROMPTS), status: 'open',
+      },
+    });
+    if (sent) await noteHelloSent(pool, user.id, sent.messageId);
+    return sent;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not greet a joiner', { userId: user?.id, err: err.message });
+    return null;
+  }
+}
+
 /** Pure: `labels` as prompt buttons (types.ts HomeroomBotAction), at most three. */
 function promptActions(labels) {
   return labels.slice(0, 3).map((label, i) => ({ id: `ask-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -2689,6 +2796,8 @@ module.exports = {
   askBotToBuild,
   askersOf,
   MAKER_HELLO,
+  joinerHello,
+  greetJoiner,
   MAKER_PROMPTS,
   MEMBER_PROMPTS,
   memberHello,

@@ -618,7 +618,13 @@ async function redeem(pool, { token, user }) {
     await client.query('COMMIT');
 
     const status = after[0]?.status === 'joined' ? 'joined' : 'queued';
-    if (status === 'joined') appAccess.invalidateVisibility(invite.app_id, invite.slug);
+    if (status === 'joined') {
+      appAccess.invalidateVisibility(invite.app_id, invite.slug);
+      // WP-F: Homeroom bot says hello, once, when it builds for them.
+      void require('./homeroom-bot-dm').greetJoiner(pool, {
+        user, app: { id: invite.app_id, slug: invite.slug, name: invite.name },
+      });
+    }
     events.record(pool, {
       type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
       userId: user.id,

@@ -521,8 +521,8 @@ function demoWork(now = Date.now()) {
       since: ago(7), ...nowhere, earlier: [],
     }, {
       ...request(9, 'Staging demo, show item counts'),
-      phase: 'follow_up_queued', stage: 'followup_queued', step: 5, of: 6, stepName: 'Group vote',
-      doing: 'waiting in the queue (number 1) to follow up on the newest replies on its proposal',
+      phase: 'follow_up_queued', stage: 'followup_queued', step: 5, of: 6, stepName: 'Approval',
+      doing: 'waiting in the queue (number 1) to follow up on the newest replies on the change',
       since: ago(1), ...nowhere, earlier: [{ id: 2, outcome: 'proposed', at: ago(60 * 26) }],
     }],
     needsYou: [{

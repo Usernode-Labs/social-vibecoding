@@ -126,7 +126,7 @@ const run = (id, issue, hoursAgo, extra = {}) => ({
 });
 const entry = (number, stage, extra = {}) => ({
   project: 'ear-trainer', projectName: 'Ear Trainer', number, title: `Request ${number}`, stage, step: 5, of: 6,
-  stepName: 'Group vote', doing: 'reading the newest replies on its proposal', busyNow: true, since: at(0.15).toISOString(), ...extra,
+  stepName: 'Approval', doing: 'reading the newest replies on the change', busyNow: true, since: at(0.15).toISOString(), ...extra,
 });
 
 test('each request appears once: in Now while the bot has it, else in Needs you while it waits on them, else in History', () => {
@@ -146,7 +146,7 @@ test('each request appears once: in Now while the bot has it, else in Needs you 
   assert.deepEqual(work.now.map((job) => job.key), ['ear-trainer#5']);
   const five = work.now[0];
   assert.equal(five.phase, 'following_up');
-  assert.deepEqual([five.step, five.of, five.stepName], [5, 6, 'Group vote']);
+  assert.deepEqual([five.step, five.of, five.stepName], [5, 6, 'Approval']);
   assert.deepEqual(five.earlier, [{ id: 8, outcome: 'failed', at: at(16.2).toISOString() }], 'its run before, folded in');
 
   assert.deepEqual(work.needsYou.map((job) => [job.key, job.outcome]), [['ear-trainer#14', 'blocked']],
@@ -570,7 +570,7 @@ test('a tile with nowhere to open has no links', () => {
   assert.doesNotMatch(html, /<a /);
   assert.match(html, /Staging demo app #14: Staging demo, show a total under the list/);
   assert.match(html, /Asked you a question · 35m ago/);
-  assert.match(html, /Waiting in the queue \(number 1\) to follow up on the newest replies on its proposal · 1m so far/);
+  assert.match(html, /Waiting in the queue \(number 1\) to follow up on the newest replies on the change · 1m so far/);
 });
 
 test('every phase and ending has words', () => {

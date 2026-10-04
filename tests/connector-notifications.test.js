@@ -254,7 +254,7 @@ test('the submitted copy leads with the destination', () => {
   const submitted = copyFor('connector_submitted', { detail: 'submitted' });
   assert.match(shared.body, /in-progress/i);
   assert.match(shared.body, /no vote/i, 'nobody is being asked to decide anything');
-  assert.match(submitted.body, /vote/i);
+  assert.match(submitted.body, /waiting for approval/i);
   assert.notEqual(shared.body, submitted.body, 'the two destinations do not read alike');
 });
 
