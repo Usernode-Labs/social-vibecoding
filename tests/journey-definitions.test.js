@@ -123,10 +123,11 @@ test('the real-person rule leaves out admins, bots, test accounts, restricted, d
   ]) assert.ok(sql.includes(part), part);
   assert.equal(journey.REAL_VOTER_SQL, sql.replace(/\bu\./g, 'uy.'),
     'the yes-voters of a change are held to exactly the same rule');
-  assert.deepEqual(journey.RESERVED_PATTERNS, ['usernode%', 'staging%'],
+  // B9: 'homeroom' joined the reserved prefixes with the bot's @mention.
+  assert.deepEqual(journey.RESERVED_PATTERNS, ['usernode%', 'staging%', 'homeroom%'],
     'the reserved prefixes nobody else may take (src/services/usernames.js RESERVED_PREFIXES)');
   const usernames = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'usernames.js'), 'utf8');
-  assert.match(usernames, /const RESERVED_PREFIXES = \['usernode', 'staging'\];/);
+  assert.match(usernames, /const RESERVED_PREFIXES = \['usernode', 'staging', 'homeroom'\];/);
   assert.deepEqual(journey.notRecorded('no record'), { recorded: false, reason: 'no record' });
 });
 
