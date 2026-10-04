@@ -62,11 +62,17 @@ export type SignInSheetProps = {
   intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
+  /**
+   * Runs once the session exists and before the shell takes over:
+   * 'existing' for an account that signed straight in, 'new' for one that
+   * just set its password (in practice, one the code just made).
+   */
+  beforeFinish?: (kind: 'existing' | 'new') => void | Promise<void>;
   onClose: () => void;
   primaryClass: string;
 };
 
-export function SignInSheet({ open, title, intro, followInvite = false, onClose, primaryClass }: SignInSheetProps) {
+export function SignInSheet({ open, title, intro, followInvite = false, beforeFinish, onClose, primaryClass }: SignInSheetProps) {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [needsUsername, setNeedsUsername] = useState(false);
@@ -185,6 +191,7 @@ export function SignInSheet({ open, title, intro, followInvite = false, onClose,
         return;
       }
       if (data.next === 'signed-in') {
+        await beforeFinish?.('existing');
         await finishLogin();
         return;
       }
@@ -196,7 +203,7 @@ export function SignInSheet({ open, title, intro, followInvite = false, onClose,
     } finally {
       setBusy(false);
     }
-  }, [email, followInvite]);
+  }, [email, followInvite, beforeFinish]);
 
   const finishAccount = useCallback(async () => {
     setError(null);
@@ -221,13 +228,14 @@ export function SignInSheet({ open, title, intro, followInvite = false, onClose,
         if (data.field === 'username') usernameField.current?.focus();
         return;
       }
+      await beforeFinish?.('new');
       await finishLogin();
     } catch (err) {
       setError(sessionMintFailureMessage(err));
     } finally {
       setBusy(false);
     }
-  }, [needsUsername]);
+  }, [needsUsername, beforeFinish]);
 
   if (!open) return null;
 

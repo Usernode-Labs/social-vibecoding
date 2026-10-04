@@ -32,10 +32,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
-import { invitedSteps, type TourScreen, type TourStep } from './tour-steps';
+import { type Made, MakeScreen } from './make';
+import { MadeScreen } from './made';
+import { invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
 
 export type FirstSessionInfo = {
   slug: string;
+  /** Homeroom bot's chat with the viewer, when it builds this project for them. */
+  conversationId?: number | null;
   name: string;
   iconEmoji?: string | null;
   iconUrl?: string | null;
@@ -72,13 +76,14 @@ function markSeen(slug: string): void {
 }
 
 /** Open the screen a step is on, through the shell's own navigation. */
-export function enterScreen(screen: TourScreen, slug: string): void {
+export function enterScreen(screen: TourScreen, slug: string, conversationId?: number | null): void {
   const { App, AppView } = legacy();
   if (!App) return;
   if (screen === 'home') App.navigateHome?.();
   else if (screen === 'app') App.navigateToApp?.(slug, 'app');
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
+  else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
 }
 
 /**
@@ -160,14 +165,14 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
   // A step whose target never shows (a screen that did not open) opens its
   // screen itself after a moment.
   useEffect(() => {
-    const t = window.setTimeout(() => { if (!targetBox(step.target)) enterScreen(step.screen, info.slug); }, 2500);
+    const t = window.setTimeout(() => { if (!targetBox(step.target)) enterScreen(step.screen, info.slug, info.conversationId); }, 2500);
     return () => window.clearTimeout(t);
   }, [index, step, info.slug]);
 
   const go = useCallback((to: number) => {
     if (to < 0) return;
     if (to >= steps.length) { onEnd(); return; }
-    if (steps[to].screen !== steps[index].screen || to < index) enterScreen(steps[to].screen, info.slug);
+    if (steps[to].screen !== steps[index].screen || to < index) enterScreen(steps[to].screen, info.slug, info.conversationId);
     setIndex(to);
   }, [index, steps, info.slug, onEnd]);
 
@@ -179,14 +184,17 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
       const t = e.target as Element | null;
       if (!t) return;
       const hit = Array.from(document.querySelectorAll(step.target)).some((el) => el.contains(t));
-      if (hit) window.setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 0);
+      if (!hit) return;
+      window.setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 0);
+      const next = steps[index + 1];
+      if (step.opensNext && next) window.setTimeout(() => enterScreen(next.screen, info.slug, info.conversationId), 250);
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [step, index]);
+  }, [step, index, steps, info.slug, info.conversationId]);
 
   const skip = useCallback(() => {
-    enterScreen(steps[steps.length - 1].screen, info.slug);
+    enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
     onEnd();
   }, [steps, info.slug, onEnd]);
 
@@ -322,10 +330,40 @@ function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
   );
 }
 
-type Mode = { kind: 'none' } | { kind: 'welcome'; info: FirstSessionInfo } | { kind: 'tour'; info: FirstSessionInfo };
+type Mode =
+  | { kind: 'none' }
+  | { kind: 'welcome'; info: FirstSessionInfo }
+  | { kind: 'make' }
+  | { kind: 'made'; made: Made }
+  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' };
+
+// Set by the signed-out story's sheet for an account it just made
+// (../auth/landing.tsx): ask it what to make once the shell has signed in.
+const MAKE_FLAG = 'usernode:first-session:make';
+
+function viewerName(): string {
+  const user = legacy().App?.user;
+  return user?.displayName || user?.username || '';
+}
 
 export function FirstSession() {
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
+
+  // An account the story's sheet just made is asked what to make, once,
+  // as soon as the shell has signed it in with access (`sv:authed` fires
+  // only then; somebody still waiting is in the waiting room instead).
+  useEffect(() => {
+    const check = () => {
+      let flagged = false;
+      try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
+      if (!flagged) return;
+      try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
+      setMode({ kind: 'make' });
+    };
+    if (legacy().App?.user) check();
+    document.addEventListener('sv:authed', check);
+    return () => document.removeEventListener('sv:authed', check);
+  }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
   // show, so the caller can land the viewer the old way when it will not.
@@ -345,10 +383,37 @@ export function FirstSession() {
   }, []);
 
   const end = useCallback(() => setMode({ kind: 'none' }), []);
-  const steps = useMemo(
-    () => (mode.kind === 'tour' ? invitedSteps({ slug: mode.info.slug, name: mode.info.name }) : []),
-    [mode],
-  );
+  const steps = useMemo(() => {
+    if (mode.kind !== 'tour') return [];
+    const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
+    return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
+  }, [mode]);
+
+  if (mode.kind === 'make') {
+    return (
+      <MakeScreen
+        who={viewerName()}
+        onMade={(made) => setMode({ kind: 'made', made })}
+        onLookAround={() => { setMode({ kind: 'none' }); legacy().App?.navigateHome?.(); }}
+      />
+    );
+  }
+  if (mode.kind === 'made') {
+    const { made } = mode;
+    return (
+      <MadeScreen
+        made={made}
+        me={viewerName()}
+        onContinue={() => {
+          const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId };
+          markSeen(made.slug);
+          rememberCommunity(made.slug);
+          enterScreen('home', made.slug);
+          setMode({ kind: 'tour', info, path: 'maker' });
+        }}
+      />
+    );
+  }
 
   if (mode.kind === 'welcome') {
     return (
@@ -357,7 +422,7 @@ export function FirstSession() {
         onGo={() => {
           rememberCommunity(mode.info.slug);
           enterScreen('home', mode.info.slug);
-          setMode({ kind: 'tour', info: mode.info });
+          setMode({ kind: 'tour', info: mode.info, path: 'invited' });
         }}
       />
     );

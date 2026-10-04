@@ -54,8 +54,9 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, MadeForYou, useInvitePreview } from './invite-card';
+import { DeadInvite, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
 import { SignInSheet } from './sign-in-sheet';
+import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
@@ -499,9 +500,10 @@ export function LandingScreen() {
   // reason the session's two action blocks are (the id inventory reads them).
   const invite = useInvitePreview();
   const madeForYou = !!invite?.live;
-  // Its Join asks for the email code in a sheet over the cards.
-  const [joining, setJoining] = useState(false);
-  const closeJoin = useCallback(() => setJoining(false), []);
+  // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
+  // the story's Get started or Sign in.
+  const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
+  const closeSheet = useCallback(() => setSheet(null), []);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -517,6 +519,14 @@ export function LandingScreen() {
   const waitlistPayload = useWaitlistOptions();
   const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
   const siteUrl = marketingSiteUrl(waitlistPayload);
+
+  // THE STORY (./story.tsx), when the first session's switch is on: what
+  // Homeroom is and "Get started", in place of the waitlist pitch, for a
+  // visitor with no session who did not come by an invite link. Read in
+  // effects like everything else here, so the first commit is the pitch the
+  // prerender shipped.
+  const [onInvitePath, setOnInvitePath] = useState(false);
+  useEffect(() => { setOnInvitePath(!!inviteTokenFrom(location.pathname)); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -550,6 +560,15 @@ export function LandingScreen() {
    */
   const refreshHeader = useCallback(() => {
     setSession(hasSession());
+  }, []);
+  const storyOn = waitlistPayload?.story_landing === true && !onInvitePath && !session;
+  const pitchHidden = madeForYou || storyOn;
+  // A new account made from the story is asked what to make next
+  // (../first-session/make.tsx), not which communities to join.
+  const startedFromStory = useCallback(async (kind: 'existing' | 'new') => {
+    if (kind !== 'new') return;
+    try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
+    await fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
   }, []);
 
   const clearViewerCover = useCallback(() => {
@@ -1191,7 +1210,7 @@ export function LandingScreen() {
               /invite/<token>, and only once its preview is back — nothing
               here on any other visit. A dead link says why, above the pitch.
           */}
-          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setJoining(true)} /> : null}
+          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
           {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
@@ -1235,14 +1254,14 @@ export function LandingScreen() {
               space to split, so this is zero high and the layout is exactly
               the one a short viewport had before.
           */}
-          <div className={hiddenLast(madeForYou, 'grow')} />
+          <div className={hiddenLast(pitchHidden, 'grow')} />
           <img
             src="/brand/people.png"
             alt=""
             width={816}
             height={612}
             draggable={false}
-            className={hiddenLast(madeForYou, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
+            className={hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
           />
           {/*
               The rail deliberately overflows AND loops: its four chips are
@@ -1266,7 +1285,7 @@ export function LandingScreen() {
               Board 1 draws the row as `padding: 20px 0 4px`: `mt-3` plus
               `pt-2` is the 20 above, `pb-1` the 4 below.
           */}
-          <div className={hiddenLast(madeForYou, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')}>
+          <div className={hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')}>
             <div className="landing-rail-track">
               {[0, 1].map((copy) => CHIPS.map(({ line, dot }) => (
                 <span
@@ -1322,7 +1341,7 @@ export function LandingScreen() {
               alignment is a property of the composition, not of any one
               string, and a later line added here should inherit it.
           */}
-          <div className={hiddenLast(madeForYou, 'px-4 flex grow flex-col text-center')}>
+          <div className={hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')}>
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               Opening gradually
             </p>
@@ -1526,6 +1545,9 @@ export function LandingScreen() {
               </a>
             </div>
           </div>
+          {storyOn ? (
+            <Story primaryClass={PRIMARY_PILL} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
+          ) : null}
         </div>
       </div>
       <ViewerRegion />
@@ -1536,11 +1558,21 @@ export function LandingScreen() {
       */}
       {madeForYou ? (
         <SignInSheet
-          open={joining}
+          open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
           intro="Sign in or make an account with your email. It takes a minute."
           followInvite
-          onClose={closeJoin}
+          onClose={closeSheet}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
+      {storyOn ? (
+        <SignInSheet
+          open={sheet === 'start' || sheet === 'signin'}
+          title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
+          intro={sheet === 'signin' ? 'Welcome back. We\'ll email you a code.' : 'With your email. It takes a minute.'}
+          beforeFinish={startedFromStory}
+          onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
         />
       ) : null}

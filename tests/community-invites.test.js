@@ -217,7 +217,7 @@ test('the page\'s link preview: a live link names the project and inviter, a dea
 test('the paths: the page is a shell document; following from the waiting room is open, making links is not', () => {
   const auth = read('src/middleware/auth.js');
   assert.match(auth, /\|\| \/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(pathname\)/);
-  assert.match(auth, /'\/api\/invite-links\/by-token\/',\s+'\/api\/invite-links\/queued',\s+\];/);
+  assert.match(auth, /'\/api\/invite-links\/by-token\/',\s+'\/api\/invite-links\/queued',(\s+\/\/[^\n]*)+\s+'\/api\/me\/first-session\/started',\s+\];/);
   assert.doesNotMatch(auth, /'\/api\/invite-links\/',/, 'not the whole prefix');
   assert.match(auth, /'\/api\/public\/',/, 'the preview rides the existing anonymous tier');
   const server = read('server.js');
@@ -367,11 +367,12 @@ test('the picture is served only through a live link, and only an after-shot of 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const madeForYou = !!invite\?\.live;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn;/);
   for (const hidden of [
-    "hiddenLast(madeForYou, 'grow')",
-    "hiddenLast(madeForYou, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
-    "hiddenLast(madeForYou, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')",
-    "hiddenLast(madeForYou, 'px-4 flex grow flex-col text-center')",
+    "hiddenLast(pitchHidden, 'grow')",
+    "hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
+    "hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')",
+    "hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')",
   ]) assert.ok(landing.includes(hidden), hidden);
   const card = read('frontend/src/features/auth/invite-card.tsx');
   assert.match(card, /<section data-landing-invite="live"/);

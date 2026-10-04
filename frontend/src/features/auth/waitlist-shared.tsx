@@ -186,6 +186,10 @@ export interface WaitlistOptions {
    *  of what this is. Built server-side from config.marketingBaseUrl, like
    *  waitlist_url above, so no client hardcodes the host. */
   marketing_url?: string;
+  /** The first session's switch (src/services/first-session.js): the landing
+   *  tells the story and asks people to get started, instead of pointing at
+   *  the waitlist. Absent or false keeps the waitlist landing. */
+  story_landing?: boolean;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

@@ -164,6 +164,11 @@ const GATE_OPEN_PATHS = [
   // room shows: making and managing links stays behind the gate.
   '/api/invite-links/by-token/',
   '/api/invite-links/queued',
+  // An account just made from the signed-out story records that it
+  // started there (routes/onboarding.js), before it is let in, so the day
+  // it is let in it is asked what to make rather than which communities to
+  // join. It writes only that answer, on the caller's own account.
+  '/api/me/first-session/started',
 ];
 
 // Documents owned by the platform SPA. Clean app URLs deliberately live in

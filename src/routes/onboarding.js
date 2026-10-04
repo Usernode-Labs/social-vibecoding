@@ -29,6 +29,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const onboarding = require('../services/onboarding');
+const firstSession = require('../services/first-session');
 const { acceptInvite } = require('../services/collab-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { drainGuard } = require('../services/lifecycle');
@@ -54,6 +55,20 @@ function onboardingRoutes(config) {
       res.json({ communities: list });
     } catch (err) {
       log.error('onboarding', 'join suggestions failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // An account just made from the signed-out story (the sheet the story's
+  // "Get started" opens): the first session asks what to make, not which
+  // communities to join (services/first-session.js).
+  router.post('/api/me/first-session/started', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      await firstSession.answerJoinScreen(pool, req.user.id, 'story');
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('onboarding', 'first session start failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
