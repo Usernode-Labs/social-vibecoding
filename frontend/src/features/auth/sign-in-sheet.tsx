@@ -191,6 +191,20 @@ export type SignInSheetProps = {
   primaryClass: string;
 };
 
+/**
+ * Join was pressed on an invite's own page and the person chose "Sign in with
+ * a password" instead of the code: the shell follows the link once they are
+ * in (App._followInvite) without asking them to join a second time. Kept for
+ * this tab only, and read once.
+ */
+function rememberInviteJoin() {
+  try {
+    if (/^\/invite\/[^/]+\/?$/.test(location.pathname)) {
+      sessionStorage.setItem('usernode:invite-join', location.pathname.replace(/\/$/, ''));
+    }
+  } catch { /* asked to join again, as before */ }
+}
+
 export function SignInSheet({
   open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
   beforeFinish, onClose, primaryClass,
@@ -572,7 +586,7 @@ export function SignInSheet({
         {step === 'choose' || step === 'email' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             {'New to Homeroom? This makes your account. '}
-            <a href="#login" onClick={onClose} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">Sign in with a password</a>
+            <a href="#login" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">Sign in with a password</a>
           </p>
         ) : null}
         <TermsNotice className="mt-3" />

@@ -131,6 +131,22 @@
       }
     },
 
+    // Resolves true once an invite this page is following has brought the
+    // viewer into its group, false when there is none or they said Not now.
+    // The boot can get here a beat before the follow starts, so an invite
+    // address waits briefly for it to begin.
+    async _joinedByInvite() {
+      const app = window.App;
+      if (!app) return false;
+      const onInvitePath = typeof app._inviteTokenFromPath === 'function'
+        && !!app._inviteTokenFromPath(location.pathname);
+      for (let i = 0; onInvitePath && !app._inviteFollow && i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!app._inviteFollow) return false;
+      try { return (await app._inviteFollow) === true; } catch (_) { return false; }
+    },
+
     _params() {
       try { return new URLSearchParams(location.search); } catch (_) { return null; }
     },
@@ -181,6 +197,18 @@
       // A ghost-click window after the sheet before it, the same one the
       // terms gate leaves after the username step.
       await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+
+      // An invite being followed comes first (App._followInvite): somebody a
+      // link is bringing into a group is asked to join that group, not what
+      // to make or which communities to join. Once they are in, this step is
+      // done (the invite answered it on the server); "Not now", and it goes
+      // on as usual.
+      if (await CommunitiesFirstRun._joinedByInvite()) {
+        CommunitiesFirstRun._answered = true;
+        window.App.user.needsCommunitiesChoice = false;
+        CommunitiesFirstRun._resolve();
+        return;
+      }
 
       // The first session in place of this screen (`storyFirstSession` on
       // /api/auth/me, while the story landing is on): an account that
