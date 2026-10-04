@@ -3987,7 +3987,10 @@ const App = {
         title: `Join ${name}?`,
         message: from
           + (standing.note ? ` “${standing.note}”` : '')
-          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
+          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
+          // WP-E: the link's maker hears when somebody joins through it.
+          + (standing.inviterName || standing.inviter
+            ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
         confirmLabel: 'Join',
         cancelLabel: 'Not now',
       }) : true;

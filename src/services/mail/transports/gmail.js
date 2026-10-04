@@ -94,6 +94,11 @@ function buildRaw({ from, to, message, boundary }) {
     `From: ${headerSafe(from)}`,
     `To: ${headerSafe(to)}`,
     `Subject: ${encodeHeader(headerSafe(message.subject))}`,
+    // A kind's own headers (activity mail's List-Unsubscribe), by name and
+    // value, each made header-safe like the rest.
+    ...Object.entries(message.headers || {})
+      .filter(([name]) => /^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(name))
+      .map(([name, value]) => `${name}: ${headerSafe(value)}`),
     'MIME-Version: 1.0',
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     '',

@@ -66,6 +66,20 @@ export function AlertsSection() {
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="builds">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Your builds</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">When something you asked Homeroom bot for is ready to try, needs your answer, stops, or goes live.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invite_activity">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Your invites</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">When someone opens your invite link, joins through it, or says hi for the first time.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>

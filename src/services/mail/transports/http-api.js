@@ -53,6 +53,9 @@ function buildPayload(from, to, message) {
     to: [to],
     subject: message.subject,
     text: message.text,
+    // A kind's own headers (activity mail's List-Unsubscribe), in the
+    // `headers` object Resend takes.
+    ...(message.headers ? { headers: { ...message.headers } } : {}),
   };
 }
 

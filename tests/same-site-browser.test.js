@@ -113,6 +113,10 @@ const EXEMPT = new Map([
   // the browser that started the trip.
   ['sign-in-providers.js POST /api/auth/oauth/apple/callback', 'the provider\'s own cross-site answer; it only redirects to the binder-checked GET'],
   ['sign-in-providers.js POST /api/auth/oauth/finish', JSON_FIELD],
+  // WP-E: a mail client's one-click unsubscribe (RFC 8058) is a cross-site
+  // POST by design. It carries no session; the HMAC token in its query is
+  // the whole of the check, and all it can do is turn activity mail off.
+  ['activity-mail.js POST /mail/unsubscribe', 'a mail client\'s one-click unsubscribe: sessionless, the signed token in the link is the check'],
   ['agent-session-drafts.js POST /api/agent-sessions/:id/drafts', JSON_FIELD],
   ['agent-sessions.js POST /api/agent-sessions/:id/attachments', RAW],
   ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],

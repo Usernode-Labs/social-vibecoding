@@ -535,6 +535,22 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/activity-mail.js",
+      "method": "GET",
+      "path": "/mail/unsubscribe",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability"
+    },
+    {
+      "source": "src/routes/activity-mail.js",
+      "method": "POST",
+      "path": "/mail/unsubscribe",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability"
+    },
+    {
       "source": "src/routes/admin-support.js",
       "method": "GET",
       "path": "/api/admin/support/search",

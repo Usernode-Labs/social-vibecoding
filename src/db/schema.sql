@@ -5119,7 +5119,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_kind_categories (
   category        VARCHAR(32) NOT NULL CHECK (category IN (
                     'direct_interactions', 'invitations', 'shared_work',
                     'developer_sessions', 'proposal_alerts', 'lightweight_activity',
-                    'messages', 'app_alerts'
+                    'messages', 'app_alerts', 'builds', 'invite_activity'
                   )),
   default_enabled BOOLEAN NOT NULL
 );
@@ -5164,6 +5164,27 @@ BEGIN
         'direct_interactions', 'invitations', 'shared_work',
         'developer_sessions', 'proposal_alerts', 'lightweight_activity',
         'messages', 'app_alerts'
+      ));
+  END IF;
+END $$;
+-- WP-E's two categories (Your builds, Your invites), same two-block reason
+-- as the ones above: this block tests for the absence of its own newest one.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'mobile_push_kind_categories'::regclass
+       AND conname = 'mobile_push_kind_categories_category_check'
+       AND pg_get_constraintdef(oid) NOT LIKE '%invite_activity%'
+  ) THEN
+    ALTER TABLE mobile_push_kind_categories
+      DROP CONSTRAINT mobile_push_kind_categories_category_check;
+    ALTER TABLE mobile_push_kind_categories
+      ADD CONSTRAINT mobile_push_kind_categories_category_check
+      CHECK (category IN (
+        'direct_interactions', 'invitations', 'shared_work',
+        'developer_sessions', 'proposal_alerts', 'lightweight_activity',
+        'messages', 'app_alerts', 'builds', 'invite_activity'
       ));
   END IF;
 END $$;
@@ -5223,7 +5244,18 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_reply', 'messages', TRUE),
   ('conversation_reaction', 'messages', TRUE),
   -- #2387: a reply in a conversation thread you started or replied in.
-  ('conversation_thread_reply', 'messages', TRUE)
+  ('conversation_thread_reply', 'messages', TRUE),
+  -- WP-E: the Homeroom bot's moments about something you asked it for
+  -- (services/homeroom-bot-dm.js BUILD_KINDS), so turning Messages off does
+  -- not silence "it's ready to try".
+  ('build_ready', 'builds', TRUE),
+  ('build_needs_you', 'builds', TRUE),
+  ('build_stopped', 'builds', TRUE),
+  ('build_live', 'builds', TRUE),
+  -- WP-E: the people your invite links bring (services/invite-activity.js).
+  ('invite_opened', 'invite_activity', TRUE),
+  ('member_joined', 'invite_activity', TRUE),
+  ('first_message', 'invite_activity', TRUE)
 ON CONFLICT (kind) DO UPDATE
   SET category = EXCLUDED.category,
       default_enabled = EXCLUDED.default_enabled;
@@ -5255,7 +5287,10 @@ DELETE FROM mobile_push_kind_categories
    -- #3181.
    'session_stalled',
    -- Server-wide limit alerts for full admins.
-   'platform_limit'
+   'platform_limit',
+   -- WP-E.
+   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
+   'invite_opened', 'member_joined', 'first_message'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -5266,7 +5301,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_preferences (
   category   VARCHAR(32) NOT NULL CHECK (category IN (
                'direct_interactions', 'invitations', 'shared_work',
                'developer_sessions', 'proposal_alerts', 'lightweight_activity',
-               'messages', 'app_alerts'
+               'messages', 'app_alerts', 'builds', 'invite_activity'
              )),
   enabled    BOOLEAN NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -5309,6 +5344,27 @@ BEGIN
         'direct_interactions', 'invitations', 'shared_work',
         'developer_sessions', 'proposal_alerts', 'lightweight_activity',
         'messages', 'app_alerts'
+      ));
+  END IF;
+END $$;
+-- WP-E's two categories (Your builds, Your invites), same two-block reason
+-- as the ones above: this block tests for the absence of its own newest one.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'mobile_push_preferences'::regclass
+       AND conname = 'mobile_push_preferences_category_check'
+       AND pg_get_constraintdef(oid) NOT LIKE '%invite_activity%'
+  ) THEN
+    ALTER TABLE mobile_push_preferences
+      DROP CONSTRAINT mobile_push_preferences_category_check;
+    ALTER TABLE mobile_push_preferences
+      ADD CONSTRAINT mobile_push_preferences_category_check
+      CHECK (category IN (
+        'direct_interactions', 'invitations', 'shared_work',
+        'developer_sessions', 'proposal_alerts', 'lightweight_activity',
+        'messages', 'app_alerts', 'builds', 'invite_activity'
       ));
   END IF;
 END $$;
@@ -5506,6 +5562,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed            BOOLEAN NO
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_token   VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_sent_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed_at         TIMESTAMPTZ;
+-- WP-E: whether activity mail may reach this person when no phone can take
+-- the push it stands in for (services/activity-mail.js). The unsubscribe link
+-- in every one of those emails clears it (routes/activity-mail.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS activity_email BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name               VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram                   VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS discord                    VARCHAR(255);

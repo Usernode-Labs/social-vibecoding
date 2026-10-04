@@ -118,6 +118,27 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       'conversation_thread_reply',
     ]),
   }),
+  Object.freeze({
+    // WP-E: what the Homeroom bot says about something you asked it for, at
+    // the four moments its messages ring (homeroom-bot-dm.js MOMENTS). They
+    // used to ride Messages, so turning Messages off silenced "it's ready to
+    // try" too. Its answers to what you wrote stay messages.
+    key: 'builds',
+    label: 'Your builds',
+    description: 'When something you asked Homeroom bot for is ready to try, needs your answer, stops, or goes live.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['build_ready', 'build_needs_you', 'build_stopped', 'build_live']),
+  }),
+  Object.freeze({
+    // WP-E: the people your invite links bring, told to whoever made the
+    // link (services/invite-activity.js). Opens are a count, never a name;
+    // a join or a first hello names a signed-in person who came by your link.
+    key: 'invite_activity',
+    label: 'Your invites',
+    description: 'When someone opens your invite link, joins through it, or says hi for the first time.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['invite_opened', 'member_joined', 'first_message']),
+  }),
 ]);
 
 const CATEGORY_BY_KEY = new Map(CATEGORY_DEFINITIONS.map((category) => (

@@ -13,6 +13,11 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_reply',
   'conversation_reaction',
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's build moments (services/notifications.js).
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 
 const DEFAULTS = Object.freeze({

@@ -514,6 +514,12 @@ app.use(challengeIllustrationImageRoutes(config));
 // 32-hex share token, and the HTML is served under a sandbox CSP.
 app.use(reportShareRoutes(config));
 
+// WP-E: the unsubscribe link in activity mail (src/routes/activity-mail.js).
+// Before authMiddleware: a mail client's one-click POST carries no session,
+// and the HMAC token in the link is the whole of the access check.
+app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
+require('./src/services/activity-mail').init(config);
+
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
 // visibility='public' rows are guarded by the unguessable 32-hex id;

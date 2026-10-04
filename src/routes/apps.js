@@ -1476,7 +1476,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       let firstVersion = null;
       if (!appRow.self_hosted && !stagingSample) {
         try {
-          const state = await require('../services/homeroom-bot-dm').firstVersionState(pool, appRow.id);
+          const botDm = require('../services/homeroom-bot-dm');
+          const state = await botDm.firstVersionState(pool, appRow.id);
           if (state) {
             const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
             firstVersion = {
@@ -1491,6 +1492,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               conversationId: mine ? state.conversationId : null,
               // B6: the plan it waits on, for its creator to build from here.
               ...(mine && state.plan ? { plan: state.plan } : {}),
+              // WP-E: about how long a build takes, for "usually about 8
+              // minutes" while it is not ready yet.
+              ...(mine && !state.ready ? { typicalMinutes: await botDm.typicalMinutesCached(pool) } : {}),
             };
           }
         } catch (err) {

@@ -624,6 +624,8 @@ async function redeem(pool, { token, user }) {
       void require('./homeroom-bot-dm').greetJoiner(pool, {
         user, app: { id: invite.app_id, slug: invite.slug, name: invite.name },
       });
+      // WP-E: the link's maker hears who came in by it.
+      void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user });
     }
     events.record(pool, {
       type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
