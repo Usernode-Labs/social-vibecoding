@@ -461,7 +461,11 @@
     // an explanatory tooltip and the `explicitApproval` flag so callers can
     // render the lock.
     if (status === 'promoted') {
-      return descriptor('in_vote', 'In vote', 'violet', false, {
+      // B10a: one word for a change that waits on the group, and the
+      // creator's own words on a project that is just them, whose one Yes is
+      // the Yes it needs.
+      var solo = (opts.audience || p.app_audience) === 'solo' && majority <= 1;
+      return descriptor('in_vote', solo ? 'Waiting for your approval' : 'Waiting for approval', 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
           ? explicitApprovalCopy(p.explicit_approval_reason).sentence

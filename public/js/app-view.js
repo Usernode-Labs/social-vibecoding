@@ -2982,8 +2982,9 @@ const AppView = {
       // Nothing more to say under the step: the card is what comes next.
     } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
     else if (fv.ready) {
-      lines.push(mine ? 'Its first version is ready. Try it and vote on it from your chat.'
-        : 'Its first version is up for a vote.');
+      // B10a: waiting for approval, in one word everywhere.
+      lines.push(mine ? 'Its first version is ready. Try it from your chat.'
+        : 'Its first version is waiting for approval.');
     } else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
     }
@@ -4608,6 +4609,7 @@ const AppView = {
     if (body.changeId) {
       body.hero = AppView._topicHeroView(t.kind, item);
       body.steps = AppView._topicStepsView(item, card, body);
+      body.tested = AppView._testedLine(item);
     }
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
@@ -4629,7 +4631,7 @@ const AppView = {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const heading = ref.state === 'merged'
       ? (issue.state === 'closed' ? 'Closed by' : 'Addressed by')
-      : ref.state === 'review' ? 'In review' : 'Work underway';
+      : ref.state === 'review' ? 'Waiting for approval' : 'Work underway';
     const n = parseInt(ref.prNumber, 10) || 0;
     return {
       heading,
@@ -4680,7 +4682,7 @@ const AppView = {
     // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
-      'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
+      'Continue building', 'Open session', 'Ask for approval', 'View PR on GitHub',
       'Retry preview', 'Before/after screenshots', 'Before & after'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
@@ -4736,29 +4738,27 @@ const AppView = {
           }] },
         });
       }
-      // The rows the band now carries leave the menu — with one guard. The
-      // ⋯ is where the band's pills fold on a narrow screen, and a trigger
-      // over no rows is a dead button, so it never opens empty: when nothing
-      // of the menu's own would be left (no GitHub link, no admin or owner
-      // row), Share stays a ⋯ row rather than becoming the band's last pill.
+      // The rows the band now carries leave the menu. The ⋯ is where the
+      // band's pills fold on a narrow screen, and a trigger over no rows is a
+      // dead button; Details is always one of its rows on a change page
+      // (below), so it never opens empty.
       const shareRow = menu.find((a) => a.icon === 'share') || null;
       for (let i = menu.length - 1; i >= 0; i -= 1) if (['explore', 'kudos'].includes(menu[i].icon)) menu.splice(i, 1);
-      const ownRows = menu.some((a) => a !== shareRow) || !!gh;
-      if (shareRow && ownRows) menu.splice(menu.indexOf(shareRow), 1);
-      const band = shareRow && !ownRows ? onBand.filter((a) => a.key !== 'share') : onBand;
+      if (shareRow) menu.splice(menu.indexOf(shareRow), 1);
       card.actions = [
         ...(card.actions || []).filter((a) => a.explore == null && a.kudos == null),
-        ...band,
+        ...onBand,
       ];
     }
-    // The technical half — the pull request's description, or the spec a
-    // change under way is built from — is a ⋯ row that opens a sheet over
-    // the page (topic-head.tsx DetailsSheet). A voter reads the summary on
-    // the page; whoever reviews the code opens this.
-    if (body.changeId && body.proposalBody) {
+    // B10b: the technical half is one tap down. The pull request and its
+    // GitHub link, the steps with their checks, and the description (or the
+    // spec a change under way is built from) are a sheet the ⋯ row opens over
+    // the page (topic-head.tsx DetailsSheet). A voter reads the summary and
+    // the Tested line on the page; whoever reviews the code opens this.
+    if (body.changeId) {
       menu.unshift({
-        label: 'Technical details', icon: 'details',
-        title: 'What changed and why, as the pull request describes it',
+        label: 'Details', icon: 'details',
+        title: 'The pull request, its steps and checks, and its description',
         act: () => AppView.openTechnicalDetails(item.id),
       });
     }
@@ -4768,7 +4768,7 @@ const AppView = {
         act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
       });
     }
-    if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
+    if (gh && !body.changeId && !menu.some((a) => a.label === 'Open on GitHub')) {
       menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
     card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
@@ -4805,7 +4805,8 @@ const AppView = {
     const n = parseInt(item.pr_number, 10) || 0;
     const status = underway
       ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
-      : ({ promoted: 'In review', merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
+      : item.status === 'promoted' ? AppView._waitingWords(item)
+        : ({ merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
@@ -4818,7 +4819,9 @@ const AppView = {
     if (agent) bits.push(`built with ${agent}`);
     if (item.source === 'maintenance') bits.push('platform maintenance');
     return {
-      kind: kind === 'session' ? 'Change' : 'Proposal',
+      // B10b: the eyebrow is "Change · Waiting for approval"; the pull
+      // request it names moved into Details (`ref`, drawn there).
+      kind: 'Change',
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,
       age: age ? { s: age.s, title: age.title } : null,
@@ -5228,15 +5231,15 @@ const AppView = {
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
     body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The spec this change is built from is under Technical details.</p>'
+      ? '<p>No short summary has been added yet. The spec this change is built from is under Details.</p>'
       : body.proposalBody
-        ? '<p>No short summary has been added yet. The current description is under Technical details.</p>'
+        ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.' : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? 'In review' : item.status) }];
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -5370,8 +5373,23 @@ const AppView = {
 
   // The ⋯ row's call: the change page's DetailsSheet (topic-head.tsx)
   // listens for its own change id.
-  openTechnicalDetails(id) {
-    window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
+  // B10b: Details opens at the top, or at one part (`'checks'`, from the
+  // Tested line).
+  openTechnicalDetails(id, part = null) {
+    window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
+  },
+
+  // B10b: the one Tested line a change page shows, in place of the steps
+  // list and its checks: what testing found, in words, from the latest run.
+  // A tap opens Details at the Checks part. Nothing before the first run.
+  _testedLine(item) {
+    const state = item && item.check_state;
+    if (!state) return null;
+    if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
+    if (state === 'pending') return { state: 'running', text: 'Testing it…' };
+    if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
+    if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
+    return { state: 'broken', text: 'Testing couldn’t finish' };
   },
 
   _canEditDescription(item) {
@@ -5553,8 +5571,8 @@ const AppView = {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
         pills.push({
-          key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
-          title: 'Put this imported pull request up for vote',
+          key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
+          title: 'Ask the group to approve this imported change',
           act: { fn: 'promoteImportedSession', args: [item.id] }, passNode: true,
         });
       }
@@ -5593,7 +5611,7 @@ const AppView = {
       pills.push(hasCloseProposal
         ? {
           key: 'close', cls: 'gc-vote-btn', label: 'Close proposed', disabled: true,
-          title: 'A close proposal for this issue is up for vote',
+          title: 'Closing this request is waiting for approval',
         }
         : {
           key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
@@ -9607,7 +9625,7 @@ const AppView = {
 
     // ── Themes ──
     const laneOrder = [
-      { key: 'review', title: 'In review' },
+      { key: 'review', title: 'Waiting for approval' },
       { key: 'underway', title: 'Underway' },
       { key: 'open', title: 'Open' },
       { key: 'shipped', title: 'Shipped this week' },
@@ -11422,7 +11440,7 @@ const AppView = {
         hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
       },
       {
-        key: 'inreview', title: 'In review', count: kInReview.length,
+        key: 'inreview', title: 'Waiting for approval', count: kInReview.length,
         reviewSort,
         rows: cardRows(
           kInReview,
@@ -11807,7 +11825,7 @@ const AppView = {
     const preview = AppView._cardPreviewSpec(s, { kind: 'own-session', sessionId: s.id });
     const author = s.imported_pr_author || 'unknown author';
     const subtitle = imported
-      ? `Imported pull request by ${author} · not up for vote yet`
+      ? `Imported by ${author} · not waiting for approval yet`
       : (shared
         ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
         : 'Only you can see this here. Code is on public GitHub.');
@@ -11825,8 +11843,8 @@ const AppView = {
     const actions = [];
     if (imported && !AppView.readOnly) {
       actions.push({
-        key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
-        title: 'Put this imported pull request up for vote',
+        key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
+        title: 'Ask the group to approve this imported change',
         act: { fn: 'promoteImportedSession', args: [s.id] }, passNode: true,
       });
     } else if (!imported && !AppView.readOnly) {
@@ -13312,7 +13330,7 @@ const AppView = {
     const roles = {
       author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
       admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
-      group: { them: 'Waiting on the group', you: v.approveSolo ? 'Waiting for your approval' : 'Waiting on your vote', is: !v.hasVoted },
+      group: { them: 'Waiting on the group', you: 'Waiting for your approval', is: !v.hasVoted },
     };
     const role = roles[current.actor];
     if (!role) {
@@ -13363,6 +13381,13 @@ const AppView = {
     if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true) return false;
     const needed = parseInt(pr.votes_required, 10);
     return !Number.isFinite(needed) || needed <= 1;
+  },
+
+  // B10a: what a change waiting on its Yes votes is called, one word
+  // everywhere: "Waiting for approval", and on a project that is just you,
+  // whose one Yes is yours, "Waiting for your approval".
+  _waitingWords(pr) {
+    return AppView._approveSolo(pr) ? 'Waiting for your approval' : 'Waiting for approval';
   },
 
   // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
@@ -15981,7 +16006,7 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(data.error || `Could not put this PR up for vote (HTTP ${resp.status}).`);
+          PlatformUI.toast(data.error || `Could not ask for approval on this change (HTTP ${resp.status}).`);
         }
         if (btn) {
           btn.disabled = false;
@@ -15992,7 +16017,7 @@ const AppView = {
       await AppView.openTopic('proposal', sessionId);
     } catch (err) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(`Could not put this PR up for vote: ${err.message}`);
+        PlatformUI.toast(`Could not ask for approval on this change: ${err.message}`);
       }
       if (btn) {
         btn.disabled = false;
@@ -17194,7 +17219,7 @@ const AppView = {
       : closeProposal
         ? {
           t: 'chip', key: 'close', cls: 'gc-checks-running-badge',
-          label: 'Close proposed', title: 'A close proposal for this issue is up for vote',
+          label: 'Close proposed', title: 'Closing this request is waiting for approval',
         }
         : null;
 
@@ -17653,7 +17678,7 @@ const AppView = {
           ? {
             label: 'Close proposed',
             icon: 'close',
-            title: 'A close proposal for this issue is up for vote',
+            title: 'Closing this request is waiting for approval',
             disabled: true,
           }
           : {
@@ -20425,7 +20450,7 @@ const AppView = {
     }
 
     const LABELS = {
-      in_review: 'In review',
+      in_review: 'Waiting for approval',
       working: 'Being worked on',
       auto_solving: 'Auto-solving…',
       // The key stays 'paused' (it orders the states and dates the

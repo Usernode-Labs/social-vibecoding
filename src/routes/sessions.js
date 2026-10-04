@@ -3808,6 +3808,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].qualified_no_count = gate.qualifiedNo;
           Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
         } catch { /* pill falls back to the raw tallies */ }
+        // B10a: a project that is just you reads "Waiting for your approval"
+        // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
+        try {
+          const membership = await communities.getMembership(pool, { id: rows[0].app_id }, req.user.id);
+          rows[0].app_audience = membership ? membership.audience : null;
+        } catch { /* the pill keeps the group's words */ }
         delete rows[0].other_yes_count;
       }
 
