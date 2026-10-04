@@ -186,8 +186,38 @@ async function recordChangeLive(pool, { config = null, session, sha = null, at =
   }
 }
 
+// The first session's first reward: the sketch of a project made from the
+// first session, the moment its maker is shown it. Once per project (the
+// unique index in schema.sql is the rule), only for its maker, and only
+// while the project is young enough for this to be the first session.
+const FIRST_ARTEFACT_SQL = `INSERT INTO events (user_id, app_id, event_type, metadata)
+  SELECT ap.created_by, ap.id, $3::text,
+         jsonb_build_object('artefact', 'sketch', 'secondsFromCreation',
+           GREATEST(0, ROUND(EXTRACT(EPOCH FROM (NOW() - ap.created_at))))::int)
+    FROM apps ap
+   WHERE ap.id = $1::int AND ap.created_by = $2::int
+     AND ap.created_at > NOW() - INTERVAL '1 day'
+  ON CONFLICT (app_id) WHERE event_type = 'first_artefact_shown' DO NOTHING
+  RETURNING id`;
+
+/** A project's sketch shown to `userId`. Resolves true when this call wrote the record. */
+async function noteFirstArtefactShown(pool, { appId, userId }) {
+  try {
+    const app = Number(appId);
+    const user = Number(userId);
+    if (!Number.isSafeInteger(app) || app <= 0 || !Number.isSafeInteger(user) || user <= 0) return false;
+    const { rows } = await pool.query(FIRST_ARTEFACT_SQL, [app, user, events.EVENT_TYPES.FIRST_ARTEFACT_SHOWN]);
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('journey-events', 'Could not record a first artefact shown', { appId, err: err && err.message });
+    return false;
+  }
+}
+
 module.exports = {
   APP_FOR_LIVE_SQL,
+  FIRST_ARTEFACT_SQL,
+  noteFirstArtefactShown,
   CHANGE_LIVE_SQL,
   MARK_FIRST_RUNNING_SQL,
   PREVIEW_OPENED_SQL,

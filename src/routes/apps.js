@@ -1174,6 +1174,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
           ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
+          // The admin Journey's first session (journey.js firstSession).
+          ...(req.body.from === 'first-session' ? { from: 'first-session' } : {}),
         },
       });
 
@@ -1631,6 +1633,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       res.type('html').send(appSketch.sketchDocument({
         name: app.name || app.slug, design: row.design, html: row.html, theme,
       }));
+      // The admin Journey's first session: the first thing of theirs its
+      // maker is shown (journey-events.js; once per project, makers only).
+      if (req.user?.id) {
+        void require('../services/journey-events').noteFirstArtefactShown(pool, { appId: app.id, userId: req.user.id });
+      }
     } catch (err) {
       log.error('apps', 'Failed to render sketch', { message: err.message });
       res.status(500).type('text/plain').send('Internal server error');

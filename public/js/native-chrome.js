@@ -1582,6 +1582,7 @@
       const startedAt = Date.now();
       NativeChrome._pingAskOpen = true;
       let shown = false;
+      let attempt = null;
       try {
         const plan = NativeChrome.decidePingAsk(
           await NativeChrome._pingAskState());
@@ -1599,6 +1600,11 @@
           return { shown: false, outcome: 'skipped', reason: 'no UI kit' };
         }
         shown = true;
+        // The first-session plan's guardrail: how the ask is answered
+        // (services/ui-telemetry.js push_permission).
+        const telemetry = window.UITelemetry;
+        attempt = telemetry && typeof telemetry.attempt === 'function'
+          ? telemetry.attempt('push_permission', { screen: 'ping_ask' }) : null;
         const yes = await ui.confirm({
           title: copy.title,
           message: copy.message,
@@ -1607,6 +1613,7 @@
         });
         if (!yes) {
           NativeChrome._pingAskDeclined = true;
+          if (attempt) telemetry.outcome(attempt, 'cancelled');
           return { shown, outcome: 'not-now' };
         }
         NativeChrome._markPingAskPrompted();
@@ -1616,6 +1623,7 @@
         } catch (err) {
           console.warn('[native-chrome] requestPermissions failed:',
             err && err.message ? err.message : err);
+          if (attempt) telemetry.outcome(attempt, 'failure', { errorCode: 'unknown' });
           return { shown, outcome: 'notify', granted: false };
         }
         const perms = next && next.permissions;
@@ -1625,6 +1633,10 @@
         // Same completion as the Settings row: wait out a lagging status,
         // and start push registration now rather than on the next resume.
         const settled = await NativeChrome.settleIosPushGrant(flag);
+        if (attempt) {
+          telemetry.outcome(attempt, settled.granted ? 'success' : 'failure',
+            settled.granted ? {} : { errorCode: 'access_denied' });
+        }
         return { shown, outcome: 'notify', granted: settled.granted };
       } catch (err) {
         console.warn('[native-chrome] askForPing failed:',

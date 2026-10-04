@@ -118,7 +118,7 @@ test('filters: all time or a week, everyone or one cohort; a person gets a view 
   assert.match(src, /useState<Scope>\(\{ week: 'all', cohort: null \}\)/, 'the default is all time, for everyone');
   assert.match(src, /if \(week\) q\.set\('week', scope\.week\);\n  if \(scope\.cohort\) q\.set\('cohort', scope\.cohort\);/,
     'the summary, stages and loops reads carry the scope');
-  for (const read of ['summary', 'stages', 'loops', 'creation', 'pairs']) {
+  for (const read of ['summary', 'stages', 'loops', 'creation', 'pairs', 'first-session']) {
     assert.ok(src.includes(`scoped('/api/admin/journey/${read}', scope)`), `${read} follows the filters`);
   }
   assert.match(src, /\{person != null \? <PersonView userId=\{person\}/, 'one person replaces the cards');
@@ -128,8 +128,8 @@ test('filters: all time or a week, everyone or one cohort; a person gets a view 
 });
 
 test('the creation path and the pairs: steps against targets, by week, and the aha out of second members', () => {
-  assert.match(src, /<CreationCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<PairsCard scope=\{scope\} onOpen=\{openPerson\} \/>/,
-    'both sit under the first mile and follow the filters');
+  assert.match(src, /<CreationCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<FirstSessionCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<PairsCard scope=\{scope\} onOpen=\{openPerson\} \/>/,
+    'both sit under the first mile and follow the filters, with the first session between them');
   for (const [key, label] of [['created', 'Created'], ['running', 'Running'], ['first_version', 'First version ready'],
     ['preview', 'Preview opened'], ['change_live', 'Requested change live']]) {
     assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} step`);
@@ -144,6 +144,21 @@ test('the creation path and the pairs: steps against targets, by week, and the a
   assert.match(src, /<Trend trend=\{data\.trend\} shown=\{data\.week === 'all' \? last : data\.week\} label="Pairs" \/>/,
     'a small weekly trend');
   assert.match(src, /data-journey-pair=\{e\.slug\}/, 'and a few example rows');
+});
+
+test('the first session: a maker\'s and an invited person\'s first hour, timed from its start', () => {
+  for (const [key, label] of [['reward', 'Sketch shown'], ['invited', 'Invite sent'], ['running', 'Running'],
+    ['said', 'Wrote in its chat'], ['suggested', 'Filed a request']]) {
+    assert.ok(src.includes(`${key}: ['${label}', `), `the ${label} step`);
+  }
+  assert.match(src, /\{data\.make\.notRecorded \? <Num v=\{data\.make\.notRecorded\} \/>/,
+    'before projects from the first session were marked, it reads so, never 0');
+  assert.match(src, /of \$\{plural\(data\.make\.people, 'maker', 'makers'\)\} sent an invite within \$\{minutes\} min/);
+  assert.match(src, /of \$\{plural\(data\.join\.people, 'person', 'people'\)\} wrote or asked for something within \$\{minutes\} min/);
+  assert.match(src, /Invite links opened: <Num v=\{data\.opens\.opened\} \/> · joined: \{data\.opens\.joined\}/,
+    'opens beside joins, and opens before they were counted read so');
+  assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/);
+  assert.match(src, /data-journey-first-session-example=\{e\.path\}/, 'and the newest few');
 });
 
 test('one declared check opens the demo page', () => {

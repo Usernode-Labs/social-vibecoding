@@ -219,7 +219,7 @@
     "targets": {
       "change_live": "number",
       "first_version": "number",
-      "preview": "number"
+      "running": "number"
     },
     "week": "string",
     "weeks": [
@@ -243,6 +243,38 @@
         "week": "string"
       }
     ],
+    "week": "string"
+  },
+  "firstSession": {
+    "examples": [],
+    "finished": "boolean",
+    "join": {
+      "aha": "number",
+      "people": "number",
+      "steps": []
+    },
+    "make": {
+      "aha": "number",
+      "notRecorded": {
+        "reason": "string",
+        "recorded": "boolean"
+      },
+      "people": "number",
+      "steps": []
+    },
+    "opens": {
+      "joined": "number",
+      "opened": {
+        "reason": "string",
+        "recorded": "boolean"
+      }
+    },
+    "recordedFrom": {
+      "make": "object",
+      "opens": "object",
+      "reward": "object"
+    },
+    "sessionMinutes": "number",
     "week": "string"
   }
 }

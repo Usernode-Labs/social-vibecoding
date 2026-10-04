@@ -398,7 +398,47 @@ function pairs(day, all = false) {
   };
 }
 
+// ── First session ──────────────────────────────────────────────────────
+//
+// Rows shaped as journey.FIRST_SESSION_SQL returns them, read by the real
+// journey.firstSessionReading. [path, person, slug, project, started at,
+// seconds to sketch shown / invite sent / running (make), or to first
+// message / first request (join)]; null is not reached.
+const DEMO_FIRST_SESSIONS = [
+  ['make', P.jun, 'reading-pile', 'Reading Pile', '2026-09-29T08:00:00Z', [38, 410, 91]],
+  ['make', P.okafor, 'bird-log', 'Bird Log', '2026-09-29T17:00:00Z', [44, 1900, 95]],
+  ['make', P.tobi, 'tally', 'Tally', '2026-09-30T09:00:00Z', [170, null, 102]],
+  ['make', P.mira, 'book-swap', 'Book Swap', '2026-10-01T18:00:00Z', [41, 260, 88]],
+  ['join', P.sable, 'bird-log', 'Bird Log', '2026-09-29T20:00:00Z', [95, 1300]],
+  ['join', P.lena, 'tally', 'Tally', '2026-09-30T12:00:00Z', [null, null]],
+  ['join', P.tobi, 'book-swap', 'Book Swap', '2026-10-01T19:00:00Z', [130, null]],
+].map(([path, p, slug, name, at, secs]) => {
+  const plus = (s) => (s == null ? null : new Date(Date.parse(at) + s * 1000).toISOString());
+  return path === 'make'
+    ? { path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
+      reward_at: plus(secs[0]), invited_at: plus(secs[1]), running_at: plus(secs[2]), said_at: null, suggested_at: null }
+    : { path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
+      reward_at: null, invited_at: null, running_at: null, said_at: plus(secs[0]), suggested_at: plus(secs[1]) };
+});
+
+function firstSession(day, all = false) {
+  const ids = members(day);
+  const window = demoWindow(all);
+  const rows = DEMO_FIRST_SESSIONS
+    .filter((r) => !ids || ids.has(r.user_id))
+    .filter((r) => inDemoSpan(r.intent_at, window));
+  const week = all
+    ? { label: 'all', finished: false }
+    : { label: DEMO_WEEK, finished: true };
+  return {
+    demo: true,
+    ...journey.firstSessionReading(rows, 11, {
+      week, recordedFrom: { make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM },
+    }),
+  };
+}
+
 module.exports = {
   cohorts, firstMile, stages, activeGroups, trustChecks, coverage, loops, nextSteps, person, summary, leftOut,
-  creation, pairs,
+  creation, pairs, firstSession,
 };

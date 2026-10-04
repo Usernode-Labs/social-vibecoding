@@ -171,6 +171,18 @@ const EVENT_TYPES = Object.freeze({
   APP_RUNNING: 'app_running',
   PREVIEW_OPENED: 'preview_opened',
   CHANGE_LIVE: 'change_live',
+  // The admin Journey's first session (services/journey.js firstSession).
+  // No backfill: nothing recorded these moments before.
+  //   first_artefact_shown  the first thing of theirs a maker sees: the sketch
+  //                         of a project made from the first session, shown
+  //                         to its maker (once per project, written by
+  //                         journey-events.noteFirstArtefactShown).
+  //                         metadata: { artefact, secondsFromCreation }
+  //   invite_opened         a live invite link opened, once per browser
+  //                         (services/invite-activity.js); user_id is the
+  //                         visitor when signed in. metadata: { inviteId, signedIn }
+  FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
+  INVITE_OPENED: 'invite_opened',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

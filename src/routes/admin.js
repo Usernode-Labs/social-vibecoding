@@ -908,6 +908,14 @@ function adminRoutes(config) {
       return journey.creationPath(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
     }));
 
+  // The first-session plan's measures (journey.firstSession).
+  router.get('/api/admin/journey/first-session', journeyRead('first session', (req, day) => journeyDemoData.firstSession(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.firstSession(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
   router.get('/api/admin/journey/pairs', journeyRead('pairs', (req, day) => journeyDemoData.pairs(day, req.query.week === 'all'),
     async (req, ctx) => {
       const scope = await journeyScope(req, ctx, { all: true });
