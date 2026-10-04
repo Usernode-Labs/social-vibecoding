@@ -536,6 +536,14 @@ export interface TopicBody {
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
   /**
+   * The rest of the summary, folded under `summaryHtml` as "How it’s built":
+   * on a change Homeroom bot built, everything from its spec's Design
+   * heading on (`AppView._summaryParts`). Null when the summary is shown
+   * whole. The open flag lives in app-view.js (`_summaryMoreOpen`), as
+   * `proposalBody`'s does, so a repaint does not shut it.
+   */
+  summaryMore?: { id: number | null; open: boolean; html: string } | null;
+  /**
    * #1370's "Full proposal details" disclosure — the complete GitHub PR
    * description, deliberately quieter than the generated summary above it.
    *
