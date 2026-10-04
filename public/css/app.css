@@ -17299,7 +17299,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    It resolves to 0 with no keyboard, so no `html.un-kb` guard is needed here.
    The wide block below makes these panels `position: relative; inset: auto`,
    which drops this `bottom` with it — a docked panel has no floor to lift. */
-.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: max(var(--un-kb-inset, 0px), var(--platform-tabs-h, 0px)); display: flex; flex-direction: column; justify-content: flex-end; }
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);
@@ -17308,12 +17308,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   position: relative;
   display: flex; flex-direction: column; gap: 8px;
   max-height: 66%; min-height: 0;
-  padding: 8px 16px calc(12px + var(--platform-safe-bottom, 0px)); box-sizing: border-box;
+  padding: 8px 16px calc(12px + max(0px, var(--platform-safe-bottom, 0px) - var(--platform-tabs-h, 0px))); box-sizing: border-box;
   border-radius: 22px 22px 0 0;
   background-color: var(--dc-sheet);
   box-shadow: 0 -10px 30px rgba(24, 39, 75, .2);
 }
-.dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + var(--platform-safe-bottom, 0px)); }
+.dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + max(0px, var(--platform-safe-bottom, 0px) - var(--platform-tabs-h, 0px))); overflow-y: auto; overscroll-behavior: contain; }
 /* With the keyboard up the sheet is short; let the card have all of it. */
 .dev-ws-needs[data-ws-kb] .dev-ws-sheet-card { max-height: 100%; }
 /* ── Open and close MOVE. The card rises from the floor and the scrim fades
@@ -18390,7 +18390,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-sheet-vote { --ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out; }
   .dev-ws-sheet-vote > .dev-ws-scrim { position: fixed; background: transparent; }
   .dev-ws-sheet-vote > .dev-ws-sheet-card {
-    max-height: none; padding: 18px 18px 16px;
+    max-height: none; overflow: visible; padding: 18px 18px 16px;
     border-radius: 18px; border: 1px solid var(--app-sheet-line);
     box-shadow: 0 18px 50px rgba(24, 39, 75, .22);
   }
