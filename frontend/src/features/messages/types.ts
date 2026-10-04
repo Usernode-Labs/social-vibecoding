@@ -48,6 +48,49 @@ export interface HomeroomBotMeta {
   askedText?: string;
   /** B5: the bot's hello, which leads the card it introduces. */
   hello?: string;
+  /**
+   * B6: a first version's plan (kind `plan`): its bullets and up to two
+   * choices, each with its suggested answer first. Built by Build it
+   * (`actionId`); `choices` are the answers it went with.
+   */
+  plan?: HomeroomBotPlan;
+  /** B6: a question post that asks two at once, and the words above them. */
+  questions?: HomeroomBotPlanQuestion[];
+  lead?: string;
+  /** B6: why a plan's buttons went: a newer plan, a week with no tap, or a reply asking for changes. */
+  replaced?: boolean;
+  stopped?: boolean;
+  changing?: boolean;
+  choices?: string[];
+  /**
+   * B7: a change ready to try (kind `proposal`), drawn as its card: whether
+   * others are in its project, whether the person's Yes would be the last
+   * one needed, and who else it waits on. `sessionId` and `epoch` are the
+   * change and the version the card was sent for; `updated` when a newer
+   * version's card replaced it.
+   */
+  ready?: HomeroomBotReady;
+  sessionId?: number;
+  epoch?: number;
+  updated?: boolean;
+}
+
+export interface HomeroomBotReady {
+  group: boolean;
+  last: boolean;
+  waitingOn: string[];
+  more: number;
+}
+
+/** B6: one of a plan's choices, or one of two questions: the suggested answer first. */
+export interface HomeroomBotPlanQuestion {
+  question: string;
+  answers: string[];
+}
+
+export interface HomeroomBotPlan {
+  bullets: string[];
+  questions: HomeroomBotPlanQuestion[];
 }
 
 /**
@@ -60,8 +103,11 @@ export interface HomeroomBotAction {
   id: string;
   label: string;
   style: 'primary' | 'secondary';
-  type: 'server' | 'open' | 'prompt';
+  /** B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card. */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply';
   target?: string;
+  sessionId?: number;
+  epoch?: number;
 }
 
 /**

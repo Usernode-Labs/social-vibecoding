@@ -2827,7 +2827,7 @@ const AppView = {
   // the shot runs against. Nothing is behind it: the record has no address
   // and is not the routed app, so "Show the starter for now" frames nothing,
   // and the chat button opens Messages.
-  showFirstVersionShot() {
+  showFirstVersionShot(withPlan = false) {
     AppView.appData = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
@@ -2835,7 +2835,21 @@ const AppView = {
       status: 'running',
       url: null,
       self_hosted: false,
-      first_version: {
+      first_version: withPlan ? {
+        // B6: its plan waits for Build it. A shot: the action id stands for
+        // no plan, so a tap here decides nothing.
+        building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan',
+        creator: null, ready: false, question: false, conversationId: null,
+        plan: {
+          bullets: [
+            'A list of your plants with a photo and how often each needs water',
+            'A Today view that shows which plants need watering now',
+            'Tap a plant to mark it watered, and its next date moves on by itself',
+          ],
+          questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
+          actionId: 990002, messageId: null, conversationId: null,
+        },
+      } : {
         building: true, mine: true, step: 4, of: 7, stepName: 'Build it',
         creator: null, ready: false, question: false, conversationId: null,
       },
@@ -2960,7 +2974,13 @@ const AppView = {
     if (Number.isInteger(fv.step) && Number.isInteger(fv.of) && fv.stepName) {
       lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
     }
-    if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
+    // B6: the plan it waits on, with Build it, in place of the chat's button
+    // (Change something goes to that chat). The step line says the rest.
+    const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
+      && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
+    if (plan) {
+      // Nothing more to say under the step: the card is what comes next.
+    } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
     else if (fv.ready) {
       lines.push(mine ? 'Its first version is ready. Try it and vote on it from your chat.'
         : 'Its first version is up for a vote.');
@@ -2972,7 +2992,18 @@ const AppView = {
       message: `${name} is being built from ${from}`,
       detail: null,
       lines,
-      action: mine
+      ...(plan ? {
+        plan: {
+          appName: name,
+          slug: appData.slug,
+          bullets: plan.bullets,
+          questions: Array.isArray(plan.questions) ? plan.questions : [],
+          actionId: plan.actionId,
+          messageId: Number.isInteger(plan.messageId) ? plan.messageId : null,
+          conversationId: Number.isInteger(plan.conversationId) ? plan.conversationId : null,
+        },
+      } : {}),
+      action: mine && !plan
         ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: appData.slug,
           conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
         : null,
@@ -2989,6 +3020,41 @@ const AppView = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.open === 'function') messages.open(id);
     else location.hash = id ? `#messages/${id}` : '#messages';
+  },
+
+  /**
+   * B6: Build it, under the plan on the App tab: the same tap the plan's card
+   * in the chat sends, decided once on the server, with the choices tapped.
+   * The screen then reads the project again and shows the build's step.
+   */
+  async buildFirstVersion(slug, actionId, answers) {
+    const id = Number(actionId);
+    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    try {
+      const resp = await fetch(`/api/conversations/homeroom-bot/actions/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice: 'build', answers: (Array.isArray(answers) ? answers : []).map((a) => a || '') }),
+      });
+      if (!resp.ok && resp.status !== 409) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(data.error || `Couldn't start building just now (HTTP ${resp.status}).`);
+      }
+    } catch (err) {
+      PlatformUI.toast(`Couldn't start building just now: ${err.message}`);
+    }
+    const current = AppView.appData;
+    if (current && current.slug === slug) AppView._recheckFirstVersion(current);
+  },
+
+  /** B6: Change something: the chat with Homeroom bot, with the plan quoted in its composer. */
+  changeFirstVersionPlan(_slug, conversationId, messageId) {
+    const messages = window.UsernodeReact && window.UsernodeReact.messages;
+    if (messages && typeof messages.quoteBotMessage === 'function') {
+      messages.quoteBotMessage(conversationId, messageId);
+      return;
+    }
+    AppView.openBotChat(_slug, conversationId);
   },
 
   /** "Show the starter for now": the app as it runs, for this visit. */
@@ -4818,6 +4884,8 @@ const AppView = {
     const majority = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
     const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null,
       was: AppView.thresholdWasNote(item, majority) };
+    // B7: on a project that is just the viewer's, the step is their approval.
+    const voteStep = AppView._approveSolo(item) ? 'Your approval' : 'Vote';
     // #2588: the two rows this carve-out existed for — the imported note and
     // the built-with note — are gone from the ledger, because neither was a
     // step waiting on anyone and the hero above the card already says where
@@ -4826,7 +4894,7 @@ const AppView = {
     const noteStep = (r) => ({
       key: r.key, gate: null,
       state: stateOf(r),
-      label: r.key === 'votes' ? 'Vote' : r.label, actor: null,
+      label: r.key === 'votes' ? voteStep : r.label, actor: null,
       note: null, action: null, row: r, vote: r.key === 'votes' ? vote : null,
     });
 
@@ -4841,7 +4909,7 @@ const AppView = {
         state: g.state,
         // The vote step says what it is; the gate's "Enough approvals" is
         // what it needs, which the tally under it says in numbers.
-        label: g.key === 'approvals' ? 'Vote' : g.label,
+        label: g.key === 'approvals' ? voteStep : g.label,
         actor: AppView.STEP_ACTORS[g.actor] || g.actor || null,
         note: useRow ? null : (g.note || (row ? said(row) : null) || null),
         action: g.action ? { key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act } : null,
@@ -12933,6 +13001,8 @@ const AppView = {
       isAdmin: !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
         || !!AppView._proposalsCtx?.isAppAdmin,
       hasVoted: !!p.my_vote,
+      // B7: on a project that is just theirs, it waits for their approval.
+      approveSolo: AppView._approveSolo(p),
     };
     const live = AppView._withLiveState(gates, p);
     const s = AppView._summarizeRequirements(live, viewer);
@@ -13197,7 +13267,7 @@ const AppView = {
     const roles = {
       author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
       admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
-      group: { them: 'Waiting on the group', you: 'Waiting on your vote', is: !v.hasVoted },
+      group: { them: 'Waiting on the group', you: v.approveSolo ? 'Waiting for your approval' : 'Waiting on your vote', is: !v.hasVoted },
     };
     const role = roles[current.actor];
     if (!role) {
@@ -13239,6 +13309,17 @@ const AppView = {
     return AppView.appData?.audience === 'solo' ? { solo: true } : {};
   },
 
+  // B7: a change on a project that is just the viewer's, whose one Yes is
+  // the one it needs (votes_required 1, and the viewer's vote counts): the
+  // vote is "Approve", one tap, and "Waiting on your vote" is "Waiting for
+  // your approval". A project with more people, a rule asking for more Yes
+  // votes, or a test account's uncounted vote keeps the vote as it is.
+  _approveSolo(pr) {
+    if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true) return false;
+    const needed = parseInt(pr.votes_required, 10);
+    return !Number.isFinite(needed) || needed <= 1;
+  },
+
   // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
   // is — group-chat.js's inline activity rows, the work drawer and the home
   // strip all consume it, and its Preview/Retry/Admin-merge concatenation is
@@ -13277,6 +13358,7 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
         ...AppView._voteSolo(),
+        ...(AppView._approveSolo(pr) ? { approve: true } : {}),
         ...uncounted,
       },
       {
@@ -13434,6 +13516,19 @@ const AppView = {
         icon: 'github',
         title: pr.pr_url,
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
+      });
+    }
+    // B7: on a project that is just the viewer's, the vote is one-tap
+    // Approve, and its No lives here, last and red: today's No, with its
+    // line asked for as any No's is.
+    if (!ro && pr.status === 'promoted' && pr.my_vote !== 'no' && AppView._approveSolo(pr)) {
+      const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10)) ? parseInt(pr.approval_epoch, 10) : null;
+      items.push({
+        label: 'Don’t approve',
+        icon: 'withdraw',
+        title: 'Say no to this change, with a line on why',
+        danger: true,
+        act: () => AppView.castVote(pr.id, 'no', ...(epoch === null ? [] : [epoch])),
       });
     }
     return items;
@@ -19054,6 +19149,11 @@ const AppView = {
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
+      // B7: on a project that is just the viewer's, it waits for their approval.
+      if (AppView._approveSolo(p)) {
+        return { ...base, tier: 5, key: 'needs_vote', label: 'Waiting for your approval', tone: 'progress', fill: true, dot: true, reasons,
+          title: 'Approve it, and it goes live' };
+      }
       return { ...base, tier: 5, key: 'needs_vote', label: `Vote · ${yes}/${maj}`, tone: 'progress', fill: true, dot: true, reasons,
         title: 'You haven’t voted on this yet' };
     }

@@ -5090,6 +5090,8 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- per-app switch in services/notification-preferences.js is the first gate.
   ('revision_recheck', 'proposal_alerts', TRUE),
   ('weekly_digest', 'proposal_alerts', TRUE),
+  -- B7: a change you can approve is ready to try. Proposal lifecycle.
+  ('change_ready', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   -- A server-wide cap nearing its ceiling, for full admins only
@@ -5125,6 +5127,8 @@ DELETE FROM mobile_push_kind_categories
    'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
    -- #1688's two.
    'revision_recheck', 'weekly_digest',
+   -- B7.
+   'change_ready',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction',
    -- #2386's two.
@@ -9707,6 +9711,21 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS live_build_waiting_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
   ON homeroom_bot_runs(live_build_waiting_at) WHERE live_build_waiting_at IS NOT NULL;
+
+-- B6: what a look planned, for its person to see before anything is built:
+-- { bullets, questions: [{ question, answers }], chosen }. A first version's
+-- plan (3 to 5 plain bullets and up to 2 choices, each with its suggested
+-- answer first) waits for its creator's Build it: its run waits with
+-- `awaiting_go_at` instead of live_build_waiting_at, which Build it then
+-- sets with the answers chosen written into build_note. A request the read
+-- has two questions about keeps them here too. `plan_change` is what the
+-- creator asked the plan changed with (Change something), in their words,
+-- for the next look at the request; it is never posted anywhere.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan JSONB;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS awaiting_go_at TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
+CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
+  ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
 
 -- Weekly building time (homeroom-bot-dm.js weeklySpentCents). A run counts
 -- toward one person's week only when it is `charged`, and against its
