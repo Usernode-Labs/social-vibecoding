@@ -1464,9 +1464,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // MAX_DECLARED_TESTS moved to 880 in the same change (see the arithmetic
   // in services/app-manifest.js).
   //
+  // 843 → 847: +4 net (PIXORA rebuilt as the microstock toolkit prototype).
+  // The shell grew real workspaces on its five path routes plus a Settings
+  // placeholder, so the two hash deep-link checks were replaced by one check
+  // per page (six) and the dashboard check now asserts the feature-card grid
+  // and the microstock tagline. Still inside the 880 ceiling, so no ceiling
+  // or deadline move (see services/app-manifest.js).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 843);
+  checkCap.assertPinned(DAPP.tests.length, 847);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

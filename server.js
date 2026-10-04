@@ -970,6 +970,33 @@ app.get('/gallery', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'gallery.html'));
 });
 
+// ── PIXORA: the static AI creative toolkit mini-app (public/pixora/) ─────
+//
+// /pixora/ is served by the static handler above as a directory index. Its
+// pages are PATH routes of that one document — /pixora/creative,
+// /pixora/upscale, ... — which express.static cannot answer, so they are
+// matched here and served the same document, whose own router reads
+// location.pathname. Anything else under /pixora/ goes to the dashboard
+// rather than falling through to the shell catch-all below. Who may load
+// the document is settled in src/middleware/auth.js, where isSpaDocumentPath
+// admits /pixora* as a standalone document.
+const PIXORA_PAGES = new Set([
+  'creative', 'upscale', 'remove-background', 'metadata', 'prompt-generator',
+  'settings',
+]);
+
+app.get('/pixora', (_req, res) => {
+  res.redirect('/pixora/');
+});
+
+app.get('/pixora/:page', (req, res, next) => {
+  if (!PIXORA_PAGES.has(req.params.page)) return res.redirect('/pixora/');
+  // Same revalidation policy as the static handler gives the document, so a
+  // redeployed app.js is never pinned in a WebView cache behind it.
+  res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'pixora', 'index.html'));
+});
+
 app.get('*', (req, res) => {
   if (req.accepts('html')) {
     // Client-side-routing fallback: serve the SPA shell. Same revalidation

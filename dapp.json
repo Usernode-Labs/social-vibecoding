@@ -5484,10 +5484,10 @@
     },
     {
       "id": "pixora.dashboard",
-      "name": "PIXORA: the dashboard renders with the sidebar and the Creative page",
+      "name": "PIXORA: the dashboard renders with the dark sidebar and the five tool cards",
       "path": "/pixora/",
-      "expectSelector": ".pixora-sidebar",
-      "expectText": "AI Creative Tools",
+      "expectSelector": ".pixora-feature-grid",
+      "expectText": "AI Creative Toolkit for Microstock",
       "allowConsoleErrors": false,
       "visual": true,
       "impact": [
@@ -5495,15 +5495,39 @@
       ]
     },
     {
-      "name": "PIXORA: the Upscale Image page opens from its own route",
-      "path": "/pixora/#/upscale",
-      "expectText": "Increase the resolution of an image while keeping details sharp.",
+      "name": "PIXORA: the Creative workspace opens from its own route",
+      "path": "/pixora/creative",
+      "expectText": "Negative Prompt",
       "allowConsoleErrors": false
     },
     {
-      "name": "PIXORA: the Prompt Generator page opens from its own route",
-      "path": "/pixora/#/prompt",
-      "expectText": "Turn a rough idea into a detailed, reusable prompt.",
+      "name": "PIXORA: the Upscale Image workspace opens from its own route",
+      "path": "/pixora/upscale",
+      "expectText": "Output resolution",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Remove Background workspace opens from its own route",
+      "path": "/pixora/remove-background",
+      "expectText": "Processed result",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Metadata AI workspace opens with example stock metadata",
+      "path": "/pixora/metadata",
+      "expectText": "Generate Metadata",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: the Prompt Generator workspace opens with its generated prompt",
+      "path": "/pixora/prompt-generator",
+      "expectText": "Generated Prompt",
+      "allowConsoleErrors": false
+    },
+    {
+      "name": "PIXORA: Settings sits at the bottom of the sidebar and opens its own page",
+      "path": "/pixora/settings",
+      "expectText": "Marketplace accounts",
       "allowConsoleErrors": false
     }
   ],

@@ -297,6 +297,13 @@ const MANIFEST_FILENAME = 'dapp.json';
 // neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 37 slots
 // over the 843 declared here.
 //
+// 843 → 847 (PIXORA rebuilt as the microstock toolkit prototype): the tool
+// pages became real path routes with full workspaces and a Settings page,
+// so the two hash deep-link checks were replaced by one check per page and
+// the dashboard check grew the feature-card selector. Four net new checks;
+// 847 sits 33 slots under this unchanged ceiling, so no deadline
+// arithmetic moves.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()

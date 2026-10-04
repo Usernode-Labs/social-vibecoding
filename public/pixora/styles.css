@@ -1,6 +1,7 @@
 /* PIXORA design system.
  *
- * One light SaaS look with a dark fallback: a plain canvas, white cards
+ * A light, professional main workspace with a dark fallback, and a
+ * near-black sidebar that is dark in both looks: plain canvas, white cards
  * with one hairline border, a single violet accent for the active tool and
  * primary actions. Every component reads these tokens, so retuning the app
  * means editing this block, not the components.
@@ -22,6 +23,16 @@
   --px-radius-lg: 16px;
   --px-shadow: 0 1px 2px rgba(24, 24, 27, 0.05);
   --px-sidebar-width: 264px;
+
+  /* The sidebar is near-black whatever the main area is doing. */
+  --px-sidebar-bg: #1c1c21;
+  --px-sidebar-ink: #f4f4f5;
+  --px-sidebar-muted: #a1a1aa;
+  --px-sidebar-faint: #71717a;
+  --px-sidebar-line: rgba(255, 255, 255, 0.08);
+  --px-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --px-sidebar-active-bg: rgba(167, 139, 250, 0.16);
+  --px-sidebar-active-ink: #c4b5fd;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -93,7 +104,10 @@ button {
 }
 
 .pixora-content {
-  max-width: 880px;
+  max-width: 960px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
@@ -101,8 +115,8 @@ button {
 .pixora-sidebar {
   width: var(--px-sidebar-width);
   flex-shrink: 0;
-  background: var(--px-surface);
-  border-right: 1px solid var(--px-border);
+  background: var(--px-sidebar-bg);
+  color: var(--px-sidebar-ink);
   display: flex;
   flex-direction: column;
   padding: 24px 16px;
@@ -113,9 +127,7 @@ button {
 }
 
 .pixora-brand {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: block;
   padding: 0 12px;
 }
 
@@ -123,12 +135,7 @@ button {
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.08em;
-}
-
-.pixora-brand-sub {
-  font-size: 12px;
-  color: var(--px-faint);
-  font-weight: 550;
+  color: var(--px-sidebar-ink);
 }
 
 .pixora-nav {
@@ -142,7 +149,7 @@ button {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--px-faint);
+  color: var(--px-sidebar-faint);
   padding: 0 12px;
   margin-bottom: 4px;
 }
@@ -155,39 +162,38 @@ button {
   border-radius: 10px;
   font-size: 14px;
   font-weight: 550;
-  color: var(--px-muted);
+  color: var(--px-sidebar-muted);
   transition: background-color 120ms ease, color 120ms ease;
 }
 
 .pixora-nav-item .pixora-icon {
-  color: var(--px-faint);
+  color: var(--px-sidebar-faint);
   transition: color 120ms ease;
 }
 
 .pixora-nav-item:hover {
-  background: var(--px-bg);
-  color: var(--px-ink);
+  background: var(--px-sidebar-hover);
+  color: var(--px-sidebar-ink);
 }
 
 .pixora-nav-item:hover .pixora-icon {
-  color: var(--px-muted);
+  color: var(--px-sidebar-muted);
 }
 
 .pixora-nav-item[aria-current="page"] {
-  background: var(--px-accent-soft);
-  color: var(--px-accent);
+  background: var(--px-sidebar-active-bg);
+  color: var(--px-sidebar-active-ink);
   font-weight: 650;
 }
 
 .pixora-nav-item[aria-current="page"] .pixora-icon {
-  color: var(--px-accent);
+  color: var(--px-sidebar-active-ink);
 }
 
 .pixora-sidebar-foot {
   margin-top: auto;
-  padding: 0 12px;
-  font-size: 12px;
-  color: var(--px-faint);
+  border-top: 1px solid var(--px-sidebar-line);
+  padding-top: 12px;
 }
 
 /* ── Mobile top bar and drawer ─────────────────────────────────────────── */
@@ -238,6 +244,12 @@ button {
   position: absolute;
   top: 14px;
   right: 10px;
+  color: var(--px-sidebar-muted);
+}
+
+.pixora-sidebar-close:hover {
+  background: var(--px-sidebar-hover);
+  color: var(--px-sidebar-ink);
 }
 
 @media (max-width: 860px) {
@@ -256,7 +268,7 @@ button {
     height: 100dvh;
     transform: translateX(-100%);
     transition: transform 200ms ease;
-    box-shadow: var(--px-shadow);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.35);
     padding-top: 56px;
   }
 
@@ -282,12 +294,12 @@ button {
 /* ── Page header ───────────────────────────────────────────────────────── */
 
 .pixora-page-head {
-  margin-bottom: 28px;
+  margin-bottom: 8px;
 }
 
 .pixora-page-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 750;
   letter-spacing: -0.01em;
 }
@@ -299,6 +311,56 @@ button {
   max-width: 56ch;
 }
 
+/* ── Dashboard feature cards ───────────────────────────────────────────── */
+
+.pixora-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.pixora-feature {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px;
+  background: var(--px-surface);
+  border: 1px solid var(--px-border);
+  border-radius: var(--px-radius-lg);
+  box-shadow: var(--px-shadow);
+  transition: border-color 120ms ease, box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.pixora-feature:hover {
+  border-color: var(--px-border-strong);
+  box-shadow: 0 2px 8px rgba(24, 24, 27, 0.08);
+  transform: translateY(-1px);
+}
+
+.pixora-feature-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--px-accent-soft);
+  border: 1px solid var(--px-accent-line);
+  color: var(--px-accent);
+}
+
+.pixora-feature-name {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pixora-feature-desc {
+  font-size: 13px;
+  color: var(--px-muted);
+}
+
 /* ── Card ──────────────────────────────────────────────────────────────── */
 
 .pixora-card {
@@ -308,40 +370,365 @@ button {
   box-shadow: var(--px-shadow);
 }
 
-/* ── Tool placeholder (empty state) ────────────────────────────────────── */
+.pixora-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--px-muted);
+  margin-bottom: 16px;
+}
 
-.pixora-placeholder {
-  padding: 72px 32px;
+.pixora-card-text {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--px-muted);
+}
+
+/* ── Form fields ───────────────────────────────────────────────────────── */
+
+.pixora-form {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pixora-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pixora-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.pixora-field-row-wide {
+  grid-template-columns: 1fr;
+}
+
+.pixora-label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pixora-hint {
+  font-size: 12.5px;
+  color: var(--px-faint);
+}
+
+.pixora-input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--px-ink);
+  background: var(--px-surface);
+  border: 1px solid var(--px-border-strong);
+  border-radius: 10px;
+  padding: 9px 12px;
+  width: 100%;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pixora-input::placeholder {
+  color: var(--px-faint);
+}
+
+.pixora-input:focus {
+  outline: none;
+  border-color: var(--px-accent);
+  box-shadow: 0 0 0 3px var(--px-accent-soft);
+}
+
+textarea.pixora-input {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.pixora-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pixora-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--px-muted);
+  border-top: 1px solid var(--px-border);
+  padding-top: 12px;
+}
+
+.pixora-meta-row strong {
+  font-weight: 650;
+  color: var(--px-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Segmented scale control ───────────────────────────────────────────── */
+
+.pixora-seg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--px-bg);
+  border: 1px solid var(--px-border);
+  border-radius: 10px;
+  align-self: flex-start;
+}
+
+.pixora-seg-btn {
+  padding: 6px 18px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--px-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.pixora-seg-btn[aria-pressed="true"] {
+  background: var(--px-surface);
+  color: var(--px-ink);
+  box-shadow: var(--px-shadow);
+}
+
+/* ── Upload dropzone and preview ───────────────────────────────────────── */
+
+.pixora-drop {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 16px;
+  gap: 6px;
+  padding: 32px 20px;
+  border: 1.5px dashed var(--px-border-strong);
+  border-radius: var(--px-radius);
+  background: var(--px-bg);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.pixora-placeholder-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.pixora-drop:hover,
+.pixora-drop:focus-visible,
+.pixora-drop-over {
+  border-color: var(--px-accent);
   background: var(--px-accent-soft);
-  border: 1px solid var(--px-accent-line);
+}
+
+.pixora-drop-icon {
+  color: var(--px-faint);
+  margin-bottom: 4px;
+}
+
+.pixora-drop-over .pixora-drop-icon {
   color: var(--px-accent);
 }
 
-.pixora-placeholder-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
+.pixora-drop-title {
+  font-size: 14px;
+  font-weight: 650;
 }
 
-.pixora-placeholder-text {
+.pixora-drop-hint {
+  font-size: 12.5px;
+  color: var(--px-faint);
+}
+
+.pixora-drop-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pixora-preview {
+  border: 1px solid var(--px-border);
+  border-radius: var(--px-radius);
+  overflow: hidden;
+  background: var(--px-bg);
+}
+
+.pixora-preview img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+}
+
+/* ── Before/after comparison ───────────────────────────────────────────── */
+
+.pixora-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.pixora-compare-pane {
+  border: 1px solid var(--px-border);
+  border-radius: var(--px-radius);
+  overflow: hidden;
+  background: var(--px-bg);
+}
+
+.pixora-compare-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--px-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--px-border);
+  background: var(--px-surface);
+}
+
+.pixora-compare-body {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.pixora-compare-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+}
+
+.pixora-compare-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--px-faint);
+  font-size: 13px;
+}
+
+/* The checkerboard a future transparent PNG reads against. */
+.pixora-checker {
+  background-image:
+    linear-gradient(45deg, var(--px-border) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--px-border) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--px-border) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--px-border) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* ── Metadata keywords ─────────────────────────────────────────────────── */
+
+.pixora-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pixora-chip {
+  font-size: 13px;
+  font-weight: 550;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--px-border-strong);
+  color: var(--px-muted);
+  background: var(--px-surface);
+}
+
+.pixora-chip-primary {
+  background: var(--px-accent-soft);
+  border-color: var(--px-accent-line);
+  color: var(--px-accent);
+}
+
+/* ── Batch queue ───────────────────────────────────────────────────────── */
+
+.pixora-batch-foot {
+  font-size: 13px;
+  color: var(--px-muted);
+  border-top: 1px solid var(--px-border);
+  padding-top: 12px;
+}
+
+/* ── Generated prompt ──────────────────────────────────────────────────── */
+
+.pixora-prompt {
   margin: 0;
   font-size: 14px;
+  line-height: 1.65;
+  color: var(--px-ink);
+  background: var(--px-bg);
+  border: 1px solid var(--px-border);
+  border-radius: var(--px-radius);
+  padding: 16px;
+  min-height: 96px;
+}
+
+/* ── Settings ──────────────────────────────────────────────────────────── */
+
+.pixora-settings {
+  padding: 8px 24px;
+}
+
+.pixora-setting {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--px-border);
+}
+
+.pixora-setting:last-child {
+  border-bottom: 0;
+}
+
+.pixora-setting-name {
+  font-size: 14px;
+  font-weight: 650;
+  min-width: 180px;
+}
+
+.pixora-setting-hint {
+  font-size: 13px;
   color: var(--px-muted);
-  max-width: 46ch;
+  flex: 1;
+}
+
+.pixora-setting-state {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--px-faint);
+  border: 1px solid var(--px-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .pixora-setting {
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+}
+
+/* ── Status note ───────────────────────────────────────────────────────── */
+
+.pixora-status {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--px-muted);
+  background: var(--px-accent-soft);
+  border: 1px solid var(--px-accent-line);
+  border-radius: 10px;
+  padding: 10px 12px;
 }
 
 /* ── Button ────────────────────────────────────────────────────────────── */
@@ -393,7 +780,11 @@ button {
   .pixora-sidebar,
   .pixora-nav-item,
   .pixora-nav-item .pixora-icon,
-  .pixora-btn {
+  .pixora-btn,
+  .pixora-feature,
+  .pixora-drop,
+  .pixora-seg-btn,
+  .pixora-input {
     transition: none;
   }
 }
