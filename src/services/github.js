@@ -1454,6 +1454,28 @@ async function compareRefs(owner, repo, basehead) {
   };
 }
 
+// "Suggest this back" (services/suggest-back.js): the commits on `head`
+// since `base`, oldest first, each as { sha, subject } (the message's first
+// line), with the total GitHub counted and the changed file paths. The
+// compare endpoint lists at most 250 commits and 300 files, so `totalCommits`
+// is the figure to show and `files` may be short of a very large change.
+// Throws on transport errors, like compareRefs.
+async function compareCommitSubjects(owner, repo, base, head) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead: `${base}...${head}`, per_page: 100,
+  });
+  const commits = (data.commits || []).map((c) => ({
+    sha: c.sha,
+    subject: String((c.commit && c.commit.message) || '').split('\n')[0].trim(),
+  }));
+  return {
+    commits,
+    totalCommits: Number.isInteger(data.total_commits) ? data.total_commits : commits.length,
+    files: (data.files || []).map((f) => f.filename),
+  };
+}
+
 // #297: a size-capped unified diff for LLM context. Concatenates the
 // per-file `patch` hunks from the compare endpoint (`main...<branch>`)
 // into one unified-diff string, truncated to a hard char budget so a huge
@@ -2485,6 +2507,7 @@ module.exports = {
   markPrReadyForReview,
   listChangedFiles,
   compareRefs,
+  compareCommitSubjects,
   getProposalDiff,
   compareFiles,
   deleteBenchBranch,

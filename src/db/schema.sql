@@ -11563,6 +11563,18 @@ END $$;
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
 
+-- "Suggest this back" (services/suggest-back.js): a proposal opened on an
+-- original from one of its remixes records the copy it came from. NULL for
+-- every other proposal. The partial unique index is what keeps one copy to
+-- one open suggestion at a time, behind the route's own read, so two presses
+-- racing past that read cannot both land. ON DELETE SET NULL: deleting the
+-- copy leaves the proposal on the original as it is.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS suggested_from_app_id INTEGER
+  REFERENCES apps(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_one_open_suggestion
+  ON chat_sessions (suggested_from_app_id)
+  WHERE suggested_from_app_id IS NOT NULL AND status IN ('active', 'promoted', 'merging');
+
 -- ── App-host sign-in (#3657; services/edge-gate.js) ──────────────────────
 --
 -- Opening an app at its own address while signed in to Homeroom signs the

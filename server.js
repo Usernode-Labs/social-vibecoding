@@ -608,6 +608,9 @@ app.use(shotsRoutes(config));
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
 // it borrows recordVote/checkAndMerge from.
 app.use(demoModeRoutes(config));
+// "Suggest this back": a remix's owner sends the copy's changes to the app
+// it was copied from, as a proposal there (routes/suggest-back.js).
+app.use(require('./src/routes/suggest-back').suggestBackRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
