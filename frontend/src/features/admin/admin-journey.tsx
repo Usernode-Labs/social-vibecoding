@@ -981,7 +981,7 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {e.steps.map((st) => (
                   <span key={st.key}>
-                    {CREATION_SHORT[st.key]}{' '}
+                    {`${CREATION_SHORT[st.key]} `}
                     {!st.recorded ? 'not recorded'
                       : st.seconds == null ? 'not yet'
                         : <span className={targetTone(st.seconds, data.targets ? data.targets[st.key] ?? null : null)}>{dur(st.seconds)}</span>}
