@@ -135,9 +135,12 @@ async function checkoutStatus(deps, params) {
     head = await gh.getRepoHead(canonical.owner, canonical.repo);
   } catch (err) {
     answer.verdict = 'repo_unreachable';
+    // GitHub's own "API rate limit exceeded for user ID ..." says nothing
+    // about when to try again; the plain-words notice does.
+    const limited = require('./github-budget').rateLimitNotice(err);
     answer.note = 'Could not read the canonical repository from GitHub, so this '
       + 'says nothing about whether the checkout is current. '
-      + `(${err && err.message ? err.message : 'unknown error'})`;
+      + (limited || `(${err && err.message ? err.message : 'unknown error'})`);
     return answer;
   }
 

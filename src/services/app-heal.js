@@ -245,8 +245,14 @@ async function provisionMissingRepo(config, pool, app) {
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
+//   github_budget   : a sweep found a missing repo while GitHub's hourly
+//                     budget is nearly used up; created on a later tick
 //   heal_failed     — the attempt threw; cooldown stamped
-async function checkAndHealOne(config, pool, app, { probeRunning = false } = {}) {
+//
+// `background: true` is the sweep's own call (poll below): only then is the
+// GitHub-heavy repo provisioning held for the budget. A person landing on a
+// down app (requestHeal) is never held.
+async function checkAndHealOne(config, pool, app, { probeRunning = false, background = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
@@ -266,6 +272,12 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
     if (!app.repo_url && github.isEnabled()) {
       if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
         return { status: 'cooldown', slug: app.slug };
+      }
+      // Creating and filling a repository is half a dozen GitHub writes;
+      // services/github-budget.js says whether background work may spend
+      // them now.
+      if (background && !require('./github-budget').budgetAllows('background')) {
+        return { status: 'github_budget', slug: app.slug };
       }
       healAttempts.set(app.slug, Date.now());
       inFlight.add(app.slug);
@@ -417,7 +429,7 @@ async function poll(config) {
   for (const app of rows) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
     try {
-      const result = await checkAndHealOne(config, pool, app);
+      const result = await checkAndHealOne(config, pool, app, { background: true });
       if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }

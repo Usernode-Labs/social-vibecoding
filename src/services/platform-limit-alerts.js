@@ -13,6 +13,20 @@
 //             else's idle one, and 429s "Platform is at capacity" when
 //             nothing is idle.
 //
+// and two that are GitHub's rather than ours, its hourly REST budget as the
+// last response reported it (services/github-budget.js):
+//
+//   github      the bot token's (GITHUB_BOT_TOKEN), which nearly every
+//               GitHub call spends. Used up, new proposals and before/after
+//               shots fail until the hour resets.
+//   github_app  the GitHub App installation's (the most-used one).
+//
+// GitHub's lines are fixed rather than PLATFORM_LIMIT_WARN_PERCENT: warn
+// when a fifth of the hour's budget is left (GITHUB_WARN_PERCENT used), and
+// again when it is used up. A new hour re-arms both, so each window pages
+// at most once per level. The figures are in memory on the leader, which is
+// the process that sweeps.
+//
 // Until now the first anybody heard of either was a user reading that
 // refusal and asking an admin to raise the limit. This module measures each
 // cap and tells the full admins (the only people who can raise one) twice
@@ -51,8 +65,11 @@
 const log = require('./logger');
 const { withTransaction } = require('./cli-auth');
 const appLimit = require('./app-limit');
+const githubBudget = require('./github-budget');
 
 const DEFAULT_WARN_PERCENT = 80;
+// GitHub's warning line: 80% of the hour's budget used, a fifth left.
+const GITHUB_WARN_PERCENT = 80;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 // A level re-arms once the count is this far under the line it crossed.
 const REARM_RATIO = 0.9;
@@ -93,6 +110,22 @@ const LIMITS = Object.freeze([
       );
       return Number(rows[0] && rows[0].n);
     },
+  }),
+  Object.freeze({
+    key: 'github',
+    envKey: 'GITHUB_BOT_TOKEN',
+    enabled: () => !!process.env.GITHUB_BOT_TOKEN,
+    percent: () => GITHUB_WARN_PERCENT,
+    cap: async () => githubBudget.alertFigures('pat').cap,
+    count: async () => githubBudget.alertFigures('pat').used,
+  }),
+  Object.freeze({
+    key: 'github_app',
+    envKey: 'GITHUB_APP_ID',
+    enabled: () => githubBudget.alertFigures('installation').cap > 0,
+    percent: () => GITHUB_WARN_PERCENT,
+    cap: async () => githubBudget.alertFigures('installation').cap,
+    count: async () => githubBudget.alertFigures('installation').used,
   }),
 ]);
 const LIMIT_BY_KEY = new Map(LIMITS.map((limit) => [limit.key, limit]));
@@ -163,7 +196,7 @@ function detailToken(key, level, used, cap) {
   return `${key}_${level}:${figure(used)}:${figure(cap)}`;
 }
 
-const DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parseDetail(detail) {
   const m = DETAIL_RE.exec(String(detail || ''));
@@ -192,7 +225,7 @@ async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
   const cap = await limit.cap(config, pool);
-  const percent = warnPercent();
+  const percent = limit.percent ? limit.percent() : warnPercent();
   const used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);
   const staging = deps.staging ?? isStaging();

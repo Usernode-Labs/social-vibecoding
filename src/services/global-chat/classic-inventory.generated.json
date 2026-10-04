@@ -1271,6 +1271,21 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/github-budget",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.github.budget.93a55081",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "PUT",
       "path": "/api/admin/app-limit",
       "expression": null,
