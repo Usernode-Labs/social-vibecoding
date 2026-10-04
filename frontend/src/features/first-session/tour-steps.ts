@@ -55,6 +55,10 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
     },
     {
       screen: 'home',
+      // The Communities tab: ONE element, the phone's bottom bar below
+      // 768px and the rail above it (features/nav/tab-bar.tsx; its key is
+      // still `workshop`). A ring drawn anywhere else is the previous step's
+      // cut-out, which ./index.tsx no longer carries into this one.
       target: '#platform-tab-workshop',
       title: 'The group lives in Communities',
       text: 'Its hub and its group chat are there.',
@@ -121,6 +125,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
     {
       screen: 'home',
+      // The same tab as the invited path's step 4 (see there).
       target: '#platform-tab-workshop',
       title: 'Your group lives in Communities',
       text: 'Its hub and its group chat are there.',
