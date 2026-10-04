@@ -47,6 +47,11 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const NOW = Date.parse('2026-10-04T15:00:00Z');
 const inMin = (m) => String(Math.floor((NOW + m * 60 * 1000) / 1000));
+// For a response recorded through the real wiring (an instrumented Octokit,
+// the raw fetch reads): those record and read at the real clock, so their
+// reset has to be ahead of the real clock too. A reset pinned to NOW passes
+// in real time, and the reading then counts as a whole new window.
+const liveReset = (m = 30) => String(Math.floor((Date.now() + m * 60 * 1000) / 1000));
 
 function headers({ limit = 5000, remaining, reset = inMin(30), used, resource = 'core' }) {
   const h = {
@@ -267,9 +272,9 @@ async function octokitWith(fetchImpl) {
 
 test('an instrumented Octokit records success, error and 304 responses, and still throws', async () => {
   const fetchImpl = fakeFetch([
-    { status: 200, body: { name: 'main', commit: { sha: 'a'.repeat(40) } }, headers: { ...headers({ remaining: 4000 }), etag: 'W/"one"' } },
-    { status: 304, body: '', headers: headers({ remaining: 3999 }) },
-    { status: 403, body: { message: 'API rate limit exceeded for user ID 1.' }, headers: headers({ remaining: 0 }) },
+    { status: 200, body: { name: 'main', commit: { sha: 'a'.repeat(40) } }, headers: { ...headers({ remaining: 4000, reset: liveReset() }), etag: 'W/"one"' } },
+    { status: 304, body: '', headers: headers({ remaining: 3999, reset: liveReset() }) },
+    { status: 403, body: { message: 'API rate limit exceeded for user ID 1.' }, headers: headers({ remaining: 0, reset: liveReset() }) },
   ]);
   const octokit = github._instrumentForTests(await octokitWith(fetchImpl), 'pat');
 
@@ -287,7 +292,7 @@ test('an instrumented Octokit records success, error and 304 responses, and stil
 });
 
 test('the installation client is recorded as its own credential', async () => {
-  const fetchImpl = fakeFetch([{ status: 200, body: {}, headers: headers({ limit: 12500, remaining: 12499 }) }]);
+  const fetchImpl = fakeFetch([{ status: 200, body: {}, headers: headers({ limit: 12500, remaining: 12499, reset: liveReset() }) }]);
   const octokit = github._instrumentForTests(await octokitWith(fetchImpl), 'installation:Usernode-Labs');
   await octokit.request('GET /repos/{owner}/{repo}', { owner: 'o', repo: 'r' });
   assert.equal(budget.core('installation:usernode-labs').remaining, 12499);
@@ -311,12 +316,12 @@ test('the raw fetch reads record against the bot token, or anonymous without one
   const realFetch = global.fetch;
   t.after(() => { global.fetch = realFetch; });
   withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
-  global.fetch = fakeFetch([{ status: 200, body: { number: 7, title: 'x', state: 'open' }, headers: headers({ remaining: 4321 }) }]);
+  global.fetch = fakeFetch([{ status: 200, body: { number: 7, title: 'x', state: 'open' }, headers: headers({ remaining: 4321, reset: liveReset() }) }]);
   await github.fetchPublicIssue('o', 'budget-a', 7);
   assert.equal(budget.core('pat').remaining, 4321);
 
   delete process.env.GITHUB_BOT_TOKEN;
-  global.fetch = fakeFetch([{ status: 200, body: [], headers: headers({ limit: 60, remaining: 59 }) }]);
+  global.fetch = fakeFetch([{ status: 200, body: [], headers: headers({ limit: 60, remaining: 59, reset: liveReset() }) }]);
   await github.fetchIssueComments('o', 'budget-b', 7);
   assert.equal(budget.core('anonymous').remaining, 59);
 });
