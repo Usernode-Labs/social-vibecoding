@@ -9735,6 +9735,27 @@ COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- The first session's sketch of a new project's main screen
+-- (services/app-sketch.js): drawn from its description about half a minute
+-- after Make it, shown on the made screen while the real app is built, and
+-- committed to the repository as design/sketch.* for the first version to
+-- keep. `html` is sanitized markup in the sketch vocabulary, never raw model
+-- output. One per project.
+CREATE TABLE IF NOT EXISTS app_sketches (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'ready', 'failed')),
+  design        JSONB,
+  html          TEXT,
+  model         TEXT,
+  error         TEXT,
+  committed_at  TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ready_at      TIMESTAMPTZ
+);
+COMMENT ON TABLE app_sketches IS 'staging:private';
+
 -- A project somebody on the bot's DM list made with no description to
 -- build from: imported from GitHub, forked, or created without one (a
 -- connector or the API). The bot acts on it for real while its maker stays

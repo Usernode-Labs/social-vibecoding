@@ -1324,6 +1324,9 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'guidance\'s "no new colours" means none beyond them. Then fill in the "## Design" section of the app\'s',
   '`CLAUDE.md` (add it if it is missing): the palette by name, the signature element, the type scale, and the one',
   'fixed look if the app keeps one. Every later change follows it.',
+  'If the repository has `design/sketch.html` and `design/sketch.json`, its creator was shown that sketch when they',
+  'made the app: build that screen for real, with its layout, its words and its accent (the kit\'s tokens may already',
+  'carry it), keep both files, and make the starter screen that shows the sketch into the real one.',
 ]);
 
 function buildPrompt({

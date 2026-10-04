@@ -2426,7 +2426,7 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
  * Pure. Shared with the benchmark's taste eval (services/bench/taste.js),
  * whose first-version trials are given the same request the bot reads.
  */
-function firstVersionIssue({ name, username, brief, botBuilds = true }) {
+function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = null }) {
   return {
     title: clip(`First version of ${name}`, 200),
     body: [
@@ -2434,6 +2434,15 @@ function firstVersionIssue({ name, username, brief, botBuilds = true }) {
       '',
       brief,
       '',
+      // The first session's sketch (services/app-sketch.js), when it was
+      // drawn: the screen its creator has already seen, so the design target.
+      ...(sketch ? [
+        `**Design target:** the sketch ${username} was shown when they made it, \`design/sketch.html\``
+          + ' (its job, layout, words and accent are in `design/sketch.json`). Build that screen for real: keep its'
+          + ' layout, its words and its accent, and list any change under Assumptions with the reason.',
+        ...(sketch.job ? ['', `Its main screen's job: ${clip(sketch.job, 200)}`] : []),
+        '',
+      ] : []),
       '---',
       botBuilds
         ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
@@ -2469,7 +2478,9 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
   const botBuilds = row.bot_builds !== false;
-  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds });
+  const sketchRow = await require('./app-sketch').readSketch(pool, row.app_id).catch(() => null);
+  const sketch = sketchRow && sketchRow.status === 'ready' && sketchRow.committed_at ? sketchRow.design || {} : null;
+  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, sketch });
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
       || (() => {
