@@ -6987,152 +6987,332 @@
   /* __USERNODE_OFFLINE_READY_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
-  // ── Floating Homeroom mark (chromeless share views) ───────────────────
+  // ── The Homeroom button (an app opened at its own address) ────────────
   //
-  // Apps shared via their bare production subdomain
-  // (<slug>.<platform-host>) render with no platform chrome at all —
-  // nothing on the page says it IS a Homeroom app, and there is no
-  // visible path from it back to the app's in-platform page. The bridge
-  // is the one piece of platform code every dapp loads, so it injects a
-  // small mark in the bottom-left corner that deep-links back to
-  // https://<platform-host>/app/<slug> — the clean, canonical App route
-  // the shell restores on a cold visit.
+  // An app opened at its own address (<slug>.<apps domain>, a link from
+  // Share) renders with no platform chrome at all: nothing on the page says
+  // it IS a Homeroom app, and there is no way back to it inside Homeroom.
+  // The bridge is the one piece of platform code every app loads, so it
+  // draws a small Homeroom button in the bottom-right corner (#3657). Tapping
+  // it opens a small panel: the app's name, one line about Homeroom, and
+  // three rows: "Open in Homeroom" (the app inside the platform), "Show the
+  // Homeroom header" (a slim bar with the wordmark and the app's name) and
+  // "What is Homeroom?" (the site's front door).
   //
   // Shown ONLY when ALL of these hold:
-  //   * top frame         — inside the platform an app renders in an
-  //                         iframe and the shell draws its own affordance
-  //                         (features/header/chromeless-pill.tsx), so a
-  //                         mark here would be the SECOND one on screen;
-  //   * no native channel — the Flutter WebView has its own navigation,
+  //   * top frame         : inside the platform an app renders in an
+  //                         iframe and the shell draws its own chrome, so a
+  //                         button here would be a SECOND one on screen;
+  //   * no native channel : the Flutter WebView has its own navigation,
   //                         a web link to the platform origin is wrong
   //                         there;
-  //   * not the platform's own document — the shell loads this same
-  //                         bridge in the TOP frame from its apex, and
-  //                         says so with window.__usernodePlatformShell
+  //   * not the platform's own document : the shell loads this same
+  //                         bridge in the TOP frame and says so with
+  //                         window.__usernodePlatformShell
   //                         (frontend/src/head.html);
-  //   * location.host is <label>.<registrable-domain> with no "--" in
-  //     the label — i.e. a production app subdomain, which is exactly
-  //     the shape the platform's routing gives an app (the
-  //     `*.{$USERNODE_DOMAIN}` site in the Caddyfile; one Ingress host
-  //     per app in services/kubernetes.js). That excludes staging
-  //     previews (<slug>--s<id>), `<slug>.localhost` and other dev hosts.
+  //   * the host is ONE clean label (no "--", so never a staging preview)
+  //     directly under the deployment's apps domain, as the platform's own
+  //     config file says it is (below).
   //
-  // WHY THE HOSTNAME AND NOT THIS SCRIPT'S SRC. This used to derive the
-  // platform host from `document.currentScript.src` and bail when it
-  // came out equal to location.host. That is only ever unequal for an
-  // app that names the platform's hostname in the tag — and the
-  // conventions tell every app to load the bridge at the RELATIVE path
-  // /usernode-bridge/v1/bridge.js, which the platform serves on the
-  // app's OWN hostname precisely so that no app carries a hostname. So
-  // for every app that follows them the derived host WAS location.host
-  // and the pill returned null: it never rendered on a single shared
-  // link. The src still gets a say where an app does name a host — then
-  // it has to agree with the one the subdomain implies, which is what
-  // keeps a foreign page that embeds this bridge from drawing a mark.
+  // WHERE THE PLATFORM IS. The hostname alone cannot say: a single-domain
+  // deployment serves the platform at <domain> and apps at <slug>.<domain>,
+  // and the hosted one serves the platform at app.<domain> beside apps at
+  // <slug>.<domain>. So the bridge reads /usernode-bridge/v1/platform.json
+  // from its OWN origin: a path under the centrally hosted prefix, which the
+  // platform's edge answers on every app host (Caddy's @platform_assets,
+  // services/kubernetes.js's asset routes) from the deployment's own
+  // settings. Nothing the app supplies is read: not window.usernode, not the
+  // page's markup. The values must also agree with this page's own host, so
+  // a page that is not an app host (a foreign site that embeds the bridge,
+  // or one whose own server answers the path) draws nothing.
   //
-  // NOT DISMISSIBLE, and icon-sized rather than a labelled pill. Both
-  // follow from the same constraint: apps own their corners (a compose
-  // button, a floating control, the kit's own chrome), so an affordance
-  // that cannot be dismissed has to be small enough and far enough out
-  // of the way to be worth its permanence. Bottom-LEFT for that reason
-  // too — bottom-right is where a floating control conventionally goes,
-  // and is where the in-shell pill already sits.
+  // NOT SPOOFABLE FROM INSIDE THE APP, in the sense that can be promised:
+  // the button lives in a CLOSED shadow root, so the app's stylesheets cannot
+  // restyle it and its scripts cannot reach in and rewrite a row or a link;
+  // and nothing the app sets can make the bridge draw it inside the
+  // platform's frame. (A page can always paint pixels of its own; this is
+  // about the button the platform draws.) Without shadow DOM there is no
+  // button at all rather than an unprotected one.
+  //
+  // NOT DISMISSIBLE, and small (36px). Apps own their corners, so an
+  // affordance that stays has to stay out of the way; the panel and the
+  // header only appear when asked for, and nothing is remembered between
+  // loads.
   (function () {
     // document.currentScript is only valid during synchronous script
-    // evaluation — which is exactly when this capture runs.
+    // evaluation, which is exactly when this capture runs.
     var _script = document.currentScript;
 
-    // Served under one of the three centrally hosted asset prefixes, so
-    // this resolves on the app's own origin and carries no hostname —
-    // the same contract as the bridge itself. See mark.svg's header.
+    // Served under the centrally hosted prefix, on the app's own origin.
     var MARK_SRC = "/usernode-bridge/v1/mark.svg";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var HOST_ID = "__un-platform-link";
 
-    // The platform host as NAMED BY THE TAG, or null when the tag is
-    // relative (the conventional form) and so names nothing at all.
-    function taggedPlatformHost() {
+    var ABOUT_LINE = "A Homeroom app, built and voted on by its community.";
+    var SHOW_HEADER = "Show the Homeroom header";
+    var HIDE_HEADER = "Hide the Homeroom header";
+
+    // The host a tag NAMES, or null when the tag is relative (the
+    // conventional form) and so names nothing at all.
+    function taggedHost() {
       if (!_script || !_script.src) return null;
       var host;
       try {
-        host = new URL(_script.src, location.href).host;
+        host = new URL(_script.src, location.href).hostname.toLowerCase();
       } catch (_) { return null; }
-      return host && host !== location.host ? host : null;
+      return host && host !== String(location.hostname).toLowerCase() ? host : null;
     }
 
-    function platformLinkTarget() {
+    // Gate 1, synchronous: could this page be an app at its own address?
+    // Returns the single label (the app's slug) or null.
+    function candidateSlug() {
       if (_inIframe || _hasNativeChannel || window.Usernode) return null;
       if (window.__usernodePlatformShell) return null;
-
-      var dot = location.host.indexOf(".");
+      var host = String(location.hostname || "").toLowerCase();
+      var dot = host.indexOf(".");
       if (dot <= 0) return null;
-      var label = location.host.slice(0, dot);
-      var platformHost = location.host.slice(dot + 1);
+      var label = host.slice(0, dot);
       // A single clean label only: staging previews (<slug>--s<id>) and
-      // deeper/odd hostnames don't get the mark.
-      if (!/^[a-z0-9-]+$/i.test(label)) return null;
+      // odd hostnames don't get the button.
+      if (!/^[a-z0-9-]+$/.test(label)) return null;
       if (label.indexOf("--") !== -1) return null;
-      // What is left has to be a registrable domain. `<slug>.localhost`
-      // and other single-label hosts are dev, not a shared app link.
-      if (platformHost.indexOf(".") === -1) return null;
-      var tagged = taggedPlatformHost();
+      // `<slug>.localhost` and other single-label parents are dev hosts.
+      if (host.slice(dot + 1).indexOf(".") === -1) return null;
+      return label;
+    }
+
+    function isDomain(value) {
+      return typeof value === "string"
+        && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value);
+    }
+
+    function under(host, domain) {
+      return host === domain
+        || host.slice(-(domain.length + 1)) === "." + domain;
+    }
+
+    // An https URL, parsed, or null. Credentials in the URL are refused.
+    function httpsUrl(value) {
+      if (typeof value !== "string" || !value) return null;
+      var u;
+      try { u = new URL(value); } catch (_) { return null; }
+      if (u.protocol !== "https:" || u.username || u.password) return null;
+      return u;
+    }
+
+    // Gate 2: the platform's own answer, checked against this page's host.
+    // Returns the targets, or null for "draw nothing".
+    function targetsFrom(config, slug) {
+      if (!config || typeof config !== "object") return null;
+      var apps = typeof config.apps_domain === "string"
+        ? config.apps_domain.toLowerCase() : "";
+      if (!isDomain(apps)) return null;
+      // This page must be <slug>.<apps domain> exactly.
+      if (String(location.hostname).toLowerCase() !== slug + "." + apps) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var platformHost = platform.hostname.toLowerCase();
+      // The platform and its apps belong to one deployment: one is the
+      // other's domain or sits under it.
+      if (!under(platformHost, apps) && !under(apps, platformHost)) return null;
+      // Never this app's own host, and never another single-label app.
+      if (platformHost === String(location.hostname).toLowerCase()) return null;
+      // A tag that names a host must name this deployment's platform.
+      var tagged = taggedHost();
       if (tagged && tagged !== platformHost) return null;
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
       return {
-        slug: label,
-        href: "https://" + platformHost + "/app/" + label,
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
       };
     }
 
-    function injectPlatformLink() {
-      var target = platformLinkTarget();
-      if (!target) return;
-      if (document.getElementById("__un-platform-link")) return;
+    // The app's name: what its page calls itself, trimmed and clamped, or a
+    // readable form of the slug (without the 6-character suffix new apps
+    // carry). Always set as TEXT, never markup.
+    function appName(slug) {
+      var title = "";
+      try { title = String(document.title || ""); } catch (_) { title = ""; }
+      title = title.replace(/\s+/g, " ").trim();
+      if (title.length > 60) title = title.slice(0, 59).trim() + "…";
+      if (title) return title;
+      return slug.replace(/-[0-9a-f]{6}$/, "").replace(/-/g, " ");
+    }
 
-      if (!document.getElementById("__usernode-platform-link-styles")) {
-        var style = document.createElement("style");
-        style.id = "__usernode-platform-link-styles";
-        style.textContent = [
-          // z-index one below the QR overlay (999999) so a transaction
-          // prompt still covers the mark. safe-area insets keep it clear
-          // of iPhone home indicators and the left-edge rounding.
-          ".__un-platform-link{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:block;width:28px;height:28px;border-radius:7px;line-height:0;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.9}",
-          ".__un-platform-link:hover,.__un-platform-link:focus-visible{opacity:1}",
-          // No radius here: the tile carries its own rounded corners, and a
-          // CSS clip at a different one would shave them.
-          ".__un-platform-link img{display:block;width:28px;height:28px}",
-        ].join("\n");
-        document.head.appendChild(style);
+    var CSS = [
+      ":host{all:initial}",
+      "*{box-sizing:border-box}",
+      "[hidden]{display:none!important}",
+      // z-index one below the QR overlay (999999) so a transaction prompt
+      // still covers the button. Safe-area insets keep it clear of the
+      // home indicator and rounded corners.
+      ".fab{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;width:36px;height:36px;padding:0;margin:0;border:0;border-radius:9px;background:transparent;line-height:0;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.92;-webkit-tap-highlight-color:transparent}",
+      ".fab:hover,.fab:focus-visible,.fab[aria-expanded=true]{opacity:1}",
+      ".fab:focus-visible{outline:2px solid #7C3AED;outline-offset:2px}",
+      ".fab img{display:block;width:36px;height:36px}",
+      ".panel{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(56px + env(safe-area-inset-bottom,0px));z-index:999998;width:min(280px,calc(100vw - 24px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px)));padding:14px 6px 6px;border-radius:16px;background:#fff;color:#18181b;box-shadow:0 10px 30px rgba(0,0,0,0.22),0 0 0 1px rgba(0,0,0,0.06);font:14px/1.35 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;text-align:left}",
+      ".name{margin:0 10px 2px;font-size:15px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".about{margin:0 10px 8px;font-size:13px;color:#52525b}",
+      ".row{display:flex;align-items:center;width:100%;min-height:44px;padding:0 10px;margin:0;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:550;text-align:left;text-decoration:none;cursor:pointer}",
+      ".row:hover,.row:focus-visible{background:#f4f4f5;outline:none}",
+      ".bar{position:fixed;left:0;right:0;top:0;z-index:999998;display:flex;align-items:center;gap:8px;min-height:calc(40px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) calc(8px + env(safe-area-inset-right,0px)) 0 calc(12px + env(safe-area-inset-left,0px));background:#fff;color:#18181b;box-shadow:0 1px 0 rgba(0,0,0,0.08);font:14px/1.2 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".bar img{display:block;width:22px;height:22px}",
+      ".brand{font-weight:700}",
+      ".sep{color:#a1a1aa}",
+      ".title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#52525b}",
+      ".close{width:32px;height:32px;padding:0;margin:0;border:0;border-radius:8px;background:transparent;color:#52525b;font:20px/1 system-ui,sans-serif;cursor:pointer}",
+      ".close:hover,.close:focus-visible{background:#f4f4f5;outline:none}",
+      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close{color:#a1a1aa}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
+    ].join("\n");
+
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text) node.textContent = text;
+      return node;
+    }
+
+    function mark(size) {
+      var img = el("img");
+      img.src = MARK_SRC;
+      // The control around it carries the accessible name.
+      img.alt = "";
+      img.width = size;
+      img.height = size;
+      return img;
+    }
+
+    function draw(t) {
+      if (!document.body || document.getElementById(HOST_ID)) return null;
+      var host = el("div");
+      host.id = HOST_ID;
+      if (typeof host.attachShadow !== "function") return null;
+      var root;
+      try { root = host.attachShadow({ mode: "closed" }); } catch (_) { return null; }
+
+      var style = el("style");
+      style.textContent = CSS;
+      root.appendChild(style);
+
+      // The slim header: the wordmark and the app's name.
+      var bar = el("div", "bar");
+      bar.hidden = true;
+      bar.setAttribute("role", "banner");
+      var brand = el("span", "brand", "Homeroom");
+      var sep = el("span", "sep", "/");
+      sep.setAttribute("aria-hidden", "true");
+      var title = el("span", "title");
+      var close = el("button", "close", "×");
+      close.type = "button";
+      close.setAttribute("aria-label", HIDE_HEADER);
+      bar.appendChild(mark(22));
+      bar.appendChild(brand);
+      bar.appendChild(sep);
+      bar.appendChild(title);
+      bar.appendChild(close);
+
+      // The panel.
+      var panel = el("div", "panel");
+      panel.id = "un-homeroom-panel";
+      panel.hidden = true;
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-label", "Homeroom");
+      var name = el("p", "name");
+      var about = el("p", "about", ABOUT_LINE);
+      var open = el("a", "row", "Open in Homeroom");
+      open.href = t.openHref;
+      var toggle = el("button", "row", SHOW_HEADER);
+      toggle.type = "button";
+      toggle.setAttribute("aria-pressed", "false");
+      var what = el("a", "row", "What is Homeroom?");
+      what.href = t.siteHref;
+      what.target = "_blank";
+      what.rel = "noopener";
+      panel.appendChild(name);
+      panel.appendChild(about);
+      panel.appendChild(open);
+      panel.appendChild(toggle);
+      panel.appendChild(what);
+
+      // The button.
+      var fab = el("button", "fab");
+      fab.type = "button";
+      fab.title = "Homeroom";
+      fab.setAttribute("aria-label", "Homeroom");
+      fab.setAttribute("aria-haspopup", "dialog");
+      fab.setAttribute("aria-expanded", "false");
+      fab.setAttribute("aria-controls", "un-homeroom-panel");
+      var fabMark = mark(36);
+      // A broken image is worse than no button: an origin that does not
+      // route the platform asset prefixes would otherwise leave a torn-image
+      // box in somebody's corner. Attached BEFORE src starts the load.
+      fabMark.onerror = function () {
+        if (host.parentNode) host.parentNode.removeChild(host);
+      };
+      fab.appendChild(fabMark);
+
+      root.appendChild(bar);
+      root.appendChild(panel);
+      root.appendChild(fab);
+
+      function setPanel(open) {
+        if (open) name.textContent = appName(t.slug);
+        panel.hidden = !open;
+        fab.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      function setHeader(show) {
+        if (show) title.textContent = appName(t.slug);
+        bar.hidden = !show;
+        toggle.textContent = show ? HIDE_HEADER : SHOW_HEADER;
+        toggle.setAttribute("aria-pressed", show ? "true" : "false");
       }
 
-      var link = document.createElement("a");
-      link.id = "__un-platform-link";
-      link.className = "__un-platform-link";
-      link.href = target.href;
-      link.title = "Open this app on Homeroom";
-      link.setAttribute("aria-label", "Open this app on Homeroom");
+      fab.addEventListener("click", function () { setPanel(panel.hidden); });
+      toggle.addEventListener("click", function () {
+        setHeader(bar.hidden);
+        setPanel(false);
+      });
+      close.addEventListener("click", function () { setHeader(false); });
+      // Escape, or a tap anywhere outside the button and panel, closes the
+      // panel. composedPath() is how a listener outside a closed root tells
+      // whether the event came from inside it.
+      document.addEventListener("keydown", function (e) {
+        if (e && e.key === "Escape" && !panel.hidden) setPanel(false);
+      });
+      document.addEventListener("click", function (e) {
+        if (panel.hidden) return;
+        var path = e && typeof e.composedPath === "function" ? e.composedPath() : [];
+        for (var i = 0; i < path.length; i += 1) if (path[i] === host) return;
+        setPanel(false);
+      }, true);
 
-      var mark = document.createElement("img");
-      // A broken image is worse than no mark: an origin that does not
-      // route the platform asset prefixes — a self-hosted fork part-way
-      // through the migration — would otherwise leave a torn-image box
-      // sitting in the corner of somebody's app. Attached BEFORE src,
-      // which is what starts the load.
-      mark.onerror = function () {
-        if (link.parentNode) link.parentNode.removeChild(link);
-      };
-      mark.src = MARK_SRC;
-      // The anchor carries the accessible name; a second one here would
-      // have a screen reader read the same link twice.
-      mark.alt = "";
-      mark.width = 28;
-      mark.height = 28;
+      document.body.appendChild(host);
+      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what };
+    }
 
-      link.appendChild(mark);
-      document.body.appendChild(link);
+    function start() {
+      var slug = candidateSlug();
+      if (!slug) return;
+      if (typeof window.fetch !== "function") return;
+      var request;
+      try {
+        request = window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      } catch (_) { return; }
+      Promise.resolve(request).then(function (res) {
+        if (!res || !res.ok) return null;
+        return res.json();
+      }).then(function (config) {
+        var t = targetsFrom(config, slug);
+        if (t) draw(t);
+      }).catch(function () { /* no config, no button */ });
     }
 
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", injectPlatformLink);
+      document.addEventListener("DOMContentLoaded", start);
     } else {
-      injectPlatformLink();
+      start();
     }
   })();
   /* __USERNODE_PLATFORM_LINK_END__ */

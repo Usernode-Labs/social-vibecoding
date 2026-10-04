@@ -28,25 +28,76 @@
  * The URL field stays UNCONTROLLED (a ref, not `value`): a controlled input
  * renders a `value` attribute in the prerender pass and this document is
  * compared against the hand-written shell attribute for attribute.
+ *
+ * ── Who can open the link (#3657) ─────────────────────────────────────
+ *
+ * The link is the app's own address for every audience, and the line under
+ * the title says who it opens for, read off the running app's record:
+ * `view_visibility` (or, where only that is to hand, the derived `audience`,
+ * whose 'open' is exactly view-public). A private community or a Just you
+ * project opens for its members only, so the dialog says so and offers the
+ * way to add people: "Invite people" hands over to the Homeroom menu's
+ * invite pane (the same door the project hub's Invite uses). A public one
+ * opens for anyone with an account. `shareAudience` is pure and unit-tested.
  */
 
 import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
+import { ArrowRightIcon, UserGroupIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
 import { useDialog } from './use-dialog';
+
+export type ShareAudience = 'members' | 'public';
+
+/**
+ * Who the shared link opens for. Anything that is not positively view-public
+ * reads as members-only: saying "only members" about an app that is in fact
+ * public costs a little reach, while saying "anyone" about a private one is
+ * a promise the link will not keep.
+ */
+export function shareAudience(app: { view_visibility?: unknown; audience?: unknown } | null | undefined): ShareAudience {
+  if (!app) return 'members';
+  if (app.view_visibility === 'public') return 'public';
+  if (app.view_visibility == null && app.audience === 'open') return 'public';
+  return 'members';
+}
+
+export const SHARE_COPY: Readonly<Record<ShareAudience, string>> = Object.freeze({
+  members: 'Only members can open it. Invite people to let them in.',
+  public: 'Anyone with a Homeroom account can open it.',
+});
+
+/**
+ * The Homeroom menu's invite pane for the app in context (the project hub's
+ * Invite does the same). Reached as a global, like the hub reaches it.
+ */
+function openInvitePane(): void {
+  const ctx = (window as unknown as {
+    AppContext?: { open?: () => void; showInvite?: () => void };
+  }).AppContext;
+  if (!ctx) return;
+  ctx.open?.();
+  ctx.showInvite?.();
+}
 
 export function ShareDialog() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [href, setHref] = useState('');
   const [copyLabel, setCopyLabel] = useState('Copy');
+  const [audience, setAudience] = useState<ShareAudience>('members');
   const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set by "Invite people" and read once the dialog's exit has landed: the
+  // kit cannot present the menu's sheet while it is still taking this
+  // dialog down, so the hand-off waits for onClose (which rides the exit).
+  const inviteNext = useRef(false);
 
   const dialog = useDialog('share', {
     onOpen: () => {
+      inviteNext.current = false;
+      setAudience(shareAudience(window.AppView?.appData as { view_visibility?: unknown; audience?: unknown } | undefined));
       const raw = (window.AppView?.appData?.url as string) || '';
       const url = raw && window.resolveDevHost ? window.resolveDevHost(raw) : raw;
       if (inputRef.current) inputRef.current.value = url;
@@ -61,8 +112,17 @@ export function ShareDialog() {
       if (flashRef.current) clearTimeout(flashRef.current);
       flashRef.current = null;
       setCopyLabel('Copy');
+      if (inviteNext.current) {
+        inviteNext.current = false;
+        openInvitePane();
+      }
     },
   });
+
+  function invite() {
+    inviteNext.current = true;
+    dialog.close();
+  }
 
   // Verbatim from AppView.copyShareUrl: try the async clipboard first, fall
   // back to select + execCommand for browsers/contexts where
@@ -114,7 +174,7 @@ export function ShareDialog() {
           Share this app
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Anyone with this link can open the app outside the Homeroom platform. Whether they need to log in is up to the app; most public apps work for anonymous viewers.
+          {SHARE_COPY[audience]}
         </p>
         <div className="flex gap-2">
           <Input
@@ -130,7 +190,20 @@ export function ShareDialog() {
             {copyLabel}
           </Button>
         </div>
-        <div className="mt-4 flex justify-end">
+        <div className={audience === 'members' ? 'mt-4 flex items-center justify-between gap-3' : 'mt-4 flex justify-end'}>
+          {audience === 'members' ? (
+            <Button
+              type="button"
+              layout="iconRow"
+              variant="neutral"
+              size="narrow"
+              ink="neutral"
+              onClick={invite}
+            >
+              <UserGroupIcon className="w-4 h-4" aria-hidden="true" />
+              Invite people
+            </Button>
+          ) : null}
           <a
             id="share-open-link"
             href={href || '#'}

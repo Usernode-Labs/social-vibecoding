@@ -390,6 +390,14 @@
     {
       "source": "server.js",
       "method": "GET",
+      "path": "/usernode-bridge/v1/platform.json",
+      "expression": null,
+      "status": "exempt",
+      "reason": "bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability"
+    },
+    {
+      "source": "server.js",
+      "method": "GET",
       "path": "/sw.js",
       "expression": null,
       "status": "exempt",

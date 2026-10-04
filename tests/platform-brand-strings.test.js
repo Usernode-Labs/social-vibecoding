@@ -31,15 +31,16 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 // would serve two different texts from one origin.
 const BRIDGE_COPIES = ['public/usernode-bridge/v1/bridge.js', 'public/usernode-bridge.js'];
 
-// The share-view affordance is a MARK now, not a labelled pill (#2705), so
-// there is no visible string left to check: the brand rides in the tooltip
-// and the accessible name, and both are asserted here instead. The stale
+// The Homeroom button an app opened at its own address carries (#3657): the
+// brand rides in its accessible name and the panel's copy. The stale
 // spelling stays barred either way.
-test('the chromeless share-view mark names the platform', () => {
+test('the Homeroom button on an app\u2019s own address names the platform', () => {
   for (const p of BRIDGE_COPIES) {
     const src = read(p);
-    assert.match(src, /link\.title = "Open this app on Homeroom";/, `${p}: tooltip`);
-    assert.match(src, /"aria-label", "Open this app on Homeroom"/, `${p}: accessible name`);
+    assert.match(src, /fab\.setAttribute\("aria-label", "Homeroom"\);/, `${p}: accessible name`);
+    assert.match(src, /"A Homeroom app, built and voted on by its community\."/, `${p}: about line`);
+    assert.match(src, /"Open in Homeroom"/, `${p}: open row`);
+    assert.match(src, /"What is Homeroom\?"/, `${p}: about row`);
     assert.doesNotMatch(src, /Open in Usernode|Open this app on Usernode/, `${p}: no stale brand`);
   }
 });

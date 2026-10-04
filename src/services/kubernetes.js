@@ -651,6 +651,17 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
   };
 }
 
+// Env for the shared asset server: only what platform.json says, so the
+// container still holds none of the platform's configuration.
+function platformAssetEnv(config) {
+  const cfg = config?.kubernetes || {};
+  return [
+    { name: 'USERNODE_DOMAIN', value: String(cfg.platformDomain || '') },
+    { name: 'USERNODE_APPS_DOMAIN', value: String(cfg.appDomain || cfg.platformDomain || '') },
+    { name: 'MARKETING_BASE_URL', value: String(config?.marketingBaseUrl || '') },
+  ];
+}
+
 function platformAssetPath(prefix) {
   return {
     path: prefix,
@@ -781,6 +792,10 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
               // The platform's node:22-alpine image provides Node on PATH.
               // The CNB launcher belongs to kpack-built child-app images.
               command: ['node', 'scripts/serve-platform-assets.js'],
+              // The three public facts behind /usernode-bridge/v1/platform.json
+              // (src/services/app-host-config.js): where the platform is, the
+              // apps domain, and the site's front door. Nothing secret.
+              env: platformAssetEnv(config),
               ports: [{ name: 'http', containerPort: 3000 }],
               ...httpProbes({ startupFailureThreshold: 60 }),
               resources: { requests: { cpu: '25m', memory: '64Mi' }, limits: { cpu: '500m', memory: '256Mi' } },
@@ -2379,6 +2394,7 @@ module.exports = {
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
+  _platformAssetEnvForTest: platformAssetEnv,
   _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
   _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
