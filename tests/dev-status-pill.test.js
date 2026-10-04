@@ -109,45 +109,49 @@ const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
 
 // ── Precedence, tier by tier ────────────────────────────────────────────
 
-test('tier 0 — a merged row is settled and reads ✓ Merged', () => {
+test('tier 0 — a merged row is settled and reads ✓ Live, quiet rather than green', () => {
   const AppView = makeAppView();
   const s = AppView.statusPillState(PR({ status: 'merged', yes_count: 5 }));
   assert.equal(s.tier, 0);
-  assert.equal(s.label, '✓ Merged');
-  assert.equal(s.tone, 'ok');
+  // The newcomer's word (first-session run-through, 4 Oct 2026), and a done
+  // state gets no fill: grey with a check, as "Joined" is (AGENTS.md).
+  assert.equal(s.label, '✓ Live');
+  assert.equal(s.tone, 'neutral');
 });
 
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
   const AppView = makeAppView();
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
-  assert.equal(deployed.label, '✓ Deployed');
-  assert.equal(deployed.tone, 'ok');
+  assert.equal(deployed.label, '✓ Live');
+  assert.equal(deployed.key, 'deployed');
+  assert.equal(deployed.tone, 'neutral');
 
   const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
-  assert.equal(deploying.label, 'Merged · deploying…');
+  assert.equal(deploying.label, 'Going live…');
   assert.equal(deploying.tone, 'progress');
   assert.equal(deploying.spinner, true);
 
   const stalled = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'stalled' }));
-  assert.equal(stalled.label, 'Merged · deployment stalled');
+  assert.equal(stalled.label, 'Stuck going live');
   assert.equal(stalled.tone, 'blocked');
 });
 
-test('merged child proposals say whether delivery is pending, failed or confirmed; unknown reads as plain Merged', () => {
+test('merged child proposals say whether delivery is pending, failed or confirmed; unknown reads as plain Live', () => {
   const AppView = makeAppView();
   const state = deployment_state => AppView.statusPillState(PR({
     status: 'merged', deployment_kind: 'child', deployment_state,
   }));
-  assert.equal(state('deployed').label, '✓ Deployed');
-  assert.equal(state('pending').label, 'Merged · awaiting deployment');
-  assert.equal(state('failed').label, 'Merged · deploy failed');
+  assert.equal(state('deployed').label, '✓ Live');
+  assert.equal(state('pending').label, 'Going live…');
+  assert.equal(state('pending').key, 'delivery_pending');
+  assert.equal(state('failed').label, 'Couldn’t go live');
   assert.equal(state('failed').tone, 'blocked');
   // #3368: `unknown` is the absence of evidence (e.g. a container deployed
   // before revision labels existed), not a problem to flag on every row.
-  assert.equal(state('unknown').label, '✓ Merged');
+  assert.equal(state('unknown').label, '✓ Live');
   assert.equal(state('unknown').key, 'merged');
-  assert.equal(state('unknown').tone, 'ok');
-  assert.equal(state(undefined).label, '✓ Merged');
+  assert.equal(state('unknown').tone, 'neutral');
+  assert.equal(state(undefined).label, '✓ Live');
 });
 
 test('the Done summary reports a child app’s latest delivery outcome', () => {
@@ -172,7 +176,7 @@ test('tier 1 — merging stays in the bar; resolving became a tag', () => {
     status: 'merging', check_state: 'failing', merge_conflict_state: 'failed',
   }));
   assert.equal(merging.tier, 1);
-  assert.equal(merging.label, 'Merging…');
+  assert.equal(merging.label, 'Going live…');
   assert.equal(merging.tone, 'progress');
   assert.ok(merging.spinner, 'in-flight stages carry the spinner');
 
@@ -449,10 +453,11 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   assert.equal(voted.label, '2 / 5');
   assert.equal(voted.tone, 'progress');
 
+  // Settled is quiet: a done state gets no fill (tier 0, grey with a check).
   const won = AppView.statusPillState(PR({
     status: 'merged', yes_count: 5, votes_required: 5,
   }));
-  assert.equal(won.tone, 'ok');
+  assert.equal(won.tone, 'neutral');
 
   const approvals = AppView.statusPillState(PR({
     check_state: 'passing', approvals_required: 3, yes_count: 2,

@@ -1,5 +1,5 @@
-// The rows under "Agent sessions" in the Homeroom menu (#2779 follow-up; it
-// was "Continue" until the UI overhaul): your agent
+// The rows under "More" in the Homeroom menu (#2779 follow-up; it was
+// "Continue" until the UI overhaul, then "Agent sessions"): your agent
 // sessions, so going back to one is a tap from anywhere. Pure, so tests can
 // read the rules without a browser.
 //
@@ -85,7 +85,7 @@ function agentDetail(session: ContinueAgentSession): string {
   const change = session.activeChange;
   if (!change) return 'Agent session';
   if (change.status === 'promoted') return 'Waiting for approval';
-  if (change.status === 'merged') return 'Merged';
+  if (change.status === 'merged') return 'Live';
   return 'In progress';
 }
 

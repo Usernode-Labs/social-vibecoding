@@ -319,7 +319,7 @@ function summarize(list, viewer) {
     // which is what the platform says while it is actively working.
     if (total && done === total) {
       return {
-        headline: 'Merged', detail: null,
+        headline: 'Live', detail: null,
         done, total, current: null, opensFor: null, needsViewer: false,
       };
     }

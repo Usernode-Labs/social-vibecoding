@@ -249,6 +249,10 @@ test('the Kudos-tab subtitle reads the cap from the budget', () => {
   assert.match(lbJs, /kudos per week, resets \$\{/);
   assert.match(lbJs, /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
     '#3230: in the viewer\u2019s own clock where ResetTime is loaded');
+  // The newcomer's word (first-session run-through, 4 Oct 2026): a change,
+  // not a PR.
+  assert.match(lbJs, /Give them to changes you appreciate\./);
+  assert.doesNotMatch(lbJs, /PRs you appreciate/);
 });
 
 test('a Dev-screen pledge also refreshes the drawer kudos meter', () => {
