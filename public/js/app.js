@@ -849,10 +849,15 @@ const App = {
   _applyFirstVersionShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    // B6: `?shot=first-version-plan`, the same screen while its plan waits for Build it.
-    if (shot !== 'first-version' && shot !== 'first-version-plan') return;
+    // B6: `?shot=first-version-plan`, the same screen while its plan waits for
+    // Build it. `-ready` and `-approved`: built and up for approval, as a
+    // member who still has to approve it and as one who has.
+    const variants = {
+      'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',
+    };
+    if (!Object.prototype.hasOwnProperty.call(variants, shot)) return;
     try {
-      if (typeof AppView !== 'undefined') AppView.showFirstVersionShot(shot === 'first-version-plan');
+      if (typeof AppView !== 'undefined') AppView.showFirstVersionShot(variants[shot]);
     } catch (err) { /* ignore */ }
   },
 

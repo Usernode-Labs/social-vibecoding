@@ -2827,7 +2827,15 @@ const AppView = {
   // the shot runs against. Nothing is behind it: the record has no address
   // and is not the routed app, so "Show the starter for now" frames nothing,
   // and the chat button opens Messages.
-  showFirstVersionShot(withPlan = false) {
+  //
+  // `variant`: true or 'plan', its plan waiting for Build it; 'ready', built
+  // and waiting for the viewer's approval in a group; 'approved', the same
+  // once the viewer approved it, waiting on the other member with the
+  // group's clock running. Their change id stands for no change, so Try it
+  // and See the change open nothing real.
+  showFirstVersionShot(variant = false) {
+    const withPlan = variant === true || variant === 'plan';
+    const ready = variant === 'ready' || variant === 'approved';
     AppView.appData = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
@@ -2835,7 +2843,17 @@ const AppView = {
       status: 'running',
       url: null,
       self_hosted: false,
-      first_version: withPlan ? {
+      first_version: ready ? {
+        building: true, mine: variant === 'approved', step: 6, of: 7, stepName: 'Approval',
+        creator: variant === 'approved' ? null : 'jordan', ready: true, question: false, conversationId: null,
+        approval: variant === 'approved' ? {
+          sessionId: 990003, mustApprove: false, approved: true, waitingOn: ['sam'], more: 0, missing: 1,
+          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        } : {
+          sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
+          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        },
+      } : withPlan ? {
         // B6: its plan waits for Build it. A shot: the action id stands for
         // no plan, so a tap here decides nothing.
         building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan',
@@ -2952,8 +2970,10 @@ const AppView = {
   // services/homeroom-bot-dm.js firstVersionState); while it says building,
   // the App tab shows that instead of mounting the frame. Its creator gets
   // their DM with the bot (and its question, when the bot waits on one);
-  // anyone else is told whose description it is. "Show the starter for now"
-  // mounts the frame anyway, for the rest of this visit to the page.
+  // anyone else is told whose description it is. Once it is built and up
+  // for approval, it says it is ready to try and what it waits on
+  // (_firstVersionReadyView). "Show the starter for now" mounts the frame
+  // anyway, for the rest of this visit to the page.
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
@@ -2978,14 +2998,12 @@ const AppView = {
     // (Change something goes to that chat). The step line says the rest.
     const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
       && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
+    // Built and up for approval: no longer "being built" (_firstVersionReadyView).
+    if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
     if (plan) {
       // Nothing more to say under the step: the card is what comes next.
     } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
-    else if (fv.ready) {
-      // B10a: waiting for approval, in one word everywhere.
-      lines.push(mine ? 'Its first version is ready. Try it from your chat.'
-        : 'Its first version is waiting for approval.');
-    } else {
+    else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
     }
     return {
@@ -3013,6 +3031,131 @@ const AppView = {
         ? { key: 'starter', label: 'Show the starter for now', slug: appData.slug }
         : null,
     };
+  },
+
+  /**
+   * The first version is built and up for approval (`first_version.ready`).
+   * The screen says so in plain words, under the step line it is given,
+   * and says what it waits on for whoever reads it, from
+   * `first_version.approval` (services/homeroom-bot-dm.js
+   * firstVersionApproval):
+   *
+   *   still has to approve  "Waiting for your approval.", with Try it (the
+   *                         preview its ready card's Try it opens) and See
+   *                         the change, where they approve it
+   *   approved it           "You approved it. Waiting for @sam, or it goes
+   *                         live on Wednesday if nobody objects.", with Try
+   *                         it and See the change
+   *   anyone else           "Waiting for approval.", with See the change
+   *
+   * "Show the starter for now" stays, quieter, under them. Without
+   * `approval` (a read that failed) its creator is pointed at their chat,
+   * as before. No amber dot: nothing is being built.
+   */
+  _firstVersionReadyView(appData, lines) {
+    const fv = appData.first_version || {};
+    const slug = appData.slug;
+    const approval = fv.approval && Number.isInteger(fv.approval.sessionId) && fv.approval.sessionId > 0
+      ? fv.approval : null;
+    const view = {
+      dot: null,
+      message: `The first version of ${appData.name || slug} is ready to try`,
+      detail: null,
+      lines,
+      secondary: appData.status === 'running'
+        ? { key: 'starter', label: 'Show the starter for now', slug }
+        : null,
+    };
+    if (!approval) {
+      lines.push(fv.mine ? 'Try it from your chat.' : 'Waiting for approval.');
+      return {
+        ...view,
+        action: fv.mine
+          ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug,
+            conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
+          : null,
+      };
+    }
+    const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
+    const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    if (approval.mustApprove) {
+      lines.push('Waiting for your approval.');
+      return { ...view, action: tryIt, alt: change };
+    }
+    lines.push(AppView._firstVersionWaitLine(approval));
+    return approval.approved ? { ...view, action: tryIt, alt: change } : { ...view, action: change };
+  },
+
+  /**
+   * What a first version that is ready waits on, for a reader who is not
+   * asked to approve it now. "You approved it." leads when they did, then
+   * whom it waits for and, while a merge clock runs, the day it goes live
+   * anyway, in the reader's own time zone: "You approved it. Waiting for
+   * @sam, or it goes live on Wednesday if nobody objects." Anyone else
+   * reads "Waiting for approval." until no Yes is missing.
+   */
+  _firstVersionWaitLine(approval, now = new Date(), locale) {
+    const day = approval.goesLiveAt ? AppView._liveDay(approval.goesLiveAt, now, locale) : null;
+    const missing = Math.max(Number(approval.missing) || 0, 0);
+    let next = null;
+    if (approval.soon) next = 'It goes live in a minute or two.';
+    else if (!missing && day) next = `It goes live ${day} if nobody objects.`;
+    else if (!approval.approved) next = 'Waiting for approval.';
+    else if (missing) {
+      next = `Waiting for ${AppView._firstVersionWhom(approval, missing)}${day ? `, or it goes live ${day} if nobody objects` : ''}.`;
+    }
+    if (!approval.approved) return next;
+    return next ? `You approved it. ${next}` : 'You approved it.';
+  },
+
+  /** Whose Yes it still needs: "@sam", "@sam and @ada", or how many more when no one person is needed. */
+  _firstVersionWhom(approval, missing) {
+    const names = (Array.isArray(approval.waitingOn) ? approval.waitingOn : [])
+      .filter((name) => typeof name === 'string' && name);
+    const more = Math.max(Number(approval.more) || 0, 0);
+    // Named only when they are exactly who is needed; else how many more.
+    if (names.length && names.length + more === missing) {
+      const who = [...names.map((name) => `@${name}`), ...(more ? [`${more} more`] : [])];
+      return who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who[0];
+    }
+    return missing === 1 ? 'one more person to approve' : `${missing} more people to approve`;
+  },
+
+  /**
+   * The day something goes live, in the reader's own clock, worded to follow
+   * "it goes live": "later today", "tomorrow", "on Wednesday" within the
+   * week, else "on October 12" (a day already past is its date too).
+   */
+  _liveDay(at, now = new Date(), locale) {
+    const when = new Date(at);
+    if (!Number.isFinite(when.getTime())) return null;
+    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    // Rounded: a day across a clock change is 23 or 25 hours long.
+    const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+    if (when.getTime() > now.getTime()) {
+      if (days === 0) return 'later today';
+      if (days === 1) return 'tomorrow';
+      if (days < 7) return `on ${new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when)}`;
+    }
+    return `on ${new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when)}`;
+  },
+
+  /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
+  tryFirstVersion(slug, sessionId) {
+    const id = Number(sessionId);
+    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    if (AppView.appData && AppView.appData.slug === slug && typeof AppView.ensureStaging === 'function') {
+      AppView.ensureStaging(id, null, null, {});
+      return;
+    }
+    AppView.openFirstVersionChange(slug, id);
+  },
+
+  /** See the change: the first version's change page, where it is approved. */
+  openFirstVersionChange(slug, sessionId) {
+    const id = Number(sessionId);
+    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    location.hash = `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 
   /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
