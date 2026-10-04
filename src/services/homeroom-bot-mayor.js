@@ -166,6 +166,21 @@ const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
 });
+
+/**
+ * B3: an offer's buttons, carried in the message itself (metadata.actions):
+ * the act first and filled, the other beside it. A tap is decided by the
+ * action endpoint (routes/conversations.js, decideOfferTap) rather than by
+ * its words sent as a message from the person, which is what a tap used to
+ * do. The words still decide it when typed or quoted (decideOffer).
+ */
+function offerActions(kind) {
+  const [yes, no] = OFFER_ANSWERS[kind] || OFFER_ANSWERS.file_request;
+  return [
+    { id: 'yes', label: yes, style: 'primary', type: 'server' },
+    { id: 'no', label: no, style: 'secondary', type: 'server' },
+  ];
+}
 // #11: what a reply that promised to come back to something later says
 // instead, when nothing it did this turn will.
 const CANT_LOOK_TEXT = 'I can\'t look into that myself from here.';
@@ -1728,8 +1743,9 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
   // flight each one points at its own. #3772: a later try at the same
   // message (deferAttempt) answers under a key of its own.
   const key = `hrbot-mayor-${message.id}${deps.deferAttempt ? `-d${deps.deferAttempt}` : ''}`;
+  // B4: every one of these answers what they just wrote, so it rings as a reply.
   const say = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: key, replyToId: message.id, ...extra,
+    bot, userId: user.id, content, idempotencyKey: key, replyToId: message.id, moment: 'reply', ...extra,
   });
   const state = { recorded: false };
   try {
@@ -2028,7 +2044,8 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     metadata: {
       kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
       question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
-      answers: [...OFFER_ANSWERS[kind]], status: 'open', mirrors: false,
+      // `answers` for a client that predates `actions`.
+      answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
     },
   });
   if (sent?.messageId) {
@@ -2130,13 +2147,60 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     action = rows[0];
   }
   if (!action) return null;
-  const dm = dmModule(deps);
   const [yesWord, noWord] = OFFER_ANSWERS[action.kind] || OFFER_ANSWERS.file_request;
   const yes = typed ? typed.yes : said(message.content, yesWord);
   const no = typed ? !typed.yes : said(message.content, noWord);
   if (!yes && !no) return null;
+  return settleOffer(pool, config, {
+    bot, user, settings, action, yes, deps, replyToId: message.id, ackKey: `hrbot-offer-${message.id}`,
+  });
+}
+
+/**
+ * B3: a tap on an offer's button (POST /api/conversations/homeroom-bot/
+ * actions/:actionId), decided exactly as its typed words are, by the person
+ * it was offered to and only once: a second tap, on this device or another,
+ * is a 409 and does nothing, and every device already shows the choice
+ * (setQuestionState). Resolves { ok: true, choice, label } or
+ * { ok: false, status, error }.
+ */
+async function decideOfferTap(pool, config, { user, actionId, choice, deps = {} }) {
+  if (choice !== 'yes' && choice !== 'no') return { ok: false, status: 400, error: 'choice must be yes or no' };
+  const id = Number(actionId);
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice' };
+  const { rows } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [id, user.id]);
+  const action = rows[0];
+  if (!action || !OFFER_ANSWERS[action.kind]) return { ok: false, status: 404, error: 'No such choice' };
+  if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
+  const dm = dmModule(deps);
+  const bot = deps.bot || await dm.botAccount(pool);
+  if (!bot) return { ok: false, status: 503, error: 'Homeroom bot is not available' };
+  const settings = await botModule(deps).readSettings(pool);
+  const yes = choice === 'yes';
+  const sent = await settleOffer(pool, config, {
+    bot, user, settings, action, yes, deps, replyToId: null, ackKey: `hrbot-offer-tap-${action.id}`, tapped: true,
+  });
+  if (sent?.alreadyDecided) return { ok: false, status: 409, error: 'already_decided' };
+  const [yesWord, noWord] = OFFER_ANSWERS[action.kind];
+  return { ok: true, choice, label: yes ? yesWord : noWord };
+}
+
+/**
+ * Decide `action` (an offer still open) once, as `yes` or not, and do what
+ * it says: file the request, or withdraw the proposal, or nothing. The
+ * first decision wins; a later one is told what happened when it was typed
+ * or quoted. A tap (`tapped`) is answered by its button instead: a second
+ * one says nothing (every device shows the first), and a "no" needs no
+ * reply, since the line under the buttons already says what was chosen.
+ */
+async function settleOffer(pool, config, {
+  bot, user, settings, action, yes, deps = {}, replyToId = null, ackKey, tapped = false,
+}) {
+  const dm = dmModule(deps);
+  const no = !yes;
+  const [yesWord, noWord] = OFFER_ANSWERS[action.kind] || OFFER_ANSWERS.file_request;
   const ack = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: `hrbot-offer-${message.id}`, replyToId: message.id, ...extra,
+    bot, userId: user.id, content, idempotencyKey: ackKey, replyToId, ...extra,
   });
   // Decided once: the first tap wins, and a second says what happened.
   const { rows: claimed } = await pool.query(
@@ -2145,13 +2209,18 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     [action.id, user.id, yes ? 'done' : 'declined'],
   );
   if (!claimed.length) {
+    if (tapped) return { alreadyDecided: true };
     return ack(action.status === 'done' && action.issue_number
       ? `I already filed that as request #${action.issue_number}.`
       : 'That one is already decided.');
   }
-  await dm.setQuestionState(pool, quoted, { status: 'answered', answer: yes ? yesWord : noWord }, {
-    conversationId: action.conversation_id, userId: user.id,
-  }).catch(() => {});
+  // The buttons give way to the choice on every device it is open on.
+  if (action.message_id) {
+    await dm.setQuestionState(pool, Number(action.message_id), {
+      status: 'answered', answer: yes ? yesWord : noWord, chosen: yes ? 'yes' : 'no',
+    }, { conversationId: action.conversation_id, userId: user.id }).catch(() => {});
+  }
+  if (no && tapped) return { declined: true };
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
@@ -2163,7 +2232,11 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     return ack('I couldn\'t file it: you need to be a member of that project first. You can join it from its page.');
   }
   try {
-    const filed = await fileRequest(pool, config, { user, app, title: action.title, details: action.details, settings, deps });
+    // B4: what they asked for, in their words: the message the offer answered.
+    const askedText = await askedFor(pool, action, user.id);
+    const filed = await fileRequest(pool, config, {
+      user, app, title: action.title, details: action.details, settings, deps, askedText,
+    });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     const name = app.name || app.slug;
     const builds = liveModule(deps).isLiveFor(settings, app);
@@ -2178,7 +2251,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
       const card = await activityModule(deps).startCard(pool, {
         app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true,
         requester: {
-          userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false,
+          userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false, askedText,
           // What dm.hasBot reads, from the signed-in person who tapped File it.
           isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
         },
@@ -2203,6 +2276,22 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
 }
 
 /**
+ * B4: the words a request offered in the DM was asked for in: the person's
+ * own message the offer answered, while it is still there. Null otherwise.
+ */
+async function askedFor(pool, action, userId) {
+  if (!action?.message_id) return null;
+  const { rows } = await pool.query(
+    `SELECT q.content FROM conversation_messages o
+       JOIN conversation_messages q ON q.id = o.reply_to_id AND q.sender_id = $2 AND q.deleted_at IS NULL
+      WHERE o.id = $1`,
+    [action.message_id, userId],
+  ).catch(() => ({ rows: [] }));
+  const text = String(rows[0]?.content || '').trim();
+  return text || null;
+}
+
+/**
  * File a request on `app` as `user`, the way POST /api/apps/:slug/issues
  * files a general one: its GitHub issue, the platform's row, the people
  * who follow new requests told, and a line in its own thread. It is
@@ -2210,7 +2299,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
  * reaches their DM, and on a project the bot acts on it goes to the front
  * of the queue.
  */
-async function fileRequest(pool, config, { user, app, title, details, settings, deps = {} }) {
+async function fileRequest(pool, config, { user, app, title, details, settings, deps = {}, askedText = null }) {
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const notifications = deps.notifications || require('./notifications');
@@ -2234,10 +2323,11 @@ async function fileRequest(pool, config, { user, app, title, details, settings, 
     [app.id, issueNumber, title, body, user.id],
   );
   await pool.query(
-    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, issue_title = EXCLUDED.issue_title`,
-    [app.id, issueNumber, user.id, title],
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, issue_title = EXCLUDED.issue_title,
+       asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
+    [app.id, issueNumber, user.id, title, askedText ? clip(askedText, 2000) : null],
   );
   try {
     notifications.createIssueOpenedNotifications?.(pool, { appId: app.id, issueNumber, authorId: user.id })
@@ -2997,6 +3087,8 @@ module.exports = {
   runTool,
   runDmTurn,
   decideOffer,
+  decideOfferTap,
+  offerActions,
   decideTyped,
   typedDecision,
   fileRequest,

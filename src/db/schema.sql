@@ -9537,6 +9537,12 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_requesters (
 );
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
   ON homeroom_bot_requesters(user_id);
+-- B4: what the person asked for, in their own words: their message to the
+-- bot that the request was filed from, the description they wrote when they
+-- asked for a change, or a first version's brief. Their activity card leads
+-- with it ("You asked: ..."), and the bot's change credits them by it. The
+-- issue's title stays the bot's short name for it.
+ALTER TABLE homeroom_bot_requesters ADD COLUMN IF NOT EXISTS asked_text TEXT;
 
 -- Every DM message the bot sent about a request, so a person's reply can
 -- be posted on the right request. A question is a row whose
@@ -9980,7 +9986,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -9988,13 +9994,15 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- #11 (WP3): the proposal a withdrawal is about, and the wider kind check
 -- for a database whose table predates it (CREATE TABLE IF NOT EXISTS above
 -- skips an existing table, and its named CHECK allowed file_request only).
+-- B3: `build_plan`, the plan card a first version waits on (B6), decided by
+-- its buttons through the same action endpoint as an offer.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

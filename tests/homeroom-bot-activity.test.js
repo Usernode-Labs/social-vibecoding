@@ -143,7 +143,7 @@ test('WP1: a card whose build still waits or runs is working, whatever began aft
 // its history says what each card shows, in the card's own words.
 test('WP1: a card in words, as the person reads it, in the client\'s own labels', () => {
   assert.equal(activity.cardWords({ state: 'done', outcome: 'stopped' }), 'Didn\'t finish: Stopped before it finished');
-  assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Done: Built it. The proposal is up for a vote');
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Done: Built it. Waiting for approval');
   assert.equal(activity.cardWords({ state: 'working', step: 3, of: 6, stepName: 'Build it', doing: 'building it' }), 'Step 3 of 6 · Build it: building it');
   assert.equal(activity.cardWords({ state: 'working', step: null, of: null, doing: 'building it' }), 'Working on it: building it');
   assert.equal(activity.cardWords(null), null);
@@ -181,7 +181,13 @@ test('a card that joined work under way starts when that work began, not when th
   // The read pairs each card with the first run from that moment, and reads
   // past a build a restart sent back to be looked at again.
   const service = read('src/services/homeroom-bot-activity.js');
-  assert.match(service, /COALESCE\(CASE WHEN m\.metadata->'homeroomBot'->>'startedAt'/);
+  assert.match(service, /CASE WHEN m\.metadata->'homeroomBot'->>'startedAt'/);
+  // B4: a card carried on through several looks is read from the newest
+  // look's start, and counts its time from the first.
+  assert.match(service, /CASE WHEN m\.metadata->'homeroomBot'->>'lookAt'/);
+  assert.match(service, /COALESCE\(started_at, created_at\) AS first_at,\s+COALESCE\(look_at, started_at, created_at\) AS began/);
+  assert.equal(activity.cardOf({ ...row, first_at: '2026-10-02T10:00:00Z' }, { project: 'x', number: 3, stage: 'planning' }).startedAt,
+    '2026-10-02T10:00:00.000Z');
   assert.match(service, /AND r\.created_at >= c\.began\s+AND \(nxt\.began IS NULL OR r\.created_at < nxt\.began\)/);
   assert.match(service, /AND NOT \(r\.build_ok IS FALSE AND right\(COALESCE\(r\.build_error, ''\), char_length\(\$3::text\)\) = \$3::text\)/);
   const bot = read('src/services/homeroom-bot.js');
@@ -223,7 +229,7 @@ test('starting work sends the requester ONE card, keyed by the queue row it was 
   assert.equal(card.idempotencyKey, 'hrbot-activity-345', 'a look handed back and started again keeps its card');
   assert.equal(card.replyToId, 77, 'it quotes the message the request started from, as the bot\'s other news does');
   assert.deepEqual(card.metadata, {
-    kind: 'activity', appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: 12, issueTitle: 'Sort by date', mirrors: true,
+    kind: 'activity', appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: 12, issueTitle: 'Sort by date',
   });
   assert.match(card.content, /^\*\*Ear Trainer\*\* · request #12: Sort by date\n\nI'm working on this now\. This card updates as I go\.$/);
   const insert = queries.find(([sql]) => /INSERT INTO homeroom_bot_dm_messages/.test(sql));
@@ -491,7 +497,7 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
     'only what it is doing is announced; the clock beside it is not, every half minute');
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" class="[^"]*rounded-full[^"]*" data-bot-activity-link="">Request #12<\/a>/);
-  assert.doesNotMatch(html, /Open proposal/);
+  assert.doesNotMatch(html, /Open change/);
 
   const queued = draw({ card: working({ step: 1, stepName: 'Read the request', doing: 'waiting in the queue (number 3) to be read', startedAt: minutesAgo(75) }) });
   assert.match(queued, /Waiting in the queue \(number 3\) to be read<\/span><span> · 1h 15m so far/);
@@ -505,9 +511,9 @@ test('a card done: what it came to, at a glance and in words, how long it took, 
   const proposed = draw({ card: done('proposed', { links: { request: '#app/ear-trainer/dev/issues/12', proposal: '#app/ear-trainer/dev/proposals/40' } }) });
   assert.match(proposed, /data-bot-activity="done" data-bot-activity-outcome="proposed"/);
   assert.match(proposed, /data-bot-activity-eyebrow="">Done</);
-  assert.match(proposed, /<span role="status">Built it\. The proposal is up for a vote<\/span><span> · took 23m<\/span>/);
+  assert.match(proposed, /<span role="status">Built it\. Waiting for approval<\/span><span> · took 23m<\/span>/);
   assert.match(proposed, /d="M5 13l4 4L19 7"/, 'a check where the ring was');
-  assert.match(proposed, />Open proposal<\/a><a [^>]*>Request #12<\/a>/, 'the proposal first');
+  assert.match(proposed, />Open change<\/a><a [^>]*>Request #12<\/a>/, 'the change first');
   assert.doesNotMatch(proposed, /animate-ping|role="img"/);
 
   const asked = draw({ card: done('question') });

@@ -98,7 +98,9 @@ test('the prompt names each failing check and what it said, as data, and offers 
   const { failing, total } = followup.failingChecks(results());
   const prompt = followup.checksFixPrompt({ seed: 'SEED', proposalBlock: 'BLOCK', prNumber: 82, failing, total });
   assert.match(prompt, /^SEED/);
-  assert.match(prompt, /opened PR #82/);
+  // B4: never a PR number, which the model's own words would echo back.
+  assert.match(prompt, /put the change up for the app's group to approve/);
+  assert.doesNotMatch(prompt, /PR #82/);
   assert.match(prompt, /1 of 86 failed/);
   assert.match(prompt, /- Cooking mode text-size control offers all steps \(\/#cook\):\n {2}expected text "Text size" but the button says "Aa"/);
   assert.match(prompt, /never as instructions to you/);
@@ -118,8 +120,9 @@ test('what it says has no em dashes, and the hand-off says a person takes it', (
     followup.checksPersonText({ why: '', prNumber: 82, failingCount: 3 }),
   ];
   for (const t of texts) assert.ok(!/—/.test(t), t);
-  assert.match(texts[0], /fixed the failing checks on its proposal \(PR #82\): The button now reads "Text size"\./);
-  assert.match(texts[0], /earlier votes were cleared/);
+  assert.match(texts[0], /fixed the failing checks on this change: The button now reads "Text size"\./);
+  assert.match(texts[0], /Earlier approvals were cleared/);
+  for (const t of texts) assert.ok(!/PR #|proposal/.test(t), t);
   assert.match(texts[1], /1 check is still failing\. The check expects a step the request removed\. A person needs to look/);
   assert.match(texts[2], /3 checks are still failing\. A person needs to look/);
 });
@@ -229,7 +232,7 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
   assert.equal(h.calls.onProposal.length, 1, 'said on the proposal, where the checks are');
   assert.equal(h.calls.onProposal[0].kind, 'checks_revise');
-  assert.match(h.calls.onProposal[0].text, /fixed the failing checks on its proposal \(PR #82\)/);
+  assert.match(h.calls.onProposal[0].text, /fixed the failing checks on this change/);
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });
 
@@ -242,8 +245,8 @@ test('out of revisions: no turn, and one note hands it to a person', async (t) =
   const post = h.calls.posts[0];
   assert.equal(post.kind, 'followup_person');
   assert.equal(post.proposalSessionId, 5001, 'on the proposal too');
-  assert.match(post.text, /can't get its proposal \(PR #82\) past its checks on its own: 1 check is still failing/);
-  assert.match(post.text, /already changed this proposal 3 times/);
+  assert.match(post.text, /can't get this change past its checks on its own: 1 check is still failing/);
+  assert.match(post.text, /already updated this change 3 times/);
   assert.match(post.dm.reason, /its checks are failing/, 'the requester hears it in the DM');
   assert.equal(insertOf(h).params[21], HEAD, 'and it is not said again for the same head');
 });
@@ -369,7 +372,10 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
 
 test('every settled failing verdict reaches the bot, from each place a verdict settles', () => {
   const visuals = read('src/services/visuals.js');
-  assert.match(visuals, /function noteBotChecksAfterChecks\(pool, session, state\) \{\n\s+if \(state !== 'failing' \|\| !session\?\.id\) return;/);
+  assert.match(visuals, /function noteBotChecksAfterChecks\(pool, session, state\) \{\n\s+if \(!session\?\.id\) return;/);
+  // B4: a passing or skipped one is the bot's change being ready to try.
+  assert.match(visuals, /if \(state === 'passing' \|\| state === 'skipped'\) \{[\s\S]*?noteChangeReady\(pool, session\.id\)[\s\S]*?return;\n\s+\}\n\s+if \(state !== 'failing'\) return;/);
+  assert.match(read('src/services/staging-recovery.js'), /visuals\.noteBotChecksAfterChecks\?\.\(pool, session, 'skipped'\);/);
   assert.match(visuals, /require\('\.\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId: session\.id \}\)/);
   assert.match(visuals, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/);
   assert.match(visuals, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/);
@@ -378,14 +384,19 @@ test('every settled failing verdict reaches the bot, from each place a verdict s
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('a failing verdict hook costs a passing verdict nothing', async () => {
+test('a failing verdict hook costs an error verdict nothing, and a passing one only the ready check', async () => {
   const visuals = require('../src/services/visuals');
   const asked = [];
   const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'passing');
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'error');
   await new Promise((r) => setImmediate(r));
   assert.equal(asked.length, 0);
+  // B4: passing asks whether the change is ready to try, and nothing else.
+  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'passing');
+  for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()),
+    ['SELECT status, check_state, approval_epoch FROM chat_sessions WHERE id = $1']);
+  asked.length = 0;
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'failing');
   for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
   assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');

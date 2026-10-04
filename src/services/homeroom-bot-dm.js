@@ -56,6 +56,14 @@ const META = conversations.BOT_METADATA_KEY;
 // carries suggested answers, and a reply without a quote answers the
 // newest one still open.
 const QUESTION_KINDS = new Set(['question', 'followup_ask']);
+// B3: the news a reply quoting it is posted on the request's public
+// discussion for: a question, and the three that ask for a reply to look
+// again with ("Reply to this message with more detail"). A reply to anything
+// else the bot said about a request (an activity card, a ready or live
+// message) stays in the DM and is read by the bot: quoting a progress card
+// to ask "can the reminder be at 9am?" used to post that on the request.
+// The client's reply bar reads the same list (messages/bot-question.tsx).
+const MIRRORED_KINDS = new Set([...QUESTION_KINDS, 'blocked', 'person', 'empty']);
 // The most a project description may hold. Long enough for a real brief,
 // short enough to be one request body.
 const MAX_BRIEF_CHARS = 4000;
@@ -141,6 +149,7 @@ function requesterFrom(row, overrides = {}) {
     username: row.username,
     firstVersion: !!row.first_version,
     issueTitle: row.issue_title,
+    askedText: row.asked_text || null,
     isSynthetic: !!row.is_synthetic,
     hasPlatformAccess: !!row.has_platform_access,
     isAdmin: !!row.is_admin,
@@ -304,8 +313,74 @@ async function quotable(pool, conversationId, userId, messageId) {
  * Resolves { conversationId, messageId, duplicate } or null when the person
  * blocked the bot or left the chat.
  */
+// ── When the bot rings ───────────────────────────────────────────────────
+
+// B4: a message from the bot notifies (a bell row and a push) only at four
+// moments in a request's life, and when it answers what the person just
+// wrote to it ('reply'). A first version used to ring six times: "setting
+// up", its card, the question, a second card, "it's built", "it's live".
+// Everything else (its progress card, "I'm building it now", a restart, a
+// revision, an ack) is stored and counts as unread, and rings nothing.
+const MOMENTS = Object.freeze({
+  // Needs your answer.
+  question: 'question', followup_ask: 'question', plan: 'question',
+  // Ready to try.
+  proposal: 'ready', ready: 'ready',
+  // Stopped: it did not finish, or waits on something only time or a person changes.
+  build_failed: 'stopped', blocked: 'stopped', person: 'stopped', empty: 'stopped',
+  first_version_failed: 'stopped', preview_failed: 'stopped', allowance: 'held', paused: 'held',
+  // Live.
+  merged: 'live',
+  // An answer to what they wrote: the model's, and its offer to file.
+  chat: 'reply', confirm: 'reply',
+});
+
+/** Pure: the moment a message of the bot's rings at, by its kind, or null. */
+function momentOf(metadata) {
+  return MOMENTS[metadata?.kind] || null;
+}
+
+/**
+ * B4: what a ringing message's notification carries (notifications.detail),
+ * for the push and the bell to word it by (mobile-push-policy.js
+ * botMomentCopy): "hrbot:<moment>:<app name>". A first version that is live
+ * is the project being live; a change to a project with others in it is
+ * "your change to" it. Never throws.
+ */
+async function notificationDetail(pool, moment, metadata) {
+  if (!moment) return null;
+  const appName = clip(String(metadata?.appName || '').replace(/\s+/g, ' '), 80);
+  let said = moment;
+  if (moment === 'live' && metadata?.firstVersion) said = 'live_first';
+  if (moment === 'ready' && !metadata?.firstVersion && metadata?.appSlug) {
+    if (await hasOthers(pool, null, metadata.appSlug)) said = 'ready_group';
+  }
+  return `hrbot:${said}:${appName}`;
+}
+
+/**
+ * B4: whether anybody but one person is in a project's community: who
+ * approves a change to it, and how its news is worded. By id, or by slug.
+ * Never throws; false when it cannot tell.
+ */
+async function hasOthers(pool, appId, appSlug = null) {
+  const { rows } = await pool.query(
+    `SELECT (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members
+       FROM apps a WHERE a.id = $1 OR ($1::int IS NULL AND a.slug = $2)`,
+    [appId == null ? null : Number(appId), appSlug],
+  ).catch(() => ({ rows: [] }));
+  return (Number(rows?.[0]?.members) || 0) > 1;
+}
+
+/**
+ * Send one message from the bot to `userId`, in their DM with it. `moment`
+ * (B4): whether it rings, and as what ('reply' for an answer to what they
+ * just wrote); left out, its kind decides (MOMENTS), and anything else is
+ * silent.
+ */
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
+  moment = undefined,
 }) {
   if (!bot?.id || !userId) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
@@ -316,11 +391,13 @@ async function sendDm(pool, {
   const quote = await quotable(pool, opened.conversationId, userId, replyToId);
   if (quote) input.reply_to_id = quote;
   const cards = Array.isArray(objects) ? objects.filter(Boolean).slice(0, MAX_CARDS) : [];
+  const rings = moment === undefined ? momentOf(metadata) : (moment || null);
+  const detail = rings ? await notificationDetail(pool, rings, metadata) : null;
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
-    { metadata: metadata ? { [META]: metadata } : null });
+    { metadata: metadata ? { [META]: metadata } : null, notify: !!rings, notificationDetail: detail });
   let result = await send(cards);
   if (!result && cards.length) {
     log.info('homeroom-bot-dm', 'Cards refused; sending the message without them', { userId, cards: cards.length });
@@ -469,7 +546,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -487,12 +564,18 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const live = require('./homeroom-bot-live');
   const poster = await live.issuePoster(pool, { app, repo, issueNumber, issue });
   if (!poster) return null;
+  // B4: in their own words, when they wrote it here: the description of the
+  // request they filed on the platform (Ask for a change).
   const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
-     SELECT $1, $2, u.id, $4 FROM users u
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
+     SELECT $1, $2, u.id, $4,
+            (SELECT LEFT(NULLIF(BTRIM(i.description), ''), 2000) FROM issues i
+              WHERE i.app_id = $1 AND i.github_issue_number = $2 AND i.created_by = u.id
+              ORDER BY i.id DESC LIMIT 1)
+       FROM users u
       WHERE LOWER(u.username) = LOWER($3) AND u.is_synthetic = FALSE
      ON CONFLICT (app_id, issue_number) DO UPDATE SET issue_title = COALESCE(EXCLUDED.issue_title, homeroom_bot_requesters.issue_title)
-     RETURNING user_id, first_version, issue_title`,
+     RETURNING user_id, first_version, issue_title, asked_text`,
     [app.id, issueNumber, poster, title],
   );
   if (!rows.length) return null;
@@ -516,7 +599,7 @@ async function personOf(pool, userId) {
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
@@ -689,6 +772,20 @@ async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
 
 // ── The request's news, in the DM ────────────────────────────────────────
 
+/**
+ * Pure (B4): what somebody asked for, in their own words, as one line of
+ * about `max` characters, cut at a word: what their activity card leads with.
+ * Null for nothing.
+ */
+function askedLine(text, max = 120) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`;
+}
+
 function requestLine({ appName, issueNumber, issueTitle, firstVersion }) {
   if (firstVersion) return `**${appName}**, its first version`;
   return `**${appName}** · request #${issueNumber}${issueTitle ? `: ${clip(issueTitle, 140)}` : ''}`;
@@ -706,24 +803,30 @@ function dmText(kind, dm, context) {
     case 'question':
       return `${line}\n\nI have a question before I build ${it}:\n\n${clip(dm.question, 2000)}`;
     case 'followup_ask':
-      return `${line}\n\nI have a question before I change the proposal:\n\n${clip(dm.question, 2000)}`;
+      return `${line}\n\nI have a question before I update your change:\n\n${clip(dm.question, 2000)}`;
     case 'spec':
       return `${line}\n\nI'm building ${it} now. I'll message you here when it's ready to try.`;
-    // #20 (WP3): the proposal's card under the message is its link (cardsFor
+    // #20 (WP3): the change's card under the message is its link (cardsFor
     // attaches it whenever the news names its session), so the text points
     // at the card. The address is written out only when there is no card:
     // beside one it was a raw URL next to the same link, in the DM and in
-    // its push.
+    // its push. B4: sent once it is ready to try (noteChangeReady), and in
+    // plain words: on a project of theirs alone they approve it themselves;
+    // with others in it, it goes live once it is approved.
     case 'proposal':
-      return hasProposalCard(dm)
-        ? `${line}\n\nIt's built. Open the proposal below to try the preview and vote on it.\n\nIt goes live once it is approved.`
-        : `${line}\n\nIt's built. Open the proposal to try the preview and vote on it: ${dm.link}\n\n`
-          + 'It goes live once it is approved.';
+      if (hasProposalCard(dm)) {
+        return context.group
+          ? `${line}\n\nIt's ready to try. Open the change below to see the preview. It goes live once it's approved.`
+          : `${line}\n\nIt's ready to try. Open the change below to see the preview, and approve it when you're happy with it.`;
+      }
+      return context.group
+        ? `${line}\n\nIt's ready to try. See the preview here: ${dm.link}\n\nIt goes live once it's approved.`
+        : `${line}\n\nIt's ready to try. See the preview, and approve it when you're happy with it: ${dm.link}`;
     case 'followup_revise': {
       let look = '';
       if (hasProposalCard(dm)) look = '\n\nTake another look at it below.';
       else if (dm.link) look = `\n\nTake another look: ${dm.link}`;
-      return `${line}\n\nI changed the proposal after the latest replies: ${clip(dm.summary, 600)}${look}`;
+      return `${line}\n\nI updated your change after the latest replies: ${clip(dm.summary, 600)}${look}`;
     }
     case 'blocked':
       return `${line}\n\nI looked into this and can't build it as it's written: ${clip(dm.reason, 600)}\n\n`
@@ -799,7 +902,8 @@ async function dmRecipient(pool, appId, issueNumber) {
 async function untaggedRequester(pool, { appId, issueNumber, bot, told = null }) {
   // WP1 (#6): news that was stale by the time it was relayed reached
   // nobody's DM on purpose, and the post does not ring them about it either.
-  if ((told?.messageId || told?.stale) && told.username) return told.username;
+  // B4: nor does "it's built" while the requester waits to hear it is ready.
+  if ((told?.messageId || told?.stale || told?.deferred) && told.username) return told.username;
   if (!bot?.id) return null;
   const recipient = await dmRecipient(pool, appId, issueNumber);
   if (!recipient) return null;
@@ -886,7 +990,9 @@ async function cardShown(pool, userId, appId, issueNumber) {
  * went to ({ conversationId, messageId, duplicate, userId, username }), or
  * null when nothing reached them.
  */
-async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm }) {
+async function relayIssuePost({
+  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null,
+}) {
   if (!dm || !bot?.id) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
@@ -897,6 +1003,8 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     issueNumber,
     issueTitle: requester.issueTitle,
     firstVersion: requester.firstVersion,
+    // B4: whether others are in the project, for who approves it.
+    group: kind === 'proposal' ? await hasOthers(pool, app.id) : false,
   };
   const content = dmText(kind, dm, context);
   if (!content) return null;
@@ -911,13 +1019,30 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
       return { conversationId: null, messageId: null, stale: true, userId: requester.userId, username: requester.username };
     }
   }
+  // B4: "it's built" waits until it is ready to try: its preview is up and
+  // its checks passed or were skipped (noteChangeReady, from every place a
+  // check verdict lands). Said to the post as told, so the post does not tag
+  // them either: they hear it once, when they can try it.
+  let sendKey = key;
+  if (kind === 'proposal' && !ready && hasProposalCard(dm)) {
+    const state = await changeReadiness(pool, dm.sessionId);
+    if (state && !state.ready) {
+      log.info('homeroom-bot-dm', 'A change is up; its requester hears when it is ready to try', {
+        app: app.slug, issueNumber, sessionId: Number(dm.sessionId) || null,
+      });
+      return { conversationId: null, messageId: null, deferred: true, userId: requester.userId, username: requester.username };
+    }
+    if (state) sendKey = readyKey(dm.sessionId, state.epoch);
+  }
   // #3767: the request's activity card already shows it. While the card is
   // the newest thing in the DM about the request, "I'm building this now"
   // repeats it word for word, so it is not sent; and no news about the
   // request carries the request's card again under it. Said to the post as
   // told (it is in front of them), so the post does not tag them instead.
   const shown = await cardShown(pool, requester.userId, app.id, issueNumber);
-  if (shown?.current && CARD_SAYS.has(kind)) {
+  // B4: one card follows a request through every look, so while it has one,
+  // that card says it, wherever it sits.
+  if (shown && CARD_SAYS.has(kind)) {
     return {
       conversationId: shown.conversationId, messageId: shown.messageId, duplicate: true,
       userId: requester.userId, username: requester.username, card: true,
@@ -933,7 +1058,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
     ...(context.firstVersion ? { firstVersion: true } : {}),
     // A reply to this message is posted on the request, publicly.
-    mirrors: true,
+    ...(MIRRORED_KINDS.has(kind) ? { mirrors: true } : {}),
     ...(asks ? { question: clip(dm.question, 2000), answers, status: 'open' } : {}),
     ...(dm.link ? { link: dm.link } : {}),
   };
@@ -943,7 +1068,7 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     content,
     withoutCards: dmText(kind, { ...dm, sessionId: null }, context),
     metadata,
-    idempotencyKey: postId ? `hrbot-post-${postId}` : null,
+    idempotencyKey: sendKey || (postId ? `hrbot-post-${postId}` : null),
     objects: cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
@@ -976,6 +1101,118 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     app: app.slug, issueNumber, kind, userId: requester.userId, question: asks,
   });
   return told;
+}
+
+// ── Ready to try ─────────────────────────────────────────────────────────
+
+// B4: the check verdicts that make a change ready to try.
+const READY_CHECKS = new Set(['passing', 'skipped']);
+
+/** Pure: the key one change's "ready" is sent once under, per approval epoch. */
+function readyKey(sessionId, epoch) {
+  return `hrbot-ready-${Number(sessionId)}-${Number(epoch) || 0}`;
+}
+
+/**
+ * B4: whether one of the bot's changes is ready to try: up for approval, with
+ * its checks passed or skipped. Resolves { ready, epoch }, or null for no
+ * such change.
+ */
+async function changeReadiness(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const { rows } = await pool.query(
+    'SELECT status, check_state, approval_epoch FROM chat_sessions WHERE id = $1', [id],
+  );
+  if (!rows[0]) return null;
+  return {
+    ready: rows[0].status === 'promoted' && READY_CHECKS.has(rows[0].check_state),
+    epoch: Number(rows[0].approval_epoch) || 0,
+  };
+}
+
+/**
+ * B4: a check verdict landed on a change (visuals.noteBotChecksAfterChecks,
+ * called from every place one does). When it is one of the bot's changes and
+ * it is ready to try now, its requester hears so, once per approval epoch:
+ * "It's built" used to go out the moment the change went up, often with its
+ * checks still running. A failing verdict is the bot's own to fix, quietly
+ * (homeroom-bot.js noteProposalChecks). Never throws; resolves what was sent.
+ */
+async function noteChangeReady(pool, sessionId, deps = {}) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const state = await changeReadiness(pool, id);
+    if (!state?.ready) return null;
+    const { rows } = await pool.query(
+      `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
+         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+        WHERE r.proposal_session_id = $1
+        ORDER BY r.id DESC LIMIT 1`,
+      [id],
+    );
+    if (!rows[0]) return null;
+    const run = rows[0];
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return null;
+    const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
+    const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
+    return await relayIssuePost({
+      pool, ws: deps.ws || null, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
+      kind: 'proposal', runId: Number(run.run_id), bot, dm: { link, sessionId: id }, ready: true, key: readyKey(id, state.epoch),
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell the requester their change is ready', { sessionId: id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * B4: one of the bot's changes cannot be tried yet for a reason that is not
+ * the bot's to fix in it (`why`: 'preview', its preview did not start). Its
+ * requester hears it once per approval epoch, as the "stopped" moment; the
+ * retries go on, and "ready" follows if one of them works. Never throws.
+ */
+async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {} } = {}) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.issue_number, a.id, a.slug, a.name, cs.status, cs.approval_epoch
+         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+        WHERE r.proposal_session_id = $1
+        ORDER BY r.id DESC LIMIT 1`,
+      [id],
+    );
+    const run = rows[0];
+    if (!run || run.status !== 'promoted') return null;
+    const settings = await settingsModule().readSettings(pool);
+    const requester = await requesterOf(pool, run.id, Number(run.issue_number));
+    if (!requester || !hasBot(settings, requester)) return null;
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return null;
+    const context = {
+      appName: run.name || run.slug, issueNumber: Number(run.issue_number),
+      issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
+    };
+    return await sendDm(pool, {
+      bot,
+      userId: requester.userId,
+      replyToId: await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber: context.issueNumber }),
+      idempotencyKey: `hrbot-stopped-${why}-${id}-${Number(run.approval_epoch) || 0}`,
+      content: `${requestLine(context)}\n\nI built it, but its preview didn't start, so it isn't ready to try yet. `
+        + 'I\'m trying again, and I\'ll tell you here when it\'s ready.',
+      metadata: {
+        kind: 'preview_failed', appSlug: run.slug, appName: context.appName, issueNumber: context.issueNumber,
+        ...(context.firstVersion ? { firstVersion: true } : {}),
+      },
+      objects: cardsFor('proposal', { sessionId: id }, { id: run.id }, context.issueNumber),
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell the requester their change is stuck', { sessionId: id, err: err.message });
+    return null;
+  }
 }
 
 // #7 (WP3): how many times, and how far apart, a merged app's health is read
@@ -1024,7 +1261,7 @@ async function noteProposalChanged(pool, sessionId, deps = {}) {
  * health could not be confirmed yet. `card`: the app's card goes under it.
  */
 function mergedText({ line, appName, live, platform = false, card = true }) {
-  const said = live ? 'It was approved and is live now.' : 'It was approved and merged, and it\'ll be live in a few minutes.';
+  const said = live ? 'It\'s live now.' : 'It\'s going live now and will be ready in a few minutes.';
   const open = card && !platform ? ` Open ${appName} below to try it${live ? '' : ' then'}.` : '';
   return `${line}\n\n${said}${open}`;
 }
@@ -1091,6 +1328,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
     metadata: {
       kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number,
       link: `#app/${encodeURIComponent(run.slug)}`, live,
+      ...(context.firstVersion ? { firstVersion: true } : {}),
     },
     // The platform's own app has no app of its own to open: its proposal.
     objects: cardsFor('merged', { sessionId: session.id, appCard: !platform }, { id: run.app_id }, run.issue_number),
@@ -1260,6 +1498,7 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
       content: `I can only pass words on to ${line} for now. Write your answer as a message.`,
+      moment: 'reply',
     });
   }
   const posted = await postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: message.id } });
@@ -1267,6 +1506,7 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
       content: `I couldn't post that on ${line}: ${posted.why}. Nothing was sent.`,
+      moment: 'reply',
     });
   }
   return sendDm(pool, {
@@ -1306,6 +1546,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      moment: 'reply',
     });
   }
   // #3684: typing from here until the answer is sent (whileTyping above).
@@ -1320,8 +1561,10 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   if (quoted) {
     const decided = await mayor.decideOffer(pool, config, { bot, user, settings, conversationId, message, deps });
     if (decided) return decided;
+    // B3: only an answer to a question, or a reply a message asked for, goes
+    // on the request; any other quote is for the bot (MIRRORED_KINDS).
     const target = await quotedTarget(pool, user.id, quoted);
-    if (target) return answerOnRequest(pool, { bot, user, target, message, deps });
+    if (target && MIRRORED_KINDS.has(target.kind)) return answerOnRequest(pool, { bot, user, target, message, deps });
   }
   // #3772: "file it" typed under a draft decides it as the tap does. Typed,
   // it went to the model, which answered "Filed: … #14" for a request that
@@ -1335,12 +1578,15 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   if (settings.dmChat !== false) {
     return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps: turnDeps });
   }
-  const target = await newestOpenQuestion(pool, user.id);
+  // A quote of anything but a question is not an answer to some other open
+  // question (MIRRORED_KINDS): without the model, it gets the help text.
+  const target = quoted ? null : await newestOpenQuestion(pool, user.id);
   if (!target) {
     // Once in a while, not after every message.
     const window = Math.floor(Date.now() / HELP_EVERY_MS);
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, content: HELP_TEXT, idempotencyKey: `hrbot-help-${user.id}-${window}`,
+      moment: 'reply',
     });
   }
   return answerOnRequest(pool, { bot, user, target, message, deps });
@@ -1463,10 +1709,12 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     );
     if (botBuilds) {
       await pool.query(
-        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
-         VALUES ($1, $2, $3, $4, TRUE)
-         ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE`,
-        [row.app_id, issueNumber, row.user_id, title],
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
+         VALUES ($1, $2, $3, $4, TRUE, $5)
+         ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE,
+           asked_text = COALESCE(homeroom_bot_requesters.asked_text, EXCLUDED.asked_text)`,
+        // B4: the brief they wrote is what they asked for.
+        [row.app_id, issueNumber, row.user_id, title, clip(row.brief, 2000) || null],
       );
     }
     await pool.query(
@@ -1494,6 +1742,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
           bot, userId: row.user_id, idempotencyKey: `hrbot-filefail-${row.app_id}`,
           content: `**${name}**\n\nI couldn't start building ${name}'s first version. You can still post a request on `
             + 'its page, or start a change from there yourself.',
+          metadata: { kind: 'first_version_failed', appSlug: row.slug, appName: name, firstVersion: true },
         }).catch(() => null);
       }
     }
@@ -1630,6 +1879,17 @@ function firstSentence(text, max = 90) {
 module.exports = {
   BOT_USERNAME,
   QUESTION_KINDS,
+  MIRRORED_KINDS,
+  MOMENTS,
+  momentOf,
+  notificationDetail,
+  askedLine,
+  hasOthers,
+  READY_CHECKS,
+  readyKey,
+  changeReadiness,
+  noteChangeReady,
+  noteChangeStopped,
   MAX_BRIEF_CHARS,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
