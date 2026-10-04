@@ -140,3 +140,33 @@ test('chat WS without credentials is rejected with 401', async () => {
   });
   assert.equal(status, 401);
 });
+
+// The only real round trip through attach()'s message handler: a person who
+// sends more than 60 writes a minute over the socket is answered, on that
+// socket, with `rate_limited` carrying the refused frame (admitSocketFrame;
+// the budgets themselves are pinned in tests/ws-rate-limit.test.js).
+test('the 61st chat frame in a minute is answered rate_limited on the same socket', async () => {
+  const sock = new WebSocket(`ws://127.0.0.1:${port}/ws/chat/chatapp`, {
+    headers: { cookie: `session=${VALID_SESSION}` },
+  });
+  const frames = [];
+  sock.on('message', (data) => frames.push(JSON.parse(String(data))));
+  await new Promise((resolve, reject) => {
+    sock.on('open', resolve);
+    sock.on('error', reject);
+  });
+  // Let the connection handler join the room before the first frame.
+  await new Promise((r) => setTimeout(r, 150));
+  for (let i = 0; i < 60; i++) sock.send(JSON.stringify({ type: 'chat', content: `hello ${i}` }));
+  sock.send(JSON.stringify({ type: 'chat', content: 'one too many' }));
+  const deadline = Date.now() + 3000;
+  while (!frames.some((f) => f.type === 'rate_limited') && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  sock.terminate();
+  const limited = frames.filter((f) => f.type === 'rate_limited');
+  assert.equal(limited.length, 1, 'exactly the one frame over the budget is refused');
+  assert.deepEqual(limited[0].retry, { type: 'chat', content: 'one too many' });
+  assert.ok(limited[0].retryAfterSeconds >= 1 && limited[0].retryAfterSeconds <= 60);
+  assert.match(limited[0].error, /^You're sending messages too fast\. Try again in \d+ seconds?\.$/);
+});

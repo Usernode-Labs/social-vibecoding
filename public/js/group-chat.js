@@ -511,6 +511,20 @@ const GroupChat = {
         void GroupChat._answerJoinRequired(msg);
         break;
       }
+      case 'rate_limited': {
+        // The server refused THIS socket's own message, edit or reaction for
+        // coming too fast (admitSocketFrame in services/ws.js). The composer
+        // already cleared itself, so say it was not sent and when to retry.
+        window.PlatformUI?.toast?.(GroupChat._rateLimitedText(msg));
+        break;
+      }
+      case 'error': {
+        // A refusal the server explains in words, such as Homeroom's old
+        // channel being read-only (`channel_moved`). It answers a message
+        // this socket sent, so it used to vanish along with that message.
+        GroupChat._showSocketError(msg);
+        break;
+      }
       case 'chat': {
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
@@ -739,6 +753,24 @@ const GroupChat = {
       return;
     }
     window.PlatformUI?.toast?.(`Not sent. ${msg.error || 'Join this project to post here.'}`);
+  },
+
+  // The toast for a `rate_limited` frame. Worded here from the number rather
+  // than read off the frame's `error`, so the copy has one home on screen;
+  // the server words its `error` the same way (socketRetryPhrase).
+  _rateLimitedText(msg) {
+    const n = Math.ceil(Number(msg && msg.retryAfterSeconds));
+    const when = Number.isFinite(n) && n > 0
+      ? `in ${n} ${n === 1 ? 'second' : 'seconds'}`
+      : 'in a moment';
+    return `Not sent. You're sending messages too fast. Try again ${when}.`;
+  },
+
+  // An `error` frame: show what the server said. Only `channel_moved` is
+  // sent today, and it answers a chat message, so it says that too.
+  _showSocketError(msg) {
+    const text = (msg && (msg.message || msg.error)) || 'Something went wrong. Try again.';
+    window.PlatformUI?.toast?.(msg && msg.code === 'channel_moved' ? `Not sent. ${text}` : text);
   },
 
   sendTyping(thread) {

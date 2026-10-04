@@ -146,3 +146,17 @@ test('a socket delete nobody answers settles quietly', async () => {
   await GroupChat.deleteMessage(42);
   assert.equal(GroupChat.messages[0].deleted, true);
 });
+
+// A socket delete over the sender's write budget (admitSocketFrame in
+// src/services/ws.js) is refused the same way, with code `rate_limited`, so
+// the message comes back and the menu's toast says it was not deleted.
+test('a socket delete refused for coming too fast puts the message back and rejects', async () => {
+  const { GroupChat, renders } = loadGroupChat(() => Promise.reject(new Error('no fetch expected')));
+  openSocket(GroupChat);
+  const pending = GroupChat.deleteMessage(42);
+  GroupChat.handleIncoming({ type: 'delete_error', id: 42, code: 'rate_limited', retryAfterSeconds: 20 });
+  await assert.rejects(pending, /Delete failed \(rate_limited\)/);
+  assert.equal(GroupChat.messages[0].deleted, false);
+  assert.equal(GroupChat.messages[0].content, 'hello there');
+  assert.equal(renders(), 1);
+});
