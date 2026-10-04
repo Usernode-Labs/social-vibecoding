@@ -18,7 +18,7 @@ const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Run its checks', 'Group vote', 'Live',
+    'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
   ]);
   assert.deepEqual(progress.REQUEST_STEPS, progress.FIRST_VERSION_STEPS.slice(1).map((s) => s.replace('description', 'request')));
   assert.equal(progress.stepNumber('setting_up', true), 1);
@@ -68,15 +68,15 @@ test('a proposal: its checks, then the group\'s vote', () => {
   const running = stage({ ...open, check_state: 'pending', check_phase: 'testing', checks_at: ago(8),
     checks_progress: { ran: 120, expected: 338, failed: 0 } });
   assert.equal(running.stage, 'checks');
-  assert.equal(running.doing, 'its proposal is up, and its checks are running: 120 of 338 done, 0 failed so far');
+  assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
   assert.equal(running.since, ago(8));
   assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
-    'its proposal is up, and its checks are running: building the preview first');
+    'it\'s waiting for approval, and its tests are running: building the preview first');
   const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'pass' }, { status: 'fail' }, { status: 'fail' }] });
   assert.equal(failing.stage, 'checks_failed');
-  assert.equal(failing.doing, 'its proposal is up, and its checks failed (2 checks did not pass)');
+  assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (2 tests did not pass)');
   assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
-    stage: 'vote', since: ago(20), doing: 'its proposal is up for the group\'s vote', waitingOn: 'the group',
+    stage: 'vote', since: ago(20), doing: 'it\'s waiting for approval', waitingOn: 'the group',
   });
   assert.equal(stage({ ...open, check_state: 'skipped' }).stage, 'vote');
   assert.equal(stage({ ...open, check_state: 'failing', started_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fixing');
@@ -84,12 +84,12 @@ test('a proposal: its checks, then the group\'s vote', () => {
   // #3734: a follow-up waiting its turn is the bot's next step, not the vote:
   // a change asked for in the DM (#3740), a reply, or its own red checks.
   assert.deepEqual(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 }), {
-    stage: 'followup_queued', since: ago(1), doing: 'waiting for a free builder to follow up on the newest replies on its proposal',
+    stage: 'followup_queued', since: ago(1), doing: 'waiting for a free builder to follow up on the newest replies on the change',
   });
   assert.equal(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }).stage, 'followup_queued',
     'a reply since the question is read next');
   assert.deepEqual(stage({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), {
-    stage: 'fix_queued', since: ago(1), doing: 'waiting for a free builder to fix its failing checks',
+    stage: 'fix_queued', since: ago(1), doing: 'waiting for a free builder to fix what its tests found',
   });
   assert.equal(stage({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }).stage, 'merging',
     'a proposal being merged is not followed up on');
@@ -228,8 +228,8 @@ test('WP1: another build of a request, and the build before, in plain words', ()
   const said = (run) => progress.attemptOutcome(run);
   assert.equal(said({ proposal_session_id: 6190, proposal_status: 'promoted' }), 'built; it\'s waiting for approval');
   assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merged' }), 'built; approved and live');
-  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merging' }), 'built; its proposal is being merged');
-  assert.equal(said({ proposal_session_id: 6191, proposal_status: 'archived' }), 'built; its proposal was closed');
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merging' }), 'built; it\'s going live now');
+  assert.equal(said({ proposal_session_id: 6191, proposal_status: 'archived' }), 'built; the change was closed');
   assert.equal(said({ build_ok: true }), 'built');
   assert.equal(said({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
     'stopped before it was built: the request already has a proposal (6190)', 'a skip stopped; it did not fail');

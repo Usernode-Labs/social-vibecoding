@@ -9678,6 +9678,14 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_hellos (
   CONSTRAINT homeroom_bot_hellos_kind_check CHECK (kind IN ('maker', 'member', 'known'))
 );
 COMMENT ON TABLE homeroom_bot_hellos IS 'staging:private';
+-- WP-F: somebody who joins by an invite link is greeted as a 'joiner'
+-- (homeroom-bot-dm.js greetJoiner).
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_hellos DROP CONSTRAINT IF EXISTS homeroom_bot_hellos_kind_check;
+  ALTER TABLE homeroom_bot_hellos ADD CONSTRAINT homeroom_bot_hellos_kind_check
+    CHECK (kind IN ('maker', 'member', 'joiner', 'known'));
+END $$;
 -- B5: the name people see the bot by. Its username stays homeroom_bot.
 UPDATE users SET display_name = 'Homeroom bot'
  WHERE username = 'homeroom_bot' AND is_synthetic = TRUE AND display_name IS DISTINCT FROM 'Homeroom bot';

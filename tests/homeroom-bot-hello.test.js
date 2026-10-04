@@ -248,6 +248,39 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.equal(ownMsg.metadata.homeroomBot.hello, undefined);
   });
 
+  await t.test('WP-F: somebody who joins by a link hears hello once, only when the bot builds for them and is on', async () => {
+    const tess = await user('tess');
+    const zed = await user('zed');
+    const mode = (value) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+    const list = (names) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(names)]);
+    await list(['maya', 'ben', 'old_friend', 'tess']);
+    await mode('off');
+    assert.equal(await dm.greetJoiner(pool, { user: tess, app: supper }), null, 'switched off: no hello it cannot keep');
+    await mode('live');
+    assert.equal(await dm.greetJoiner(pool, { user: zed, app: supper }), null, 'not one it builds for');
+    const sent = await dm.greetJoiner(pool, { user: tess, app: supper });
+    assert.ok(sent?.messageId);
+    const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.content, dm.joinerHello('Supper Club'));
+    assert.match(msg.content, /^Hi, I'm Homeroom bot, the AI that builds things for the groups on Homeroom\. Welcome to Supper Club!/);
+    assert.match(msg.content, /tap Ask for a change on its page\. I'll build it, and the group tries it and decides whether it goes live\.$/);
+    assert.equal(msg.metadata.homeroomBot.kind, 'hello_joiner');
+    assert.equal(dm.momentOf(msg.metadata.homeroomBot), null, 'a hello rings nothing');
+    assert.deepEqual(msg.metadata.homeroomBot.actions.map((a) => a.label), ['What can I ask for?', 'How does the group decide?']);
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [tess.id]);
+    assert.deepEqual(hello, { kind: 'joiner', message_id: sent.messageId });
+    assert.equal(await dm.greetJoiner(pool, { user: tess, app: herbs }), null, 'once, ever');
+    await list(['maya', 'ben', 'old_friend']);
+    await mode('off');
+    // Redeeming a link is what greets them.
+    assert.match(read('src/services/community-invites.js'),
+      /if \(status === 'joined'\) \{\n {6}appAccess\.invalidateVisibility\(invite\.app_id, invite\.slug\);\n[^\n]*\n {6}void require\('\.\/homeroom-bot-dm'\)\.greetJoiner\(pool, \{/);
+  });
+
   await t.test('two claims at once greet once', async () => {
     const claims = await Promise.all([1, 2, 3].map(() => dm.claimHello(pool, { userId: old.id, botId: bot.id, kind: 'member' })));
     assert.equal(claims.filter(Boolean).length, 1);

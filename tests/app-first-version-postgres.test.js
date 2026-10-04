@@ -156,7 +156,7 @@ test('the first version being built, from the records the bot leaves', { timeout
        VALUES ($1, 1, 'live', 'ready', TRUE, $2)`,
       [app.id, proposal.id],
     );
-    assert.deepEqual(steps(await state()), { step: 6, of: 7, stepName: 'Group vote', question: false, ready: true },
+    assert.deepEqual(steps(await state()), { step: 6, of: 7, stepName: 'Approval', question: false, ready: true },
       'up for its vote: ready to try');
   });
 
@@ -175,12 +175,12 @@ test('the first version being built, from the records the bot leaves', { timeout
         return (await res.json()).app.first_version;
       };
       assert.deepEqual(await get(), {
-        building: true, mine: true, step: 6, of: 7, stepName: 'Group vote', creator: ada.username,
+        building: true, mine: true, step: 6, of: 7, stepName: 'Approval', creator: ada.username,
         ready: true, question: false, conversationId: opened.conversationId,
       });
       viewer = sam;
       assert.deepEqual(await get(), {
-        building: true, mine: false, step: 6, of: 7, stepName: 'Group vote', creator: ada.username,
+        building: true, mine: false, step: 6, of: 7, stepName: 'Approval', creator: ada.username,
         ready: true, question: false, conversationId: null,
       }, 'somebody else\'s DM is never handed out');
 

@@ -1722,7 +1722,7 @@ function inviteView(inv) {
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
-    verb: isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on',
+    verb: isApprover ? 'asked you to help approve changes to' : 'invited you to build',
     appName: inv.appName || inv.appSlug || 'an app',
     ...stampFields(inv.createdAt),
   };
@@ -1737,18 +1737,18 @@ function inviteView(inv) {
 function completionAlertInfo(n) {
   const appName = n.appName || 'your app';
   if (n.kind === 'auto_solve_done') {
-    const issue = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
+    const issue = n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request';
     let title;
     let body;
     if (n.detail === 'failed') {
       title = 'Change failed';
-      body = `Proposal for ${issue} in ${appName} failed. You can retry`;
+      body = `The change for ${issue} in ${appName} failed. You can retry`;
     } else if (n.detail === 'question') {
       title = 'Change has a question';
-      body = `Proposal for ${issue} in ${appName} is waiting for your input`;
+      body = `The change for ${issue} in ${appName} is waiting for your input`;
     } else {
       title = 'Change ready to try';
-      body = `Proposal for ${issue} in ${appName} is ready`;
+      body = `The change for ${issue} in ${appName} is ready`;
     }
     return {
       kind: n.kind,
@@ -1944,10 +1944,18 @@ function botMomentLine(detail, message) {
     question: app ? `${app}: I have a question` : 'I have a question',
     ready: app ? `${app} is ready to try` : 'Your change is ready to try',
     ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
-    stopped: app ? `${app}: your change didn't finish` : 'Your change didn\'t finish',
+    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
+    stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
+    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
+    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
+    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
+    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
+    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
     held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
     live: app ? `Your change to ${app} is live` : 'Your change is live',
     live_first: app ? `${app} is live` : 'Your project is live',
+    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
+    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
     reply: plainMarkdown(message).slice(0, 140),
   }[m[1]];
   return words || null;
@@ -2269,7 +2277,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⚠️',
-      ...headline('Checks blocked', prLabel || n.sessionTitle || 'your change'),
+      ...headline('Testing couldn\'t run', prLabel || n.sessionTitle || 'your change'),
     };
   }
 
@@ -2387,7 +2395,7 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F4DD}',
-      ...headline('New issue', n.detail ? `#${n.detail}` : 'filed'),
+      ...headline('New request', n.detail ? `#${n.detail}` : 'filed'),
     };
   }
 
@@ -2537,7 +2545,7 @@ function rowView(n) {
       icon: failed ? '⚠️' : '\u{1F916}',
       ...headline(
         label,
-        n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue',
+        n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request',
       ),
     };
   }
@@ -2565,12 +2573,12 @@ function rowView(n) {
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? 'Invited you to collaborate'
+      ? 'Invited you to build with them'
       : n.kind === 'collab_invite_accepted'
-        ? 'Accepted your collaborator invite'
+        ? 'Accepted your invite'
         : n.kind === 'approver_invite'
-          ? 'Invited you to be an approver'
-          : 'Accepted your approver invite';
+          ? 'Asked you to help approve changes'
+          : 'Can approve changes now';
     return {
       ...base,
       mb: false,

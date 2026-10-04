@@ -254,7 +254,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.ok(by.get('seed-swap#3').since, 'and since when');
     assert.equal(by.get('seed-swap#3').botBuildsHere, true);
     assert.equal(by.get('seed-swap#4').status, 'step 1 of 6: waiting for an answer to the question asked');
-    assert.equal(by.get('note-board#5').status, 'step 5 of 6: its proposal is up for the group\'s vote');
+    assert.equal(by.get('note-board#5').status, 'step 5 of 6: it\'s waiting for approval');
     assert.equal(by.get('note-board#5').proposal.proposal, proposal.id);
     assert.equal(by.get('note-board#5').proposal.yesVotes, 0);
     assert.equal(by.get('note-board#5').proposal.checks, 'passed');
@@ -774,7 +774,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [proposal.id],
     );
     const running = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.doing, 'its proposal is up, and its checks are running: 120 of 338 done, 0 failed so far');
+    assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
     assert.equal(running.step, 4);
     await pool.query(
       `UPDATE chat_sessions SET check_state = 'failing', check_phase = NULL, checks_progress = NULL,
@@ -783,7 +783,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     const failing = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(failing.stage, 'checks_failed');
-    assert.equal(failing.doing, 'its proposal is up, and its checks failed (1 check did not pass)');
+    assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
     // Merged: no longer in progress, and among what finished lately.
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
     const merged = await read();
@@ -1262,7 +1262,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(said.stage, 'followup_queued');
     assert.equal(progressSvc.inFlight(said), true);
-    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on its proposal$/);
+    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on the change$/);
     const work = await tray.workFor(pool, { user: ada, settings });
     const shown = work.now.find((job) => job.appSlug === 'note-board' && job.issueNumber === 5);
     assert.ok(shown, 'the tray lists it under Now');
@@ -1270,7 +1270,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(shown.href, `#app/note-board/dev/proposals/${proposal.id}`);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
     assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
-      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on its proposal$/,
+      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on the change$/,
       'and the bot\'s list of her work says the same');
     // Running it: both say so.
     await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);

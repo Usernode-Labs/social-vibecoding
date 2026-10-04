@@ -82,10 +82,18 @@ function botMomentCopy(detail, message) {
     question: app ? `${app}: I have a question` : 'I have a question',
     ready: app ? `${app} is ready to try` : 'Your change is ready to try',
     ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
-    stopped: app ? `${app}: your change didn't finish` : 'Your change didn\'t finish',
+    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
+    stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
+    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
+    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
+    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
+    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
+    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
     held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
     live: app ? `Your change to ${app} is live` : 'Your change is live',
     live_first: app ? `${app} is live` : 'Your project is live',
+    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
+    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
     reply: message,
   }[m[1]];
   return words ? { title: 'Homeroom bot', body: words } : null;
@@ -270,7 +278,7 @@ function buildCopy(kind, context, now) {
         title: actor
           ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)
           : withApp('You have a collaboration invite'),
-        body: 'Join as a collaborator. Accept or decline in the app',
+        body: 'Join them to build it. Accept or decline in the app',
       };
     case 'collab_invite_accepted':
       return actor && {
@@ -279,13 +287,13 @@ function buildCopy(kind, context, now) {
       };
     case 'approver_invite':
       return {
-        title: withApp(actor ? `@${actor} asked you to be an approver` : 'You have an approver invite'),
-        body: "You'd review and vote on proposals. Accept in the app",
+        title: withApp(actor ? `@${actor} asked you to help approve changes` : 'You were asked to help approve changes'),
+        body: "You'd try changes and vote on them. Accept in the app",
       };
     case 'approver_invite_accepted':
       return actor && {
-        title: withApp(`@${actor} is now an approver`),
-        body: 'They can review and vote on proposals from now on',
+        title: withApp(`@${actor} can approve changes now`),
+        body: 'They can try changes and vote on them from now on',
       };
     case 'spec_shared':
       return {
@@ -430,8 +438,8 @@ function buildCopy(kind, context, now) {
     }
     case 'check_failed':
       return {
-        title: withApp(quotedTitle ? `Checks failed on ${quotedTitle}` : 'Checks failed on your change'),
-        body: 'Needs a fix before it can go live',
+        title: withApp(quotedTitle ? `Testing found a problem with ${quotedTitle}` : 'Testing found a problem with your change'),
+        body: 'It needs a fix before it can go live',
       };
     case 'stale_pr': {
       const days = daysSince(context.promotedAt, now);
@@ -452,7 +460,7 @@ function buildCopy(kind, context, now) {
           : 'Your agent submitted work'),
         body: context.detail === 'shared'
           ? 'It is visible in the in-progress area (no vote yet)'
-          : 'It is up for the group\'s vote, and its checks are running',
+          : 'It is waiting for approval, and it is being tested',
       };
     // #1405 path B, and the copy is load-bearing.
     //
