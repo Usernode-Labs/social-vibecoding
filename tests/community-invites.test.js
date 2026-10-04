@@ -246,7 +246,10 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // A link that joined them on the spot (its maker's skip let them in) has
   // its "Find people to build with" counted before the answer (#3564); that
   // one line sits between the redeem and the branch, and nothing else may.
-  assert.match(auth, /const invite = verified\.created\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  // An existing account follows it only when the sign-in is the Join its page
+  // asked for (the sheet sends followInvite); the cookie alone never does.
+  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
   assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');
   assert.doesNotMatch(login, /redeemCarried/);
@@ -278,6 +281,14 @@ test('the words: the landing card, the invite pane', () => {
     '@ada invited you to join Tiers.');
   assert.equal(card.membersLine(1), '1 person is in it.');
   assert.equal(card.membersLine(0), '');
+  // "Made for you": the gift when the sender made it, the invitation when not.
+  const made = { live: true, reason: null, project: { name: 'Sunday Run Club', iconEmoji: '🏃', iconUrl: null },
+    inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, memberCount: 4 };
+  assert.equal(card.madeLine(made), 'Maya made this for Sunday Run Club');
+  assert.equal(card.underLine(made), 'and invited you to join · 4 people are in it');
+  assert.equal(card.underLine({ ...made, memberCount: 0 }), 'and invited you to join');
+  assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@maya invited you to join Sunday Run Club.');
+  assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
@@ -300,4 +311,71 @@ test('the words: the landing card, the invite pane', () => {
   assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
   assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
   assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
+});
+
+test(`a link carries its maker's note: plain text, one paragraph, at most 280 characters`, () => {
+  assert.equal(invites.NOTE_MAX, 280);
+  assert.deepEqual(invites.cleanNote(undefined), { ok: true, note: null });
+  assert.deepEqual(invites.cleanNote('   '), { ok: true, note: null });
+  assert.deepEqual(invites.cleanNote('  Come  help\nwith our run tracker! '), { ok: true, note: 'Come help with our run tracker!' });
+  assert.equal(invites.cleanNote('x'.repeat(280)).ok, true);
+  assert.equal(invites.cleanNote('x'.repeat(281)).ok, false);
+  assert.equal(invites.cleanNote('🏃'.repeat(280)).ok, true, 'counted in characters, not code units');
+  assert.equal(invites.cleanNote('bell\u0007').ok, false);
+  assert.equal(invites.cleanNote(42).ok, false);
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /ALTER TABLE community_invites ADD COLUMN IF NOT EXISTS note TEXT;/);
+  assert.match(schema, /CHECK \(note IS NULL OR char_length\(note\) BETWEEN 1 AND 280\)/);
+  const src = read('src/services/community-invites.js');
+  assert.match(src, /const cleaned = cleanNote\(note\);\s+if \(!cleaned\.ok\) return \{ ok: false, status: 400, error: cleaned\.error \};/);
+  assert.match(read('src/routes/community-invites.js'), /maxUses: req\.body\?\.maxUses, note: req\.body\?\.note,/);
+});
+
+test(`the preview reads like the page: who made it for whom, their note, the project's picture`, () => {
+  const live = {
+    live: true,
+    project: { name: 'Sunday Run Club', iconUrl: '/app-icons/abc', description: 'A run tracker', picture: null },
+    inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, note: 'Come help with our run tracker!', memberCount: 4,
+  };
+  const tags = routes.previewTags(live, 'https://homeroom.example');
+  assert.match(tags, /og:title" content="Maya made this for Sunday Run Club"/);
+  assert.match(tags, /og:description" content="Come help with our run tracker!"/);
+  assert.match(tags, /og:image" content="https:\/\/homeroom\.example\/app-icons\/abc"/);
+  assert.match(tags, /twitter:card" content="summary"/);
+  // No note: the project's own line. Not its maker: the plain invitation.
+  const plain = routes.previewTags({ ...live, note: null, inviterMadeIt: false }, null);
+  assert.match(plain, /og:title" content="Join Sunday Run Club on Homeroom"/);
+  assert.match(plain, /og:description" content="A run tracker"/);
+  assert.doesNotMatch(plain, /og:image/);
+  // A picture is the large card.
+  const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example');
+  assert.match(shot, /twitter:card" content="summary_large_image"/);
+  assert.match(shot, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/t\/picture"/);
+  // The note is escaped like everything else.
+  assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
+});
+
+test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
+  const src = read('src/services/community-invites.js');
+  assert.match(src, /WHERE s\.app_id = \$1 AND s\.merged_at IS NOT NULL AND s\.shots_state = 'verified'\s+AND a\.side = 'head' AND a\.media = 'png'/);
+  assert.match(src, /async function pictureBytes\(pool, token\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  const route = read('src/routes/community-invites.js');
+  assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
+  assert.match(route, /'X-Content-Type-Options': 'nosniff',/);
+});
+
+test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /const madeForYou = !!invite\?\.live;/);
+  for (const hidden of [
+    "hiddenLast(madeForYou, 'grow')",
+    "hiddenLast(madeForYou, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
+    "hiddenLast(madeForYou, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')",
+    "hiddenLast(madeForYou, 'px-4 flex grow flex-col text-center')",
+  ]) assert.ok(landing.includes(hidden), hidden);
+  const card = read('frontend/src/features/auth/invite-card.tsx');
+  assert.match(card, /<section data-landing-invite="live"/);
+  assert.match(card, /data-landing-invite-picture=\{picture\.kind\}/);
+  assert.match(card, /data-landing-invite-note=""/);
+  assert.match(card, /\{`Join \$\{project\.name\}`\}/);
 });

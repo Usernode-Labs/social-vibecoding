@@ -11181,6 +11181,24 @@ CREATE TABLE IF NOT EXISTS community_invites (
 CREATE INDEX IF NOT EXISTS idx_community_invites_app ON community_invites (app_id, created_by);
 COMMENT ON TABLE community_invites IS 'staging:private';
 
+-- The maker's own words, shown on the page a link opens and in its preview
+-- ("Come help with our run tracker!"). Plain text, at most 280 characters;
+-- NULL when they left none. services/community-invites.js cleanNote() is the
+-- one writer.
+ALTER TABLE community_invites ADD COLUMN IF NOT EXISTS note TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'community_invites'::regclass
+       AND conname = 'community_invites_note_length'
+  ) THEN
+    ALTER TABLE community_invites
+      ADD CONSTRAINT community_invites_note_length
+      CHECK (note IS NULL OR char_length(note) BETWEEN 1 AND 280);
+  END IF;
+END $$;
+
 -- One row per person who followed a link. 'joined' was applied; 'queued' is
 -- somebody without platform access yet, whose community waits for the day
 -- they are let in (the trigger below applies it then); 'cancelled' was

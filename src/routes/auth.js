@@ -362,10 +362,14 @@ function authRoutes(config) {
       // An invite link this visitor opened first is followed as the account
       // the code just CREATED (services/community-invites.js): signing up
       // from the link is the consent, and the new account's community is
-      // queued for the day it is let in. An account that already existed is
+      // queued for the day it is let in. An account that already existed
+      // follows it only when this sign-in IS the Join its page asked for
+      // (`followInvite`, sent by the sheet "Made for you" opens: the person
+      // just pressed "Join …" on the link's own page). Anywhere else it is
       // asked by the shell instead, like a password sign-in, so the carried
       // copy is only dropped. Never throws.
-      const invite = verified.created
+      const consented = verified.created || req.body?.followInvite === true;
+      const invite = consented
         ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
         : (communityInvites.clearInviteCookie(res), null);
       // A link whose maker's skip let this person straight in has joined

@@ -4129,6 +4129,14 @@
     {
       "source": "src/routes/community-invites.js",
       "method": "GET",
+      "path": "/api/public/invites/:token/picture",
+      "expression": null,
+      "status": "exempt",
+      "reason": "anonymous public API rather than signed-in Classic"
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
       "path": "/api/invite-links/queued",
       "expression": null,
       "status": "mapped",

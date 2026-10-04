@@ -54,7 +54,8 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { InviteCard } from './invite-card';
+import { DeadInvite, MadeForYou, useInvitePreview } from './invite-card';
+import { SignInSheet } from './sign-in-sheet';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
@@ -490,6 +491,17 @@ export function LandingScreen() {
   // hooks this component patches onto AuthScreens are installed and the
   // interior's nodes exist by the time the on-show hook runs.
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.landing);
+
+  // An invite link's preview (./invite-card.tsx), read in an effect like
+  // everything else here. A LIVE link turns the screen into "Made for you":
+  // its three cards take the place of the illustration, the rail and the
+  // waitlist pitch, which are hidden rather than unmounted for the same
+  // reason the session's two action blocks are (the id inventory reads them).
+  const invite = useInvitePreview();
+  const madeForYou = !!invite?.live;
+  // Its Join asks for the email code in a sheet over the cards.
+  const [joining, setJoining] = useState(false);
+  const closeJoin = useCallback(() => setJoining(false), []);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -1174,11 +1186,13 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARD (./invite-card.tsx): who invited you to
-              what, and the two ways in. Only on /invite/<token>, and only
-              once its preview is back — nothing here on any other visit.
+              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it for
+              whom, the project itself, the note and the way in. Only on
+              /invite/<token>, and only once its preview is back — nothing
+              here on any other visit. A dead link says why, above the pitch.
           */}
-          <InviteCard primaryClass={PRIMARY_PILL} secondaryClass={SECONDARY_PILL} />
+          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setJoining(true)} /> : null}
+          {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
               in the words below it, and a screen reader announcing a
@@ -1221,14 +1235,14 @@ export function LandingScreen() {
               space to split, so this is zero high and the layout is exactly
               the one a short viewport had before.
           */}
-          <div className="grow" />
+          <div className={hiddenLast(madeForYou, 'grow')} />
           <img
             src="/brand/people.png"
             alt=""
             width={816}
             height={612}
             draggable={false}
-            className="mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full"
+            className={hiddenLast(madeForYou, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
           />
           {/*
               The rail deliberately overflows AND loops: its four chips are
@@ -1252,7 +1266,7 @@ export function LandingScreen() {
               Board 1 draws the row as `padding: 20px 0 4px`: `mt-3` plus
               `pt-2` is the 20 above, `pb-1` the 4 below.
           */}
-          <div className="mt-3 overflow-hidden pt-2 pb-1 pl-4">
+          <div className={hiddenLast(madeForYou, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')}>
             <div className="landing-rail-track">
               {[0, 1].map((copy) => CHIPS.map(({ line, dot }) => (
                 <span
@@ -1308,7 +1322,7 @@ export function LandingScreen() {
               alignment is a property of the composition, not of any one
               string, and a later line added here should inherit it.
           */}
-          <div className="px-4 flex grow flex-col text-center">
+          <div className={hiddenLast(madeForYou, 'px-4 flex grow flex-col text-center')}>
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               Opening gradually
             </p>
@@ -1515,6 +1529,21 @@ export function LandingScreen() {
         </div>
       </div>
       <ViewerRegion />
+      {/*
+          The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
+          Rendered nothing until then, so the interior's first commit is the
+          markup the prerender shipped.
+      */}
+      {madeForYou ? (
+        <SignInSheet
+          open={joining}
+          title={`Join ${invite!.project!.name}`}
+          intro="Sign in or make an account with your email. It takes a minute."
+          followInvite
+          onClose={closeJoin}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
         </>
       ) : null}
     </main>

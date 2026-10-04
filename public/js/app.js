@@ -3949,9 +3949,14 @@ const App = {
       if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
       const name = standing.project && standing.project.name ? standing.project.name : 'this project';
       const count = standing.memberCount || 0;
+      // Who it is from, in the words the invite page uses, then their note.
+      const from = standing.inviterMadeIt && standing.inviterName
+        ? `${standing.inviterName} made it and invited you.`
+        : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
       const ok = window.ConfirmModal ? await ConfirmModal.show({
         title: `Join ${name}?`,
-        message: `${standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.'}`
+        message: from
+          + (standing.note ? ` “${standing.note}”` : '')
           + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
         confirmLabel: 'Join',
         cancelLabel: 'Not now',
