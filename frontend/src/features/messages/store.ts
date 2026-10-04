@@ -1125,6 +1125,26 @@ export function open(conversationId?: number | null): void {
   else window.location.hash = target;
 }
 
+/**
+ * B8: open the signed-in person's chat with Homeroom bot, from any door that
+ * says "ask Homeroom bot". It is made the first time; until the server
+ * answers, Messages opens on its list.
+ */
+export async function openBot(reference?: SharedObjectReference | null): Promise<void> {
+  let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  if (!id) {
+    try { id = await api.openBotConversation(); } catch { id = null; }
+  }
+  // B8: a change to write about ("Ask for changes"), staged on the composer
+  // as Share stages one (see share below).
+  if (reference) pendingShare = reference;
+  const already = !!id && state.route.conversationId === id;
+  open(id);
+  if (reference && already && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
+  }
+}
+
 /** The app-channel message link last revealed (see revealAppFocus). */
 let revealedAppFocus: string | null = null;
 
@@ -1939,19 +1959,23 @@ export function handleEvent(raw: ConversationEvent): void {
       const username = state.active?.id === conversationId
         ? state.active.members.find((member) => member.id === userId && member.status === 'member')?.username || ''
         : '';
+      // B5: the bot types as its name, "Homeroom bot is typing…".
+      const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
+        ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
       const current = new Set(state.typing[conversationId] || []);
       const expiryKey = `${conversationId}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
-      if (event.typing === false) current.delete(username); else current.add(username);
+      const shown = botPeer || username;
+      if (event.typing === false) current.delete(shown); else current.add(shown);
       publish({ typing: { ...state.typing, [conversationId]: [...current] } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
           const next = new Set(state.typing[conversationId] || []);
-          if (!next.delete(username)) return;
+          if (!next.delete(shown)) return;
           publish({ typing: { ...state.typing, [conversationId]: [...next] } });
         }, 6000));
       }
@@ -2050,6 +2074,8 @@ function paintSaved(messageId: number, saved: boolean): void {
 
 export const messagesController = {
   open,
+  // B8: the chat with Homeroom bot (app-view.js's doors to it).
+  openBot: (reference?: SharedObjectReference | null) => { void openBot(reference); },
   openAddress,
   openDiscussion,
   openThread,

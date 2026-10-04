@@ -81,6 +81,8 @@ export function normalizeUser(input: unknown): ConversationUser {
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
     // #3624: a platform account (the Homeroom bot). Named here, or dropped.
     ...(pick(row, 'bot') === true ? { bot: true } : {}),
+    // B5: and the name it is shown by, for a platform account only.
+    ...(pick(row, 'bot') === true && text(pick(row, 'displayName')) ? { displayName: text(pick(row, 'displayName')).slice(0, 80) } : {}),
   };
 }
 
@@ -145,6 +147,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       chosen: optional('chosen'),
       startedAt: optional('startedAt'),
       askedText: optional('askedText'),
+      hello: optional('hello'),
       ...(pick(bot, 'live') === true ? { live: true } : {}),
     },
   };
@@ -652,6 +655,12 @@ export async function decideBotAction(actionId: number, choice: string): Promise
     method: 'POST', body: JSON.stringify({ choice }),
   }));
   return { label: text(pick(data, 'label')) || null };
+}
+
+/** B8: the signed-in person's chat with Homeroom bot, made the first time. */
+export async function openBotConversation(): Promise<number | null> {
+  const data = record(await request<unknown>('/api/conversations/homeroom-bot', { method: 'POST', body: '{}' }));
+  return strictId(pick(data, 'conversationId')) || null;
 }
 
 export async function setBlock(userId: number, blocked: boolean): Promise<void> {

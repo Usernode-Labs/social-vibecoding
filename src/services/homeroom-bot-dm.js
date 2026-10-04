@@ -1542,6 +1542,8 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!bot || bot.id === user.id) return null;
   if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
   const settings = await settingsModule().readSettings(pool);
+  // B5: words that are one of its open prompts settle those buttons.
+  await settlePrompt(pool, { botId: bot.id, userId: user.id, conversationId, content: message.content });
   if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
@@ -1592,6 +1594,242 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   return answerOnRequest(pool, { bot, user, target, message, deps });
 }
 
+// ── A request filed elsewhere ────────────────────────────────────────────
+
+// B8: how long the bot usually takes from starting on a request to its change
+// being ready to try, when there is not enough of its own record to say.
+const TYPICAL_BUILD_MINUTES = 8;
+
+/**
+ * B8: about how many minutes the bot takes from reading a request to the
+ * change it builds going up: the median over its last 30 days, once it has
+ * built at least five, else TYPICAL_BUILD_MINUTES. Never throws.
+ */
+async function typicalMinutes(pool) {
+  const { rows } = await pool.query(
+    `SELECT percentile_cont(0.5) WITHIN GROUP (
+              ORDER BY EXTRACT(EPOCH FROM (cs.promoted_at - r.created_at)) / 60.0
+              + COALESCE(r.duration_ms, 0) / 60000.0) AS minutes,
+            COUNT(*)::int AS built
+       FROM homeroom_bot_runs r JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+      WHERE r.mode = 'live' AND cs.promoted_at IS NOT NULL AND cs.promoted_at >= r.created_at
+        AND r.created_at > NOW() - INTERVAL '30 days'`,
+  ).catch(() => ({ rows: [] }));
+  const row = rows[0];
+  if (!row || Number(row.built) < 5 || !Number.isFinite(Number(row.minutes))) return TYPICAL_BUILD_MINUTES;
+  return Math.min(60, Math.max(2, Math.round(Number(row.minutes))));
+}
+
+/**
+ * B8: a request somebody filed through Ask for a change (routes/feedback.js),
+ * told to the bot the way its own filing from a DM is (homeroom-bot-mayor.js
+ * fileRequest): recorded as theirs, in their own words, and, on a project the
+ * bot builds on, put first in its queue with its card in their DM. Resolves
+ * { botWillBuild, typicalMinutes } for the confirmation, or null when they
+ * are not somebody the bot talks to. Never throws.
+ */
+async function noteRequestFiled(pool, { app, user, issueNumber, title = null, askedText = null }) {
+  try {
+    const n = Number(issueNumber);
+    if (!app?.id || !user?.id || user.isSynthetic || !Number.isInteger(n) || n <= 0) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (!hasBot(settings, user)) return null;
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id,
+         issue_title = COALESCE(EXCLUDED.issue_title, homeroom_bot_requesters.issue_title),
+         asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
+      [app.id, n, user.id, clip(title, 300) || null, clip(askedText, 2000) || null],
+    );
+    if (!require('./homeroom-bot-live').isLiveFor(settings, app)) return { botWillBuild: false };
+    const queued = await settingsModule().enqueueFront(pool, {
+      appId: app.id, issueNumber: n, userId: user.id, reason: 'asked', payerId: user.id,
+    });
+    const bot = await botAccount(pool);
+    if (queued?.id && bot) {
+      await require('./homeroom-bot-activity').startCard(pool, {
+        app, issueNumber: n, bot, jobKey: Number(queued.id), settings, filed: true,
+        requester: {
+          userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText,
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+        },
+      });
+    }
+    log.info('homeroom-bot-dm', 'A request asked for on the platform goes to the bot first', { app: app.slug, issueNumber: n, userId: user.id });
+    return { botWillBuild: true, typicalMinutes: await typicalMinutes(pool) };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not hand a filed request to the bot', { app: app?.slug, issueNumber, err: err.message });
+    return null;
+  }
+}
+
+// ── Asking it to build a request ─────────────────────────────────────────
+
+/**
+ * B8: whether a request's page offers `user` "Ask Homeroom bot to build
+ * this": Homeroom bot is theirs, and it builds on `app`. Resolves
+ * { typicalMinutes } or null. Never throws.
+ */
+async function botDoorFor(pool, app, user) {
+  try {
+    if (!app?.slug || !user?.id || user.isSynthetic) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (!hasBot(settings, user) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
+    return { typicalMinutes: await typicalMinutes(pool) };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read whether the bot builds here', { app: app?.slug, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * B8: somebody pressed "Ask Homeroom bot to build this" on request
+ * `issueNumber` of `app` (routes/issues.js): it goes first in the bot's
+ * queue, paid from their building time (B2). The request stays its asker's:
+ * whoever it is recorded for keeps it, and its card and news reach them; a
+ * request nobody is recorded for becomes this person's. Resolves
+ * { ok: true, typicalMinutes, mine } or { ok: false, status, error, code }.
+ */
+async function askBotToBuild(pool, { app, user, issueNumber }) {
+  const n = Number(issueNumber);
+  if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid request number' };
+  if (!app?.id || !user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
+  const settings = await settingsModule().readSettings(pool);
+  if (!hasBot(settings, user)) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.' };
+  if (!require('./homeroom-bot-live').isLiveFor(settings, app)) {
+    return { ok: false, status: 409, error: 'Homeroom bot does not build on this project.', code: 'not_building' };
+  }
+  const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
+  if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
+  let requester = await requesterOf(pool, app.id, n);
+  if (!requester) {
+    const { rows } = await pool.query(
+      `SELECT title FROM issues WHERE app_id = $1 AND github_issue_number = $2 ORDER BY id DESC LIMIT 1`,
+      [app.id, n],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [app.id, n, user.id, clip(rows[0]?.title, 300) || null],
+    );
+    requester = await requesterOf(pool, app.id, n);
+  }
+  const queued = await settingsModule().enqueueFront(pool, {
+    appId: app.id, issueNumber: n, userId: user.id, reason: 'asked', payerId: user.id,
+  });
+  // A look already started on it holds the row, and nothing is queued again.
+  if (!queued?.id) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
+  const bot = await botAccount(pool);
+  if (bot && requester) {
+    await require('./homeroom-bot-activity').startCard(pool, {
+      app, issueNumber: n, bot, jobKey: Number(queued.id), settings, queued: true, requester,
+    });
+  }
+  log.info('homeroom-bot-dm', 'Asked to build a request from its page', { app: app.slug, issueNumber: n, userId: user.id });
+  return { ok: true, typicalMinutes: await typicalMinutes(pool), mine: Number(requester?.userId) === Number(user.id) };
+}
+
+/**
+ * B8: who each of `numbers` on `app` is being built for, for the request
+ * page's note ("Ada asked Homeroom bot to build this"): Map(number →
+ * { username, userId }). Never throws.
+ */
+async function askersOf(pool, appId, numbers) {
+  const list = [...new Set((numbers || []).map(Number).filter((x) => Number.isInteger(x) && x > 0))];
+  if (!list.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT q.issue_number, q.user_id, u.username FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
+      WHERE q.app_id = $1 AND q.issue_number = ANY($2::int[])`,
+    [appId, list],
+  ).catch(() => ({ rows: [] }));
+  return new Map(rows.map((r) => [Number(r.issue_number), { username: r.username, userId: Number(r.user_id) }]));
+}
+
+// ── Saying hello ─────────────────────────────────────────────────────────
+
+// B5: the bot introduces itself once per person, ever, and offers a few
+// questions to tap (B3 `prompt` buttons: a tap sends the words as theirs,
+// and the bot answers them like any message). A maker hears it with their
+// first project; anybody else with their first request, above its card.
+const MAKER_HELLO = 'Hi, I\'m Homeroom bot. I build apps and changes from what you describe, and I\'ll message you '
+  + 'when something\'s ready to try.';
+const MAKER_PROMPTS = Object.freeze(['How long will this take?', 'What can I ask for?', 'How do I invite friends?']);
+const MEMBER_PROMPTS = Object.freeze(['What else can I ask for?', 'How long will this take?']);
+
+/** Pure: the hello somebody hears with their first request on a project they did not make. */
+function memberHello(appName) {
+  return `Hi, I'm Homeroom bot. I build the changes people in ${appName || 'this project'} ask for. Here's yours:`;
+}
+
+/** Pure: `labels` as prompt buttons (types.ts HomeroomBotAction), at most three. */
+function promptActions(labels) {
+  return labels.slice(0, 3).map((label, i) => ({ id: `ask-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
+}
+
+/**
+ * B5: claim `userId`'s one hello, as `kind` ('maker' or 'member'). True only
+ * for the first claim: a second device, a retry or a later project gets
+ * false. Somebody the bot already wrote to before hellos existed is
+ * recorded as known and never greeted. Never throws.
+ */
+async function claimHello(pool, { userId, botId, kind }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_hellos (user_id, kind)
+       SELECT $1::int, CASE WHEN EXISTS (
+                SELECT 1 FROM conversation_messages m
+                  JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'direct'
+                  JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1::int
+                 WHERE m.sender_id = $2::int
+              ) THEN 'known' ELSE $3::text END
+       ON CONFLICT (user_id) DO NOTHING
+       RETURNING kind`,
+      [Number(userId), Number(botId), kind],
+    );
+    return rows[0]?.kind === kind;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not claim a hello (none sent)', { userId, err: err.message });
+    return false;
+  }
+}
+
+/** B5: which message a hello went out in, for the record. Never throws. */
+async function noteHelloSent(pool, userId, messageId) {
+  if (!messageId) return;
+  await pool.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [userId, messageId]).catch(() => {});
+}
+
+/**
+ * B5: a person wrote the words of one of the bot's open prompts (tapped, or
+ * typed): those buttons give way to "You asked: ..." on every device. Never
+ * throws; resolves whether one was settled.
+ */
+async function settlePrompt(pool, { botId, userId, conversationId, content }) {
+  const said = String(content || '').trim().toLowerCase();
+  if (!said || !botId || !conversationId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 5`,
+      [conversationId, botId],
+    );
+    for (const row of rows) {
+      const actions = row.metadata?.[META]?.actions || [];
+      const hit = actions.find((a) => a?.type === 'prompt' && String(a.label || '').trim().toLowerCase() === said);
+      if (!hit) continue;
+      await setQuestionState(pool, Number(row.id), { status: 'answered', answer: hit.label, chosen: hit.id }, { conversationId, userId });
+      return true;
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not settle a prompt', { userId, err: err.message });
+  }
+  return false;
+}
+
 // ── A project built from its description ─────────────────────────────────
 
 /** A description fit to build from, or null. */
@@ -1627,15 +1865,24 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
     return null;
   }
   const name = app.name || app.slug;
+  // B5: a maker's first project is where the bot says hello, once.
+  const hello = await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'maker' });
+  const off = settings.mode === 'off' ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
   const sent = await sendDm(pool, {
     bot,
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
-    content: `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll build its first version from your `
-      + 'description and send it to you here to try. If anything is unclear, I\'ll ask you here first.'
-      + (settings.mode === 'off' ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : ''),
-    metadata: { kind: 'first_version_started', appSlug: app.slug, appName: name },
+    content: hello
+      ? `${MAKER_HELLO}\n\nI'm setting up **${name}** now. Once it's ready I'll build its first version from your `
+        + `description and send it to you here to try.${off}`
+      : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll build its first version from your `
+        + `description and send it to you here to try. If anything is unclear, I'll ask you here first.${off}`,
+    metadata: {
+      kind: 'first_version_started', appSlug: app.slug, appName: name,
+      ...(hello ? { hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' } : {}),
+    },
   });
+  if (hello) await noteHelloSent(pool, user.id, sent?.messageId);
   log.info('homeroom-bot-dm', 'Project will be built from its description', { app: app.slug, userId: user.id });
   return sent ? { conversationId: sent.conversationId } : null;
 }
@@ -1885,6 +2132,20 @@ module.exports = {
   notificationDetail,
   askedLine,
   hasOthers,
+  TYPICAL_BUILD_MINUTES,
+  typicalMinutes,
+  noteRequestFiled,
+  botDoorFor,
+  askBotToBuild,
+  askersOf,
+  MAKER_HELLO,
+  MAKER_PROMPTS,
+  MEMBER_PROMPTS,
+  memberHello,
+  promptActions,
+  claimHello,
+  noteHelloSent,
+  settlePrompt,
   READY_CHECKS,
   readyKey,
   changeReadiness,

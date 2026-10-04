@@ -878,7 +878,7 @@
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
-      "expectText": "Start work"
+      "expectText": "Build it yourself"
     },
     {
       "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
@@ -1117,10 +1117,10 @@
       "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
-      "name": "Dev board cards offer Explore in dev chat — on the card face or in its ⋯ menu (#827, #1135)",
+      "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
       "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open a dev chat with a message about this PR\"], .dev-card-menu [data-menu-idx][title^=\"Open a dev chat with a message about this PR\"]",
-      "expectText": "Explore in dev chat"
+      "expectText": "Explore in a coding agent"
     },
     {
       "name": "A proposal opened by DIRECT URL has a working ⋯ menu, with Technical details as a row of its own (#1324)",
@@ -1498,7 +1498,7 @@
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "Start work",
+      "expectText": "Build it yourself",
       "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"chooseIssueWork\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
@@ -1518,16 +1518,16 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Start a new change and Ask for a change, then names its settings group (#1900, #852 review)",
+      "name": "The hub's ⋯ menu leads with Ask for a change, then Build it yourself, then names its settings group (#1900, #852 review, B8)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu > button[data-plus=\"new-change\"]:first-child + button[data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
+      "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child + button[data-plus=\"new-change\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Ask for a change"
     },
     {
-      "name": "Start a new change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
+      "name": "Build it yourself leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul, B8)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
-      "expectText": "Start a new change"
+      "expectText": "Build it yourself"
     },
     {
       "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
@@ -2186,10 +2186,10 @@
       "expectText": "No work in progress."
     },
     {
-      "name": "Foreign proposal: Explore in dev chat is a pill on the hero's band, which the ⋯ menu closes (#827); the Votes step names who voted, with How voting works as the ? at the line's end",
+      "name": "Foreign proposal: Explore in a coding agent is a pill on the hero's band, which the ⋯ menu closes (#827); the Votes step names who voted, with How voting works as the ? at the line's end",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
       "expectSelector": ".dev-topic:has(.gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ [data-card-menu]:last-child) [data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-btn",
-      "expectText": "Explore in dev chat"
+      "expectText": "Explore in a coding agent"
     },
     {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",
@@ -2307,7 +2307,7 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries Start a new change under Agent sessions (Streamlined Concept, UI overhaul)",
+      "name": "The app-context sheet carries Build it yourself under Agent sessions (Streamlined Concept, UI overhaul, B8)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
@@ -2621,9 +2621,9 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Start a new change leads the hero's ⋯ rather than ending the hub (#852 review)",
+      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Ask for a change leads the hero's ⋯, Build it yourself next, rather than ending the hub (#852 review, B8)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"new-change\"]:first-child",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
     },
     {
@@ -3320,7 +3320,7 @@
       "expectText": "Go to community"
     },
     {
-      "name": "Agent sessions leads with Start a new change, sessions or none (UI overhaul; it was Continue)",
+      "name": "Agent sessions leads with Build it yourself, sessions or none (UI overhaul; it was Continue; B8)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
       "expectText": "Agent sessions"
