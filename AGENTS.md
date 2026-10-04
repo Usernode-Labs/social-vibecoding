@@ -133,7 +133,7 @@ selects a skill.
 - **The platform runs everything on every submission.** `npm run lint:sql`,
   the full unit suite (`npm test`) and every declared `dapp.json` check run
   against the submitted commit in a clean container, and they gate the merge.
-  A local run of all 13,000+ tests duplicates that, minutes at a time, and
+  A local run of all 19,000+ tests duplicates that, minutes at a time, and
   one hung test once held such a run open for an hour with no failure in it.
   The local run's job is narrower: to know, before you submit, whether the
   files you touched still satisfy the suites that read them.
@@ -224,8 +224,10 @@ is no replay plan to write and nothing to verify locally.
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and has four tabs, **Hub** (who is here and who it is for, the
   actions, a 14-day trend, since your last visit, votes owed, the chat's
-  last lines, your work), **Chat**, **Needs you** and **All items**; the
-  **Workshop** page opens from the hub's since card. The Communities
+  last lines, your work), **Discussion**, **Needs you** and **Workshop**
+  (`features/dev-board/workshop/project-band.tsx`). **All items** is a page
+  under the Workshop (its "See all"), with a way back, and the Workshop tab
+  stays lit while it is up. The Communities
   screen's Needs you is one feed of every decision owed across your projects
   (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
@@ -337,8 +339,13 @@ is no replay plan to write and nothing to verify locally.
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 338 declared tests select on deep
-  chains of them. The structural baseline is
+  by `getElementById` and `dapp.json`'s 800+ declared checks (its `tests`
+  array; count it rather than trusting this line) select on deep chains of
+  them. Their ceiling is `MAX_DECLARED_TESTS` in
+  `src/services/app-manifest.js` (860), and the manifest keeps 20 slots
+  clear of it (`tests/lib/check-cap.js`). In October 2026 it stood exactly
+  at that floor, 840 of 860: fold a new check into an existing one first,
+  as the guards' message in `check-cap.js` says. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
   `tests/dapp-selectors-resolve.test.js` and
@@ -398,9 +405,12 @@ between them is about the SURFACE each is drawn for, not about styling.
 - **The admin console** — the `AdminUI` registry in
   `frontend/src/features/admin/admin-console.js`. A frozen object of class
   *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …). It
-  is published on `window.AdminUI` as well as exported, because the section
-  modules (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read
-  it as a bare identifier at call time.
+  is exported, and every module that draws with it imports it
+  (`import { AdminUI } from './admin-console.js'`; `admin-analytics.tsx` and
+  `admin-mail.tsx` among them). `admin-console.js` still publishes it on
+  `window.AdminUI` too, a leftover from when the sections were classic
+  scripts that read it as a bare identifier; nothing in `frontend/src` or
+  `public/js` reads the global now, so a new module imports it.
 
 The console used to be a genuinely separate design system — the topochain
 admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The

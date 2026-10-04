@@ -193,9 +193,11 @@ export const AdminUI = Object.freeze({
   kbd: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:text-zinc-100',
 });
 
-// Still published on the global: admin-topochain.js's sub-modules and a few
-// section modules read `AdminUI` as a bare identifier inside functions, and
-// the standalone /admin page's remaining scripts have never imported it.
+// Still published on the global, though nothing reads it there now: every
+// module that draws with the registry imports it (the section modules,
+// topochain/tokens.ts), nothing in public/js mentions it, and /admin is a
+// redirect stub to #admin. It is what the sections read as a bare
+// identifier when they were classic scripts; import it in anything new.
 // Guarded because the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminUI = AdminUI;
 

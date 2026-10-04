@@ -380,7 +380,7 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   assert.match(src, /being created/, 'new mode gets the created wording');
   // The progress subtree must never reach the prerendered document — its
   // ids are not in tests/baselines/shell-markup.json and its markup is
-  // not in the 338 declared dapp.json selectors. `created` starting null
+  // not in dapp.json's declared selectors. `created` starting null
   // is what guarantees that.
   assert.match(src, /useState<\{ slug: string; name: string \} \| null>\(null\)/,
     'the progress view is gated on state that starts null');
