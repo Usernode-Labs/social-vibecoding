@@ -126,7 +126,13 @@ interface LegacyWindow {
   AuthScreens?: Record<string, unknown>;
   // The native bridge (usernode-native). Absent in a regular browser, which is
   // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
-  usernode?: { isNative?: boolean; getBridgeDiagnostics?(): unknown };
+  usernode?: {
+    isNative?: boolean;
+    getBridgeDiagnostics?(): unknown;
+    getBridgeInfo?(): Promise<{ capabilities?: unknown } | null>;
+    // The app's own Apple or Google sheet (NATIVE-BRIDGE.md, Native sign-in).
+    signInWithProvider?(options: { provider: string; nonce: string }): Promise<{ idToken?: unknown } | null>;
+  };
   getNodeAddress?(): Promise<string | null>;
   signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
 }

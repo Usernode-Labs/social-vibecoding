@@ -9,6 +9,9 @@
  *   POST /api/auth/oauth/apple/callback      Apple's form POST, turned into the GET
  *   POST /api/auth/oauth/finish              the username step, for a new account
  *
+ *   POST /api/auth/oauth/:provider/native/start  inside the Homeroom app: a state and a nonce
+ *   POST /api/auth/oauth/:provider/native        the ID token the app's own sheet returned
+ *
  *   GET  /api/admin/sign-in-providers                 the console's view
  *   PUT  /api/admin/sign-in-providers/:provider       save one provider
  *   POST /api/admin/sign-in-providers/:provider/check ask the provider about it
@@ -24,6 +27,12 @@
  * follows it (routes/auth.js otp/verify): by an account the trip just made,
  * or by any account when the trip started from the link's own Join
  * (`follow=1`).
+ *
+ * INSIDE THE APP there is no trip: the page asks for a state and a nonce,
+ * the app's own sheet answers with an ID token, and the page sends it here.
+ * The answer is JSON, as the email code's is: { next: 'signed-in', user },
+ * { next: 'username' } (the same continuation cookie as above), or
+ * { error, code } with the same codes the way back leaves for the sheet.
  */
 
 const express = require('express');
@@ -100,6 +109,30 @@ function signInProviderRoutes(config) {
     }
   }
 
+  // What every provider sign-in does once it found or made the account.
+  async function afterSignIn(req, res, provider, state, result) {
+    if (result.created) {
+      // What an email code does for an account it makes (email-signup.js
+      // verifyCode, routes/auth.js): a released waitlist address is let
+      // in, project invites to it are claimed, and the included
+      // OpenRouter key is made. Each is best effort and never throws.
+      const waitlist = require('../services/waitlist');
+      await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email });
+      await require('../services/email-invites').claimEmailInvites(pool, { userId: result.userId, email: result.email });
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId: result.userId, config, reason: `signup_${provider}`,
+      });
+      // Made from the story's sheet: asked what to make, not which
+      // communities to join (services/first-session.js).
+      if (state.started_from === 'story') await firstSession.answerJoinScreen(pool, result.userId, 'story');
+    }
+    const consented = result.created || state.follow_invite === true;
+    const invite = consented
+      ? await communityInvites.redeemCarried(pool, req, res, result.userId)
+      : (communityInvites.clearInviteCookie(res), null);
+    if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
+  }
+
   router.get('/api/auth/oauth/:provider/start', oauthSignInLimiter, async (req, res) => {
     const provider = req.params.provider;
     const returnTo = providers.safeReturnTo(typeof req.query.return === 'string' ? req.query.return : '/');
@@ -155,26 +188,7 @@ function signInProviderRoutes(config) {
       // Nobody signed in, so an invite link being followed stays carried for
       // the email code or password the sheet points them to next.
       if (result.refuse) return goBack(res, returnTo, `error-${result.refuse}`);
-      if (result.created) {
-        // What an email code does for an account it makes (email-signup.js
-        // verifyCode, routes/auth.js): a released waitlist address is let
-        // in, project invites to it are claimed, and the included
-        // OpenRouter key is made. Each is best effort and never throws.
-        const waitlist = require('../services/waitlist');
-        await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email });
-        await require('../services/email-invites').claimEmailInvites(pool, { userId: result.userId, email: result.email });
-        await managedOpenRouter.ensureIncludedKey({
-          pool, userId: result.userId, config, reason: `signup_${provider}`,
-        });
-        // Made from the story's sheet: asked what to make, not which
-        // communities to join (services/first-session.js).
-        if (state.started_from === 'story') await firstSession.answerJoinScreen(pool, result.userId, 'story');
-      }
-      const consented = result.created || state.follow_invite === true;
-      const invite = consented
-        ? await communityInvites.redeemCarried(pool, req, res, result.userId)
-        : (communityInvites.clearInviteCookie(res), null);
-      if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
+      await afterSignIn(req, res, provider, state, result);
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
         log.info('sign-in-providers', 'Signed in', { provider, userId: result.userId, created: result.created });
@@ -216,6 +230,76 @@ function signInProviderRoutes(config) {
       return res.redirect(303, `${providers.callbackPath('apple')}?${params.toString()}`);
     }
   );
+
+  // ── Inside the Homeroom app ───────────────────────────────────────────
+
+  function nativeFail(res, err, what, provider) {
+    if (err instanceof providers.SignInProviderError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    log.error('sign-in-providers', `${what} failed`, { provider, err: err.message });
+    return res.status(500).json({ error: 'Internal server error', code: 'failed' });
+  }
+
+  // The live-session refusal is routes/auth.js SESSION_MINT_PATHS', which
+  // lists the finish below; a start over a live session is refused here.
+  router.post('/api/auth/oauth/:provider/native/start', oauthSignInLimiter, async (req, res) => {
+    const provider = req.params.provider;
+    res.set('Cache-Control', 'no-store');
+    if (!providers.isProvider(provider)) return res.status(404).json({ error: 'Unknown provider.', code: 'not_offered' });
+    // The page always says where the sheet was opened from, in a JSON body:
+    // a form another site posts cannot start one.
+    if (typeof req.body?.from !== 'string') return res.status(400).json({ error: 'Say where the sign-in started.', code: 'invalid_request' });
+    try {
+      if (await liveSession(req)) {
+        return res.status(409).json({ error: 'Sign out before signing in again.', code: 'logout_required' });
+      }
+      const { state, nonce, binder } = await providers.beginNativeSignIn(pool, config, provider, {
+        from: req.body.from,
+        followInvite: req.body.follow === true,
+      });
+      privateCookie(res, BINDER_COOKIE, binder, providers.STATE_TTL_MS);
+      return res.json({ state, nonce });
+    } catch (err) {
+      return nativeFail(res, err, 'Native start', provider);
+    }
+  });
+
+  router.post('/api/auth/oauth/:provider/native', oauthSignInLimiter, async (req, res) => {
+    const provider = req.params.provider;
+    const binder = req.cookies?.[BINDER_COOKIE];
+    clearPrivateCookie(res, BINDER_COOKIE);
+    res.set('Cache-Control', 'no-store');
+    if (!providers.isProvider(provider)) return res.status(404).json({ error: 'Unknown provider.', code: 'not_offered' });
+    try {
+      const state = await providers.consumeState(pool, provider, req.body?.state, binder, { native: true });
+      if (!state || state.mismatch) {
+        return res.status(422).json({ error: 'That sign-in took too long, or started somewhere else. Try again.', code: 'expired' });
+      }
+      const claims = await providers.verifyNativeIdToken(pool, config, provider, req.body?.idToken, state);
+      const result = await providers.signIn(pool, provider, claims, { createSession });
+      if (result.refuse) return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
+      await afterSignIn(req, res, provider, state, result);
+      if (result.next === 'signed-in') {
+        createSessionCookie(res, result.session.token, result.session.expiresAt);
+        log.info('sign-in-providers', 'Signed in from the app', { provider, userId: result.userId, created: result.created });
+        return res.json({
+          next: 'signed-in',
+          created: result.created,
+          user: {
+            id: result.user.id,
+            username: result.user.username,
+            ...roleFields(result.user.isAdmin, result.user.adminReadonly),
+          },
+        });
+      }
+      privateCookie(res, SIGNUP_COOKIE, result.signupToken, providers.SIGNUP_TTL_MS);
+      log.info('sign-in-providers', 'Username step pending, from the app', { provider, userId: result.userId, created: result.created });
+      return res.json({ next: 'username', created: result.created });
+    } catch (err) {
+      return nativeFail(res, err, 'Native sign-in', provider);
+    }
+  });
 
   router.post('/api/auth/oauth/finish', otpVerifyLimiter, async (req, res) => {
     try {

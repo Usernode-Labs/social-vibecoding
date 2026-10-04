@@ -776,6 +776,48 @@ test('notification permission and navigation actions require the top-frame capab
     }
   });
 
+test('native sign-in is a top-frame privileged action, and says when the sheet was closed', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'signInWithApple'],
+    responseMethods: { signInWithProvider: { idToken: 'header.payload.signature' } },
+  });
+  const answer = await loaded.sandbox.usernode.signInWithProvider({ provider: 'apple', nonce: 'n-1' });
+  assert.equal(answer.idToken, 'header.payload.signature');
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    ['getBridgeInfo', 'getPrivilegedBridgeCapability', 'signInWithProvider']
+  );
+  assert.equal(loaded.nativePosts[2].privilegedCapability, 'navigation-capability');
+  assert.deepEqual(loaded.nativePosts[2].args, { provider: 'apple', nonce: 'n-1' });
+  await assert.rejects(loaded.sandbox.usernode.signInWithProvider({ provider: 'github', nonce: 'n' }), /provider/);
+  await assert.rejects(loaded.sandbox.usernode.signInWithProvider({ provider: 'apple' }), /nonce/);
+  assert.equal(loaded.nativePosts.length, 3, 'a bad call never reaches the app');
+
+  const closed = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'signInWithGoogle'],
+    errorMethods: { signInWithProvider: 'Sign-in was cancelled.' },
+    errorInfoMethods: { signInWithProvider: { code: 'cancelled' } },
+  });
+  await assert.rejects(
+    closed.sandbox.usernode.signInWithProvider({ provider: 'google', nonce: 'n-2' }),
+    (error) => error.usernodeCode === 'cancelled'
+  );
+
+  const relayed = loadBridge();
+  const childReplies = [];
+  const child = ownedAppFrame(relayed, childReplies);
+  relayed.dispatchMessage({
+    source: child,
+    origin: 'https://child.example',
+    data: {
+      __usernode_relay: 'request', id: 'sign-in', method: 'signInWithProvider',
+      args: { provider: 'apple', nonce: 'n' },
+    },
+  });
+  assert.equal(relayed.nativePosts.length, 0, 'an iframe cannot ask the app to sign somebody in');
+  assert.match(childReplies[0].value.error, /top-level page/);
+});
+
 test('native screenshot capture is a top-frame privileged action', async () => {
   const loaded = loadBridge({
     capabilities: ['privilegedBridgeCapability', 'captureScreenshot'],

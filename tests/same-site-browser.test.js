@@ -113,6 +113,10 @@ const EXEMPT = new Map([
   // the browser that started the trip.
   ['sign-in-providers.js POST /api/auth/oauth/apple/callback', 'the provider\'s own cross-site answer; it only redirects to the binder-checked GET'],
   ['sign-in-providers.js POST /api/auth/oauth/finish', JSON_FIELD],
+  // Inside the Homeroom app: the start needs `from`, the finish the state and
+  // the ID token, each in a JSON body.
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native/start', JSON_FIELD],
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
   // WP-E: a mail client's one-click unsubscribe (RFC 8058) is a cross-site
   // POST by design. It carries no session; the HMAC token in its query is
   // the whole of the check, and all it can do is turn activity mail off.
@@ -155,6 +159,7 @@ const EXEMPT = new Map([
   // SESSION_MINT_PATHS names it for the live-session guard; the handler is
   // sign-in-providers.js's, below.
   ['auth.js POST /api/auth/oauth/finish', JSON_FIELD],
+  ['auth.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
   ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
   ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
   ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],
