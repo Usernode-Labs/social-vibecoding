@@ -40,6 +40,10 @@ const settingsJs = read('frontend', 'src', 'features', 'settings', 'settings.js'
 const mountTs = read('frontend', 'src', 'features', 'settings', 'mount.ts');
 const appJs = read('public', 'js', 'app.js');
 const nativeChromeJs = read('public', 'js', 'native-chrome.js');
+const loginTsx = read('frontend', 'src', 'features', 'auth', 'login.tsx');
+const registerTsx = read('frontend', 'src', 'features', 'auth', 'register.tsx');
+const authSharedTs = read('frontend', 'src', 'features', 'auth', 'terms-notice.ts');
+const publicApiJs = read('src', 'routes', 'public-api.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 // The `showTermsSheet` body, sliced at anchors that BOTH exist and that
@@ -313,4 +317,112 @@ test('the dapp.json checks cover title, Accept and Decline on both shot routes',
   assert.ok(modalTexts.includes('Accept the terms'));
   assert.ok(modalTexts.includes('Decline'));
   for (const c of modalChecks) assert.match(c.expectSelector, /\.un-modal/);
+});
+
+// ─── Passive acceptance at sign-in (#3801) ───────────────────────────────
+
+test('a sign-in completed on the sign-on screens marks the tab once (#3801)', () => {
+  // AuthScreens.finishLogin is the single completion path for every
+  // credential exchange on those screens (password, OTP, wallet,
+  // activation-code register), so the marker is written by wrapping it —
+  // on entry, guarded against a double wrap.
+  assert.match(triggerJs, /usernode\.terms\.signed-in-here/);
+  assert.match(triggerJs, /sessionStorage\.setItem\(SIGNED_IN_HERE_KEY, '1'\)/);
+  assert.match(triggerJs, /const wrapped = function \(\) \{\s*\n\s*markSignedInHere\(\);/);
+  assert.match(triggerJs, /original\.apply\(this, arguments\)/);
+  assert.match(triggerJs, /screens\.finishLogin\._termsSignedInMarker/) ;
+  assert.match(triggerJs, /screens\.finishLogin = wrapped;/);
+  // The wrap installs at init and retries from maybePrompt when the
+  // router was not there yet.
+  assert.match(triggerJs, /init\(\) \{\s*\n\s*\/\/ Mark sign-ins completed on the sign-on screens/);
+  assert.match(triggerJs, /ensureFinishLoginMarker\(\);\s*\n\s*if \(TermsFirstRun\._inFlight/);
+  // One-shot: read AND remove in the same tick, so a re-prompt weeks
+  // later in the same tab finds no marker and presents the sheet.
+  assert.match(triggerJs, /sessionStorage\.getItem\(SIGNED_IN_HERE_KEY\) !== '1'\) return false;/);
+  assert.match(triggerJs, /sessionStorage\.removeItem\(SIGNED_IN_HERE_KEY\);/);
+  // sessionStorage is best-effort: both directions swallowed.
+  const helpers = triggerJs.slice(
+    triggerJs.indexOf('function markSignedInHere'),
+    triggerJs.indexOf('const TermsFirstRun'));
+  assert.equal((helpers.match(/catch \(_\) \{/g) || []).length, 2);
+});
+
+test('the passive branch posts accepted through the sheet’s own endpoint, silently', () => {
+  // The marker branch sits AFTER the already-answered early-return (the
+  // 404 / non-null consent shapes are unchanged) and BEFORE the sheet
+  // presentation: with a marker, nothing is presented.
+  const consumeAt = triggerJs.indexOf('if (consumeSignedInHere()) {');
+  assert.ok(consumeAt > 0, 'the passive branch must exist');
+  const answeredAt = triggerJs.indexOf("payload.consent.status !== null) {");
+  const sheetAt = triggerJs.indexOf('window.Settings.showTermsSheet');
+  assert.ok(answeredAt > 0 && consumeAt > answeredAt && sheetAt > consumeAt,
+    'already-answered -> passive branch -> sheet presentation, in that order');
+  assert.match(triggerJs, /\/challenges-api\/terms\/consent', \{[\s\S]*?credentials: 'same-origin'/);
+  assert.match(triggerJs, /terms_version_id: payload\.id,\s*\n\s*status: 'accepted',/);
+  // Success memoizes exactly like the sheet's onAnswered; failure keeps
+  // consent null so the next boot's check presents the sheet.
+  assert.match(triggerJs,
+    /TermsFirstRun\._answered = true;\s*\n\s*\} catch \(err\) \{\s*\n\s*console\.warn\('\[terms-first-run\] passive terms accept skipped:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);\s*\n\s*return;/);
+  // Passive is silent: no toast, no sheet call inside the branch.
+  const branchStart = triggerJs.lastIndexOf('// ── Passive acceptance', consumeAt);
+  const passive = triggerJs.slice(branchStart, triggerJs.indexOf('if (!window.Settings', consumeAt));
+  assert.ok(passive.length > 100, 'the branch slice must be bounded by anchors that both exist');
+  assert.ok(!passive.includes('showTermsSheet'), 'the passive branch must not present');
+  assert.ok(!passive.includes('PlatformUI.toast'), 'the passive branch must not toast');
+});
+
+test('the sign-on screens carry the passive terms notice (#3801)', () => {
+  // The hook reads the public read-only GET and shares one fetch per
+  // document; the fetch is in an effect, never in initial render. Its
+  // own module (./terms-notice.ts) — shared.ts runs in test VMs whose
+  // import allowlists are closed, and the hook needs react.
+  assert.match(authSharedTs, /export function useTermsNoticeLink\(\): string \| null/);
+  assert.match(authSharedTs, /fetch\('\/api\/public\/terms\/current'\)/);
+  assert.match(authSharedTs, /useEffect\(\(\) => \{/);
+  assert.match(authSharedTs, /By signing in you agree to the /);
+  // Both screens render the same sentence, with the link opening the
+  // published terms in a new tab the way the sheet's anchor does. The
+  // class strings are the screens' shared constants (./shared.ts), one
+  // spelling for both.
+  assert.match(authSharedTs, /mt-2\.5 text-sm text-zinc-500 dark:text-zinc-400/);
+  assert.match(authSharedTs, /text-violet-700 hover:text-violet-400 underline dark:text-violet-400/);
+  for (const tsx of [loginTsx, registerTsx]) {
+    assert.match(tsx, /TERMS_NOTICE_LEAD/);
+    assert.match(tsx, /TERMS_NOTICE_LINK_TEXT/);
+    assert.match(tsx, /TERMS_NOTICE\b/);
+    assert.match(tsx, /TERMS_NOTICE_LINK\b/);
+    assert.match(tsx, /target="_blank"/);
+    assert.match(tsx, /rel="noopener noreferrer"/);
+    assert.match(tsx, /useTermsNoticeLink\(\)/);
+  }
+  // The login notice sits after #otp-view and before #recovery-view.
+  const otpAt = loginTsx.indexOf('id="otp-view"');
+  const noticeAt = loginTsx.indexOf('{TERMS_NOTICE_LEAD}');
+  const recoveryAt = loginTsx.indexOf('id="recovery-view"');
+  assert.ok(otpAt > 0 && otpAt < noticeAt && noticeAt < recoveryAt,
+    'the notice sits between #otp-view and #recovery-view');
+  // ...and shows on the password view and the email-code steps only.
+  assert.match(loginTsx,
+    /hiddenFirst\(!\(view === 'base' \|\| view === 'otp'\), TERMS_NOTICE\)/);
+  // The register notice sits under #register-form, above the sign-in pill.
+  const formAt = registerTsx.lastIndexOf('</form>');
+  const regNoticeAt = registerTsx.indexOf('{TERMS_NOTICE_LEAD}');
+  const pillAt = registerTsx.indexOf('Already have an account?');
+  assert.ok(formAt > 0 && regNoticeAt > formAt && regNoticeAt < pillAt,
+    'the notice sits between the form and the sign-in pill');
+  // No new ids: nothing selects the notice.
+  assert.doesNotMatch(loginTsx, /id="terms-notice/);
+  assert.doesNotMatch(registerTsx, /id="terms-notice/);
+});
+
+test('the public terms read carries no consent fields (#3801)', () => {
+  assert.match(publicApiJs, /router\.get\('\/api\/public\/terms\/current'/);
+  assert.match(publicApiJs, /FROM terms_versions\s*\n\s*WHERE published_at IS NOT NULL/);
+  assert.match(publicApiJs, /ORDER BY published_at DESC, id DESC LIMIT 1/);
+  const route = publicApiJs.slice(
+    publicApiJs.indexOf("router.get('/api/public/terms/current'"),
+    publicApiJs.indexOf('// GET /api/public/waitlist/options'));
+  assert.ok(route.length > 100, 'the route must exist');
+  assert.ok(!/consent/i.test(route),
+    'the public read returns nothing about anyone’s consent');
 });

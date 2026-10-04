@@ -78,6 +78,13 @@ import {
   USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
 } from './shared';
+import {
+  TERMS_NOTICE,
+  TERMS_NOTICE_LEAD,
+  TERMS_NOTICE_LINK,
+  TERMS_NOTICE_LINK_TEXT,
+  useTermsNoticeLink,
+} from './terms-notice';
 
 /** Which of the four views on this screen is showing. */
 type LoginView = 'base' | 'otp' | 'recovery' | 'reset';
@@ -471,6 +478,8 @@ export function LoginScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const completion = useSessionConfirmation();
   const { finishLogin, clear: clearConfirmation } = completion;
+  // The passive terms notice's link (#3801), fetched once per document.
+  const termsNoticeLink = useTermsNoticeLink();
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -1842,6 +1851,33 @@ export function LoginScreen() {
               {backLabel}
             </button>
           </div>
+          {/*
+              The passive terms notice (#3801): one line at the foot of the
+              password view and the email-code steps — under the email-code
+              pill on the base view, under the back button on the steps.
+              Hidden on the recovery and reset views, which bring their own
+              copy and are out of this change's scope. No id: nothing
+              selects it. The link opens the published terms in a new tab,
+              the way the terms sheet's "Read the full terms" anchor does;
+              with nothing published to link, the sentence renders as
+              plain text.
+          */}
+          <p className={hiddenFirst(!(view === 'base' || view === 'otp'), TERMS_NOTICE)}>
+            {TERMS_NOTICE_LEAD}
+            {termsNoticeLink ? (
+              <a
+                href={termsNoticeLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={TERMS_NOTICE_LINK}
+              >
+                {TERMS_NOTICE_LINK_TEXT}
+              </a>
+            ) : (
+              TERMS_NOTICE_LINK_TEXT
+            )}
+            {'.'}
+          </p>
           {/*
               Password recovery sub-view (issue #282). Hidden until "Forgot
               password?" is tapped. Picks one of two paths by context: a

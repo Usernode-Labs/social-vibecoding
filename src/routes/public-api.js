@@ -158,6 +158,43 @@ function publicApiRoutes(config) {
     }
   });
 
+  // GET /api/public/terms/current — the current published terms version's
+  // public metadata (title, version, published date, web address). Backs
+  // the sign-on screens' passive terms notice (#3801): a signed-out
+  // visitor cannot call the session-authed twin (GET /challenges-api/
+  // terms/current, src/routes/topochain/mobile.js), and the notice needs
+  // the published terms' web address to link to. Read-only and fully
+  // anonymous like every route in this file — it never reads req.user
+  // and returns nothing about anyone's consent; the consent state stays
+  // on the session-authed endpoint. Same newest-published query shape
+  // termsCurrentHandler uses. 404 when nothing is published, which the
+  // notice degrades to a plain-text sentence.
+  router.get('/api/public/terms/current', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT version, title, terms_link, published_at FROM terms_versions
+          WHERE published_at IS NOT NULL
+          ORDER BY published_at DESC, id DESC LIMIT 1`
+      );
+      const current = rows[0];
+      if (!current) {
+        return res.status(404).json({ success: false, error: 'No published terms version.' });
+      }
+      return res.json({
+        success: true,
+        data: {
+          title: current.title,
+          version: current.version,
+          terms_link: current.terms_link,
+          published_at: isoOrNull(current.published_at),
+        },
+      });
+    } catch (err) {
+      log.error('public-api', 'terms current failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/public/waitlist/options — the survey question definitions
   // (option keys + labels, countries, limits). The SPA renders both
   // waitlist forms from this so client and server validation can't

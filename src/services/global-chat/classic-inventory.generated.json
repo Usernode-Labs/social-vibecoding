@@ -7951,6 +7951,14 @@
     {
       "source": "src/routes/public-api.js",
       "method": "GET",
+      "path": "/api/public/terms/current",
+      "expression": null,
+      "status": "exempt",
+      "reason": "anonymous public integration and waitlist surface"
+    },
+    {
+      "source": "src/routes/public-api.js",
+      "method": "GET",
       "path": "/api/public/waitlist/options",
       "expression": null,
       "status": "exempt",

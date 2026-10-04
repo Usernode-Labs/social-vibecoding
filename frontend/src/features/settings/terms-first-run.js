@@ -42,6 +42,59 @@
   // The prerender pass imports this module with no DOM to speak to.
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
+  // ── Passive acceptance at sign-in (#3801) ───────────────────────────
+  //
+  // The sign-on screens (features/auth/login.tsx, register.tsx) carry a
+  // passive notice line — "By signing in you agree to the Terms and
+  // conditions" — and completing a sign-in there IS the consent: no
+  // sheet, no extra tap. AuthScreens.finishLogin is the single
+  // completion path for every credential exchange on those screens
+  // (password form, OTP verify and set-password, wallet verify and
+  // wallet reset, activation-code register), so wrapping it marks the
+  // tab at the moment the session opens. sessionStorage survives
+  // finishLogin's `return_to` navigation (a full navigation in the same
+  // tab), so a sign-in that lands on another document still counts.
+  //
+  // The marker is ONE-SHOT and read-and-removed in the same tick: a
+  // re-prompt weeks later in the same tab — a new published version, or
+  // an old account that never answered — finds no marker and presents
+  // the sheet as before. Storage failures are swallowed: the sheet path
+  // remains, which is today's behaviour.
+  const SIGNED_IN_HERE_KEY = 'usernode.terms.signed-in-here';
+
+  function markSignedInHere() {
+    try { sessionStorage.setItem(SIGNED_IN_HERE_KEY, '1'); } catch (_) {}
+  }
+
+  function consumeSignedInHere() {
+    try {
+      if (sessionStorage.getItem(SIGNED_IN_HERE_KEY) !== '1') return false;
+      sessionStorage.removeItem(SIGNED_IN_HERE_KEY);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Wraps the router's finishLogin once. The React screens patch their
+  // per-screen hooks onto window.AuthScreens, but finishLogin is NOT one
+  // of them (features/auth/shared.ts's useAuthScreensPatch list), so the
+  // wrap survives hydration — and the screens' own finishLogin() calls
+  // reach it by name at call time, wrapping included. If the router has
+  // not loaded yet, maybePrompt retries.
+  function ensureFinishLoginMarker() {
+    const screens = window.AuthScreens;
+    if (!screens || typeof screens.finishLogin !== 'function') return;
+    if (screens.finishLogin._termsSignedInMarker) return;
+    const original = screens.finishLogin;
+    const wrapped = function () {
+      markSignedInHere();
+      return original.apply(this, arguments);
+    };
+    wrapped._termsSignedInMarker = true;
+    screens.finishLogin = wrapped;
+  }
+
   const TermsFirstRun = {
     // Never two checks at once, never a second overlay over an open one,
     // and nothing further once this document has an answer on record.
@@ -95,6 +148,8 @@
     // on any route fails proposal checks) and leaves consent null, so a
     // later healthy check simply tries again.
     async maybePrompt() {
+      // The wrap retry: the router was not there at module time.
+      ensureFinishLoginMarker();
       if (TermsFirstRun._inFlight || TermsFirstRun._presented ||
           TermsFirstRun._answered) return;
 
@@ -218,6 +273,39 @@
         return;
       }
 
+      // ── Passive acceptance (#3801) ─────────────────────────────────
+      // A sign-in completed on the sign-on screens marked this tab: the
+      // person has agreed by signing in, so record 'accepted' through the
+      // same endpoint and shape the sheet's Accept posts — silently, no
+      // sheet, no toast. Read-and-remove is one-shot: spent here whether
+      // the POST lands or not, so a later check in this tab presents the
+      // sheet instead of silently re-agreeing. On failure consent stays
+      // null and the gate settles; the next boot's check (restored
+      // session, no marker) presents the sheet as today, so the ask is
+      // never lost.
+      if (consumeSignedInHere()) {
+        try {
+          const res = await fetch('/challenges-api/terms/consent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              terms_version_id: payload.id,
+              status: 'accepted',
+            }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || !body.success) {
+            throw new Error(body.error || `HTTP ${res.status}`);
+          }
+          TermsFirstRun._answered = true;
+        } catch (err) {
+          console.warn('[terms-first-run] passive terms accept skipped:', err);
+        }
+        TermsFirstRun._resolve();
+        return;
+      }
+
       if (!window.Settings ||
           typeof window.Settings.showTermsSheet !== 'function') {
         TermsFirstRun._resolve();
@@ -258,6 +346,9 @@
     },
 
     init() {
+      // Mark sign-ins completed on the sign-on screens (#3801), now if the
+      // router is already there, else maybePrompt retries the wrap.
+      ensureFinishLoginMarker();
       // `sv:authed` fires at most once per document, only for released
       // users (public/js/app.js gates the waiting room before it), so
       // unreleased waitlist accounts are not prompted until release.

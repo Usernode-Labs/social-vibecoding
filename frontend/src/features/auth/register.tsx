@@ -38,6 +38,13 @@ import {
   USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
 } from './shared';
+import {
+  TERMS_NOTICE,
+  TERMS_NOTICE_LEAD,
+  TERMS_NOTICE_LINK,
+  TERMS_NOTICE_LINK_TEXT,
+  useTermsNoticeLink,
+} from './terms-notice';
 
 /**
  * The register form's three fields, spelled as <Input> props: `w-full
@@ -78,6 +85,8 @@ export function RegisterScreen() {
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const completion = useSessionConfirmation();
   const { finishLogin, clear: clearConfirmation } = completion;
+  // The passive terms notice's link (#3801), fetched once per document.
+  const termsNoticeLink = useTermsNoticeLink();
   // A refusal the server pinned to one field (`field` on the 400/409), shown
   // under that field instead of in #reg-error.
   const [fieldError, setFieldError] = useState<{ field: RegisterField; message: string } | null>(null);
@@ -268,6 +277,30 @@ export function RegisterScreen() {
               Register
             </Button>
           </form>
+          {/*
+              The passive terms notice (#3801), directly under the Register
+              button: registration creates the account and signs the person
+              in, so the same sentence is true here as on the sign-in
+              screen. Same shared spelling as the login screen's line —
+              one copy of the words, one of the classes (./shared.ts). No
+              id: nothing selects it.
+          */}
+          <p className={TERMS_NOTICE}>
+            {TERMS_NOTICE_LEAD}
+            {termsNoticeLink ? (
+              <a
+                href={termsNoticeLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={TERMS_NOTICE_LINK}
+              >
+                {TERMS_NOTICE_LINK_TEXT}
+              </a>
+            ) : (
+              TERMS_NOTICE_LINK_TEXT
+            )}
+            {'.'}
+          </p>
           <p className="mt-3">
             <a href="#login" className={PILL_LINK}>
               {'Already have an account? '}

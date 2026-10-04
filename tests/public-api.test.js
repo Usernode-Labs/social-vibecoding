@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const express = require('express');
 
 function withMockPool(mockPool, fn) {
@@ -94,6 +95,17 @@ const APP_BY_SLUG = {
   'secrets-app': { id: 14, slug: 'secrets-app', self_hosted: false, view_visibility: 'public', status: 'awaiting_secrets', moderation_suspended_at: null },
 };
 
+// The published terms row the /api/public/terms/current route returns.
+// Same column shape the session-authed twin's newest-published query
+// selects (src/routes/topochain/mobile.js termsCurrentHandler). Null here
+// means "nothing published" — the 404 branch.
+const TERMS_ROW = {
+  version: 'v3',
+  title: 'Homeroom Terms and conditions',
+  terms_link: 'https://example.com/terms/v3',
+  published_at: '2026-09-15T00:00:00.000Z',
+};
+
 function makeMockPool() {
   const calls = [];
   async function query(sql, params = []) {
@@ -117,6 +129,10 @@ function makeMockPool() {
         for (const r of CONTRIBUTORS[id] || []) rows.push({ ...r });
       }
       return { rows };
+    }
+    // Newest published terms version; null rows = nothing published.
+    if (/FROM terms_versions\s+WHERE published_at IS NOT NULL/i.test(s)) {
+      return { rows: TERMS_ROW ? [{ ...TERMS_ROW }] : [] };
     }
     throw new Error(`unhandled mock SQL: ${s.slice(0, 80)}`);
   }
@@ -423,4 +439,108 @@ test('waitlist options: the never-public fields are still absent', async () => {
     assert.equal('max_invites' in body, false);
     assert.equal('discovery_detail_labels' in body, false);
   } finally { await srv.close(); }
+});
+
+// ─── GET /api/public/terms/current (#3801) ───────────────────────
+//
+// The sign-on screens' passive terms notice reads the published terms'
+// web address here, signed out — the session-authed twin
+// (/challenges-api/terms/current) is not callable anonymously. The route
+// must stay a read of public metadata only: the consent state lives on
+// the session-authed endpoint, and nothing about it may leak here.
+
+test('terms current: 200 with the published version’s public metadata', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/terms/current');
+    assert.equal(status, 200);
+    assert.equal(body.success, true);
+    assert.deepEqual(body.data, {
+      title: 'Homeroom Terms and conditions',
+      version: 'v3',
+      terms_link: 'https://example.com/terms/v3',
+      published_at: '2026-09-15T00:00:00.000Z',
+    });
+  } finally { await srv.close(); }
+});
+
+test('terms current: the payload carries no consent fields', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/terms/current');
+    assert.ok(!('consent' in body.data));
+    assert.ok(!('id' in body.data), 'the session-authed twin’s id stays off the public wire');
+    assert.deepEqual(Object.keys(body.data).sort(),
+      ['published_at', 'terms_link', 'title', 'version']);
+  } finally { await srv.close(); }
+});
+
+test('terms current: 404 when nothing is published', async () => {
+  const emptyTermsPool = { query: async () => ({ rows: [] }) };
+  const srv = await startTestServer(emptyTermsPool);
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/terms/current');
+    assert.equal(status, 404);
+    assert.equal(body.success, false);
+    assert.ok(body.error, 'the 404 carries an error sentence');
+  } finally { await srv.close(); }
+});
+
+test('terms current: runs against real PostgreSQL when one is up', { timeout: 180000 }, async (t) => {
+  const { Client } = require('pg');
+  const DSN = process.env.TEST_DATABASE_URL
+    || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+  const client = new Client({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await client.connect(); } catch (err) {
+    await client.end().catch(() => {});
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const schema = `public_terms_${crypto.randomBytes(6).toString('hex')}`;
+  t.after(async () => {
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await client.end().catch(() => {});
+  });
+  await client.query(`CREATE SCHEMA ${schema}`);
+  await client.query(`SET search_path = ${schema}`);
+  // The columns the route reads, as schema.sql declares them.
+  await client.query(`
+    CREATE TABLE terms_versions (
+      id bigserial PRIMARY KEY,
+      version text NOT NULL,
+      title text,
+      terms_link text,
+      published_at timestamptz
+    );
+  `);
+  await client.query(`
+    INSERT INTO terms_versions (version, title, terms_link, published_at) VALUES
+      ('v1', 'Old terms', 'https://example.com/terms/v1', now() - interval '30 days'),
+      ('v2', 'Current terms', 'https://example.com/terms/v2', now() - interval '2 days'),
+      ('v3', 'Draft terms', 'https://example.com/terms/v3', NULL);
+  `);
+  // A single-client pool shim: the handler only calls pool.query.
+  const pool = { query: (sql, params) => client.query(sql, params) };
+  const srv = await startTestServer(pool);
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/terms/current');
+    assert.equal(status, 200);
+    assert.equal(body.success, true);
+    // The NEWEST published version — the draft (NULL published_at) and the
+    // older published one must both lose to v2.
+    assert.equal(body.data.version, 'v2');
+    assert.equal(body.data.terms_link, 'https://example.com/terms/v2');
+    assert.ok(body.data.published_at, 'published_at rides along as ISO-8601');
+    assert.ok(!('consent' in body.data));
+  } finally { await srv.close(); }
+
+  // Unpublish everything: the 404 branch, against the same real table.
+  await client.query('UPDATE terms_versions SET published_at = NULL');
+  const srv2 = await startTestServer(pool);
+  try {
+    const { status, body } = await get(srv2.baseUrl, '/api/public/terms/current');
+    assert.equal(status, 404);
+    assert.equal(body.success, false);
+  } finally { await srv2.close(); }
 });
