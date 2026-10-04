@@ -114,12 +114,15 @@ test('next steps count moves and people, keep Left and Other, and flag dead ends
   assert.deepEqual(starts[0], { screen: 'home', visits: 6, people: 3 });
 });
 
-test('the real-person rule leaves out admins, bots, restricted, deleted, service and left-out accounts', () => {
+test('the real-person rule leaves out admins, bots, test accounts, restricted, deleted, service and left-out accounts', () => {
   const sql = journey.REAL_PERSON_SQL;
   for (const part of [
-    'u.is_admin IS NOT TRUE', 'u.is_synthetic IS NOT TRUE', 'u.participation_restricted_at IS NULL',
+    'u.is_admin IS NOT TRUE', 'u.is_synthetic IS NOT TRUE', 'u.test_account_created_at IS NULL',
+    'u.participation_restricted_at IS NULL',
     'u.anonymised_at IS NULL', 'NOT (LOWER(u.username) LIKE ANY($3::text[]))', 'NOT (u.id = ANY($4::int[]))',
   ]) assert.ok(sql.includes(part), part);
+  assert.equal(journey.REAL_VOTER_SQL, sql.replace(/\bu\./g, 'uy.'),
+    'the yes-voters of a change are held to exactly the same rule');
   assert.deepEqual(journey.RESERVED_PATTERNS, ['usernode%', 'staging%'],
     'the reserved prefixes nobody else may take (src/services/usernames.js RESERVED_PREFIXES)');
   const usernames = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'usernames.js'), 'utf8');
@@ -146,4 +149,29 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
   assert.equal(started.stuckAt, 'account');
   assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
   assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+});
+
+test('a change the Homeroom bot built is credited to the person who asked for it', () => {
+  const flat = (x) => x.replace(/\s+/g, ' ');
+  const person = flat(journey.CHANGE_PERSON_SQL);
+  assert.match(person, /WHEN EXISTS \(SELECT 1 FROM users bu WHERE bu\.id = cs\.user_id AND bu\.is_synthetic\)/,
+    'only a synthetic author is replaced');
+  assert.match(person, /homeroom_bot_requesters r WHERE r\.app_id = cs\.app_id AND r\.issue_number = cs\.created_from_issue_number/,
+    'the requester the bot recorded for the request it built');
+  assert.match(person, /issues ri WHERE ri\.app_id = cs\.app_id AND ri\.github_issue_number = cs\.created_from_issue_number/,
+    'else whoever filed that request');
+  assert.match(person, /ELSE cs\.user_id END/, 'every other change is its author\'s');
+  // Every reading that keys on a change's author reads it through the rule:
+  // the North Star and its trend, the groups one short, the trust checks,
+  // and the Activate, Belong and Use stages.
+  for (const [name, sql] of Object.entries({
+    LIVE_CHANGES_SQL: journey.LIVE_CHANGES_SQL, WAITING_SQL: journey.WAITING_SQL, TRUST_SQL: journey.TRUST_SQL,
+  })) {
+    assert.ok(sql.includes(journey.CHANGE_PERSON_SQL), `${name} credits bot builds`);
+    assert.doesNotMatch(sql, /pvx\.user_id <> cs\.user_id/, `${name}: "somebody else's yes" means somebody other than the person credited`);
+  }
+  const stages = journey.STAGES_SQL;
+  assert.equal(stages.split(journey.CHANGE_PERSON_SQL).length - 1, 5,
+    'Activate (a change), Belong (a yes, kudos or a comment on somebody else\'s change) and Use');
+  assert.doesNotMatch(stages, /<> cs\.user_id/);
 });

@@ -301,7 +301,12 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     }
     assert.equal((await activeUsers.getActiveUserStats(pool, realApp)).active, 2, 'the tester is not in the denominator');
     assert.equal((await activeUsers.getActiveUserStats(pool, testApp)).active, 3, 'on a test-made app it is');
-    assert.ok((await activeUsers.listActiveUserIds(pool, realApp)).includes(tester.userId), 'still pinged like a newcomer');
+    assert.equal((await activeUsers.listActiveUserIds(pool, realApp)).includes(tester.userId), false,
+      'nor asked for a vote or sent the digest: the list matches the denominator');
+    assert.deepEqual((await activeUsers.listActiveUserIds(pool, realApp)).sort((x, y) => x - y),
+      [person.id, other.id].sort((x, y) => x - y));
+    assert.ok((await activeUsers.listActiveUserIds(pool, testApp)).includes(tester.userId),
+      'on a test-made app it is asked like anybody');
 
     const proposal = async (appId) => (await pool.query(
       "INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'promoted') RETURNING id", [appId, person.id]

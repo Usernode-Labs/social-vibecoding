@@ -49,4 +49,15 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
   }
   const loops = await (await fetch(`${base}/api/admin/journey/loops?demo=1`)).json();
   assert.deepEqual(loops.change.atStep.hear_back, { status: 'coming' }, 'Hear back is coming in the demo too');
+
+  // The demo keeps the real-person rule: the test account on its left-out
+  // list is in none of its readings.
+  const left = (await (await fetch(`${base}/api/admin/journey/left-out?demo=1`)).json()).people;
+  assert.ok(left.some((p) => p.reason === 'test'));
+  const named = JSON.stringify([
+    await (await fetch(`${base}/api/admin/journey/stages?demo=1`)).json(),
+    await (await fetch(`${base}/api/admin/journey/summary?demo=1`)).json(),
+    loops,
+  ]);
+  for (const p of left) assert.equal(named.includes(`"userId":${p.userId}`), false, `${p.username} is left out of the demo`);
 });

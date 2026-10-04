@@ -8,7 +8,11 @@
 //
 //   test      A test account. Left out of every Journey number; its UI
 //             telemetry stays, because it costs nothing and an engineer may
-//             want it.
+//             want it. An account made in Admin → Test accounts is also left
+//             out by its own flag (journey.REAL_PERSON_SQL reads
+//             users.test_account_created_at), so taking its entry off this
+//             list does not bring it back; the reason is what marks any other
+//             account somebody tests with.
 //   objected  Somebody who asked not to be recorded. Adding them erases their
 //             UI telemetry (observations and delivery receipts) in the same
 //             transaction, and ui-telemetry.isRecordable() then answers false

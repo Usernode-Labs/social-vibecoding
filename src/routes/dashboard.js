@@ -32,12 +32,17 @@ const llm = require('../services/llm');
 // Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
 // is false (the default) every analytics query drops rows attributed to
 // an admin account (users.is_admin = TRUE — view-only admins included).
-// `col` is the user-id column to test in the calling query. Returns a
-// fragment that begins with the given keyword (AND by default) so it can
-// be spliced into an existing WHERE clause or stand alone.
+// Test accounts (services/test-accounts.js) are dropped whatever the box
+// says: they are nobody's real use, and with the box on they would land in
+// the non-admin column. That half keeps a row with no user (a NULL `col`),
+// as the query did before it. `col` is the user-id column to test in the
+// calling query. Returns a fragment that begins with the given keyword (AND
+// by default) so it can be spliced into an existing WHERE clause or stand
+// alone.
 function adminFilter(col, includeAdmins, keyword = 'AND') {
-  if (includeAdmins) return '';
-  return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin)`;
+  const tests = `(${col} IS NULL OR ${col} NOT IN (SELECT id FROM users WHERE test_account_created_at IS NOT NULL))`;
+  if (includeAdmins) return `${keyword} ${tests}`;
+  return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin) AND ${tests}`;
 }
 
 // ── Staging mock data (#860) ─────────────────────────────────────────────

@@ -498,12 +498,13 @@ async function isCommunityMember(pool, appId, userId) {
 
 // The full set of user ids currently counted as active for an app,
 // using the same definition as getActiveUserStats (so "who gets the
-// vote-request ping" matches "whose votes count"). The one deliberate
-// difference: a test account active on a real app is still listed here, so
-// it is pinged like a newcomer would be, though its vote will not count
-// (counts_toward_outcome in getActiveUserStats above). Returns a bare
-// array of ids. self_hosted apps fan out across every app's activity,
-// mirroring getActiveUserStats's union semantics.
+// vote-request ping" matches "whose votes count"). That includes its test
+// account rule: a test account is left out on an app a real person made
+// (counts_toward_outcome), so the vote pings, the weekly digest and every
+// other list read from here go to real people only, and on an app a test
+// account made it is listed like anybody. Returns a bare array of ids.
+// self_hosted apps fan out across every app's activity, mirroring
+// getActiveUserStats's union semantics.
 async function listActiveUserIds(pool, appId) {
   const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
 
@@ -517,6 +518,7 @@ async function listActiveUserIds(pool, appId) {
                WHERE b.user_id = a.user_id
                  AND b.seconds_spent >= 60
              )
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
@@ -542,6 +544,7 @@ async function listActiveUserIds(pool, appId) {
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
              ))
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
