@@ -4550,7 +4550,9 @@ const AppView = {
       // and the discussion thread — mirroring the issue body for issues.
       body = {
         actions: AppView._detailActionsView('proposal', item),
-        summaryHtml: AppView._proposalSummaryHtml(item),
+        // The lead, and on a change Homeroom bot built the rest of its
+        // summary one tap down (`_summaryParts`).
+        ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
@@ -4575,7 +4577,7 @@ const AppView = {
       card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       body = {
         actions: AppView._detailActionsView('session', item),
-        summaryHtml: AppView._proposalSummaryHtml(item),
+        ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
@@ -4719,7 +4721,7 @@ const AppView = {
           act: { fn: 'exploreProposalInDevChat', args: [item.id, null] },
         });
       }
-      if (proposal && window.Kudos && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
+      if (proposal && AppView._kudosOffered(item) && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
       if (body.build) {
         onBand.push({
           key: 'build', cls: 'gc-vote-btn', label: body.build.label,
@@ -4815,7 +4817,13 @@ const AppView = {
         : ({ merging: 'Going live', merged: settled, closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
-    const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
+    // First-session run-through, 4 Oct 2026: a flatmate's first look at the
+    // group's first version read "homeroom_bot · proposed 35m ago". The bot
+    // is "Homeroom bot" wherever it is named (group-chat.js BOT_NAME, the
+    // notifications), and it MADE the change, which is what a reader needs.
+    const bot = AppView._botBuilt(item);
+    const author = bot ? 'Homeroom bot'
+      : (item.username || (kind === 'session' && App.user ? App.user.username : null) || null);
     // The provenance words the meta line carried, as text: React escapes.
     const bits = [];
     if (item.source === 'imported') {
@@ -4832,7 +4840,7 @@ const AppView = {
       status,
       age: age ? { s: age.s, title: age.title } : null,
       author,
-      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : 'proposed'),
+      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : (bot ? 'made' : 'proposed')),
       provenance: bits.length ? bits.join(' · ') : null,
       tint: Number(item.id) % 2 ? 'a' : 'b',
     };
@@ -5575,7 +5583,7 @@ const AppView = {
           act: { fn: 'withdrawProposal', args: [item.id] },
         });
       }
-      if (window.Kudos) pills.push({ key: 'kudos', label: '', kudos: item.id });
+      if (AppView._kudosOffered(item)) pills.push({ key: 'kudos', label: '', kudos: item.id });
     } else if (kind === 'session' && item.source === 'imported') {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
@@ -12786,6 +12794,85 @@ const AppView = {
     return `<div class="dev-issue-body">${renderMd(md)}</div>`;
   },
 
+  // First-session run-through, 4 Oct 2026: the summary on a first version
+  // Homeroom bot built was its spec's "User-facing changes" half, Design
+  // subsection and all (homeroom-bot-live.js specUserFacing, when the build
+  // wrote no description of its own): accent colours as RGB triples, the
+  // kit's class names, "Exact words: ..." — thousands of characters of build
+  // brief as the first thing a flatmate read. The spec's own shape says where
+  // the plain part ends: the spec prompt puts a "### Design" subsection LAST
+  // in that half (services/prompts.js, both design briefs), and it is
+  // written for the build: the look, the kit, the words to use.
+  //
+  // So a change the bot built shows its summary up to that heading, and the
+  // rest one tap down ("How it's built", ChangeHero). Nothing is written
+  // here: both halves are the stored summary's own words. The credit line
+  // the bot appends to every description it files ("Asked for by @maya",
+  // creditedDescription) is the change's, not the spec's, so it stays with
+  // the lead. A summary with no Design heading, one that OPENS with it (no
+  // lead to show), and every summary a person or their agent wrote are shown
+  // whole, as before. Specs written from now on leave Design out of the
+  // summary to begin with (specUserFacing); this is for the ones already up.
+  _summaryParts(item) {
+    const md = item && typeof item.pr_summary_md === 'string' ? item.pr_summary_md.trim() : '';
+    const whole = { lead: md, more: '' };
+    if (!md || !AppView._botBuilt(item)) return whole;
+    const lines = md.split('\n');
+    let fenced = false;
+    let at = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      const t = lines[i].trim();
+      if (/^(```|~~~)/.test(t)) fenced = !fenced;
+      else if (!fenced && /^#{1,6}\s+design\b/i.test(t)) { at = i; break; }
+    }
+    if (at < 0) return whole;
+    let lead = lines.slice(0, at).join('\n').trim();
+    let more = lines.slice(at).join('\n').trim();
+    if (!lead) return whole;
+    // Wherever it landed: a later update can follow it ("**Latest update:**",
+    // pr-metadata latestDescriptionSummary).
+    const credit = more.match(/^[ \t]*(Asked for by @\S+)[ \t]*$/m);
+    if (credit) {
+      more = `${more.slice(0, credit.index)}${more.slice(credit.index + credit[0].length)}`
+        .replace(/\n{3,}/g, '\n\n').trim();
+      lead = `${lead}\n\n${credit[1]}`;
+    }
+    return { lead, more };
+  },
+
+  // The folded half's open flag, kept out of the DOM for the reason
+  // `_proposalBodyOpen` below gives: a repaint must not shut it on a reader.
+  _summaryMoreOpen: new Set(),
+
+  _setSummaryMoreOpen(proposalId, open) {
+    const id = Number(proposalId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (open) AppView._summaryMoreOpen.add(id);
+    else AppView._summaryMoreOpen.delete(id);
+  },
+
+  // A change's summary as the hero reads it: `summaryHtml` (the lead) and
+  // `summaryMore`, the rest as a disclosure model, or null when there is no
+  // rest. `html` is DevChat.renderMarkdown's output, sanitised where built.
+  _changeSummaryView(item) {
+    const { lead, more } = AppView._summaryParts(item);
+    const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead });
+    if (!more) return { summaryHtml, summaryMore: null };
+    const id = Number(item && item.id);
+    const hasStableId = Number.isInteger(id) && id > 0;
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return {
+      summaryHtml,
+      summaryMore: {
+        id: hasStableId ? id : null,
+        open: hasStableId && AppView._summaryMoreOpen.has(id),
+        html: renderMd(more),
+      },
+    };
+  },
+
   // The complete GitHub PR description is deliberately quieter than the
   // generated summary above: reviewers can expand it when they need the
   // implementation and testing detail without making every proposal topic
@@ -12948,7 +13035,7 @@ const AppView = {
     // _fillKudosHosts writes it in). The detail head lists the slot in its
     // own action list below the header (_detailActionsView), so its card
     // carries none, and a merged card has always had one (_mergedRowModel).
-    const bandKudos = !isMerged && !AppView.readOnly && !noNav && window.Kudos
+    const bandKudos = !isMerged && !AppView.readOnly && !noNav && AppView._kudosOffered(pr)
       ? [{ key: 'kudos', label: '', kudos: pr.id }]
       : [];
     const actions = (isMerged || AppView.readOnly)
@@ -13523,7 +13610,7 @@ const AppView = {
     // st.kudosOnFace — the merged card promotes the kudos button back onto
     // its action band (it has no votes to cast, so the band was empty), and
     // two ways to give the same kudos on one card is one too many.
-    if (window.Kudos && !ro && !st.kudosOnFace) {
+    if (AppView._kudosOffered(pr) && !ro && !st.kudosOnFace) {
       const entry = Kudos._ensureCache ? Kudos._ensureCache(pr.id) : {};
       const isSelf = !!(App.user && pr.user_id && pr.user_id === App.user.id);
       const mineKudos = !!entry.my_kudos;
@@ -17515,6 +17602,16 @@ const AppView = {
   },
 
   /**
+   * Whether a change offers kudos at all. Kudos thank a change's author, and
+   * the author of a change Homeroom bot built is the bot's own account, so
+   * "Thank homeroom_bot" thanked nobody (first-session run-through, 4 Oct
+   * 2026). Every kudos slot and row on a change asks this.
+   */
+  _kudosOffered(item) {
+    return !!window.Kudos && !AppView._botBuilt(item);
+  },
+
+  /**
    * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
    * with it, with this change staged as a card to write about.
    */
@@ -18013,7 +18110,7 @@ const AppView = {
     // `_fillKudosHosts` writes Kudos.renderButton's markup into it, because
     // Kudos.attach / _refreshButton / _renderPopover all keep writing there.
     // The button is left out entirely when kudos.js isn't loaded.
-    const hasKudos = !!(window.Kudos && !AppView.readOnly);
+    const hasKudos = AppView._kudosOffered(pr) && !AppView.readOnly;
     const menu = AppView._proposalMenuItems(pr, {
       mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: hasKudos,
     });
