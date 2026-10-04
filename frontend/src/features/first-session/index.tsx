@@ -59,7 +59,10 @@ type Legacy = {
     _workshopViewPath?: (url: string) => string | null;
     _publishCommunityScope?: (slug: string | null) => void;
   };
-  AppView?: { _landOnHub?: (slug: string) => void };
+  AppView?: {
+    _landOnHub?: (slug: string) => void;
+    changeFirstVersionPlan?: (slug: string, conversationId: number | null, messageId: number | null) => void;
+  };
   UsernodeReact?: Record<string, unknown>;
 };
 const legacy = (): Legacy => window as unknown as Legacy;
@@ -84,6 +87,17 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+}
+
+/**
+ * Change something, under the plan on the made screen: what the App tab's
+ * does (AppView.changeFirstVersionPlan), the chat with Homeroom bot with the
+ * plan quoted in its composer.
+ */
+export function changePlanInChat(slug: string, conversationId: number | null, messageId: number | null): void {
+  const { AppView } = legacy();
+  if (typeof AppView?.changeFirstVersionPlan === 'function') AppView.changeFirstVersionPlan(slug, conversationId, messageId);
+  else if (conversationId) window.location.hash = `#messages/${conversationId}`;
 }
 
 /**
@@ -422,6 +436,14 @@ export function FirstSession() {
           rememberCommunity(made.slug);
           enterScreen('home', made.slug);
           setMode({ kind: 'tour', info, path: 'maker' });
+        }}
+        // Change something is a reply in the chat: the first session ends
+        // there, with no tour over it.
+        onChangePlan={(conversationId, messageId) => {
+          markSeen(made.slug);
+          rememberCommunity(made.slug);
+          setMode({ kind: 'none' });
+          changePlanInChat(made.slug, conversationId, messageId);
         }}
       />
     );

@@ -347,6 +347,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(posted.length, 0, 'never posted on the request');
     const closed = await planMessage(second);
     assert.deepEqual([closed.meta.status, closed.meta.changing], ['closed', true]);
+    // Redoing the plan is not reading the description for the first time:
+    // the App tab and the made screen keep it on the plan's step.
+    const fv = await dm.firstVersionState(pool, app.id);
+    assert.deepEqual([fv.step, fv.of, fv.stepName], [3, 7, 'Updating the plan']);
+    assert.equal(fv.plan, undefined, 'no plan waits while the new one is written');
     const changes = await bot.planChangesFor(pool, app.id, 1);
     assert.deepEqual(changes, { bullets: PLAN.bullets, changes: ['Make it work for my partner too'] });
   });
