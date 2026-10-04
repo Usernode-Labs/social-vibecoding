@@ -114,6 +114,119 @@ function connectedUserIds() {
     .flatMap(clients => [...clients].map(client => Number(client.user.id))))];
 }
 
+// ── How fast one person may write over the chat socket ─────────────────
+//
+// The REST twins are limited (POST and DELETE /api/apps/:slug/messages
+// mount groupChatWriteLimiter, middleware/rate-limits.js), and the socket
+// used to be the open door beside them: every frame ran the live-account
+// query and handleMessage, so a script could post, react (each reaction can
+// notify the author) or delete as fast as it could send. attach() now runs
+// admitSocketFrame on each parsed frame BEFORE any of that.
+//
+// The check lives here and not in handleMessage on purpose: the REST twins
+// call handleMessage behind their own limiter, and the Homeroom bot's relays
+// (homeroom-bot-dm.js) call it on a person's behalf. Counting either again
+// would charge one message twice.
+//
+// Budgets per person (user.id, across all their sockets), in one-minute
+// windows that start at the first frame, like express-rate-limit's store:
+//   - chat, edit and delete share 60, the REST twins' groupChatWriteLimiter;
+//   - react has 120, the size of conversationReactionLimiter;
+//   - typing has its own 120. The composer sends at most one every two
+//     seconds, so only a script reaches it, and over it the frame is
+//     dropped without a word: nobody needs telling that a typing dot was
+//     not shown.
+// In process, which is exact at the one replica the platform ships with; at
+// several, each pod counts its own sockets. The Postgres token bucket is not
+// worth a round trip per typing frame.
+const SOCKET_RATE_WINDOW_MS = 60 * 1000;
+const SOCKET_RATE_BUDGETS = Object.freeze({
+  chat: Object.freeze({ bucket: 'write', max: 60 }),
+  edit: Object.freeze({ bucket: 'write', max: 60 }),
+  delete: Object.freeze({ bucket: 'write', max: 60 }),
+  react: Object.freeze({ bucket: 'react', max: 120 }),
+  typing: Object.freeze({ bucket: 'typing', max: 120, silent: true }),
+});
+const socketRateWindows = new Map(); // `${bucket}:${userId}` -> { used, resetAt, logged }
+let socketRateSweepAt = 0;
+
+// "in 12 seconds", "in 1 second", or "in a moment" when there is no number.
+// public/js/group-chat.js words its toast the same way.
+function socketRetryPhrase(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return 'in a moment';
+  const whole = Math.ceil(n);
+  return `in ${whole} ${whole === 1 ? 'second' : 'seconds'}`;
+}
+
+// Spend one frame of `type` from `userId`'s budget. A type with no budget
+// (and a frame with no sender) always passes. Over the budget, nothing is
+// spent and the answer says how long until the window resets.
+function takeSocketRate(userId, type, now = Date.now()) {
+  const budget = Object.prototype.hasOwnProperty.call(SOCKET_RATE_BUDGETS, type)
+    ? SOCKET_RATE_BUDGETS[type] : null;
+  if (!budget || userId == null) return { ok: true };
+  // Forget finished windows once a window, so the map holds only the people
+  // who wrote in the last minute.
+  if (now >= socketRateSweepAt) {
+    for (const [key, win] of socketRateWindows) {
+      if (win.resetAt <= now) socketRateWindows.delete(key);
+    }
+    socketRateSweepAt = now + SOCKET_RATE_WINDOW_MS;
+  }
+  const key = `${budget.bucket}:${userId}`;
+  let win = socketRateWindows.get(key);
+  if (!win || win.resetAt <= now) {
+    win = { used: 0, resetAt: now + SOCKET_RATE_WINDOW_MS, logged: false };
+    socketRateWindows.set(key, win);
+  }
+  if (win.used >= budget.max) {
+    const firstRefusal = !win.logged;
+    win.logged = true;
+    return {
+      ok: false,
+      bucket: budget.bucket,
+      silent: !!budget.silent,
+      firstRefusal,
+      retryAfterSeconds: Math.max(1, Math.ceil((win.resetAt - now) / 1000)),
+    };
+  }
+  win.used += 1;
+  return { ok: true };
+}
+
+// The frame check attach() runs before handleMessage. True lets the frame
+// through; false means it was refused, and the sender has been told when
+// there is something to tell: a delete gets the `delete_error` its composer
+// already rolls back on, and chat, edit and react get `rate_limited`
+// carrying the refused frame as `retry`, like `join_required` does. Only the
+// sending socket hears about it; nothing is broadcast.
+function admitSocketFrame(client, msg, now = Date.now()) {
+  const type = msg && typeof msg === 'object' ? msg.type : null;
+  const userId = client && client.user ? client.user.id : null;
+  const verdict = takeSocketRate(userId, type, now);
+  if (verdict.ok) return true;
+  // One line per person and window, not one per refused frame: a flood
+  // would otherwise write the log as fast as it writes the socket.
+  if (verdict.firstRefusal) {
+    log.warn('ws', 'Throttled', { name: `ws-${verdict.bucket}`, userId, appId: client.appId, type });
+  }
+  if (verdict.silent) return false;
+  const { retryAfterSeconds } = verdict;
+  const frame = type === 'delete'
+    ? { type: 'delete_error', id: appChat.positiveInt(msg.id), code: 'rate_limited', retryAfterSeconds }
+    : {
+      type: 'rate_limited',
+      retryAfterSeconds,
+      error: `You're sending messages too fast. Try again ${socketRetryPhrase(retryAfterSeconds)}.`,
+      retry: msg,
+    };
+  try {
+    if (client.ws && client.ws.readyState === 1) client.ws.send(JSON.stringify(frame));
+  } catch { /* a closed socket has nobody to tell */ }
+  return false;
+}
+
 function attach(server, config) {
   const pool = getPool(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
@@ -231,9 +344,12 @@ function attach(server, config) {
 
     ws.on('message', async (raw) => {
       try {
+        const msg = JSON.parse(raw);
+        // The rate check comes first, so a frame over the budget costs no
+        // query at all (see admitSocketFrame).
+        if (!admitSocketFrame(client, msg)) return;
         const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]);
         if (!live.rows.length) { disconnectUser(user.id); return; }
-        const msg = JSON.parse(raw);
         await handleMessage(pool, client, msg);
       } catch (err) {
         log.warn('ws', 'Invalid message', { err: err.message });
@@ -1752,4 +1868,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
