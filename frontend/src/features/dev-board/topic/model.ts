@@ -230,6 +230,14 @@ export interface LedgerRow {
    * when — "snait, now", "automatic, after 1".
    */
   sub?: string | null;
+  /**
+   * True only on the votes row while the member floor is still owed its Yes:
+   * the row's `sub` then carries the count AND the words ("2 of 2 · still
+   * needs a Yes from another member"), and this flag is what makes the row
+   * draw that line — a votes row's `sub` is otherwise never rendered (the
+   * count rides in the tally and the pill instead).
+   */
+  memberFloor?: boolean;
   /** The sentence, in the primary ink. */
   text: TextRun[];
   /**

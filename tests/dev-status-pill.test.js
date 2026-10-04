@@ -484,6 +484,63 @@ test('explicit approval is a lock glyph inside the pill, not a chip', () => {
   assert.doesNotMatch(html, /gc-vote-explicit/, 'no separate chip any more');
 });
 
+test('while the member floor is owed its Yes, the pill says so in words beside the lock', () => {
+  const AppView = makeAppView();
+  const html = pillHtml(AppView, PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    needs_other_member_yes: true, other_member_yes_count: 0,
+    yes_count: 1, votes_required: 3, my_vote: 'yes',
+  }));
+  assert.match(html, /gc-vote-count-lock/, 'the glyph stays');
+  assert.match(html, /won’t merge on a timer/, 'and so does its hover explanation');
+  assert.match(html, /gc-vote-count-lock-label[^>]*>Needs another member’s Yes</,
+    'the words are real text beside it, not hover-only');
+  // And the words are the amber merge state's own label — one wording.
+  assert.equal(AppView.statusPillState(PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    needs_other_member_yes: true, other_member_yes_count: 0,
+    yes_count: 1, votes_required: 3, my_vote: 'yes',
+  })).lockLabel, 'Needs another member’s Yes');
+});
+
+test('once another member has said Yes, the pill keeps the lock but drops the words', () => {
+  const AppView = makeAppView();
+  const html = pillHtml(AppView, PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    needs_other_member_yes: true, other_member_yes_count: 1,
+    yes_count: 2, votes_required: 3, my_vote: 'yes',
+  }));
+  assert.match(html, /gc-vote-count-lock/);
+  assert.match(html, /won’t merge on a timer/, 'the change still never merges on a timer');
+  assert.doesNotMatch(html, /gc-vote-count-lock-label/, 'nothing is still owed, so nothing is said');
+});
+
+test('a flagged row not waiting on the floor, and an unflagged row, carry neither glyph-label nor words', () => {
+  const AppView = makeAppView();
+  // A one-member community: flagged, but the server sends no floor.
+  const solo = pillHtml(AppView, PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    yes_count: 1, votes_required: 3, my_vote: 'yes',
+  }));
+  assert.match(solo, /gc-vote-count-lock/, 'the lock stays — a flagged row never merges on a timer');
+  assert.doesNotMatch(solo, /gc-vote-count-lock-label/);
+  const plainPill = pillHtml(AppView, PR({
+    check_state: 'passing', yes_count: 1, votes_required: 3, my_vote: 'yes',
+  }));
+  assert.doesNotMatch(plainPill, /gc-vote-count-lock/);
+  assert.doesNotMatch(plainPill, /gc-vote-count-lock-label/);
+});
+
+test('a settled row never carries the words, whatever its floor columns say', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    status: 'merged', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.lock, false);
+  assert.equal(s.lockLabel, undefined, 'the vote is history; the words do not survive onto the pill');
+});
+
 test('multiple reasons: every one is its own tag, and none of them is the bar', () => {
   const AppView = makeAppView();
   const pr = PR({

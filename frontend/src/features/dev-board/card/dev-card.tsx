@@ -247,6 +247,12 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
             title={s.lockTitle || 'This change needs a Yes from another member. It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.'}
           >{'\u{1F512}'}</span>
         ) : null}
+        {/* The member floor in words, beside the glyph — not on hover. Only
+            in the pill's full, card-width form: the inline capsules (detail
+            heads, the change page's tally) keep glyph and tooltip only. */}
+        {!inline && s.lockLabel ? (
+          <span className="gc-vote-count-lock-label">{s.lockLabel}</span>
+        ) : null}
       </span>
     </span>
   );

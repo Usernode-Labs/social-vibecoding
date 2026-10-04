@@ -310,6 +310,30 @@ test('the row keys the declared checks select on are untouched', () => {
   }
 });
 
+test('the votes row says the member floor in words while the floor is still owed', () => {
+  // A flagged row whose votes are in but none of them from another member:
+  // the row's count line carries the words the warn note already says, so
+  // the page reads itself without the hover. The sentence's own tail —
+  // "a Yes from another member" — is the wording; no second phrasing.
+  const AppView = makeAppView();
+  const settled = {
+    check_state: 'passing', test_results: [],
+    freshness: { mergeability: 'clean', behindBy: 0, mergeabilityFiles: [] },
+    yes_count: 1, no_count: 0,
+  };
+  const floor = find(rowsOf(AppView, {
+    ...CONFLICTED, ...settled,
+    requires_explicit_approval: true, explicit_approval_reason: 'admins',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }), 'votes');
+  assert.equal(floor.sub, '1 of 1 · still needs a Yes from another member');
+  assert.equal(floor.memberFloor, true);
+
+  const plainRow = find(rowsOf(AppView, { ...CONFLICTED, ...settled }), 'votes');
+  assert.equal(plainRow.sub, '1 of 1 needed', 'an ordinary row keeps its count, and only its count');
+  assert.equal(plainRow.memberFloor, undefined, 'no flag on a row the server described as settled');
+});
+
 test('a count on a chip carries its unit', () => {
   // "Conflicts with main · 10" (files) sat beside "Behind main · 118"
   // (commits) in the same grammar, and read as commits.

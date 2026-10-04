@@ -460,3 +460,23 @@ test('MergeStatus.lifecycle: votes in, no other member yet, is its own state', (
   assert.equal(inVote.key, 'in_vote');
   assert.match(inVote.title, /^Changes to who can see this app need a Yes from another member\. It won’t merge on a timer/);
 });
+
+test('the pill’s short label and the awaiting_member descriptor are one string', () => {
+  // The vote pill's words beside the lock and the amber merge state's label
+  // describe the same situation; they share memberFloorShort() so neither
+  // can drift from the other.
+  const sandbox = { console };
+  sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
+  const MS = sandbox.__MS;
+  const row = {
+    status: 'promoted', yes_count: 1, votes_required: 1, check_state: 'passing',
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  };
+  assert.equal(MS.memberFloorShort(), 'Needs another member’s Yes');
+  assert.equal(MS.memberFloorShort(), MS.lifecycle(row, {}).label);
+  assert.notEqual(MS.lifecycle({ ...row, other_member_yes_count: 1 }, {}).label, MS.memberFloorShort(),
+    'and once the floor is met, the words are not the state’s label any more');
+});

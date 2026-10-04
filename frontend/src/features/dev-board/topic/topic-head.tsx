@@ -450,10 +450,12 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
         <span className="dev-ledger-text">
           <Runs parts={r.text} />
           {/* When the run happened, at the sentence's end. The vote row's
-              count rides in its tally instead. */}
+              count rides in its tally instead — unless it carries the member
+              floor's words, which it says ahead of the roster's line. */}
           {r.sub && r.key !== 'votes' ? <span className="dev-step-when">{` ${r.sub}`}</span> : null}
         </span>
       ) : null}
+      {r.memberFloor && r.sub ? <span className="dev-step-when">{r.sub}</span> : null}
       {r.progress ? <Progress p={r.progress} /> : null}
       {/* The Review line: who approved, and at its right end the "How
           voting works" affordances — this is the row they explain. */}

@@ -13023,6 +13023,14 @@ const AppView = {
     };
   },
 
+  // The member floor in words, short — what the vote pill says beside the
+  // lock glyph, in the amber merge state's own words (MergeStatus).
+  _memberFloorLabel() {
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    if (MS && typeof MS.memberFloorShort === 'function') return MS.memberFloorShort();
+    return 'Needs another member’s Yes';
+  },
+
   // Still waiting on the member floor: more than one member, and nobody but
   // the author has said Yes.
   _awaitingOtherMember(pr) {
@@ -13843,9 +13851,16 @@ const AppView = {
       // "Approved by @maya ✓" once it has what it needs, the tally while it
       // has not (topic-head.tsx's Roster reads `approved`). Both numbers
       // come from the same fields the pill uses, so they cannot disagree.
+      // While the member floor is still owed its Yes, the count says so in
+      // words — the sentence's own tail ("a Yes from another member"), so
+      // the row, the requirement strip and the pill cannot disagree.
+      const onFloor = AppView._awaitingOtherMember(pr);
       rows.push({
         key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: 'Votes',
-        sub: `${yes} of ${req} needed`,
+        sub: onFloor
+          ? `${yes} of ${req} · still needs a Yes from another member`
+          : `${yes} of ${req} needed`,
+        ...(onFloor ? { memberFloor: true } : {}),
         text: [], roster: { ...d.roster, approved: yes >= req }, foot: [],
         warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
         // "How voting works" rides at the right end of this row's line — the
@@ -19161,9 +19176,13 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
+    // The member floor says itself in words, not only on hover: while a Yes
+    // from someone other than the author is still missing, the pill carries
+    // the short label beside the lock glyph.
     const base = {
       yes, no, majority: maj, advisory, lock, reasons: [],
       ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+      ...(lock && AppView._awaitingOtherMember(p) ? { lockLabel: AppView._memberFloorLabel() } : {}),
     };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
@@ -19171,24 +19190,24 @@ const AppView = {
     // label so legacy history never makes a claim it cannot support.
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: '✓ Deployed', tone: 'ok', lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Deployed', tone: 'ok', lock: false, lockLabel: undefined, advisory: 0,
           title: 'This change is live in production.' };
       }
       if (p.deployment_state === 'deploying') {
-        return { ...base, tier: 0, key: 'deploying', label: 'Merged · deploying…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deploying', label: 'Merged · deploying…', tone: 'progress', spinner: true, lock: false, lockLabel: undefined, advisory: 0,
           title: 'This change has merged, but production is still running an earlier revision.' };
       }
       if (p.deployment_state === 'stalled') {
-        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, lockLabel: undefined, advisory: 0,
           title: 'This change has merged, but its production deployment is stalled.' };
       }
       if (p.deployment_kind === 'child') {
         if (p.deployment_state === 'pending') {
-          return { ...base, tier: 0, key: 'delivery_pending', label: 'Merged · awaiting deployment', tone: 'neutral', lock: false, advisory: 0,
+          return { ...base, tier: 0, key: 'delivery_pending', label: 'Merged · awaiting deployment', tone: 'neutral', lock: false, lockLabel: undefined, advisory: 0,
             title: 'This change has merged, but production is still serving an earlier revision.' };
         }
         if (p.deployment_state === 'failed') {
-          return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, advisory: 0,
+          return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, lockLabel: undefined, advisory: 0,
             title: 'The production rebuild failed after this change merged.' };
         }
         // `unknown` falls through to the plain merged pill below: without
@@ -19196,11 +19215,11 @@ const AppView = {
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
-      return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, lockLabel: undefined, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
-      return { ...base, tier: 1, key: 'merging', label: 'Merging…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+      return { ...base, tier: 1, key: 'merging', label: 'Merging…', tone: 'progress', spinner: true, lock: false, lockLabel: undefined, advisory: 0,
         title: 'This change is being merged into the app and production is rebuilding.' };
     }
     // opts.kind ∈ 'proposal' (default) | 'gov'. A governance proposal has no

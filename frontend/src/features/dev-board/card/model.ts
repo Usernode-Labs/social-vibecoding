@@ -74,6 +74,8 @@ export interface StatusPillState {
   lock: boolean;
   /** Why the lock is there, in the reason's own words (AppView._lockTitle). */
   lockTitle?: string;
+  /** The lock in words, beside the glyph — the member floor's short label (AppView._memberFloorLabel). */
+  lockLabel?: string;
   dot?: boolean;
   spinner?: boolean;
   countdown?: number;

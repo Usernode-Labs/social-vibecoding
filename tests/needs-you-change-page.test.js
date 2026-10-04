@@ -228,6 +228,28 @@ test('the steps sheet is the strip expanded: its headline and count, one short s
   assert.match(html, /<li class="dev-step dev-step-pending" data-note="github" data-req-gate="github" data-req-state="pending"><span class="dev-step-mark dev-step-mark-pending" aria-hidden="true">·<\/span><span class="dev-step-main"><span class="dev-step-label">Merge<\/span><\/span><\/li>/);
 });
 
+test('the Votes step says the member floor in words, and a plain votes row keeps no small line', () => {
+  const av = context();
+  // No merge gates recorded, so the sheet draws the ledger rows — the Votes
+  // one included, its roster still loading the way the head paints it.
+  const ungated = { ...PR };
+  delete ungated.mergeRequirements;
+  const awaiting = {
+    ...ungated, yes_count: 2, no_count: 0,
+    requires_explicit_approval: true, explicit_approval_reason: 'admins',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  };
+  const { html } = render(av, awaiting);
+  assert.match(html,
+    /<span class="dev-step-when">2 of 2 · still needs a Yes from another member<\/span>/,
+    'the count and the owed Yes, in the row’s muted line style, without a hover');
+  const { html: plainHtml } = render(av, ungated);
+  assert.doesNotMatch(plainHtml, /still needs a Yes from another member/,
+    'nothing is owed here, so nothing is said');
+  assert.doesNotMatch(plainHtml, /1 of 2 needed/,
+    'a votes row without the floor keeps drawing no small line at all');
+});
+
 test('the card’s strip and the page say one fact in the same words', () => {
   const av = context();
   const item = { ...PR, integration: { blockReasons: ['integrating'] }, integration_conflict_paths: ['a.js'],

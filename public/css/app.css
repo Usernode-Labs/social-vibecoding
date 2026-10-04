@@ -8552,6 +8552,9 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .gc-vote-count-suffix { opacity: 0.65; font-weight: 500; }
 .gc-vote-count-lock { margin-left: 3px; opacity: 0.8; }
+/* The lock in words ("Needs another member's Yes"), beside the glyph: the
+   pill label's own ink and size, spaced like the glyph it sits with. */
+.gc-vote-count-lock-label { margin-left: 3px; opacity: 0.8; }
 @keyframes ping {
   75%, 100% { transform: scale(2); opacity: 0; }
 }

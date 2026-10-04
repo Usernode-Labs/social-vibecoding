@@ -169,6 +169,14 @@
     return num(p.other_member_yes_count) < 1;
   }
 
+  // The member floor in words, short: what the vote pill says beside the
+  // lock glyph, and the awaiting_member descriptor's label — one constant,
+  // so the two cannot drift.
+  var MEMBER_FLOOR_SHORT = 'Needs another member’s Yes';
+  function memberFloorShort() {
+    return MEMBER_FLOOR_SHORT;
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -450,7 +458,7 @@
     // 8a — the member floor: the votes are in, but none of them is from a
     // member other than the author. "Merging shortly" would be untrue.
     if (status === 'promoted' && reached && awaitingOtherMember(p)) {
-      return descriptor('awaiting_member', 'Needs another member\u2019s Yes', 'amber', false, {
+      return descriptor('awaiting_member', memberFloorShort(), 'amber', false, {
         votes: votes,
         title: explicitApprovalCopy(p.explicit_approval_reason).sentence,
         explicitApproval: true,
@@ -565,6 +573,7 @@
     pillHtml: pillHtml,
     explicitApprovalCopy: explicitApprovalCopy,
     awaitingOtherMember: awaitingOtherMember,
+    memberFloorShort: memberFloorShort,
     checksWillRetry: checksWillRetry,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
