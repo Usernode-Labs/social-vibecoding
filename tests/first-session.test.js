@@ -56,6 +56,58 @@ test('every id the tour points at is one the shell ships', () => {
   assert.match(read(GC_FORM_SRC), /form: 'gc-form',/);
 });
 
+test('the Communities and Messages steps point at the bar\'s own tabs, the same elements on a phone and the rail', () => {
+  const { invitedSteps, makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  assert.equal(invitedSteps({ slug: 'x', name: 'X' })[3].target, '#platform-tab-workshop');
+  const maker = makerSteps({ slug: 'x', name: 'X', conversationId: 5 });
+  assert.equal(maker[3].target, '#platform-tab-workshop');
+  assert.equal(maker[5].target, '#platform-tab-messages');
+  // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
+  // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /\{ key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon \}/);
+  assert.match(bar, /\{ key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon \}/);
+  assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
+  assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
+});
+
+test('a step draws only its own target, measured before its card is painted', () => {
+  const { boxForStep } = loadTsx(`${DIR}/index.tsx`);
+  // 4 of 7 on a 375x812 browser drew its ring round step 3's ✕, at the
+  // header's top-left, over Home's Homeroom logo: the card had moved on and
+  // the box had not. A box counts only for the step it was measured for.
+  const backBtn = { left: 16, top: 36, width: 28, height: 28 };
+  assert.equal(boxForStep({ step: 2, box: backBtn }, 3), null);
+  assert.deepEqual(boxForStep({ step: 3, box: backBtn }, 3), backBtn);
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const box = boxForStep\(measured, index\);/);
+  // Measured in a layout effect when the step changes, so the first paint of
+  // a step is its own target (or no ring at all), never the last one's.
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(\{ step: index, box: targetBox\(step\.target\) \}\);\s+\}, \[index, step\.target\]\);/);
+  // The per-frame follow tags what it measures with the step, and survives a
+  // frame that throws rather than leaving the ring where it was.
+  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(b\)\}`;\s+if \(key !== last\) \{ last = key; setMeasured\(\{ step: at, box: b \}\); \}/);
+  assert.match(src, /\} catch \{ \/\* measured again next frame \*\/ \}\s+raf = requestAnimationFrame\(tick\);/);
+  assert.doesNotMatch(src, /setBox\(/);
+});
+
+test('the ring round a tab on the phone\'s bar stays on the screen', () => {
+  const { holeFor } = loadTsx(`${DIR}/index.tsx`);
+  const phone = { width: 375, height: 812 };
+  // The Communities tab as the built shell lays it out at 375x812.
+  const tab = { left: 211.734375, top: 756, width: 90.015625, height: 56 };
+  const hole = holeFor(tab, phone);
+  assert.equal(hole.left, tab.left - 6);
+  assert.equal(hole.top, 750);
+  // The padded box ran 6px past the bottom edge, and the ring with it; it
+  // stops 3px (the ring's width) short of the edge now.
+  assert.equal(hole.top + hole.height, 809);
+  // A target clear of every edge keeps its full padding.
+  assert.deepEqual(holeFor({ left: 100, top: 100, width: 50, height: 20 }, phone), { left: 94, top: 94, width: 62, height: 32 });
+  // And one in the top-left corner keeps its ring on screen too.
+  assert.deepEqual(holeFor({ left: 0, top: 0, width: 28, height: 28 }, phone), { left: 3, top: 3, width: 31, height: 31 });
+});
+
 test('the island renders nothing until it is opened, so the prerender is unchanged', () => {
   const html = renderComponent(`${DIR}/index.tsx`, 'FirstSession');
   assert.equal(html, '');

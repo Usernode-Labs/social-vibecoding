@@ -33,6 +33,7 @@
  */
 
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
+import { ReplyStarters } from './reply-starters';
 
 const SAFE_BAR = 'platform-safe-bar';
 
@@ -94,6 +95,10 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
               </div>
             ) : (
               <>
+                {/* Reply chips for somebody who has not said anything here
+                    yet, once someone else has (./reply-starters.tsx). A tap
+                    fills the box below; it does not send. */}
+                <ReplyStarters />
                 <ComposerSlots scope="general" />
                 <ComposerForm
                   scope="general"

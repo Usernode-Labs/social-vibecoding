@@ -27,7 +27,7 @@
  * and kept in state only when it moves.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -119,7 +119,44 @@ export function targetBox(selectors: string): Box | null {
 }
 
 const PAD = 6;
+/** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
+const RING = 3;
 const SHADE = 'pointer-events-auto fixed bg-[rgba(9,9,12,0.6)] transition-all duration-200';
+
+/**
+ * A target measured, and the step it was measured FOR.
+ *
+ * The box used to be state of its own, refreshed by the next animation frame,
+ * so the render that showed a new step's card still drew the previous step's
+ * cut-out. On 4 of 7 that was the ring round ✕, at the top-left of the
+ * app's header, drawn over Home's Homeroom logo beside "Tap Communities"
+ * (production, 375x812 browser, 4 Oct 2026), and it stayed there for as long
+ * as no frame came to replace it. A box now counts only for its own step:
+ * until the new target has been measured the screen dims whole, with no
+ * ring anywhere.
+ */
+export type Measured = { step: number; box: Box | null };
+
+export function boxForStep(measured: Measured, step: number): Box | null {
+  return measured.step === step ? measured.box : null;
+}
+
+/**
+ * The cut-out around a target: padded, and kept inside the screen so its
+ * whole ring shows. A tab on the phone's bar sits on the screen's bottom
+ * edge, and its padded ring ran off it.
+ */
+export function holeFor(box: Box, viewport: { width: number; height: number }): Box {
+  const left = Math.max(RING, box.left - PAD);
+  const top = Math.max(RING, box.top - PAD);
+  const right = Math.min(viewport.width - RING, box.left + box.width + PAD);
+  const bottom = Math.min(viewport.height - RING, box.top + box.height + PAD);
+  return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
+function boxKey(b: Box | null): string {
+  return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
+}
 
 /** The coach card's position for a target box, as inline style. */
 export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
@@ -139,23 +176,37 @@ export function cardPlacement(box: Box | null, step: TourStep, viewport: { width
 
 function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void }) {
   const [index, setIndex] = useState(0);
-  const [box, setBox] = useState<Box | null>(null);
+  const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
   stepRef.current = step;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const box = boxForStep(measured, index);
 
-  // Measure the target every frame; keep it only when it moved.
+  // A new step measures its own target before it is painted, so its card
+  // never shows beside the last step's cut-out (see Measured).
+  useLayoutEffect(() => {
+    setMeasured({ step: index, box: targetBox(step.target) });
+  }, [index, step.target]);
+
+  // Then follow the target every frame; keep it only when it moved. A frame
+  // that throws (a selector the document cannot parse) must not end the
+  // loop, or the ring would stay wherever it was last drawn.
   useEffect(() => {
     let raf = 0;
     let last = '';
     const tick = () => {
-      const b = targetBox(stepRef.current.target);
-      const key = b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
-      if (key !== last) { last = key; setBox(b); }
-      if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
-        setViewport({ width: window.innerWidth, height: window.innerHeight });
-      }
+      try {
+        const at = indexRef.current;
+        const b = targetBox(stepRef.current.target);
+        const key = `${at}:${boxKey(b)}`;
+        if (key !== last) { last = key; setMeasured({ step: at, box: b }); }
+        if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
+          setViewport({ width: window.innerWidth, height: window.innerHeight });
+        }
+      } catch { /* measured again next frame */ }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -198,12 +249,7 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
     onEnd();
   }, [steps, info.slug, onEnd]);
 
-  const hole = box && {
-    left: box.left - PAD,
-    top: box.top - PAD,
-    width: box.width + PAD * 2,
-    height: box.height + PAD * 2,
-  };
+  const hole = box && holeFor(box, viewport);
   const card = cardPlacement(box, step, viewport);
 
   return (
