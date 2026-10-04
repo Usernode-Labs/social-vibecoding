@@ -2434,6 +2434,14 @@
     {
       "source": "src/routes/app-platform-api.js",
       "method": "GET",
+      "path": "/api/members",
+      "expression": null,
+      "status": "exempt",
+      "reason": "child-app platform API authenticated by app grants"
+    },
+    {
+      "source": "src/routes/app-platform-api.js",
+      "method": "GET",
       "path": "/api/governance/feed",
       "expression": null,
       "status": "exempt",

@@ -1463,7 +1463,7 @@ const AppView = {
     AppView._stagingDockable = false;
     AppView._setStagingMode('fullscreen');
     staging.clearSrc();
-    staging.setUrlLabel('https://staging-demo-preview.example');
+    staging.setUrlLabel(AppView._stagingTitle(AppView.appData));
     staging.open();
     staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     if (shot === 'preview-rebuilding') {
@@ -21961,6 +21961,7 @@ const AppView = {
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
+        ...(typeof data.appName === 'string' ? { appName: data.appName } : {}),
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
@@ -22127,7 +22128,7 @@ const AppView = {
     const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
     AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
 
-    staging.setUrlLabel(resolved);
+    staging.setUrlLabel(AppView._stagingTitle(app, opts && opts.appName));
     // Who the app is for words the line under the bar: your own project's
     // preview goes live when you vote it in, a group's is tried by members
     // before they vote (#16).
@@ -22388,6 +22389,25 @@ const AppView = {
     if (app && app.audience) return app.audience;
     const open = AppView.appData;
     return (app && open && open.slug === app.slug && open.audience) || null;
+  },
+
+  // The preview bar's title: the app's name and that this is its preview,
+  // "Flat 4B Chores · Preview". It used to be the raw staging address
+  // ("https://flat-4b-chores-e98ecd--s62…"), which tells someone who tapped
+  // Try it on the bot's ready card nothing (first-session run, 4 October
+  // 2026). The name comes from the server's ensure answer (`appName`, which
+  // covers callers that hand over only a slug), else the caller's own app
+  // record, else the open app's when it is the same app. With none known it
+  // just says Preview.
+  _stagingTitle(app, name) {
+    const open = AppView.appData;
+    const candidates = [
+      name,
+      app && app.name,
+      app && open && open.slug === app.slug ? open.name : null,
+    ];
+    const found = candidates.find((v) => typeof v === 'string' && v.trim());
+    return found ? `${found.trim()} · Preview` : 'Preview';
   },
 
   _stagingReadOnly(opts) {

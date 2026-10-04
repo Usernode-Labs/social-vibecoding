@@ -284,6 +284,7 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
     const body = await res.json();
     assert.deepEqual(body, {
       status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
     });
     assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild when already live');
     assert.equal(loaded.edgeProbes.length, 1, 'public edge verified before ready');
@@ -303,6 +304,7 @@ test('#2328 preview-status gives read-only reviewers the same verified readiness
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), {
       status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
     });
     assert.equal(loaded.getRebuildCalls(), 0, 'the GET route never changes preview state');
     assert.equal(loaded.healthProbes.length, 1);

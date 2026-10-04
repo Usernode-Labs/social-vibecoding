@@ -115,6 +115,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
    never a hardcoded host. Handle checks use `usernode.lookupUser()` /
    `searchUsers()` — never a guess from users your app has already seen.
+   "Everyone in the group" is `GET /members` (see "Members"), which works
+   in previews: never the users who opened the app, never fake people.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
@@ -1776,6 +1778,8 @@ Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
 wallet field. Only view-public, non-platform apps with a usable deployment
 appear. Use the returned `url`, never rebuild a hostname from `slug`.
 `icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+Contributors are who built an app, not who is in it: for your own
+project's people use "Members" below.
 
 Cache the response for 30–60 seconds; the route allows 60 requests/minute
 per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
@@ -1931,7 +1935,7 @@ const { found, user, ambiguous } = await resp.json();
 ```
 
 This user-token-only fallback exists **only** on the two `/users/*`
-endpoints. The governance feed still requires the app token, so its
+endpoints and `/members` (see "Members"). The governance feed still requires the app token, so its
 `FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
 `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
@@ -1981,6 +1985,46 @@ try {
   known = (await usernode.lookupUser(handle)).found;
 } catch { /* no shell — accept it */ }
 ```
+
+The directory never returns the platform's own accounts (the
+`usernode-*` service identities that run checks, and synthetic users such
+as the Homeroom bot), so a handle like `usernode-capture-admin` is
+`found: false`.
+
+## Members: who is in this project
+
+"Everyone in the group" (a chore rota, a turn order, a "who's coming"
+list) is the project's member list, and the platform has it. Ask for it;
+don't build it.
+
+```js
+const headers = { 'x-usernode-user-token': userTokenFromThisRequest };
+if (process.env.USERNODE_LLM_PROXY_TOKEN) {
+  headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+}
+const resp = await fetch(`${PLATFORM_API_BASE}/members`, { headers });
+if (resp.status === 403) { /* not a member: show the screen without the roster */ }
+const { members, has_more } = await resp.json();
+// members: [{ id, username }, ...], the creator first, then oldest member first
+```
+
+- **Same auth as `/users/*`, previews included.** A staging preview sends
+  only the user token and gets the project's **real** members, the same
+  people the live app will see. So the preview is where a member checks
+  that the rota has the right people in it.
+- **Only members get an answer.** Anyone else (an admin looking in, the
+  platform's check runner) gets `403 { code: 'not_a_member' }`. Show the
+  screen without the roster, and never fail the page on it.
+- **Never "whoever has opened the app".** Every proposal check opens the
+  preview as a platform account, so a list built from visitors shows that
+  account to the group. Key per-person rows by `members[].id`.
+- **Never a staging fixture of fake people for this.** It hides the real
+  answer in the one place people review it. If a declared check needs fixed
+  names, serve them only behind `IS_STAGING && req.query.demo === '1'` and
+  point that check at the `?demo=1` path; the plain route stays real.
+- Rate limit: shared with `/users/*` (120/min per app and user). Cache the
+  list for a minute rather than asking on every request. `?limit=` defaults
+  to 100, at most 200; `has_more` says there are more.
 
 ## Don't `git push` yourself
 

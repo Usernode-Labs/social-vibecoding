@@ -6223,6 +6223,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     return {
       status: 'ready', url: session.staging_url, verified: true,
       checksRunning: session.check_state === 'pending',
+      // The preview bar's title ("Flat 4B Chores · Preview"). A caller that
+      // opens a preview from a slug alone (the bot's ready card, an agent
+      // session) has no name to show; this answer does.
+      appName: session.app_name || null,
     };
   }
 

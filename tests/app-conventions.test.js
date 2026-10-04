@@ -111,6 +111,28 @@ test('conventions doc carries the user-directory section (#1195)', () => {
   assert.match(doc, /ambiguous.*true/);
 });
 
+// A 4 October 2026 first-session run: a group's chore rota showed "Staging
+// demo Maya" and the check runner's handle in its preview, because an app
+// had no member list to ask for. The section tells the next app to ask for
+// it, and why it must not fake it in staging.
+test('conventions doc tells apps where "everyone in the group" comes from', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Members: who is in this project$/m);
+  const section = doc.slice(doc.indexOf('## Members: who is in this project'));
+  const body = section.slice(0, section.indexOf('\n## ', 1));
+  assert.match(body, /\$\{PLATFORM_API_BASE\}\/members/);
+  assert.match(body, /previews included/);
+  assert.match(body, /\*\*real\*\* members/);
+  assert.match(body, /not_a_member/);
+  assert.match(body, /Never "whoever has opened the app"/);
+  assert.match(body, /Never a staging fixture of fake people for this/);
+  assert.match(body, /req\.query\.demo === '1'/);
+  // The always-read rules point at it, and the user-token-only exception
+  // names it beside /users/*.
+  assert.match(doc, /"Everyone in the group" is `GET \/members`/);
+  assert.match(doc, /endpoints and `\/members` \(see "Members"\)/);
+});
+
 test('the server-side directory section covers staging previews (#1213)', () => {
   const doc = getAppConventions();
   // Retitled from "(production)" — previews can reach the directory now.

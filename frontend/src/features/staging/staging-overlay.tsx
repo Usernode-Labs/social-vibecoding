@@ -176,7 +176,7 @@ export function StagingOverlay(): ReactNode {
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
-          Back to session
+          Back
         </button>
         <span className="flex-1">
         </span>
@@ -210,7 +210,14 @@ export function StagingOverlay(): ReactNode {
         >
           {state.fsBtnText}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-400 font-mono truncate">
+        {/*
+            The preview's title, "Flat 4B Chores · Preview", set by
+            AppView.swapToStaging (_stagingTitle). The id is the old name: it
+            showed the raw staging address, which told a newcomer arriving
+            from the bot's ready card nothing (first-session run, 4 October
+            2026).
+        */}
+        <span id="staging-url-label" className="text-xs text-zinc-400 truncate">
           {state.urlLabel}
         </span>
         {/*
@@ -235,7 +242,7 @@ export function StagingOverlay(): ReactNode {
         </button>
         {/*
             #771: close button for the docked side panel. CSS shows it only
-            in docked mode (where "Back to session" is hidden — closing the
+            in docked mode (where "Back" is hidden: closing the
             panel IS going back to the session, which never left).
         */}
         <button
