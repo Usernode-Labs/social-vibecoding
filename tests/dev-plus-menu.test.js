@@ -11,7 +11,7 @@
 //     for the self-app).
 //   - data-plus="rename" / data-plus="secrets" render for every
 //     non-read-only viewer; data-plus="settings" is gone.
-//   - Read-only viewers still get only "Fork this app".
+//   - Read-only viewers still get only the fork row ("Remix").
 //   - Old #app/<slug>/dev/settings deep links normalize to the card list.
 //
 // Run with: node --test tests/dev-plus-menu.test.js
@@ -255,7 +255,7 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   assert.ok(FRAME_SRC.slice(end).includes('data-plus="fork"'), 'fork item still present');
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
-  assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
+  assert.ok(FRAME_SRC.includes("? 'Remix: make your own copy'"), 'read-only tooltip names the one row it opens');
   // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
   // and broke a version of this that pinned the exact string, and the "+"
   // moving to the end of the Workshop's tab strip swapped the Tailwind

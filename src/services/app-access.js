@@ -349,16 +349,17 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
 const platformJwt = require('./platform-jwt');
 const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('./caddy');
 
-// Short-lived grant the apex /__access/authorize route (routes/apps.js)
-// mints from a real platform session; the edge gate (/__caddy/access in
-// routes/internal.js) exchanges it for the per-host scoped access
-// cookie. 120s is plenty for one redirect hop (TTL lives with the signer).
+// The single-use sign-in code the apex /__access/authorize route mints from
+// a real platform session (services/edge-gate.js handleAuthorize); the
+// app-host gate trades it for the per-host cookie. One minute, one host,
+// one app, one user, one platform session (`sid`), and a `jti` the gate
+// redeems exactly once (TTL lives with the signer).
 //
 // Signed with EDGE_JWT_SECRET — its own authority, never handed to any
-// container — and carries a `pur` claim the gate re-checks, so a grant
+// container — and carries a `pur` claim the gate re-checks, so a code
 // can't be replayed as the longer-lived access cookie.
-function mintAccessGrant({ uid, appId, host }) {
-  return platformJwt.signEdgeGrant({ uid, appId, host });
+function mintAccessGrant({ uid, appId, host, sid }) {
+  return platformJwt.signEdgeGrant({ uid, appId, host, sid });
 }
 
 // Map a request host to its app slug. Handles production hosts

@@ -26,8 +26,20 @@ function stub(id, exports) {
 function makePool(opts) {
   const claims = [];
   const updates = [];
+  const records = [];
   const pool = {
     async query(sql, params) {
+      // The member floor's reads, asked for only on a flagged proposal:
+      // the Yes votes from someone other than the author, and the size of
+      // the community.
+      if (/IS DISTINCT FROM \$2::int/.test(sql)) {
+        return { rows: [{ cnt: String(opts.otherYes ?? opts.yes) }] };
+      }
+      if (/community_members/.test(sql)) return { rows: [{ n: opts.members ?? 1 }] };
+      if (/SET merge_requirements = \$2::jsonb/.test(sql)) {
+        records.push(JSON.parse(params[1]));
+        return { rows: [] };
+      }
       if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(opts.yes) }] };
       if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(opts.no) }] };
       if (/SET status = 'merging'/.test(sql)) {
@@ -50,7 +62,7 @@ function makePool(opts) {
       return { rows: [] };
     },
   };
-  return { pool, claims, updates };
+  return { pool, claims, updates, records };
 }
 
 function loadVotes() {
@@ -244,6 +256,94 @@ test('contested proposal: full majority merges immediately, sub-majority is bloc
     r = await subject.checkAndMerge({ jwtSecret: 's' }, passes.pool, justNow, {});
     assert.equal(r.merged, true, 'contested + full majority merges immediately, no window');
     assert.equal(passes.claims.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+// ── The member floor (a flagged proposal) ──────────────────────────────
+//
+// A proposal that changes a protected dapp.json block (here: stored as a
+// visibility change; GitHub is off in this harness, so the stored flag is
+// what the gate uses) needs a Yes from someone other than its author
+// whenever the community has more than one member.
+
+const flagged = (extra) => ({
+  ...baseSession,
+  requires_explicit_approval: true,
+  explicit_approval_reason: 'visibility',
+  promoted_at: new Date().toISOString(),
+  ...extra,
+});
+
+test('flagged: the author\'s own Yes meets the count but does not merge', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(1); // only the author has been active lately: one Yes is the threshold
+  try {
+    const { pool, claims, records } = makePool({ yes: 1, no: 0, otherYes: 0, members: 3, sessionId: 7, appId: 51 });
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 51 }), {});
+    assert.equal(r.merged, false);
+    assert.equal(r.awaitingOtherMember, true);
+    assert.equal(claims.length, 0, 'never claimed the merge');
+    const rec = records[records.length - 1];
+    assert.ok(rec, 'the gate recorded what it did');
+    assert.deepEqual(rec.evaluated.map((e) => [e.key, e.state]),
+      [['approvals', 'done'], ['explicit', 'waiting']]);
+    assert.equal(rec.evaluated[1].detail.reason, 'visibility');
+    assert.equal(rec.evaluated[1].detail.note,
+      'Changes to who can see this app need a Yes from another member.');
+    assert.equal(rec.context.memberFloor, true);
+  } finally {
+    restore();
+  }
+});
+
+test('flagged: one Yes from another member merges, with no window to wait out', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(20);
+  try {
+    // 6 of 20 meets the eased threshold; unflagged this would sit out the
+    // visibility window (see the first test). Flagged, it merges now.
+    const { pool, claims, records } = makePool({ yes: 6, no: 0, otherYes: 5, members: 20, sessionId: 7, appId: 52 });
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 52 }), {});
+    assert.equal(r.merged, true);
+    assert.equal(claims.length, 1);
+    const first = records[0];
+    assert.deepEqual(first.evaluated.slice(0, 2).map((e) => [e.key, e.state]),
+      [['approvals', 'done'], ['explicit', 'done']]);
+    assert.equal(first.evaluated[1].detail.reason, 'visibility');
+  } finally {
+    restore();
+  }
+});
+
+test('flagged in a one-member community: the author\'s Yes is enough', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(1);
+  try {
+    const { pool, claims, records } = makePool({ yes: 1, no: 0, otherYes: 0, members: 1, sessionId: 7, appId: 53 });
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 53 }), {});
+    assert.equal(r.merged, true);
+    assert.equal(claims.length, 1);
+    assert.equal(records[0].context.memberFloor, false,
+      'the requirement row is left out where there is nobody else to ask');
+  } finally {
+    restore();
+  }
+});
+
+test('flagged below threshold: waits on the votes first, not on the floor', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(20);
+  try {
+    const { pool, claims, records } = makePool({ yes: 2, no: 0, otherYes: 2, members: 20, sessionId: 7, appId: 54 });
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool,
+      flagged({ app_id: 54, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() }), {});
+    assert.equal(r.merged, false);
+    assert.notEqual(r.awaitingOtherMember, true);
+    assert.equal(r.windowEndsAt, null, 'no lazy-consensus clock for a flagged proposal');
+    assert.equal(claims.length, 0);
+    assert.deepEqual(records[0].evaluated.map((e) => [e.key, e.state]), [['approvals', 'waiting']]);
   } finally {
     restore();
   }

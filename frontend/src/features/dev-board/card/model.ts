@@ -72,6 +72,8 @@ export interface StatusPillState {
   majority: number;
   advisory: number;
   lock: boolean;
+  /** Why the lock is there, in the reason's own words (AppView._lockTitle). */
+  lockTitle?: string;
   dot?: boolean;
   spinner?: boolean;
   countdown?: number;

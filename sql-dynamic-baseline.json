@@ -474,16 +474,16 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "e16f1722cca1c2b80269",
+      "fingerprint": "987be5ec7c3b800ddd21",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
     },
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "ec779975cd2483c3da2b",
+      "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
+      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
     },
     {
       "source": "src/routes/status.js",
@@ -803,6 +803,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "a60f601501345e76ab84",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "b2f38492b29a6d836fab",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, COALESCE((i.payload->>'appliedAt')::timest"
@@ -810,16 +817,9 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "c2db43ba3814d6753aa0",
+      "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "e7df7816bfbe9268b515",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1020,9 +1020,9 @@
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "a1d7a7efda566f40685a",
+      "fingerprint": "6eabeae315fa7737550d",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes, COUNT(*) FILTER (WHERE vote = '${noVal}') AS no FROM ${table} WHERE ${keyCol} = $1 AND user_id = ANY("
+      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}' AND user_id IS DISTINCT FROM $2::int${epochClause}`"
     },
     {
       "source": "src/services/governance.js",
@@ -1030,6 +1030,13 @@
       "fingerprint": "ca502810f68a7b7521dd",
       "count": 1,
       "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${epochClause}`"
+    },
+    {
+      "source": "src/services/governance.js",
+      "kind": "structural-template",
+      "fingerprint": "ea66c821a5edfb2110b2",
+      "count": 1,
+      "preview": "`SELECT COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes, COUNT(*) FILTER (WHERE vote = '${noVal}') AS no${wantOther ? `, COUNT(*) FILTER (WHERE vote = '${yesV"
     },
     {
       "source": "src/services/homeroom-bot-dm.js",
@@ -1118,7 +1125,7 @@
     {
       "source": "src/services/merge-queue.js",
       "kind": "structural-template",
-      "fingerprint": "cc1a843c534c5622d9c7",
+      "fingerprint": "54f23c72aa02de8e5813",
       "count": 1,
       "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch, cs.integra"
     },

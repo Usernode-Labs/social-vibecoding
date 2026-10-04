@@ -598,6 +598,12 @@ function load() {
       appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      // The app-host gate (#3657; services/kubernetes.js, scripts/app-gate.js):
+      // `on` routes every app and preview through a platform-owned check,
+      // `off` (the default) routes them straight to their own Services. Turn
+      // it on only once the app namespace's network policy lets the gate's
+      // pods reach app pods and the platform.
+      appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',

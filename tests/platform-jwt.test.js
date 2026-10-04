@@ -96,6 +96,23 @@ test('edge grant and edge cookie both round-trip', () => {
   assert.equal(cookie.exp - cookie.iat, pj.EDGE_COOKIE_TTL_S);
 });
 
+// #3657: the sign-in code is single-use (a fresh jti every mint), one
+// minute, and names the platform session it came from.
+test('the edge grant is a one-minute code with a fresh jti and its session', () => {
+  const sid = 'c'.repeat(64);
+  const a = pj.verifyEdgeGrant(pj.signEdgeGrant({ uid: 7, appId: APP_ID, host: 'app.example.com', sid }));
+  const b = pj.verifyEdgeGrant(pj.signEdgeGrant({ uid: 7, appId: APP_ID, host: 'app.example.com', sid }));
+  assert.equal(pj.EDGE_GRANT_TTL_S, 60);
+  assert.equal(a.exp - a.iat, 60);
+  assert.equal(a.sid, sid);
+  assert.match(a.jti, /^[0-9a-f]{32}$/);
+  assert.notEqual(a.jti, b.jti);
+  const anon = pj.verifyEdgeAnon(pj.signEdgeAnon({ host: 'app.example.com' }));
+  assert.equal(anon.pur, 'edge:anon');
+  assert.equal(anon.host, 'app.example.com');
+  assert.equal(anon.exp - anon.iat, pj.EDGE_ANON_TTL_S);
+});
+
 // ── cross-authority rejection matrix ───────────────────────────────────
 //
 // Every verifier against every token that is not its own.
@@ -106,6 +123,7 @@ function tokens() {
     worker: pj.signWorkerToken({ sessionId: 5 }),
     grant: pj.signEdgeGrant({ uid: 7, appId: APP_ID, host: 'app.example.com' }),
     cookie: pj.signEdgeCookie({ uid: 7, appId: APP_ID, host: 'app.example.com' }),
+    anon: pj.signEdgeAnon({ host: 'app.example.com' }),
   };
 }
 
@@ -114,6 +132,7 @@ const VERIFIERS = {
   worker: (t) => pj.verifyWorkerToken(t),
   grant: (t) => pj.verifyEdgeGrant(t),
   cookie: (t) => pj.verifyEdgeCookie(t),
+  anon: (t) => pj.verifyEdgeAnon(t),
 };
 
 test('every authority rejects every other authority\'s token', () => {
@@ -130,8 +149,8 @@ test('every authority rejects every other authority\'s token', () => {
       checked += 1;
     }
   }
-  // 4 verifiers × 3 foreign tokens.
-  assert.equal(checked, 12);
+  // 5 verifiers × 4 foreign tokens.
+  assert.equal(checked, 20);
 });
 
 test('the two edge purposes share a key but are not interchangeable', () => {

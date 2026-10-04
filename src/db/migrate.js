@@ -157,6 +157,7 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingBootstrapFailure(pool, config);
   await seedStagingChatEditFixtures(pool, config);
+  await seedStagingBotChatRequest(pool, config);
   await seedStagingLlmUsage(pool);
   await seedStagingWeeklyCaps(pool);
   await seedStagingSpendDistribution(pool);
@@ -2579,6 +2580,43 @@ async function seedStagingPushDeliveries(pool, config) {
 //      "edited" marker and its full-timestamp tooltip.
 // Idempotent: keyed on (app_id, content) like seedStagingNotifications, so a
 // rebuild doesn't duplicate. Strictly a staging no-op in production.
+// B9: a message in the platform's own chat that asked Homeroom bot for a
+// change, wearing the status chip everybody in the room sees ("Building").
+// The bot never acts on staging, so without this a preview has no chat
+// request to show. Its author is a staging demo account, never whoever
+// opened the preview; the requester's private card is theirs alone and is
+// not seeded. Idempotent by explicit id; a no-op outside staging.
+async function seedStagingBotChatRequest(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1',
+      [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging bot chat request skipped: self-app row missing', { slug: config.selfAppSlug });
+      return;
+    }
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900083, 'staging-demo-asker', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, created_at)
+       VALUES (900083, $1, 900083,
+               'Staging demo: @Homeroom bot could the plant list show which ones need water today?',
+               'message', '{"botRequest": {"status": "building"}}', NOW() - INTERVAL '2 minutes')
+       ON CONFLICT DO NOTHING`,
+      [appId]
+    );
+    log.info('db', 'Staging bot chat request seeded');
+  } catch (err) {
+    log.warn('db', 'Staging bot chat request seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingChatEditFixtures(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -13597,6 +13635,7 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
+  seedStagingBotChatRequest,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,

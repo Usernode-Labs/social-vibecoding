@@ -610,6 +610,9 @@ app.use(shotsRoutes(config));
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
 // it borrows recordVote/checkAndMerge from.
 app.use(demoModeRoutes(config));
+// "Suggest this back": a remix's owner sends the copy's changes to the app
+// it was copied from, as a proposal there (routes/suggest-back.js).
+app.use(require('./src/routes/suggest-back').suggestBackRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
@@ -1057,6 +1060,12 @@ async function becomeLeader() {
     require('./src/services/kubernetes').ensurePlatformAssetBackend(config)
       .then((name) => log.info('server', 'Hosted-asset backend reconciled', { name }))
       .catch((err) => log.warn('server', 'Hosted-asset backend reconcile deferred', { err: err.message }));
+    // The app-host gate follows APP_GATE on every boot, in both directions:
+    // on brings it up and routes every app through it, off routes them all
+    // straight back (services/kubernetes.js reconcileAppGateIngresses).
+    require('./src/services/kubernetes').reconcileAppGateIngresses(config)
+      .then((r) => log.info('server', 'App-host gate routing reconciled', r))
+      .catch((err) => log.warn('server', 'App-host gate routing reconcile deferred', { err: err.message }));
   }
 
   // Credential rows deliberately outlive their active period for settings
@@ -1719,8 +1728,15 @@ async function auditExistingRepoPrivacy(pool) {
   let privateCount = 0;
   let errorCount = 0;
 
+  // One read per app on every boot, and only a log line comes of it, so it
+  // is the first thing to give way when GitHub's hourly budget is nearly
+  // used up (services/github-budget.js): a rollout right after the budget
+  // ran out must not spend what is left on an audit.
+  const githubBudget = require('./src/services/github-budget');
+  let held = false;
   async function worker() {
     while (queue.length) {
+      if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
       const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
       if (!m) continue;
@@ -1750,6 +1766,7 @@ async function auditExistingRepoPrivacy(pool) {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
   log.info('server', 'Private-repo audit complete', {
     total: rows.length, private: privateCount, errors: errorCount,
+    ...(held ? { heldForGithubBudget: queue.length } : {}),
   });
 }
 
@@ -4271,11 +4288,17 @@ async function resumeDetachedTurnInner({
       ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
       : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
     if (deadline != null) {
+      const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
         botTimedOut = true;
         Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
-      }, Math.max(0, deadline - Date.now()));
-      if (typeof botClock.unref === 'function') botClock.unref();
+      }, botClockMs);
+      // Unref only a clock that has time left to wait: it must not hold a
+      // shutting-down process open for a turn's whole budget. A turn already
+      // past its deadline is stopped on the next tick, and an unref'd 0 ms
+      // timer can be skipped entirely when nothing else keeps the loop alive,
+      // leaving the adoption waiting on a stop that never comes.
+      if (botClockMs > 0 && typeof botClock.unref === 'function') botClock.unref();
     }
   }
 
@@ -5392,8 +5415,12 @@ function startSessionAutoPauseSweeper(config) {
       );
       const MAX_HEAD_SYNCS_PER_SWEEP = 10;
       let synced = 0;
+      const githubBudget = require('./src/services/github-budget');
       for (const session of rows) {
         if (synced >= MAX_HEAD_SYNCS_PER_SWEEP) break;
+        // A getPR per imported proposal: background work, held while
+        // GitHub's hourly budget is nearly used up (services/github-budget.js).
+        if (!githubBudget.budgetAllows('background')) break;
         if (worker.isInFlight(session.id)) continue;
         const last = importedHeadSyncAttempts.get(session.id) || 0;
         if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
@@ -5562,9 +5589,13 @@ function startGovernanceApplyTicker(config) {
       );
       for (const issue of rows) {
         try {
-          // Gate-first for EVERY kind — see the header comment.
+          // Gate-first for EVERY kind — see the header comment. A secret
+          // change is flagged: no timer, and an up vote from another member
+          // (the apply helper re-checks the same gate).
           const gate = await governance.governedGate(pool, issue.app_id, {
             kind: 'issue', id: issue.id, openedAt: issue.created_at,
+            explicitApproval: issue.kind === 'secret_change',
+            authorId: issue.created_by ?? null,
           });
           if (!gate.mergeable) continue;
           // The apply helpers re-check the gate and lock the issue row
@@ -5689,12 +5720,14 @@ function startStalePrSweeper(config) {
           // #646: governance-aware gate — honors the app's approver
           // policy + at-least-N mode (governance/electorate lookups are
           // TTL-cached in the service, so no per-app cache needed here).
-          // #788: plus the no-timer modifier for an admins-changing
-          // proposal, so the sweeper can never auto-merge one on a clock.
+          // #788: plus the no-timer modifier for a flagged proposal, so
+          // the sweeper can never auto-merge one on a clock, and the
+          // member floor: never on its author's Yes alone either.
           const gate = await governance.governedGate(pool, session.app_id, {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
             explicitApproval: !!session.requires_explicit_approval,
+            authorId: session.user_id ?? null,
             // #2038: scoped by approval epoch inside the gate.
           });
           // Merge takes precedence: a row that just became mergeable should
@@ -5765,9 +5798,12 @@ function startStalePrSweeper(config) {
             await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
             continue;
           }
-          // #646: governance-aware gate for issue-vote proposals too.
+          // #646: governance-aware gate for issue-vote proposals too. A
+          // secret change is flagged, exactly as the apply helper gates it.
           const gate = await governance.governedGate(pool, issue.app_id, {
             kind: 'issue', id: issue.id, openedAt: issue.created_at,
+            explicitApproval: issue.kind === 'secret_change',
+            authorId: issue.created_by ?? null,
           });
           if (!gate.mergeable) continue;
           if (issue.kind === 'rename') {
@@ -5962,7 +5998,9 @@ function startAppStorageCapSweeper(config) {
 // Early warning for the server-wide caps (services/platform-limit-alerts.js):
 // every few minutes the leader counts live apps against MAX_APPS and active
 // sessions against MAX_GLOBAL_SESSIONS, and tells the full admins once when
-// either crosses PLATFORM_LIMIT_WARN_PERCENT and once when it is full.
+// either crosses PLATFORM_LIMIT_WARN_PERCENT and once when it is full. It
+// reads GitHub's hourly budget the same way (the bot token's, and the App's),
+// warning at a fifth left and again when it is used up.
 // Leader-only so two colors don't each measure the same crossing (the row
 // lock would stop a double notification anyway, but not the double work).
 // The app-create routes nudge the apps check between sweeps. The first run

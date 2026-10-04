@@ -9,18 +9,26 @@ const github = require('./github');
 const staging = require('./staging');
 const mainWatch = require('./main-watch');
 const mergeLock = require('./merge-finalization-lock');
+const githubBudget = require('./github-budget');
 const { getPool } = require('../db/pool');
 
+// main's tip through the drift poller's conditional read: this sweep runs
+// every four minutes over every app with a merged proposal, and an unchanged
+// main then answers 304, which GitHub does not count against the hourly
+// budget. The two sweeps share one ETag per repo. Required lazily, so
+// loading this module does not load the poller and everything it requires.
 async function remoteMain(owner, repo) {
-  const octokit = await github.getOctokit(owner);
-  const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch: 'main' });
-  return data.commit?.sha || null;
+  const head = await require('./main-drift-poller').fetchRemoteHead(owner, repo);
+  return head.sha || null;
 }
 
 async function recover(config, {
   pool = getPool(config), getMain = remoteMain,
   rebuild = staging.rebuildProduction, check = mainWatch.afterMerge,
   enabled = github.isEnabled,
+  // Background work: while GitHub's hourly budget is nearly used up, the
+  // rest of the sweep waits for a later tick (services/github-budget.js).
+  allowed = () => githubBudget.budgetAllows('background'),
 } = {}) {
   if (!enabled()) return { scanned: 0, delivered: 0, checks: 0, done: Promise.resolve([]) };
   // The newest confirmed merge per app is enough: a newer main contains its
@@ -40,8 +48,10 @@ async function recover(config, {
   );
   let delivered = 0;
   let checks = 0;
+  let held = false;
   const runs = [];
   for (const row of rows) {
+    if (!allowed()) { held = true; break; }
     const release = await mergeLock.acquire(pool, row.session_id, { tryOnly: true });
     if (!release) continue; // The normal finalizer is still running.
     try {
@@ -98,7 +108,7 @@ async function recover(config, {
       await release();
     }
   }
-  return { scanned: rows.length, delivered, checks, done: Promise.all(runs) };
+  return { scanned: rows.length, delivered, checks, held, done: Promise.all(runs) };
 }
 
 function start(config, { intervalMs = 4 * 60 * 1000 } = {}) {

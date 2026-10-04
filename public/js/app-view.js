@@ -2982,8 +2982,9 @@ const AppView = {
       // Nothing more to say under the step: the card is what comes next.
     } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
     else if (fv.ready) {
-      lines.push(mine ? 'Its first version is ready. Try it and vote on it from your chat.'
-        : 'Its first version is up for a vote.');
+      // B10a: waiting for approval, in one word everywhere.
+      lines.push(mine ? 'Its first version is ready. Try it from your chat.'
+        : 'Its first version is waiting for approval.');
     } else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
     }
@@ -4608,6 +4609,7 @@ const AppView = {
     if (body.changeId) {
       body.hero = AppView._topicHeroView(t.kind, item);
       body.steps = AppView._topicStepsView(item, card, body);
+      body.tested = AppView._testedLine(item);
     }
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
@@ -4629,7 +4631,7 @@ const AppView = {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const heading = ref.state === 'merged'
       ? (issue.state === 'closed' ? 'Closed by' : 'Addressed by')
-      : ref.state === 'review' ? 'In review' : 'Work underway';
+      : ref.state === 'review' ? 'Waiting for approval' : 'Work underway';
     const n = parseInt(ref.prNumber, 10) || 0;
     return {
       heading,
@@ -4680,7 +4682,7 @@ const AppView = {
     // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
-      'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
+      'Continue building', 'Open session', 'Ask for approval', 'View PR on GitHub',
       'Retry preview', 'Before/after screenshots', 'Before & after'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
@@ -4736,29 +4738,27 @@ const AppView = {
           }] },
         });
       }
-      // The rows the band now carries leave the menu — with one guard. The
-      // ⋯ is where the band's pills fold on a narrow screen, and a trigger
-      // over no rows is a dead button, so it never opens empty: when nothing
-      // of the menu's own would be left (no GitHub link, no admin or owner
-      // row), Share stays a ⋯ row rather than becoming the band's last pill.
+      // The rows the band now carries leave the menu. The ⋯ is where the
+      // band's pills fold on a narrow screen, and a trigger over no rows is a
+      // dead button; Details is always one of its rows on a change page
+      // (below), so it never opens empty.
       const shareRow = menu.find((a) => a.icon === 'share') || null;
       for (let i = menu.length - 1; i >= 0; i -= 1) if (['explore', 'kudos'].includes(menu[i].icon)) menu.splice(i, 1);
-      const ownRows = menu.some((a) => a !== shareRow) || !!gh;
-      if (shareRow && ownRows) menu.splice(menu.indexOf(shareRow), 1);
-      const band = shareRow && !ownRows ? onBand.filter((a) => a.key !== 'share') : onBand;
+      if (shareRow) menu.splice(menu.indexOf(shareRow), 1);
       card.actions = [
         ...(card.actions || []).filter((a) => a.explore == null && a.kudos == null),
-        ...band,
+        ...onBand,
       ];
     }
-    // The technical half — the pull request's description, or the spec a
-    // change under way is built from — is a ⋯ row that opens a sheet over
-    // the page (topic-head.tsx DetailsSheet). A voter reads the summary on
-    // the page; whoever reviews the code opens this.
-    if (body.changeId && body.proposalBody) {
+    // B10b: the technical half is one tap down. The pull request and its
+    // GitHub link, the steps with their checks, and the description (or the
+    // spec a change under way is built from) are a sheet the ⋯ row opens over
+    // the page (topic-head.tsx DetailsSheet). A voter reads the summary and
+    // the Tested line on the page; whoever reviews the code opens this.
+    if (body.changeId) {
       menu.unshift({
-        label: 'Technical details', icon: 'details',
-        title: 'What changed and why, as the pull request describes it',
+        label: 'Details', icon: 'details',
+        title: 'The pull request, its steps and checks, and its description',
         act: () => AppView.openTechnicalDetails(item.id),
       });
     }
@@ -4768,7 +4768,7 @@ const AppView = {
         act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
       });
     }
-    if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
+    if (gh && !body.changeId && !menu.some((a) => a.label === 'Open on GitHub')) {
       menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
     card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
@@ -4805,7 +4805,8 @@ const AppView = {
     const n = parseInt(item.pr_number, 10) || 0;
     const status = underway
       ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
-      : ({ promoted: 'In review', merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
+      : item.status === 'promoted' ? AppView._waitingWords(item)
+        : ({ merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
@@ -4818,7 +4819,9 @@ const AppView = {
     if (agent) bits.push(`built with ${agent}`);
     if (item.source === 'maintenance') bits.push('platform maintenance');
     return {
-      kind: kind === 'session' ? 'Change' : 'Proposal',
+      // B10b: the eyebrow is "Change · Waiting for approval"; the pull
+      // request it names moved into Details (`ref`, drawn there).
+      kind: 'Change',
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,
       age: age ? { s: age.s, title: age.title } : null,
@@ -5228,15 +5231,15 @@ const AppView = {
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
     body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The spec this change is built from is under Technical details.</p>'
+      ? '<p>No short summary has been added yet. The spec this change is built from is under Details.</p>'
       : body.proposalBody
-        ? '<p>No short summary has been added yet. The current description is under Technical details.</p>'
+        ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.' : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? 'In review' : item.status) }];
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -5370,8 +5373,23 @@ const AppView = {
 
   // The ⋯ row's call: the change page's DetailsSheet (topic-head.tsx)
   // listens for its own change id.
-  openTechnicalDetails(id) {
-    window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
+  // B10b: Details opens at the top, or at one part (`'checks'`, from the
+  // Tested line).
+  openTechnicalDetails(id, part = null) {
+    window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
+  },
+
+  // B10b: the one Tested line a change page shows, in place of the steps
+  // list and its checks: what testing found, in words, from the latest run.
+  // A tap opens Details at the Checks part. Nothing before the first run.
+  _testedLine(item) {
+    const state = item && item.check_state;
+    if (!state) return null;
+    if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
+    if (state === 'pending') return { state: 'running', text: 'Testing it…' };
+    if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
+    if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
+    return { state: 'broken', text: 'Testing couldn’t finish' };
   },
 
   _canEditDescription(item) {
@@ -5553,8 +5571,8 @@ const AppView = {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
         pills.push({
-          key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
-          title: 'Put this imported pull request up for vote',
+          key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
+          title: 'Ask the group to approve this imported change',
           act: { fn: 'promoteImportedSession', args: [item.id] }, passNode: true,
         });
       }
@@ -5593,7 +5611,7 @@ const AppView = {
       pills.push(hasCloseProposal
         ? {
           key: 'close', cls: 'gc-vote-btn', label: 'Close proposed', disabled: true,
-          title: 'A close proposal for this issue is up for vote',
+          title: 'Closing this request is waiting for approval',
         }
         : {
           key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
@@ -9607,7 +9625,7 @@ const AppView = {
 
     // ── Themes ──
     const laneOrder = [
-      { key: 'review', title: 'In review' },
+      { key: 'review', title: 'Waiting for approval' },
       { key: 'underway', title: 'Underway' },
       { key: 'open', title: 'Open' },
       { key: 'shipped', title: 'Shipped this week' },
@@ -11422,7 +11440,7 @@ const AppView = {
         hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
       },
       {
-        key: 'inreview', title: 'In review', count: kInReview.length,
+        key: 'inreview', title: 'Waiting for approval', count: kInReview.length,
         reviewSort,
         rows: cardRows(
           kInReview,
@@ -11807,7 +11825,7 @@ const AppView = {
     const preview = AppView._cardPreviewSpec(s, { kind: 'own-session', sessionId: s.id });
     const author = s.imported_pr_author || 'unknown author';
     const subtitle = imported
-      ? `Imported pull request by ${author} · not up for vote yet`
+      ? `Imported by ${author} · not waiting for approval yet`
       : (shared
         ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
         : 'Only you can see this here. Code is on public GitHub.');
@@ -11825,8 +11843,8 @@ const AppView = {
     const actions = [];
     if (imported && !AppView.readOnly) {
       actions.push({
-        key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
-        title: 'Put this imported pull request up for vote',
+        key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
+        title: 'Ask the group to approve this imported change',
         act: { fn: 'promoteImportedSession', args: [s.id] }, passNode: true,
       });
     } else if (!imported && !AppView.readOnly) {
@@ -12986,6 +13004,50 @@ const AppView = {
   // Returns null when there is nothing to say: a merged or withdrawn row, or a
   // proposal the gate has never run against. An empty checklist would be a
   // claim about a merge that nothing has evaluated.
+  // ── Explicit approval: the words for why (#788, the member floor) ───
+  //
+  // services/explicit-approval.js on the server, MergeStatus here: a
+  // flagged proposal changes who runs the app, how changes are approved,
+  // who can see it, its platform settings or its keys, and needs a Yes from
+  // a member other than its author whenever the community has more than one.
+  _explicitCopy(reason) {
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    if (MS && typeof MS.explicitApprovalCopy === 'function') return MS.explicitApprovalCopy(reason);
+    return {
+      phrase: null,
+      sentence: 'This change needs a Yes from another member.',
+      line: 'It changes a protected setting',
+    };
+  },
+
+  // Still waiting on the member floor: more than one member, and nobody but
+  // the author has said Yes.
+  _awaitingOtherMember(pr) {
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    if (MS && typeof MS.awaitingOtherMember === 'function') return MS.awaitingOtherMember(pr);
+    return !!(pr && pr.requires_explicit_approval && pr.needs_other_member_yes
+      && !((parseInt(pr.other_member_yes_count, 10) || 0) >= 1));
+  },
+
+  // The lock's tooltip (the status pill's glyph and the vote pill's chip).
+  _lockTitle(pr) {
+    const copy = AppView._explicitCopy(pr && pr.explicit_approval_reason);
+    const lead = pr && pr.needs_other_member_yes
+      ? copy.sentence
+      : `It changes ${copy.phrase || 'a protected setting'}.`;
+    return `${lead} It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold, and it can still be voted down.`;
+  },
+
+  // The Admin merge control's tooltip. Only a platform admin sees it on a
+  // flagged row (the server refuses an app admin there).
+  _adminMergeTitle(pr) {
+    if (!pr || !pr.requires_explicit_approval) {
+      return 'Admin: merge this PR right now, bypassing the vote majority';
+    }
+    const phrase = AppView._explicitCopy(pr.explicit_approval_reason).phrase;
+    return `Admin: merge this change to ${phrase || 'a protected setting'} right now, without the vote or another member’s Yes`;
+  },
+
   requirementsSpec(pr) {
     const p = pr || {};
     if (p.status === 'merged' || p.status === 'closed') return null;
@@ -13071,11 +13133,12 @@ const AppView = {
       // The status pill carries the count; the change page's step names the
       // voters (_voteNamesLine).
       case 'approvals': return null;
+      // The member floor: the row's label says what is needed ("A Yes from
+      // another member"), the line says why, from the reason the gate
+      // recorded (or the row's own, for a recording from before it did).
       case 'explicit': {
         if (g.state === 'done' || !reached) return null;
-        const need = parseInt(p.votes_required, 10);
-        return Number.isFinite(need) && need > 0
-          ? `Admin change · needs ${plural(need, 'yes vote', 'yes votes')}` : 'Admin change · needs yes votes';
+        return AppView._explicitCopy(detail.reason || p.explicit_approval_reason).line;
       }
       case 'admin_yes': return g.state === 'done' || !reached ? null : 'Needs one admin to vote yes';
       case 'integration': return AppView._integrationLine(g, p, o.viewer);
@@ -13267,7 +13330,7 @@ const AppView = {
     const roles = {
       author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
       admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
-      group: { them: 'Waiting on the group', you: v.approveSolo ? 'Waiting for your approval' : 'Waiting on your vote', is: !v.hasVoted },
+      group: { them: 'Waiting on the group', you: 'Waiting for your approval', is: !v.hasVoted },
     };
     const role = roles[current.actor];
     if (!role) {
@@ -13318,6 +13381,13 @@ const AppView = {
     if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true) return false;
     const needed = parseInt(pr.votes_required, 10);
     return !Number.isFinite(needed) || needed <= 1;
+  },
+
+  // B10a: what a change waiting on its Yes votes is called, one word
+  // everywhere: "Waiting for approval", and on a project that is just you,
+  // whose one Yes is yours, "Waiting for your approval".
+  _waitingWords(pr) {
+    return AppView._approveSolo(pr) ? 'Waiting for your approval' : 'Waiting for approval';
   },
 
   // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
@@ -13383,16 +13453,14 @@ const AppView = {
 
     if (!ro && !isMerged) {
       // Admin force-merge: platform admins always; the app's own admins
-      // except on a proposal that changes the admins block (self-escalation).
+      // except on a flagged proposal (it waits for another member's Yes).
       const canForceMerge = App.user?.canAdminWrite
         || (!!ctx.isAppAdmin && !pr.requires_explicit_approval);
       if (canForceMerge && pr.status === 'promoted') {
         items.push({
           label: 'Admin merge',
           icon: 'merge',
-          title: pr.requires_explicit_approval
-            ? 'Admin: merge this admins-changing PR right now, bypassing the vote'
-            : 'Admin: merge this PR right now, bypassing the vote majority',
+          title: AppView._adminMergeTitle(pr),
           danger: true,
           act: () => AppView.castAdminMerge(pr.id),
         });
@@ -13610,10 +13678,18 @@ const AppView = {
         ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
       const eSnap = parseInt(pr.votes_required);
       const eReq = (Number.isFinite(eSnap) && eSnap > 0) ? eSnap : (parseInt(ctx.majority) || 1);
+      // The member floor (needs_other_member_yes): the votes can all be in
+      // and it still waits, until someone other than the author says Yes.
+      const eWaitsOnMember = AppView._awaitingOtherMember(pr);
       const eBody = eYes >= eReq
-        ? `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`
+        ? (eWaitsOnMember
+          ? `It has the Yes votes it needs (${eYes} of ${eReq}), but none of them is from another member yet.`
+          : `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`)
         : `It needs ${eReq} real Yes vote${eReq === 1 ? '' : 's'} and has ${eYes} so far.`;
-      explicitNote = `This proposal edits the app's admins list, so it won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
+      const eLead = pr.needs_other_member_yes
+        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
+        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`;
+      explicitNote = `${eLead} It won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
     }
 
     // "How voting works" explainer affordances — only on live proposals (the
@@ -14019,16 +14095,24 @@ const AppView = {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
     }
 
-    // #788: this proposal changes who can administer the app, so the
-    // time-based merge paths are off. The app's NORMAL rules still
-    // decide the threshold — which is why this is a suffix appended to
-    // the regime-specific wording below rather than a branch that
-    // replaces it. Every countdown branch is skipped because the server
-    // sends no merge_window_ends_at for a flagged row.
+    // #788: this proposal changes a protected setting (who runs the app,
+    // how changes are approved, who can see it, its platform settings or
+    // its keys), so the time-based merge paths are off. The app's NORMAL
+    // rules still decide the threshold — which is why this is a suffix
+    // appended to the regime-specific wording below rather than a branch
+    // that replaces it. Every countdown branch is skipped because the
+    // server sends no merge_window_ends_at for a flagged row.
     const noTimer = !!pr.requires_explicit_approval;
     const noTimerNote = noTimer
-      ? ` This changes who can administer the app, so it won’t merge on a timer. It needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
+      ? ` ${pr.needs_other_member_yes
+        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
+        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`} It won’t merge on a timer: it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
       : '';
+    // The member floor holds a proposal whose votes are in: say so, rather
+    // than "queued to merge shortly".
+    if (noTimer && reached && AppView._awaitingOtherMember(pr) && !blocker) {
+      blocker = 'none of its Yes votes is from another member yet';
+    }
 
     // #646: "at least N approvals" mode — clock-free, so none of the
     // countdown/contested branches below apply. Describe the configured
@@ -15344,7 +15428,10 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if ((ctx.locked && !issue.demo) || issue.contested) {
+    // The member floor (a secret change): the votes can be in while it
+    // still waits for a Yes from someone other than its author, and that
+    // wait is not an apply in flight.
+    if ((ctx.locked && !issue.demo) || issue.contested || AppView._awaitingOtherMember(issue)) {
       delete AppView._govDueSince[issue.id];
       return null;
     }
@@ -15919,7 +16006,7 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(data.error || `Could not put this PR up for vote (HTTP ${resp.status}).`);
+          PlatformUI.toast(data.error || `Could not ask for approval on this change (HTTP ${resp.status}).`);
         }
         if (btn) {
           btn.disabled = false;
@@ -15930,7 +16017,7 @@ const AppView = {
       await AppView.openTopic('proposal', sessionId);
     } catch (err) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(`Could not put this PR up for vote: ${err.message}`);
+        PlatformUI.toast(`Could not ask for approval on this change: ${err.message}`);
       }
       if (btn) {
         btn.disabled = false;
@@ -17132,7 +17219,7 @@ const AppView = {
       : closeProposal
         ? {
           t: 'chip', key: 'close', cls: 'gc-checks-running-badge',
-          label: 'Close proposed', title: 'A close proposal for this issue is up for vote',
+          label: 'Close proposed', title: 'Closing this request is waiting for approval',
         }
         : null;
 
@@ -17591,7 +17678,7 @@ const AppView = {
           ? {
             label: 'Close proposed',
             icon: 'close',
-            title: 'A close proposal for this issue is up for vote',
+            title: 'Closing this request is waiting for approval',
             disabled: true,
           }
           : {
@@ -19045,7 +19132,10 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
-    const base = { yes, no, majority: maj, advisory, lock, reasons: [] };
+    const base = {
+      yes, no, majority: maj, advisory, lock, reasons: [],
+      ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+    };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
     // derived answer from /merged. Missing/unknown is deliberately the old
@@ -19115,19 +19205,24 @@ const AppView = {
       return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
         title: 'Enough people have objected that the timer is off. This needs a straight majority of Yes votes, so talk it through.' };
     }
+    // The member floor: a flagged row whose votes are in still waits for a
+    // Yes from someone other than its author, so it is not "reached" green.
+    const waitsOnMember = isOpenRow && AppView._awaitingOtherMember(p);
     // "At least N approvals" mode is clock-free, so it can't count down.
     if (p.approvals_required != null && isOpenRow) {
       const n = parseInt(p.approvals_required, 10) || 1;
       const reached = yes >= n;
       return { ...base, tier: 6, key: 'approvals', majority: n, fill: true, reached,
         label: `${yes} of ${n} approval${n === 1 ? '' : 's'}`,
-        tone: reached ? 'ok' : 'progress', reasons,
-        title: reached
-          ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
-          : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
+        tone: reached && !waitsOnMember ? 'ok' : 'progress', reasons,
+        title: reached && waitsOnMember
+          ? AppView._explicitCopy(p.explicit_approval_reason).sentence
+          : reached
+            ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
+            : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
     }
-    // 4 — counting down. A flagged (admins-changing) row never merges on a
-    // clock, so it must never promise one even from a stale cached row.
+    // 4 — counting down. A flagged row never merges on a clock, so it
+    // must never promise one even from a stale cached row.
     const windowEndsMs = p.merge_window_ends_at ? Date.parse(p.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
     const reachedMaj = yes >= maj;
@@ -19158,11 +19253,13 @@ const AppView = {
         title: 'You haven’t voted on this yet' };
     }
     // 6 — plain tally.
-    const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
+    const outcome = yes >= maj ? (waitsOnMember ? 'progress' : 'ok') : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
-      title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+      title: (yes >= maj && waitsOnMember)
+        ? AppView._explicitCopy(p.explicit_approval_reason).sentence
+        : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+          ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
@@ -19204,13 +19301,14 @@ const AppView = {
       ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers. They don't count toward merging">+${advisoryYes} advisory</span>`
       : '';
 
-    // #788: this proposal changes who can administer the app. The app's
-    // normal threshold is unchanged — only the clocks are off — so the
-    // chip sits BESIDE the ordinary tally rather than replacing it.
-    // Suppressed on settled rows (the vote is history there).
+    // #788: this proposal changes a protected setting. The app's normal
+    // threshold is unchanged — only the clocks are off, and another
+    // member has to say Yes — so the chip sits BESIDE the ordinary tally
+    // rather than replacing it. Suppressed on settled rows (the vote is
+    // history there).
     const explicitChip = (pr.requires_explicit_approval
         && pr.status !== 'merged' && pr.status !== 'merging')
-      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer. It needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
+      ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">Explicit approval</span>`
       : '';
 
     // #646: "at least N" mode — a clock-free approvals-progress pill
@@ -20352,7 +20450,7 @@ const AppView = {
     }
 
     const LABELS = {
-      in_review: 'In review',
+      in_review: 'Waiting for approval',
       working: 'Being worked on',
       auto_solving: 'Auto-solving…',
       // The key stays 'paused' (it orders the states and dates the
@@ -20613,7 +20711,7 @@ const AppView = {
     const canForceMerge = App.user?.canAdminWrite
       || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
     const adminMerge = canForceMerge
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     // The vote carries the approval epoch this card was rendered with, so a
     // proposal that genuinely changed under the voter is still refused —

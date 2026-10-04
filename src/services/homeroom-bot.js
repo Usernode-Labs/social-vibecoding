@@ -53,6 +53,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
 const log = require('./logger');
+const githubBudget = require('./github-budget');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
@@ -2414,6 +2415,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // not twice for a restart, and not for a backlog pass. Never throws.
     if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON) {
       await activity().startCard(pool, { app, issueNumber, requester, bot, jobKey: item.id, settings, deps: { dm: deps.dm } });
+      // B9: the chat message it was asked in, if it was, says it is read.
+      await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
     }
     // B6: a plan still waiting for Build it is not what the bot thinks once
     // it reads the request again. Its buttons go now, so a tap while this
@@ -3185,6 +3188,14 @@ async function drainBuilds(pool, config, deps = {}) {
       out.retryInMs = buildFault.until - now;
       return out;
     }
+    // A build reads GitHub and opens a pull request: background work, held
+    // like the triage pass while the hourly budget is nearly used up.
+    const githubHold = githubBudget.backgroundHold({ now });
+    if (githubHold) {
+      out.paused = 'github';
+      out.retryInMs = githubHold.retryInMs;
+      return out;
+    }
     const free = settings.buildConcurrency - buildsInFlight.size;
     if (free <= 0) return out;
     const bot = await ensureBotUser(pool, config);
@@ -3241,6 +3252,7 @@ async function buildTick(config) {
     const out = await drainBuilds(getPool(config), config);
     busy = !!out.busy;
     if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(delay, out.retryInMs);
+    if (out.paused === 'github' && out.retryInMs > 0) delay = Math.max(delay, out.retryInMs);
   } catch (err) {
     log.error('homeroom-bot', 'Build tick failed', { err: err.message });
   } finally {
@@ -5985,6 +5997,16 @@ async function runOnce(pool, config, deps = {}) {
     });
 
     const now = deps.now ? deps.now() : Date.now();
+    // Every pass reads GitHub (the queue refresh, then the work it starts),
+    // and it is background work. While GitHub's hourly budget is nearly used
+    // up the pass waits for the reset, so people's own work keeps the
+    // reserve (services/github-budget.js). Wakes stay queued for that pass.
+    const githubHold = githubBudget.backgroundHold({ now });
+    if (githubHold) {
+      out.paused = 'github';
+      out.retryInMs = githubHold.retryInMs;
+      return out;
+    }
     // Take the wakes that arrived before this pass. Ones that arrive DURING
     // it are left for the next, which tick() schedules at once.
     const targeted = [...pendingApps];
@@ -6134,6 +6156,8 @@ async function tick(config) {
     if (out.processed > 0 && !out.paused && out.mode !== 'off') delay = BUSY_PASS_DELAY_MS;
     // A platform fault waits out its backoff rather than the 30-second idle.
     if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(IDLE_PASS_DELAY_MS, out.retryInMs);
+    // And a GitHub budget hold waits for the hour to reset.
+    if (out.paused === 'github' && out.retryInMs > 0) delay = Math.max(IDLE_PASS_DELAY_MS, out.retryInMs);
     // A wake that landed while this pass ran is not made to wait out the
     // idle delay; a pass that paused (budget, fault) is not spun by it.
     if (wakeRequested && !out.paused && out.mode !== 'off') delay = 0;

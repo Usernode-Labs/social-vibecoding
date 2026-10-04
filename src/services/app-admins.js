@@ -27,16 +27,21 @@
 //      app admin satisfy the lock would let them neutralise a
 //      platform-imposed lock, which is the opposite of its purpose.
 //
-//   2. WHEN A PROPOSAL IS SELF-ESCALATING. detectAdminsChange diffs
-//      the manifest's admins list between main and a proposal's head.
-//      A proposal that changes it is flagged
-//      chat_sessions.requires_explicit_approval, which (a) switches
-//      off the time-based merge paths for it (see
-//      services/governance.js applyNoTimerMerge) and (b) withdraws the
-//      app-admin force-merge, so adding an admin always costs real
-//      votes.
+//   2. WHEN A PROPOSAL IS RISKY. detectExplicitApprovalChange diffs
+//      the manifest's protected blocks (admins, governance, visibility,
+//      platform_env, secrets; services/explicit-approval.js) between
+//      the merge base and a proposal's head. A proposal that changes
+//      one is flagged chat_sessions.requires_explicit_approval, with the
+//      primary block in explicit_approval_reason, which (a) switches
+//      off the time-based merge paths for it and (b) adds the member
+//      floor: a Yes from someone other than its author whenever the
+//      community has more than one member (both in
+//      services/governance.js), and (c) withdraws the app-admin
+//      force-merge, so none of these changes can land on one person's
+//      say-so.
 
 const log = require('./logger');
+const explicitApproval = require('./explicit-approval');
 
 // Short in-process TTL cache, mirroring the governance cache in
 // services/governance.js: reads happen on every management gate and
@@ -83,9 +88,10 @@ async function canManageApp(pool, app, user) {
 
 // Force-merge eligibility. Full platform admins always; app admins on
 // their own app UNLESS the proposal is flagged as needing explicit
-// approval — an app admin force-merging an admins change would be
-// unilateral self-escalation, which is exactly what the flag exists to
-// prevent. A full platform admin can still force-merge those.
+// approval: an app admin force-merging a change to the admins, the
+// approval rules, who can see the app or its keys would be a unilateral
+// decision about exactly what the flag exists to put to another member.
+// A full platform admin can still force-merge those.
 async function canForceMerge(pool, app, user, { explicitApproval = false } = {}) {
   if (!user) return false;
   if (user.canAdminWrite) return true;
@@ -122,25 +128,79 @@ function normalizeAdmins(list) {
   return [...seen].sort();
 }
 
-function sameAdmins(a, b) {
-  return a.length === b.length && a.every((v, i) => v === b[i]);
-}
-
 // Parse a raw dapp.json string into its normalized admins list. A
 // missing file, unparseable JSON, or an absent/invalid block all
 // resolve to [] — matching the deploy reader's leniency, and making
 // "no block on either side" a non-change.
 function adminsFromManifestSource(raw) {
-  if (raw == null) return [];
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch { return []; }
-  // eslint-disable-next-line global-require
-  const appManifest = require('./app-manifest');
-  return normalizeAdmins(appManifest.readAdmins(parsed) || []);
+  return explicitApprovalBlocks(raw).admins;
 }
 
-// Does this proposal's OWN diff change the declared admins list?
-// Returns { changed, from, to, determinate, mergeBaseSha }.
+// Parse a raw dapp.json source into a manifest object, or {} for a
+// missing file / unparseable JSON / a non-object top level. Every block
+// then resolves to its reader's "absent" value, so garbage on one side
+// and an empty manifest on the other compare equal.
+function parseManifestSource(raw) {
+  if (raw == null) return {};
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return {}; }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+}
+
+const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+
+// The five protected blocks of one dapp.json source, each in a canonical
+// form so only a change that MEANS something reads as one: through the
+// same readers the deploy uses (app-manifest.js), with ordering, casing
+// of admin names and documentation-only fields (descriptions, the
+// platform_env display group) left out. What stays in is what decides
+// power or carries a value: the admin roster, the approval rules, both
+// visibility axes, and per variable its key, required, private and its
+// defaults.
+function explicitApprovalBlocks(raw) {
+  // eslint-disable-next-line global-require
+  const appManifest = require('./app-manifest');
+  const parsed = parseManifestSource(raw);
+  const visibility = appManifest.readVisibility(parsed);
+  const governance = appManifest.readGovernance(parsed);
+  const platformEnv = appManifest.readPlatformEnv(parsed);
+  const secrets = appManifest.readSecrets(parsed, { platformEnv });
+  return {
+    admins: normalizeAdmins(appManifest.readAdmins(parsed) || []),
+    governance: governance
+      ? { approvers: governance.approvers, approvals: governance.approvals } : null,
+    visibility: visibility ? { build: visibility.build, view: visibility.view } : null,
+    platform_env: platformEnv
+      .map((e) => ({ key: e.key, required: e.required, private: e.private, default: e.default }))
+      .sort(byKey),
+    secrets: secrets
+      .map((e) => ({
+        key: e.key, required: e.required, private: e.private,
+        default: e.default, staging_default: e.staging_default,
+      }))
+      .sort(byKey),
+  };
+}
+
+// Which protected blocks differ between two explicitApprovalBlocks()
+// snapshots, in REASONS order (the first is the primary reason).
+function changedReasons(from, to) {
+  return explicitApproval.REASONS.filter(
+    (r) => JSON.stringify(from[r]) !== JSON.stringify(to[r])
+  );
+}
+
+function pickBlocks(blocks, reasons) {
+  const out = {};
+  for (const r of reasons) out[r] = blocks[r];
+  return out;
+}
+
+// Does this proposal's OWN diff change a protected dapp.json block?
+// Returns { changed, reasons, reason, from, to, determinate, mergeBaseSha }:
+// `reasons` every changed block in services/explicit-approval.js REASONS
+// order, `reason` the primary one (what explicit_approval_reason stores),
+// and `from` / `to` only the changed blocks, as compared, for the logs.
 //
 // Three-dot semantics: the head is compared against the MERGE BASE of
 // main and the head (the point the branch was cut from), not main's
@@ -149,7 +209,7 @@ function adminsFromManifestSource(raw) {
 // on main afterwards (the 2648 regression): main gained a name, the
 // old branch had none, and the diff read as "removes the admins list".
 // Against the merge base, only edits the branch itself made count —
-// which still catches every self-escalation (adding a name → differs
+// which still catches every escalation (adding a name → differs
 // from base; removing a base name → differs from base), while main
 // moving underneath is a non-change (a three-way merge keeps main's
 // version; if both sides edited the block the merge conflicts and
@@ -164,57 +224,70 @@ function adminsFromManifestSource(raw) {
 //
 // A GitHub TRANSPORT failure throws instead, so the caller can pick its
 // own fallback explicitly (checkAndMerge keeps the stored column).
-async function detectAdminsChange(app, { headRef } = {}) {
+async function detectExplicitApprovalChange(app, { headRef } = {}) {
   // eslint-disable-next-line global-require
   const github = require('./github');
   // eslint-disable-next-line global-require
   const appManifest = require('./app-manifest');
-  const unknown = { changed: false, from: [], to: [], determinate: false, mergeBaseSha: null };
-  if (!headRef) return unknown;
-  if (!github.isEnabled()) return unknown;
+  const none = (determinate, mergeBaseSha) => ({
+    changed: false, reasons: [], reason: null, from: {}, to: {}, determinate, mergeBaseSha,
+  });
+  if (!headRef) return none(false, null);
+  if (!github.isEnabled()) return none(false, null);
   const [, owner, repo] = (app?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  if (!owner || !repo) return unknown;
+  if (!owner || !repo) return none(false, null);
 
   const { mergeBaseSha, files, filesComplete } =
     await github.compareRefs(owner, repo, `main...${headRef}`);
   // No merge base (unrelated histories, vanished ref) — can't attribute
   // a diff to the branch, so keep the stored flag.
-  if (!mergeBaseSha) return unknown;
+  if (!mergeBaseSha) return none(false, null);
   // Common case, one API call total: the proposal doesn't touch the
   // manifest at all. Only trust the file list when it's exhaustive —
   // the compare endpoint caps it, and a capped list missing dapp.json
   // proves nothing.
   if (filesComplete && !files.includes(appManifest.MANIFEST_FILENAME)) {
-    return { changed: false, from: [], to: [], determinate: true, mergeBaseSha };
+    return none(true, mergeBaseSha);
   }
 
   const [baseRaw, headRaw] = await Promise.all([
     github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, mergeBaseSha),
     github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, headRef),
   ]);
-  const from = adminsFromManifestSource(baseRaw);
-  const to = adminsFromManifestSource(headRaw);
-  return { changed: !sameAdmins(from, to), from, to, determinate: true, mergeBaseSha };
+  const fromBlocks = explicitApprovalBlocks(baseRaw);
+  const toBlocks = explicitApprovalBlocks(headRaw);
+  const reasons = changedReasons(fromBlocks, toBlocks);
+  return {
+    changed: reasons.length > 0,
+    reasons,
+    reason: explicitApproval.primaryReason(reasons),
+    from: pickBlocks(fromBlocks, reasons),
+    to: pickBlocks(toBlocks, reasons),
+    determinate: true,
+    mergeBaseSha,
+  };
 }
 
-// Persist the flag on a session row. Best-effort at every stamping
-// point except checkAndMerge's authoritative re-verify — a failure to
-// record it must never break a promote or a push.
-async function stampExplicitApproval(pool, sessionId, changed) {
+// Persist the flag and its primary reason on a session row. Best-effort
+// at every stamping point except checkAndMerge's authoritative
+// re-verify — a failure to record it must never break a promote or a
+// push. An unknown reason is stored as NULL rather than invented; every
+// surface then says the generic sentence.
+async function stampExplicitApproval(pool, sessionId, changed, reason = null) {
   try {
     await pool.query(
       `UPDATE chat_sessions
           SET requires_explicit_approval = $2,
               explicit_approval_reason = $3
         WHERE id = $1`,
-      [sessionId, !!changed, changed ? 'admins' : null]
+      [sessionId, !!changed, changed && explicitApproval.isReason(reason) ? reason : null]
     );
   } catch (err) {
     log.warn('app-admins', 'Explicit-approval stamp failed', { sessionId, err: err.message });
   }
 }
 
-// The ref detectAdminsChange should diff for a given session row: the
+// The ref detectExplicitApprovalChange should diff for a given session row: the
 // imported-PR head sha for imported proposals, the branch name for
 // native ones. Shared by refreshExplicitApproval, checkAndMerge's live
 // re-verify, and the sweeper's stale-flag re-check.
@@ -232,9 +305,9 @@ function headRefForSession(session) {
 async function refreshExplicitApproval(pool, app, session) {
   const headRef = headRefForSession(session);
   try {
-    const { changed, determinate } = await detectAdminsChange(app, { headRef });
+    const { changed, reason, determinate } = await detectExplicitApprovalChange(app, { headRef });
     if (!determinate) return null;
-    await stampExplicitApproval(pool, session.id, changed);
+    await stampExplicitApproval(pool, session.id, changed, reason);
     return changed;
   } catch (err) {
     log.warn('app-admins', 'Explicit-approval detection failed (leaving flag as-is)', {
@@ -262,11 +335,11 @@ async function sweepExplicitApproval(pool, session) {
   if (stored === false) return false;
   const wasFlagged = stored === true;
   try {
-    const detected = await detectAdminsChange(session, {
+    const detected = await detectExplicitApprovalChange(session, {
       headRef: headRefForSession(session),
     });
     if (!detected.determinate) return stored ?? null;
-    await stampExplicitApproval(pool, session.id, detected.changed);
+    await stampExplicitApproval(pool, session.id, detected.changed, detected.reason);
     if (wasFlagged && !detected.changed) {
       log.info('app-admins', 'Stale explicit-approval flag cleared by sweeper', {
         sessionId: session.id, appId: session.app_id,
@@ -291,7 +364,8 @@ module.exports = {
   getAdminAppIdsForUser,
   normalizeAdmins,
   adminsFromManifestSource,
-  detectAdminsChange,
+  explicitApprovalBlocks,
+  detectExplicitApprovalChange,
   headRefForSession,
   stampExplicitApproval,
   refreshExplicitApproval,

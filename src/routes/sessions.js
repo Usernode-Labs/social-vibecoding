@@ -56,6 +56,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
+const journeyEvents = require('../services/journey-events');
 const modelFallback = require('../services/model-fallback');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -206,7 +207,6 @@ const issueAnnounce = require('../services/issue-announce');
 // Mayor's in-process draft_issue_report tool below.
 const issueDraft = require('../services/issue-draft');
 const {
-  reviewedHeadForSession,
   visualHeadForSession,
   countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
@@ -3705,6 +3705,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
                     AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
+                -- The member floor (services/governance.js applyNoTimerMerge):
+                -- Yes votes from someone other than the author, read only for
+                -- a proposal flagged for explicit approval.
+                CASE WHEN cs.requires_explicit_approval THEN
+                  (SELECT COUNT(*)::int FROM pr_votes pv
+                    WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                      AND pv.user_id IS DISTINCT FROM cs.user_id
+                      AND ${countedVotePredicateSql('pv', 'cs')})
+                END AS other_yes_count,
                 -- #1258: the upstream commit this proposal's branch started
                 -- from. It is not a column on the session — it lives on the
                 -- job that produced the branch — and a coding agent that
@@ -3772,14 +3781,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const governanceSvc = require('../services/governance');
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
+          // #788: a flagged proposal has no merge clock and waits for a Yes
+          // from someone other than its author, so the header pill says
+          // that rather than "merging shortly".
+          const flagged = !!rows[0].requires_explicit_approval;
           const q = electorate.approverIds
             ? await governanceSvc.qualifiedCounts(
               pool, 'pr', rows[0].id, electorate.approverIds,
-              reviewedHeadForSession(rows[0])
+              flagged ? { authorId: rows[0].user_id ?? null } : undefined
             )
-            : { yes: rows[0].yes_count, no: rows[0].no_count };
+            : { yes: rows[0].yes_count, no: rows[0].no_count, otherYes: rows[0].other_yes_count };
           const gate = governanceSvc.computeGate(
-            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
+            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at, null,
+            {
+              explicitApproval: flagged,
+              otherYes: q.otherYes,
+              memberCount: flagged
+                ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+            }
           );
           rows[0].votes_required = gate.required;
           rows[0].merge_window_ends_at = gate.windowEndsAt;
@@ -3787,7 +3806,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].approvals_required = gate.approvalsRequired;
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
+          Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
         } catch { /* pill falls back to the raw tallies */ }
+        // B10a: a project that is just you reads "Waiting for your approval"
+        // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
+        try {
+          const membership = await communities.getMembership(pool, { id: rows[0].app_id }, req.user.id);
+          rows[0].app_audience = membership ? membership.audience : null;
+        } catch { /* the pill keeps the group's words */ }
+        delete rows[0].other_yes_count;
       }
 
       // A GET on this route is NOT by itself evidence that the user opened
@@ -6213,6 +6240,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      // The admin Journey's creation path: a preview answered as ready is
+      // a preview opened, once per viewer per change. Never awaited.
+      if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       return res.json(result.status === 'missing'
         ? { status: 'unavailable', reason: 'missing' }
         : result);
@@ -6260,6 +6290,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // reason to churn the app or its database, but it is a reason not to
       // navigate the reviewer to stale/current/error content.
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
+      // As in preview-status: a ready answer is a preview opened. A rebuild
+      // is not, until the client asks again once it is up.
+      if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.

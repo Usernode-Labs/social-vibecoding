@@ -1,4 +1,5 @@
 const log = require('./logger');
+const budget = require('./github-budget');
 
 let App;
 let app;
@@ -34,6 +35,49 @@ function publicFetchHeaders() {
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) headers['Authorization'] = `Bearer ${pat}`;
   return headers;
+}
+
+// The budget a publicFetchHeaders() read spends: the bot token's when one is
+// configured, else the anonymous per-IP one.
+function publicFetchCredential() {
+  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'anonymous';
+}
+
+// Record one response's rate-limit headers (services/github-budget.js).
+// Bookkeeping only: it never throws into the request it describes, and a
+// stub without headers records nothing.
+function recordHeaders(credential, headers) {
+  try {
+    if (headers) budget.record(credential, headers);
+  } catch (_) { /* bookkeeping only */ }
+}
+
+function recordFetchResponse(credential, resp) {
+  recordHeaders(credential, resp && resp.headers);
+}
+
+// Record every response an Octokit client gets, success or error, against
+// the credential it authenticates as. A client without Octokit's hook API (a
+// test double) is returned untouched.
+function instrument(octokit, credential) {
+  if (!octokit || !octokit.hook || typeof octokit.hook.wrap !== 'function') return octokit;
+  octokit.hook.wrap('request', async (request, options) => {
+    try {
+      const response = await request(options);
+      recordHeaders(credential, response && response.headers);
+      return response;
+    } catch (err) {
+      recordHeaders(credential, err && err.response && err.response.headers);
+      throw err;
+    }
+  });
+  return octokit;
+}
+
+// A REST client on the bot's personal access token, recorded as 'pat'.
+async function patOctokit(pat) {
+  const { Octokit } = await import('@octokit/rest');
+  return instrument(new Octokit({ auth: pat }), 'pat');
 }
 
 // Read-only open-issues fetch (fetchPublicIssues) tunables. The 5-minute
@@ -469,7 +513,7 @@ async function resolveInstallationId(owner) {
 
 async function getInstallationOctokit(owner) {
   const id = await resolveInstallationId(owner);
-  return app.getInstallationOctokit(id);
+  return instrument(await app.getInstallationOctokit(id), `installation:${owner}`);
 }
 
 async function getInstallationToken(owner) {
@@ -509,8 +553,7 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
     throw new Error('GITHUB_BOT_TOKEN env var required for repo creation on user accounts');
   }
 
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
+  const octokit = await patOctokit(pat);
 
   try {
     const { data } = await octokit.rest.repos.createForAuthenticatedUser({
@@ -552,10 +595,7 @@ async function getOctokit(owner) {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
   // Prefer PAT for repos owned by the bot (avoids App installation sync issues)
   const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) {
-    const { Octokit } = await import('@octokit/rest');
-    return new Octokit({ auth: pat });
-  }
+  if (pat) return patOctokit(pat);
   return getInstallationOctokit(owner);
 }
 
@@ -1454,6 +1494,28 @@ async function compareRefs(owner, repo, basehead) {
   };
 }
 
+// "Suggest this back" (services/suggest-back.js): the commits on `head`
+// since `base`, oldest first, each as { sha, subject } (the message's first
+// line), with the total GitHub counted and the changed file paths. The
+// compare endpoint lists at most 250 commits and 300 files, so `totalCommits`
+// is the figure to show and `files` may be short of a very large change.
+// Throws on transport errors, like compareRefs.
+async function compareCommitSubjects(owner, repo, base, head) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead: `${base}...${head}`, per_page: 100,
+  });
+  const commits = (data.commits || []).map((c) => ({
+    sha: c.sha,
+    subject: String((c.commit && c.commit.message) || '').split('\n')[0].trim(),
+  }));
+  return {
+    commits,
+    totalCommits: Number.isInteger(data.total_commits) ? data.total_commits : commits.length,
+    files: (data.files || []).map((f) => f.filename),
+  };
+}
+
 // #297: a size-capped unified diff for LLM context. Concatenates the
 // per-file `patch` hunks from the compare endpoint (`main...<branch>`)
 // into one unified-diff string, truncated to a hard char budget so a huge
@@ -1588,6 +1650,7 @@ async function patchIssueTitle(owner, repo, issueNumber, title) {
       },
       body: JSON.stringify({ title: safeMention(title) }),
     });
+    recordFetchResponse('pat', res);
     if (res.ok) return;
     log.warn('github', 'PAT issue PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -1612,6 +1675,7 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
       },
       body: JSON.stringify({ body: safeBody }),
     });
+    recordFetchResponse('pat', res);
     if (res.ok) return;
     log.warn('github', 'PAT issue body PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -1724,8 +1788,7 @@ async function botPatOctokit() {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(null);
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (!pat) return null;
-  const { Octokit } = await import('@octokit/rest');
-  return new Octokit({ auth: pat });
+  return patOctokit(pat);
 }
 
 // GET /user/repository_invitations returns 30 invitations per page by
@@ -1873,12 +1936,11 @@ async function verifyBotAccess(owner, repo) {
 // on failure. Callers decide whether to treat "couldn't determine" as
 // fatal (bootstrap) or just log (audit).
 async function checkRepoPublic(owner, repo) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) {
+  // botPatOctokit: the bot token's client, or the test seam's.
+  const octokit = await botPatOctokit();
+  if (!octokit) {
     return { ok: false, code: 'no_token', message: 'GitHub bot token not configured.' };
   }
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo });
     return { ok: true, private: data.private === true };
@@ -1886,6 +1948,10 @@ async function checkRepoPublic(owner, repo) {
     if (err.status === 404) {
       return { ok: false, code: 'not_found', message: `Repo ${owner}/${repo} not accessible.` };
     }
+    // GitHub's own "API rate limit exceeded for user ID ..." told a person
+    // nothing about what to do. Say it in plain words, with when it resets.
+    const notice = budget.rateLimitNotice(err);
+    if (notice) return { ok: false, code: 'rate_limited', message: notice };
     return { ok: false, code: 'github_error', message: err.message };
   }
 }
@@ -1901,6 +1967,7 @@ async function fetchPublicRepoInfo(owner, repo) {
     const resp = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
       headers: { 'Accept': 'application/vnd.github+json' },
     });
+    recordFetchResponse('anonymous', resp);
     if (!resp.ok) return null;
     const data = await resp.json();
     return { name: data.name || null, description: data.description || null };
@@ -2093,6 +2160,7 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
       } finally {
         clearTimeout(timer);
       }
+      recordFetchResponse(publicFetchCredential(), resp);
 
       // Rate limited: anonymous quota is per-IP and shared across all apps
       // on the host. Fall back to whatever we last cached (even if expired)
@@ -2227,6 +2295,7 @@ async function fetchPublicIssue(owner, repo, number) {
     } finally {
       clearTimeout(timer);
     }
+    recordFetchResponse(publicFetchCredential(), resp);
 
     if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
       // Same stale-cache fallback fetchPublicIssues uses: an expired list
@@ -2310,6 +2379,7 @@ async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MA
       } finally {
         clearTimeout(timer);
       }
+      recordFetchResponse(publicFetchCredential(), resp);
 
       if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
         log.warn('github', 'Issue-comments fetch rate-limited', { repo: `${owner}/${repo}`, issue: n });
@@ -2485,6 +2555,7 @@ module.exports = {
   markPrReadyForReview,
   listChangedFiles,
   compareRefs,
+  compareCommitSubjects,
   getProposalDiff,
   compareFiles,
   deleteBenchBranch,
@@ -2507,6 +2578,12 @@ module.exports = {
   // services (services/external-agent-tasks) inherit the bot-PAT-when-present
   // rate-limit posture instead of re-implementing it anonymously.
   publicApiHeaders: publicFetchHeaders,
+  // The budget those reads spend ('pat' or 'anonymous'), and the recorder
+  // for a raw fetch response (services/github-budget.js), for the same
+  // services.
+  publicApiCredential: publicFetchCredential,
+  recordFetchResponse,
+  _instrumentForTests: instrument,
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,

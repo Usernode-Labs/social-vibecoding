@@ -646,6 +646,13 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
 -- the IS NULL guard makes the backfill a one-shot.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_deploy_at TIMESTAMPTZ;
 UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
+-- When the project first ran: set once, by the first successful deploy in
+-- services/app-creator.js (services/journey-events.js markFirstRunning),
+-- beside an `app_running` event. last_deploy_at cannot answer it, since
+-- every merge moves it. NULL for a project that never ran, and for every
+-- project from before this column: it is not backfilled, because nothing
+-- recorded the moment (the admin Journey's creation path says so).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS first_running_at TIMESTAMPTZ;
 -- Snapshot of `dapp.json` from the last successful clone (createApp +
 -- rebuildProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the
@@ -1735,8 +1742,9 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
 
 -- #788: "explicit approval" flag — this proposal's diff changes a
--- privilege-granting block in dapp.json (today only the top-level
--- `admins` list), so the TIME-BASED merge paths are switched off for it:
+-- protected block in dapp.json (`admins`, `governance`, `visibility`,
+-- `platform_env` or `secrets`; services/explicit-approval.js), so the
+-- TIME-BASED merge paths are switched off for it:
 -- no minimum visibility window, no lazy-consensus "silence is consent"
 -- auto-merge. The app's NORMAL approval rules are otherwise untouched
 -- (same threshold, same electorate, same at-least-N / invited-approver
@@ -1745,17 +1753,42 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEG
 -- rejection countdown and the stale-PR sweep behave exactly as they do
 -- for any other proposal on that app. Implemented as the pure
 -- applyNoTimerMerge modifier in services/governance.js.
+-- A flagged proposal ALSO needs at least one qualifying Yes from someone
+-- other than its author whenever the app's community has more than one
+-- member (the member floor, services/governance.js applyNoTimerMerge), and
+-- an app admin can no longer force-merge it.
 --   requires_explicit_approval : NULL = not computed yet (the stale-PR
 --     sweeper backfills), FALSE = ordinary proposal, TRUE = flagged.
---   explicit_approval_reason   : which rule flagged it; only 'admins'
---     today, a string so a second source can be added later without a
---     schema change.
+--   explicit_approval_reason   : which block flagged it: 'admins',
+--     'governance', 'visibility', 'platform_env' or 'secrets'. ONE value,
+--     the primary block in that order, when a proposal touches several:
+--     every surface says one sentence, and the joined list would not fit
+--     the column (the full list rides on the merge debug step).
 -- Stamped at promote, at manifest-PR creation, and on every head change
 -- (native new-commit vote reset + imported-PR head sync);
 -- re-verified authoritatively in checkAndMerge just before the gate.
 -- Covered by the table-level staging:private comment.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS requires_explicit_approval BOOLEAN;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS explicit_approval_reason   VARCHAR(32);
+-- The platform's own manifest PRs that were open before visibility,
+-- governance and secret-declaration PRs were flagged at creation. Their
+-- branch prefix says what they change (services/rename-pr.js), so they are
+-- stamped here rather than left to merge on a timer until checkAndMerge's
+-- live re-check reaches them. Idempotent: a stamped row is skipped, so
+-- this touches nothing after its first boot.
+UPDATE chat_sessions
+   SET requires_explicit_approval = TRUE,
+       explicit_approval_reason = CASE
+         WHEN branch_name LIKE 'visibility/%' THEN 'visibility'
+         WHEN branch_name LIKE 'governance/%' THEN 'governance'
+         WHEN pr_title LIKE 'Declare platform variable%' THEN 'platform_env'
+         ELSE 'secrets'
+       END
+ WHERE status IN ('promoted', 'merging')
+   AND requires_explicit_approval IS NOT TRUE
+   AND (branch_name LIKE 'visibility/%'
+     OR branch_name LIKE 'governance/%'
+     OR branch_name LIKE 'secret-declare/%');
 
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
@@ -2891,6 +2924,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
   ON events (user_id, (metadata->>'batchId'))
   WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
+
+-- The admin Journey's creation path (services/journey-events.js): a
+-- preview counts as opened once per viewer per change, however often it is
+-- reopened, and a merged change is recorded live once, however often its
+-- merge's tail runs again after a restart.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_preview_opened_once
+  ON events (session_id, user_id)
+  WHERE event_type = 'preview_opened';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
+  ON events (session_id)
+  WHERE event_type = 'change_live';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -9800,6 +9844,32 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
 
+-- B9: a request asked for in a project's group chat, by mentioning Homeroom
+-- bot or by "Make this a request" on your own message. The message stays
+-- the person's own, and the bot writes nothing into the chat: how it is
+-- going rides on the message's metadata (`botRequest`) for everyone, and
+-- the card under it is drawn for its requester alone, from these rows
+-- (GET /api/apps/:slug/my-bot-requests), never from chat_messages. `kind`:
+-- filed (the bot builds it), group (filed for the group, where the bot does
+-- not build), unsure (asks the person first), question (pointed at the
+-- bot's own chat), dismissed (they said not now).
+CREATE TABLE IF NOT EXISTS chat_bot_requests (
+  chat_message_id INTEGER PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  requester_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL,
+  issue_number    INTEGER,
+  title           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_requester
+  ON chat_bot_requests(requester_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_issue
+  ON chat_bot_requests(app_id, issue_number) WHERE issue_number IS NOT NULL;
+COMMENT ON TABLE chat_bot_requests IS 'staging:private';
+
 -- Weekly building time (homeroom-bot-dm.js weeklySpentCents). A run counts
 -- toward one person's week only when it is `charged`, and against its
 -- `payer`: the person whose action started it (the requester unless
@@ -11410,10 +11480,12 @@ END $$;
 -- The last level each server-wide cap reached (services/platform-limit-
 -- alerts.js): 'ok', 'warn' (at PLATFORM_LIMIT_WARN_PERCENT of the cap) or
 -- 'full'. One row per cap ('apps' for MAX_APPS, 'sessions' for
--- MAX_GLOBAL_SESSIONS), read and written under a row lock in the same
--- transaction that notifies the full admins, so a crossing is announced
--- once however many evaluators race it. used / cap / measured_at are the
--- figures behind the last decision, kept for anybody reading the row.
+-- MAX_GLOBAL_SESSIONS, 'github' and 'github_app' for GitHub's hourly
+-- request budget, which warns at a fifth left), read and written under a
+-- row lock in the same transaction that notifies the full admins, so a
+-- crossing is announced once however many evaluators race it. used / cap /
+-- measured_at are the figures behind the last decision, kept for anybody
+-- reading the row.
 --
 -- Operational state, not a secret, so it is not tagged staging:private.
 CREATE TABLE IF NOT EXISTS platform_limit_alerts (
@@ -11627,3 +11699,44 @@ END $$;
 -- every fork reads as. app-creator scaffolds from it, so a Retry after a
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
+
+-- "Suggest this back" (services/suggest-back.js): a proposal opened on an
+-- original from one of its remixes records the copy it came from. NULL for
+-- every other proposal. The partial unique index is what keeps one copy to
+-- one open suggestion at a time, behind the route's own read, so two presses
+-- racing past that read cannot both land. ON DELETE SET NULL: deleting the
+-- copy leaves the proposal on the original as it is.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS suggested_from_app_id INTEGER
+  REFERENCES apps(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_one_open_suggestion
+  ON chat_sessions (suggested_from_app_id)
+  WHERE suggested_from_app_id IS NOT NULL AND status IN ('active', 'promoted', 'merging');
+
+-- ── App-host sign-in (#3657; services/edge-gate.js) ──────────────────────
+--
+-- Opening an app at its own address while signed in to Homeroom signs the
+-- person in there too: the app host's gate sends the browser to the apex
+-- (/__access/authorize), which reads the real platform session and sends it
+-- back with a one-minute sign-in code bound to the host, the app, the user
+-- and that session. The gate trades the code for a host-only cookie.
+--
+-- The code is SINGLE-USE. Its `jti` is recorded here the first time it is
+-- redeemed (INSERT ... ON CONFLICT DO NOTHING; first writer wins on every
+-- platform process at once), and a second presentation finds the row and is
+-- refused. Rows are only needed until the code would have expired anyway, so
+-- each redemption also clears a bounded batch of expired ones.
+CREATE TABLE IF NOT EXISTS edge_grant_redemptions (
+  jti          CHAR(32) PRIMARY KEY CHECK (jti ~ '^[0-9a-f]{32}$'),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  redeemed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE edge_grant_redemptions IS 'staging:private';
+CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
+  ON edge_grant_redemptions (expires_at);
+
+-- The app-host cookie names its platform session by a SHA-256 of the
+-- session token (never the token itself), and every gated request checks
+-- that session is still live, so signing out of Homeroom signs out of every
+-- app host at once. This index is that lookup.
+CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
+  ON sessions (encode(sha256(token::bytea), 'hex'));

@@ -700,6 +700,7 @@ function buildLaneLine(b: BuildLane | undefined): string {
   let line = `${parts.join(', ')}.`;
   if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
   else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
+  else if (b.lane?.paused === 'github') line += ' Waiting for GitHub\'s hourly limit to reset.';
   return line;
 }
 
@@ -1207,6 +1208,7 @@ export function health(settings: Settings | undefined, loop: LastPass | null | u
   if (!loop) return { tone: 'warn', text: 'No pass since the platform started' };
   if (loop.paused === 'budget') return { tone: 'warn', text: 'Paused: the weekly budget is spent' };
   if (loop.paused === 'infra') return { tone: 'bad', text: `Platform fault${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
+  if (loop.paused === 'github') return { tone: 'warn', text: `Waiting for GitHub's hourly limit${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
   if (loop.refusals?.length) return { tone: 'warn', text: `${loop.refusals.length} app${loop.refusals.length === 1 ? '' : 's'} backing off` };
   return { tone: 'ok', text: `Working, last pass ${when(loop.at)}` };
 }
@@ -1526,6 +1528,8 @@ function HomeroomBotSection() {
                   payload.loop.paused === 'budget' ? '; paused on the weekly cap'
                     : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
                       retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
+                      : payload.loop.paused === 'github' ? `; waiting for GitHub's hourly limit to reset${
+                        retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
                       : payload.loop.paused === 'mode_off' ? '; stopped because the mode was switched off'
                         : payload.loop.busy ? '; another instance held the loop' : ''}.`
                 : 'No pass has run since the platform started.'}

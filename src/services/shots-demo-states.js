@@ -33,6 +33,7 @@ const IDS = Object.freeze({
   alwaysOpenTemplate: 990853,
   onboardingChallenges: Object.freeze([990854, 990855, 990856]),
   alwaysOpenChallenge: 990857,
+  visibilityProposal: 990858,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990859]);
 
@@ -281,6 +282,52 @@ const STATES = [
         shows: [{
           state: 'A proposal up for a vote with a vote of yours on an earlier version, not counted ("Still yes?"), and a threshold that moved since voting opened ("was 1 when voting opened"). Its checks are still running.',
           path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.proposal}`,
+        }],
+      };
+    },
+  },
+  {
+    // A proposal of the member's to make the app private, stamped as the
+    // platform stamps one (a visibility change needs explicit approval), with
+    // only its author's Yes: the lock on its card and what it still needs.
+    // A copy cannot open one for real (that needs GitHub, which a copy does
+    // not have), and "Make it private" is offered only to whoever manages a
+    // public app. Checks have not passed, so no vote in the copy merges it.
+    id: 'shots-demo-member-visibility-proposal-v1',
+    persona: 'member',
+    needs: {
+      chat_sessions: ['id', 'app_id', 'user_id', 'branch_name', 'pr_number', 'pr_title', 'pr_summary_md',
+        'status', 'promoted_at', 'check_state', 'created_at',
+        'requires_explicit_approval', 'explicit_approval_reason'],
+      pr_votes: ['session_id', 'user_id', 'vote', 'created_at'],
+    },
+    free: async (client, ctx) => {
+      const pr = await client.query('SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = $2',
+        [ctx.appId, IDS.visibilityProposal]);
+      return pr.rowCount === 0 && idsFree(client, 'chat_sessions', [IDS.visibilityProposal]);
+    },
+    async install(client, ctx) {
+      await client.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+            promoted_at, check_state, created_at, requires_explicit_approval, explicit_approval_reason)
+         VALUES ($1, $2, $3, 'visibility/shots-fixture-990858', $1,
+                 '[shots fixture] Make this app private (collaborators only)',
+                 'A demo proposal: it changes who can see the app, so it needs a Yes from another member.',
+                 'promoted', NOW() - INTERVAL '30 minutes', 'pending', NOW() - INTERVAL '40 minutes',
+                 TRUE, 'visibility')`,
+        [IDS.visibilityProposal, ctx.appId, ctx.member.id]
+      );
+      // The author's own Yes; the epoch is stamped by the table's trigger.
+      await client.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', NOW() - INTERVAL '25 minutes')`,
+        [IDS.visibilityProposal, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A proposal of yours to make the app private, with only your own Yes: its card shows the lock, and its checklist of what it still needs (expand it).',
+          path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.visibilityProposal}`,
         }],
       };
     },

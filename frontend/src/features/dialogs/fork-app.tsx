@@ -1,8 +1,9 @@
 /**
- * Fork-app dialog (#fork-modal).
+ * Fork-app dialog (#fork-modal), which people see as "Remix".
  *
- * Stands up an independent copy of an app — its own repo, database and web
- * address.
+ * Makes the viewer their own copy of an app: its code and look, in a new
+ * project that starts as Just you, with its own repo, an empty database and
+ * its own web address.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. The render output is still
@@ -46,6 +47,26 @@ import { useDialog } from './use-dialog';
 
 const POLL_INTERVAL_MS = 4000;
 
+/**
+ * What a remix copies, what starts fresh and what stays behind, in that
+ * order: the box under the name field. Each line must stay true of what
+ * src/services/app-forker.js does (an empty database, no stored keys, the
+ * original's visibility, approval rule and admins stripped from dapp.json).
+ * tests/remix-safe-defaults.test.js pins the words as the shell ships them.
+ */
+const FORK_INFO_LINES: ReadonlyArray<{ lead: string | null; text: string }> = [
+  { lead: 'Copied:', text: 'the code, the look and the icon.' },
+  {
+    lead: 'Starts fresh:',
+    text: 'it’s Just you, with an empty database. Invite people or open it up later.',
+  },
+  {
+    lead: 'Not copied:',
+    text: 'anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.',
+  },
+  { lead: null, text: 'Its code is public on GitHub.' },
+];
+
 export interface ForkSource {
   slug: string;
   name?: string;
@@ -71,7 +92,7 @@ export function ForkAppDialog() {
       setError('');
       setForked(null);
       stopWatchingCreation();
-      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (fork)`;
+      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (remix)`;
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -125,7 +146,7 @@ export function ForkAppDialog() {
       const data = await res.json().catch(() => ({}));
       void invalidateAppAllowance();
       if (!res.ok) {
-        setError(data.error || 'Fork failed.');
+        setError(data.error || 'Could not make your copy.');
         return;
       }
       const slug = data.app?.slug;
@@ -135,7 +156,7 @@ export function ForkAppDialog() {
         // Home writes an address right after the close (#3683).
         dialog.closeForNavigation();
         window.PlatformUI?.toast?.(
-          'Your fork is being created. It will appear in your apps when it is ready.',
+          'Your copy is being made. It will appear in your apps when it is ready.',
         );
         (window.App?.navigateHome as (() => void) | undefined)?.();
         return;
@@ -208,15 +229,22 @@ export function ForkAppDialog() {
           />
         ) : (
           <>
-        <h2 className="text-lg font-bold mb-1">
-          Fork this app
+        {/*
+            People see a fork as a "Remix": their own copy, which starts as
+            Just you with an empty database (src/services/app-forker.js says
+            what is copied and what is not). The ids keep "fork": the route
+            is /fork and the shell baseline pins them.
+
+            Every space beside an inline element is written inside a string:
+            JSX drops the line break between text and a tag, which once ran
+            the name into its sentence ("ForkingBook Clubstands up").
+        */}
+        <h2 className="text-lg font-bold mb-1 break-words">
+          {'Remix '}
+          <span id="fork-source-name">{sourceName || 'this app'}</span>
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Forking
-          <span id="fork-source-name" className="font-mono text-zinc-300">
-            {sourceName}
-          </span>
-          stands up your own independent copy: its own repo, database, and web address.
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+          Make your own copy. You get the code and the look, and it starts as Just you.
         </p>
         <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
@@ -225,7 +253,7 @@ export function ForkAppDialog() {
               htmlFor="fork-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              Name for your fork
+              Name for your copy
             </label>
             <Input
               id="fork-input"
@@ -238,39 +266,22 @@ export function ForkAppDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="My fork"
+              placeholder="My copy"
             />
           </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
-            <p>
-              <span className="text-emerald-700 dark:text-emerald-400">
-                ✅ Carries over:
-              </span>
-              the app's code, its icon, and its current
-              <strong>
-                public
-              </strong>
-              data (e.g. leaderboards, public posts).
-            </p>
-            <p>
-              <span className="text-violet-700 dark:text-violet-400">
-                🔁 Resets to you:
-              </span>
-              you become the sole owner, and collaborators, group chat, issues, proposals and votes all start empty.
-            </p>
-            <p>
-              <span className="text-amber-800 dark:text-amber-400">
-                ❌ Not copied:
-              </span>
-              <strong>
-                private
-              </strong>
-              secrets (API keys, signing keys) and
-              <strong>
-                private
-              </strong>
-              data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
-            </p>
+          <div
+            className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3"
+          >
+            {FORK_INFO_LINES.map((line) => (
+              <p key={line.lead || line.text}>
+                {line.lead ? (
+                  <strong className="font-semibold text-zinc-900 dark:text-zinc-100">{line.lead}</strong>
+                ) : null}
+                {/* One text child, its leading space inside the string: two
+                    adjacent text runs do not survive the prerender. */}
+                {line.lead ? ` ${line.text}` : line.text}
+              </p>
+            ))}
           </div>
           <div id="fork-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
@@ -291,7 +302,7 @@ export function ForkAppDialog() {
               disabled={busy || quotaBlocksCreation}
               disabledStyle="block"
             >
-              {busy ? 'Forking…' : 'Fork'}
+              {busy ? 'Remixing…' : 'Remix'}
             </Button>
           </div>
         </form>

@@ -286,8 +286,8 @@ function AppCardTile({ app, style, yours, live }: {
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={`Forked from ${app.forkName}`}
-            aria-label={`Forked from ${app.forkName}`}
+            title={`Remixed from ${app.forkName}`}
+            aria-label={`Remixed from ${app.forkName}`}
           >
             ⑂
           </span>

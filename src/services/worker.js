@@ -2354,6 +2354,18 @@ async function _bootstrapWarmContainer(sessionId, {
   // catches that case before we waste a container slot. Imports that
   // pre-date the public-only enforcement are caught here as well.
   const privacy = await github.checkRepoPublic(repoOwner, repoName);
+  if (!privacy.ok && privacy.code === 'rate_limited') {
+    // GitHub refused the check because Homeroom's hourly budget is used up.
+    // This message reaches people as it is (a dev chat's turn error, a
+    // before/after shots card), so it says that in plain words and when the
+    // budget resets, rather than "Cannot bootstrap worker ... API rate limit
+    // exceeded for user ID ...".
+    const err = new Error(
+      `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
+    );
+    err.code = 'github_rate_limited';
+    throw err;
+  }
   if (!privacy.ok) {
     throw new Error(
       `Cannot bootstrap worker for ${repoOwner}/${repoName}: ${privacy.message}`

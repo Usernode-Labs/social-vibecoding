@@ -154,11 +154,18 @@ function loadIssues({ row = null, gatedApp = { id: 1, slug: 'demo' }, staging = 
     emptySummary: () => ({ priority: null, assignee: null }),
   });
   stub(ids.llm, { FEEDBACK_FALLBACK_TITLE: 'Feedback' });
+  const realGovernance = require('../src/services/governance');
   stub(ids.governance, {
     getGovernance: async () => ({}),
     getElectorate: async () => ({ active: 3, approverIds: null }),
     qualifiedCountsBatch: async () => new Map(),
-    computeGate: () => ({
+    // A secret change is flagged for explicit approval (the member floor):
+    // the route reads the community's size and hangs the floor's fields on
+    // the row, through the real field builder.
+    communityMemberCount: async () => 3,
+    explicitApprovalRowFields: realGovernance.explicitApprovalRowFields,
+    computeGate: (gov, active, yes, no, openedAt, now, opts = {}) => ({
+      memberFloor: opts.explicitApproval ? { applies: true, otherYes: opts.otherYes || 0, met: false } : null,
       required: 2,
       windowEndsAt: '2026-01-12T00:00:00.000Z',
       contested: false,
@@ -302,6 +309,13 @@ test('a secret_change row never leaks its ciphertext', async () => {
   assert.equal(payload.proposal.payload.hasValue, true, 'presence still reported');
   assert.equal(payload.proposal.payload.key, 'STRIPE_SECRET_KEY');
   assert.doesNotMatch(JSON.stringify(payload), /ciphertext-here/, 'nowhere in the body');
+  // A key value is a change the community decides together: flagged, with
+  // the member floor's fields, and nothing internal left on the row.
+  assert.equal(payload.proposal.requires_explicit_approval, true);
+  assert.equal(payload.proposal.explicit_approval_reason, 'secrets');
+  assert.equal(payload.proposal.needs_other_member_yes, true);
+  assert.equal(payload.proposal.other_member_yes_count, 0);
+  assert.equal(payload.proposal.other_up_count, undefined);
 });
 
 test('a row the DB does not have 404s', async () => {

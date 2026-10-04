@@ -168,6 +168,21 @@ test('success: opens a visibility/ branch PR editing dapp.json and promotes a se
   assert.match(pr.body, /`visibility` block in `dapp\.json`/);
 });
 
+test('success stamps requires_explicit_approval = true / reason = visibility on the session', async () => {
+  // #788, extended: who can see the app and how changes are approved are
+  // protected like the admins list. The flag is stamped at creation, so the
+  // proposal never merges on a timer or on its author's own Yes.
+  const stamps = [];
+  const inner = poolQueryHandler;
+  poolQueryHandler = async (sql, params) => {
+    if (/UPDATE chat_sessions/.test(sql) && /requires_explicit_approval/.test(sql)) stamps.push(params);
+    return inner(sql, params);
+  };
+  const res = await propose({ collabVisibility: 'private', viewVisibility: 'public' });
+  assert.equal(res.status, 201);
+  assert.deepEqual(stamps, [[4242, true, 'visibility']]);
+});
+
 test('admins can propose on apps they did not create', async () => {
   // Full admin (canAdminWrite) — the visibility-pr gate is full-admin-or-
   // creator since issue #311; a view-only admin would not pass it.

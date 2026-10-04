@@ -25,6 +25,7 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
+const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
 const shotsExport = require('../services/shots-export');
@@ -898,6 +899,22 @@ function adminRoutes(config) {
       return { change, invite };
     }));
 
+  // The creation path and the pairs follow the page's filters like the
+  // stages and loops: a week or all time, everyone or one admit cohort.
+  router.get('/api/admin/journey/creation', journeyRead('creation path', (req, day) => journeyDemoData.creation(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.creationPath(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/pairs', journeyRead('pairs', (req, day) => journeyDemoData.pairs(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.pairs(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
   router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
     async (req, ctx) => {
       if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
@@ -1131,6 +1148,31 @@ function adminRoutes(config) {
       log.error('admin', 'Read app limit failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
+  });
+
+  // ── GitHub requests ─────────────────────────────────────────
+  //
+  // GitHub's hourly REST budget per credential, as the last response with
+  // each one reported it (services/github-budget.js). Read-only, any admin,
+  // like /limits: Admin, Limits shows it beside the app limit, and the
+  // GitHub platform-limit alert opens there. In memory on this process, so
+  // empty until the first GitHub response after a restart.
+  //
+  // A platform preview boots with no GitHub token (GITHUB_BOT_TOKEN's
+  // staging_default is empty), so it would only ever show the empty state.
+  // There it answers fixed, labelled sample figures instead, the same
+  // request-time demo injection routes/apps.js resolveActionsSecrets uses.
+  // Strictly a no-op outside staging.
+  router.get('/api/admin/github-budget', (_req, res) => {
+    const snap = githubBudget.snapshot();
+    const configured = {
+      botToken: !!process.env.GITHUB_BOT_TOKEN,
+      app: !!(config && config.githubAppId && config.githubPrivateKey),
+    };
+    if (IS_STAGING && !snap.credentials.length) {
+      return res.json({ ...githubBudget.demoSnapshot(), configured, demo: true });
+    }
+    res.json({ ...snap, configured });
   });
 
   router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
