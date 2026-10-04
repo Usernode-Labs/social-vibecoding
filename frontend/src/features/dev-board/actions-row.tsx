@@ -262,7 +262,7 @@ export function DevPlusMenu({
       replaces the node's attributes wholesale, so the two owners do not meet.
   */
   const plusLabel = readOnly
-    ? 'Fork this app'
+    ? 'Remix: make your own copy'
     : 'Ask for a change, import a PR or manage this app';
   return (
     <>
@@ -440,8 +440,8 @@ export function DevPlusMenu({
           <PlusRow
             data-plus="fork"
             icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            title="Fork this app"
-            sub="Stand up your own independent copy"
+            title="Remix"
+            sub="Make your own copy"
             dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
           />
         )}

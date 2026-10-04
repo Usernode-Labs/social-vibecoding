@@ -77,8 +77,9 @@ test('an import says importing, not creating', () => {
   assert.match(text({ phase: 'repository' }, { mode: 'import' }), /Importing .?My App/);
 });
 
-test('a fork says it is forking the named app', () => {
-  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Forking .?My App/);
+test('a fork says it is remixing the named app', () => {
+  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Remixing .?My App/);
+  assert.doesNotMatch(text({ phase: 'repository' }, { mode: 'fork' }), /Fork/, 'people see Remix, never Fork');
 });
 
 test('live shows the app is up and offers to open it', () => {
@@ -190,11 +191,11 @@ test('what happens next follows who builds it and who it is for: a builder by au
       if (builder === 'bot') assert.doesNotMatch(lines, /Open (it|your app)/, 'the bot builds it; nothing to open and try yet');
     }
   }
-  // A fork keeps the three lines it had.
+  // A fork (a remix) always starts as Just you, so the vote is yours.
   assert.deepEqual([...nextSteps({ mode: 'fork' })], [
     'Open your app and try what it shipped with.',
     'Describe a change in chat, and a coding agent writes it.',
-    'Collaborators vote it in, and it goes live.',
+    'You approve it, and it goes live.',
   ]);
   // And the view draws what nextSteps says.
   assert.deepEqual(nextOf(html({ status: 'running' }, { builder: 'bot', audience: 'solo' })),
