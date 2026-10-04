@@ -85,6 +85,12 @@ export interface HomeroomBotReady {
   last: boolean;
   waitingOn: string[];
   more: number;
+  /**
+   * What does not work yet: the declared changes its before & after shots
+   * showed failing, after the bot's own fix round (homeroom-bot-dm.js
+   * noteChangeReady). The card then says so instead of "ready to try".
+   */
+  broken?: string[];
 }
 
 /** B6: one of a plan's choices, or one of two questions: the suggested answer first. */

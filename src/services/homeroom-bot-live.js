@@ -1291,6 +1291,10 @@ function browserLines({ readsImages = false } = {}) {
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     '  the app cannot boot promptly, and then say why in your summary. Stay within the time budget above.',
+    '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
+    '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
+    '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
+    '  reload. Homeroom tries the same thing on its own copy before anybody is asked to approve the change.',
   ];
 }
 

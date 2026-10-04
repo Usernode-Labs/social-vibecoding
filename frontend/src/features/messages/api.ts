@@ -165,11 +165,16 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const questions = normalizePlanQuestions(pick(bot, 'questions'));
   const choices = array(pick(bot, 'choices')).filter((c): c is string => typeof c === 'string').slice(0, 2);
   const readyRow = pick(bot, 'ready');
+  // What does not work yet, when its before & after shots showed a change failing.
+  const broken = readyRow && typeof readyRow === 'object'
+    ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
+    : [];
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
+    ...(broken.length ? { broken } : {}),
   } : null;
   return {
     homeroomBot: {

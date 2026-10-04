@@ -524,6 +524,16 @@ function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
 // Something somebody asked Homeroom bot for is ready to try.
 function buildReady(payload) {
   const app = String(payload.appName || 'Your project').slice(0, 80);
+  // Built, but its before & after shots showed part of it failing.
+  if (payload.notWorking) {
+    return activityFrame({
+      subject: `${app} is built, but not everything works yet`,
+      lead: `Homeroom bot built what you asked for in ${app}, but not everything works yet. Open it to see what.`,
+      url: payload.url || PRODUCTION_ORIGIN,
+      label: 'Open it',
+      unsubscribeUrl: payload.unsubscribeUrl || null,
+    });
+  }
   return activityFrame({
     subject: `${app} is ready to try`,
     lead: `Homeroom bot built what you asked for in ${app}, and it's ready to try.`,

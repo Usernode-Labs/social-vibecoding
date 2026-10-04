@@ -104,7 +104,18 @@ beside the shots. If you cannot reach a change at all, or the shots you saved
 for it turn out not to show it, call skip_change with that change id and what
 you saw: nothing saved for that change is published. Then carry on with the
 others. You do not need to judge whether a change is good. Finish once every
-change is saved or skipped, and do not end with only prose.`;
+change is saved or skipped, and do not end with only prose.
+
+Tell apart a change you could not reach from one that does not work. When you
+carried out the steps on the after address and the app itself broke (an
+action answered a server error: check browser_network_requests for an HTTP
+5xx; the page showed an error; or the claimed effect never appeared because
+the app errored), try the step once more, then call skip_change with outcome
+"failed" and say what you did and what the app answered, for example the
+request and its status. That is the change not working, and people and its
+author need to know. Use the default outcome only when these copies cannot
+reach the state: missing data, access, or an interaction you could not
+perform.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of

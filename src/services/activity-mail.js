@@ -84,7 +84,9 @@ function openUrl({ appSlug, conversationId = null }) {
  * file). Resolves 'sent' (handed to the mailer, which keeps its own record),
  * or why not. Never throws.
  */
-async function emailIfNoPush(pool, { userId, kind, appName = null, appSlug = null, line = null, conversationId = null }) {
+async function emailIfNoPush(pool, {
+  userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
+}) {
   try {
     if (!config || !KINDS.includes(kind) || !userId) return 'off';
     const unsubscribe = unsubscribeUrl(userId);
@@ -103,6 +105,7 @@ async function emailIfNoPush(pool, { userId, kind, appName = null, appSlug = nul
       to: user.email,
       appName: appName || 'Your project',
       line,
+      ...(notWorking ? { notWorking: true } : {}),
       url: openUrl({ appSlug, conversationId }),
       unsubscribeUrl: unsubscribe,
     });
