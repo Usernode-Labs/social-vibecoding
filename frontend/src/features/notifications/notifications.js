@@ -982,6 +982,19 @@ const Notifications = {
       }
       return;
     }
+    // #1374's daily digest of what waits for your approval. With one change
+    // the row names it (services/vote-digest.js puts its app and session on
+    // the row), and it opens that change with the other proposal kinds
+    // below. With several there is no app: it opens the Communities
+    // screen's Needs you, which lists every vote owed across your projects.
+    // It used to open nothing at all, so a tap (or a push) left you on
+    // whatever screen was showing (4 October).
+    if (item.kind === 'vote_digest' && !item.appSlug) {
+      Notifications._dismissSheetForNav();
+      window.UsernodeReact?.workshop?.setTab?.('needs');
+      window.location.hash = '#communities';
+      return;
+    }
     if (item.appSlug) {
       // Every path below navigates (the topic sub-branch returns after
       // routing; an invalid topic ref falls through to the chat/proposals
@@ -1044,9 +1057,8 @@ const Notifications = {
       // card is.
       // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
       // voted on it, and the daily digest of what is waiting on you. The
-      // digest carries no sessionId, so it lands on the board — which is
-      // right, since its subject is "these several proposals" rather than
-      // one of them.
+      // digest reaches here only when it names its one change; a digest of
+      // several has no app and opens Needs you (above).
       // #1688: the re-confirm ask names one proposal and opens it; the
       // weekly card is a chat message, so its row opens the chat it is in.
       // B7: "ready to try" opens the change, its preview one tap away.

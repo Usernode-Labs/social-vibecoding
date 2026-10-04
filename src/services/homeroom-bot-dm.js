@@ -1577,7 +1577,9 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
  * (`userId`): whose Yes counts on its project (governance.js: the approvers
  * a project names, else everybody), how many it needs and has, and whether
  * this person's Yes counts, is in already, and would be the last one
- * needed. Null for no such change.
+ * needed. `gate` is the merge gate as it stands (governance.governedGate,
+ * with the change's own explicit-approval flag, so no clock is promised to
+ * a change that has none). Null for no such change.
  */
 async function approvalState(pool, { sessionId, userId = null }) {
   const id = Number(sessionId);
@@ -1585,6 +1587,7 @@ async function approvalState(pool, { sessionId, userId = null }) {
   const communities = require('./communities');
   const { rows: [session] } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at,
+            COALESCE(cs.requires_explicit_approval, FALSE) AS explicit_approval,
             ${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}
               AS audience
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
@@ -1596,7 +1599,10 @@ async function approvalState(pool, { sessionId, userId = null }) {
   const { countedVotePredicateSql } = require('./pr-vote-revision');
   const gov = await governance.getGovernance(pool, session.app_id);
   const electorate = await governance.getElectorate(pool, session.app_id, gov);
-  const gate = await governance.governedGate(pool, session.app_id, { kind: 'pr', id, openedAt: session.opened_at });
+  const gate = await governance.governedGate(pool, session.app_id, {
+    kind: 'pr', id, openedAt: session.opened_at,
+    explicitApproval: session.explicit_approval === true, authorId: session.user_id ?? null,
+  });
   const { rows: yes } = await pool.query(
     `SELECT pv.user_id FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
       WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}`,
@@ -1609,7 +1615,7 @@ async function approvalState(pool, { sessionId, userId = null }) {
   const needed = Math.max(Number(gate.required ?? gate.approvalsRequired ?? 1) || 1, 1);
   const have = Math.max(Number(gate.qualifiedYes) || 0, 0);
   return {
-    session, gov, electorate, yesIds, needed, have,
+    session, gov, electorate, gate, yesIds, needed, have,
     counts, already,
     last: counts && !already && have + 1 >= needed,
     audience: session.audience,
@@ -1703,9 +1709,48 @@ async function noteApproversReady(pool, { sessionId, epoch, requesterId = null, 
 }
 
 /**
+ * Pure (B7): what happens next to a change once its person has said Yes,
+ * for the line their ready card shows from then on ("You approved it. It
+ * goes live …"). `gate` is the change's merge gate counted with their Yes
+ * (approvalState), `waiting` the usernames of whoever else it still waits on
+ * (needsYesFrom). Either it goes live in a minute or two, because nothing
+ * more is needed (`soon`); or it needs `missing` more Yes votes (0 when it
+ * has them and only its clock runs), `waitingOn` names up to three of the
+ * people asked and `more` counts the rest, and `at` is when it goes live
+ * anyway if nobody objects: the lazy-consensus window's end
+ * (active-users.js lazyWindowMs, from when it went up for approval), or the
+ * visibility window of a change that has its approvals. A change with
+ * neither clock has no `at`. The client words it, in the reader's own time
+ * zone (frontend/src/features/messages/bot-ready.tsx approvedLine).
+ */
+function goesLiveAfterYes(gate, waiting = []) {
+  if (!gate) return null;
+  if (gate.mergeable) return { soon: true };
+  const clock = (gate.thresholdMet || gate.lazyArmed) && gate.windowEndsAt ? String(gate.windowEndsAt) : null;
+  const missing = gate.thresholdMet
+    ? 0
+    : Math.max((Number(gate.required) || 1) - (Number(gate.qualifiedYes) || 0), 1);
+  const names = missing ? waiting.filter((name) => typeof name === 'string' && name) : [];
+  return { soon: false, at: clock, missing, waitingOn: names.slice(0, 3), more: Math.max(names.length - 3, 0) };
+}
+
+/** B7: goesLiveAfterYes for one change, read now, after `userId`'s Yes was recorded. Null when it cannot be read. */
+async function goesLiveFor(pool, sessionId, userId) {
+  const state = await approvalState(pool, { sessionId, userId });
+  if (!state) return null;
+  const waiting = await usernamesOf(pool, await needsYesFrom(pool, state, { except: [Number(userId)] }));
+  return goesLiveAfterYes(state.gate, waiting);
+}
+
+/**
  * B7: `userId` said Yes to one of the bot's changes (routes/votes.js), from
  * its card, the change page or anywhere else: the "ready to try" cards they
- * were sent about it stop offering Approve, on every device. Never throws.
+ * were sent about it stop offering Approve, on every device, and say what
+ * happens next instead (`goesLive`, goesLiveAfterYes). Resolves that, for
+ * the vote's own answer to carry to the card that was tapped; null when no
+ * card of theirs was waiting on this Yes, or when what happens next could
+ * not be read (the card then words it from what it was sent with). Never
+ * throws.
  */
 async function noteApproved(pool, sessionId, userId, deps = {}) {
   try {
@@ -1717,18 +1762,24 @@ async function noteApproved(pool, sessionId, userId, deps = {}) {
         WHERE d.user_id = $1 AND d.kind = 'proposal' AND r.proposal_session_id = $2`,
       [userId, sessionId],
     );
-    let settled = 0;
-    for (const row of rows) {
-      if (!row.meta?.ready || row.meta.status !== 'open') continue;
-      await setQuestionState(pool, Number(row.message_id), { status: 'answered', chosen: 'approve', answer: 'Approve' }, {
+    const open = rows.filter((row) => row.meta?.ready && row.meta.status === 'open');
+    if (!open.length) return null;
+    // Read once, for every card about it. A card still settles without it.
+    const goesLive = await goesLiveFor(pool, sessionId, userId).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not read what happens next to an approved change', { sessionId, err: err.message });
+      return null;
+    });
+    for (const row of open) {
+      await setQuestionState(pool, Number(row.message_id), {
+        status: 'answered', chosen: 'approve', answer: 'Approve', ...(goesLive ? { goesLive } : {}),
+      }, {
         ws: deps.ws || null, conversationId: row.conversation_id, userId,
       });
-      settled += 1;
     }
-    return settled;
+    return goesLive;
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not settle a change\'s ready card after a Yes', { sessionId, userId, err: err.message });
-    return 0;
+    return null;
   }
 }
 
@@ -2910,6 +2961,7 @@ module.exports = {
   readyActions,
   noteApproversReady,
   noteApproved,
+  goesLiveAfterYes,
   // B6: a first version's plan.
   PLAN_KIND,
   planCardText,

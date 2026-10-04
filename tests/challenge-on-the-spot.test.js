@@ -380,7 +380,7 @@ test('every vote door counts the vote before it answers', () => {
   const route = votes.slice(votes.indexOf("router.post('/api/sessions/:id/vote'"));
   const body = route.slice(0, route.indexOf('settleVoteInBackground({ config, pool, session, revision })'));
   assert.match(votes, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
-  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false \}\);/,
+  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false(?:, \.\.\.readyCard)? \}\);/,
     'a proposal vote: credited before the voter is answered');
   assert.ok(body.indexOf('scoreOnVote') > body.indexOf('if (reasonOnly) {'),
     'on a real vote only, behind the same gate as every other side effect');

@@ -66,8 +66,8 @@ test('B7: the card, drawn in every state', () => {
   assert.match(open, /class="messages-bot-primary" data-bot-ready-action="approve"><span>Approve<\/span>/);
   assert.match(open, /data-bot-ready-action="change"><span>Change something<\/span>/);
   assert.ok(!/Waiting for approval/.test(open), 'a project of one waits on nobody else');
-  assert.match(draw({ state: 'approved', actions: [] }), /You approved it\. It’s going live\./);
-  assert.match(draw({ state: 'approved', actions: [], meta: { ...meta, ready: { ...meta.ready, last: false } } }), /You approved it\.</);
+  // Approved: what happens next, never just "You approved it." (4 October).
+  assert.match(draw({ state: 'approved', actions: [] }), />You approved it\. It goes live in a minute or two\.</);
   const stale = draw({ state: 'stale', actions: actions.slice(0, 1) });
   assert.match(stale, /This change was updated\. Try the new version first\./);
   assert.ok(!/Approve</.test(stale), 'a replaced version approves nothing until it is tried');
@@ -80,6 +80,16 @@ test('B7: the card, drawn in every state', () => {
   assert.equal(waitingLine({ ...group.ready, waitingOn: ['ada', 'cy'], more: 2 }, false), 'Waiting for approval from @ada, @cy and 2 more');
   assert.equal(waitingLine({ ...group.ready, last: true }, true), null, 'their Yes is the last one needed');
   assert.equal(readyTitle({ ...group, firstVersion: true }), 'Supper Club is ready to try');
+  // An older card approved before cards said what comes next words it from what it was sent with.
+  assert.match(draw({ state: 'approved', actions: [], meta: group }), />You approved it\. It goes live when @ada approves too\.</);
+  // The vote's own answer says it at once, and the message's update says it everywhere after.
+  const next = { soon: false, at: new Date(2026, 9, 7, 9, 30).toISOString(), missing: 1, waitingOn: ['ada'], more: 0 };
+  const sunday = new Date(2026, 9, 4, 18, 0);
+  const said = 'You approved it. It goes live when @ada approves too, or on Wednesday if nobody objects.';
+  assert.ok(draw({ state: 'approved', actions: [], meta: group, goesLive: next, now: sunday, locale: 'en-US' }).includes(`>${said}<`));
+  assert.ok(draw({ state: 'approved', actions: [], meta: { ...group, goesLive: next }, now: sunday, locale: 'en-US' }).includes(`>${said}<`));
+  assert.match(draw({ state: 'approved', actions: [], meta: { ...group, goesLive: { soon: true, at: null, missing: 0, waitingOn: [], more: 0 } } }),
+    />You approved it\. It goes live in a minute or two\.</, 'the message\'s own word wins over what the card was sent with');
 
   const msg = (m) => ({ id: 1, sender: { id: 9, username: 'homeroom_bot', bot: true }, content: 'x', metadata: { homeroomBot: m } });
   assert.equal(isReadyMessage(msg(meta)), true);
@@ -98,10 +108,85 @@ test('B7: the client knows the new buttons, and Approve is the person\'s own vot
   const dmSrc = read('src/services/homeroom-bot-dm.js');
   assert.ok(!/pr_votes \(|recordVote|\/vote'/.test(dmSrc), 'the bot service writes no vote');
   const votes = read('src/routes/votes.js');
-  assert.match(votes, /if \(vote === 'yes'\) void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteApproved\(pool, session\.id, req\.user\.id\);/);
+  assert.match(votes, /const goesLive = vote === 'yes'\s*\? await require\('\.\.\/services\/homeroom-bot-dm'\)\.noteApproved\(pool, session\.id, req\.user\.id\)\s*: null;/);
+  // Every answer to a recorded Yes carries what happens next, when it settled a card.
+  assert.equal((votes.match(/res\.json\(\{ ok: true, merged: false[^}]*\.\.\.readyCard \}\)/g) || []).length, 3);
   const policy = require('../src/services/cli-api-policy');
   assert.equal(policy.isConnectorApiRequest('POST', '/api/sessions/9/vote'), false, 'the vote route stays off the connector list');
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'POST', '/api/sessions/9/vote'), false, 'and off the agents\'');
+});
+
+// ── What the card says once it is approved ──
+
+test('B7: once approved, the card says what happens next, from the change\'s real gate', () => {
+  const governance = require('../src/services/governance');
+  const DAY = 24 * 60 * 60 * 1000;
+  const opened = Date.parse('2026-10-04T12:00:00Z');
+  const now = opened + 60 * 60 * 1000;
+  const gate = (gov, active, yes) => governance.computeGate(gov, active, yes, 0, new Date(opened).toISOString(), now);
+  const byDefault = { approverPolicy: 'anyone', approvalsRequired: null };
+
+  // Just you: your Yes is all it needs.
+  assert.deepEqual(dm.goesLiveAfterYes(gate(byDefault, 1, 1), []), { soon: true });
+  // You and one other (Flat 4B Chores, 4 October): one Yes of two, so the
+  // lazy-consensus clock runs, three days from when it went up for approval.
+  assert.deepEqual(dm.goesLiveAfterYes(gate(byDefault, 2, 1), ['sam_t1004']), {
+    soon: false, at: new Date(opened + 3 * DAY).toISOString(), missing: 1, waitingOn: ['sam_t1004'], more: 0,
+  });
+  // Both said Yes: it goes live now.
+  assert.deepEqual(dm.goesLiveAfterYes(gate(byDefault, 2, 2), []), { soon: true });
+  // "At least two approvals" runs no clock: it waits for the other Yes.
+  assert.deepEqual(dm.goesLiveAfterYes(gate({ approverPolicy: 'anyone', approvalsRequired: 2 }, 5, 1), ['ada', 'ben', 'cy', 'di']), {
+    soon: false, at: null, missing: 1, waitingOn: ['ada', 'ben', 'cy'], more: 1,
+  });
+  // A change to a protected setting is never let through by silence.
+  const flagged = governance.computeGate(byDefault, 2, 1, 0, new Date(opened).toISOString(), now, { explicitApproval: true });
+  assert.equal(dm.goesLiveAfterYes(flagged, ['sam_t1004']).at, null);
+  assert.equal(dm.goesLiveAfterYes(null, []), null);
+});
+
+test('B7: the approved line, in words, in the reader\'s own week', () => {
+  const { approvedLine, liveDay, goesLiveFromReady } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const sunday = new Date(2026, 9, 4, 18, 0);
+  const on = (y, m, d, h = 9) => new Date(y, m, d, h, 30).toISOString();
+  const line = (next) => approvedLine({ soon: false, at: null, missing: 1, waitingOn: [], more: 0, ...next }, sunday, 'en-US');
+  assert.equal(approvedLine({ soon: true, at: null, missing: 0, waitingOn: [], more: 0 }), 'You approved it. It goes live in a minute or two.');
+  assert.equal(line({ waitingOn: ['sam_t1004'], at: on(2026, 9, 7) }),
+    'You approved it. It goes live when @sam_t1004 approves too, or on Wednesday if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam_t1004'] }), 'You approved it. It goes live when @sam_t1004 approves too.');
+  assert.equal(line({ missing: 2, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when @ada and @cy approve too.');
+  assert.equal(line({ missing: 4, waitingOn: ['ada', 'cy', 'di'], more: 1 }), 'You approved it. It goes live when @ada, @cy, @di and 1 more approve too.');
+  assert.equal(line({ missing: 1, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when one more person approves.',
+    'never names two people when one Yes is enough');
+  assert.equal(line({ missing: 2, waitingOn: [], at: on(2026, 9, 5) }), 'You approved it. It goes live when 2 more people approve, or tomorrow if nobody objects.');
+  assert.equal(line({ missing: 0, at: on(2026, 9, 4, 22) }), 'You approved it. It goes live later today if nobody objects.');
+  assert.equal(liveDay(on(2026, 9, 12), sunday, 'en-US'), 'on October 12', 'past the week, its date');
+  assert.equal(liveDay(on(2026, 9, 1), sunday, 'en-US'), 'on October 1', 'a day already past, read later');
+  assert.equal(liveDay('not a date', sunday, 'en-US'), null);
+  assert.deepEqual(goesLiveFromReady({ group: false, last: true, waitingOn: [], more: 0 }), { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
+  assert.deepEqual(goesLiveFromReady({ group: true, last: false, waitingOn: ['ada'], more: 2 }), { soon: false, at: null, missing: 3, waitingOn: ['ada'], more: 2 });
+  // Plain words: none of the platform's.
+  for (const said of [line({ waitingOn: ['ada'], at: on(2026, 9, 7) }), line({ missing: 0 }), approvedLine({ soon: true })]) {
+    assert.doesNotMatch(said, /propos|merg|vote|\bPR\b|staging|\u2014/i, said);
+  }
+});
+
+test('B7: the client reads what happens next from the vote\'s answer and from the card', () => {
+  const { normalizeGoesLive, normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  assert.deepEqual(normalizeGoesLive({ soon: true }), { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
+  assert.deepEqual(normalizeGoesLive({ soon: false, at: '2026-10-07T12:00:00.000Z', missing: 1, waitingOn: ['sam', 7, ''], more: 0 }),
+    { soon: false, at: '2026-10-07T12:00:00.000Z', missing: 1, waitingOn: ['sam'], more: 0 });
+  assert.equal(normalizeGoesLive({ soon: false, at: 'whenever' }).at, null);
+  assert.equal(normalizeGoesLive(null), null);
+  assert.equal(normalizeGoesLive({ missing: 1 }), null, 'not one of these');
+  const meta = normalizeBotMeta({ homeroomBot: { kind: 'proposal', status: 'answered', chosen: 'approve', goesLive: { soon: true } } });
+  assert.deepEqual(meta.homeroomBot.goesLive, { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
+  assert.equal('goesLive' in normalizeBotMeta({ homeroomBot: { kind: 'proposal' } }).homeroomBot, false);
+  const api = read('frontend/src/features/messages/api.ts');
+  assert.match(api, /if \(response\.ok\) return \{ ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive\(pick\(data, 'goesLive'\)\) \};/);
+  const card = read('frontend/src/features/messages/bot-ready.tsx');
+  assert.match(card, /if \(out\.ok\) \{ setGoesLive\(out\.goesLive \|\| null\); setApproved\(true\);/);
+  assert.match(card, /const next = meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
 });
 
 test('B7: "ready to try" in the bell and on the phone, on by default', async () => {
@@ -228,9 +313,13 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.equal(sent.meta.askedText, 'Remind us on Sundays');
     assert.match(sent.content, /It's ready to try\. Approve it when you're happy with it, and it goes live\.$/);
     assert.deepEqual(await told(id), [], 'nobody else must approve');
-    // A Yes, from the card or anywhere, settles it on every device.
-    assert.equal(await dm.noteApproved(pool, id, maya.id), 1);
-    assert.deepEqual([(await card(maya.id, id)).meta.status, (await card(maya.id, id)).meta.chosen], ['answered', 'approve']);
+    // A Yes, from the card or anywhere, settles it on every device, and
+    // says what happens next: hers was the last Yes it needed.
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [id, maya.id]);
+    assert.deepEqual(await dm.noteApproved(pool, id, maya.id), { soon: true });
+    const settled = (await card(maya.id, id)).meta;
+    assert.deepEqual([settled.status, settled.chosen, settled.goesLive], ['answered', 'approve', { soon: true }]);
+    assert.equal(await dm.noteApproved(pool, id, maya.id), null, 'a second Yes finds no card waiting on it');
   });
 
   await t.test('a private community: the others active on it are told once per version, and the asker sees who it waits on', async () => {
@@ -256,6 +345,17 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
       [ben.id],
     )).rows;
     assert.deepEqual([older[0].meta.status, older[0].meta.updated], ['closed', true], 'the older version\'s card gives way');
+    // Ben approves the version in front of him: it waits on Ada, or goes
+    // live three days after it went up for approval if nobody objects.
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 1)`, [id, ben.id]);
+    const { rows: [{ promoted_at: promotedAt }] } = await pool.query('SELECT promoted_at FROM chat_sessions WHERE id = $1', [id]);
+    const next = await dm.noteApproved(pool, id, ben.id);
+    assert.deepEqual(next, {
+      soon: false, at: new Date(new Date(promotedAt).getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      missing: 1, waitingOn: ['ada'], more: 0,
+    });
+    assert.deepEqual((await card(ben.id, id)).meta.goesLive, next, 'and the card keeps it, on every device');
+    await pool.query('DELETE FROM pr_votes WHERE session_id = $1 AND user_id = $2', [id, ben.id]);
     // Ada has said Yes: she is not asked, and nobody is left to ask.
     await pool.query(
       `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 1)`, [id, ada.id],

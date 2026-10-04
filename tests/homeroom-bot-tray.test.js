@@ -468,6 +468,9 @@ test('the status line says what the bot is working on, else what waits on them, 
 
   assert.deepEqual(status(work({ history: [past({ issueNumber: 9, outcome: 'answer', at: minutesAgo(60 * 16) })] })),
     { kind: 'last', long: 'Last: answered on Ear Trainer #9 · 16h ago', short: 'Last: answered on #9 · 16h ago' });
+  // 4 October: a first version up for approval read "Last: proposed Flat 4B Chore…".
+  assert.deepEqual(status(work({ history: [past({ appName: 'Flat 4B Chores', firstVersion: true, outcome: 'proposed', at: minutesAgo(2) })] })),
+    { kind: 'last', long: 'Last: Flat 4B Chores first version waiting for approval · 2m ago', short: 'Last: Flat 4B Chores waiting for approval · 2m ago' });
 });
 
 test('the status line under the bot\'s name: a dot while it works, both lengths, and words only', () => {
@@ -568,8 +571,9 @@ test('the panel: Now with the step it is at, Needs you, and History folded away'
   });
   assert.match(unfolded, /aria-expanded="true" aria-controls="messages-bot-work-history" data-bot-work-history-toggle="">Hide history/);
   assert.match(unfolded, /<div id="messages-bot-work-history"/);
-  assert.match(unfolded, /data-bot-work-tile="history" data-bot-work-tone="done"/);
-  assert.match(unfolded, /Built it\. Waiting for approval · 1h ago/, 'the cards\' words');
+  // A change waiting for approval is Built, not Done; Done is for what went live.
+  assert.match(unfolded, /data-bot-work-tile="history" data-bot-work-tone="built"[\s\S]*?>Built<\/span>[\s\S]*?Built it\. Waiting for approval · 1h ago/, 'the cards\' words');
+  assert.match(unfolded, /data-bot-work-tile="history" data-bot-work-tone="done"[\s\S]*?>Done<\/span>[\s\S]*?Built it\. It’s live/);
   assert.match(unfolded, />Open change<\/a>/);
   assert.match(unfolded, /2 earlier runs/);
   assert.match(unfolded, /Ear Trainer first version/);
@@ -615,6 +619,7 @@ test('every phase and ending has words', () => {
   assert.deepEqual(Object.keys(SHORT_PHASES).sort(), [...tray.PHASES].sort());
   assert.deepEqual(Object.keys(LAST_WORDS).sort(), [...tray.OUTCOMES].sort());
   for (const outcome of tray.OUTCOMES) assert.match(LAST_WORDS[outcome]('Ear Trainer #3'), /Ear Trainer #3/, outcome);
+  assert.equal(SHORT_PHASES.merging, 'going live');
   assert.equal(WORK_CHANGED_EVENT, 'homeroom-bot-work-changed');
   assert.equal(jobTitle(job({ firstVersion: true, title: 'ignored' })), 'Ear Trainer first version');
   assert.equal(jobTitle(job({ issueNumber: 3, title: 'Sort' })), 'Ear Trainer #3: Sort');
@@ -622,6 +627,52 @@ test('every phase and ending has words', () => {
   const message = (id, isBot) => ({ id, sender: { id: isBot ? 1 : 2, username: isBot ? 'homeroom_bot' : 'ada', ...(isBot ? { bot: true } : {}) } });
   assert.equal(newestBotMessageId([message(4, true), message(7, true), message(9, false), message(-3, false)]), 7);
   assert.equal(newestBotMessageId([message(9, false)]), null);
+});
+
+// 4 October: the header said "Last: proposed Flat 4B Chore…". What the bot
+// did last says the same ending its activity card names, in the server's
+// words and the client's alike, and none of the platform's own vocabulary.
+test('the status line\'s last thing says the activity card\'s ending, in the person\'s words', () => {
+  const { LAST_WORDS, PHASE_LABELS, SHORT_PHASES } = loadTsx(TRAY);
+  const { ACTIVITY_OUTCOME_LABELS } = loadTsx('frontend/src/features/messages/bot-activity.tsx');
+  const activity = require('../src/services/homeroom-bot-activity');
+  const plain = (s) => s.replace(/’/g, '\'').toLowerCase();
+  assert.deepEqual(Object.fromEntries(tray.OUTCOMES.map((o) => [o, LAST_WORDS[o]('Ear Trainer #3')])), {
+    question: 'asked you about Ear Trainer #3',
+    proposed: 'Ear Trainer #3 waiting for approval',
+    live: 'Ear Trainer #3 went live',
+    closed: 'the change for Ear Trainer #3 was closed',
+    blocked: 'couldn’t build Ear Trainer #3 as written',
+    build_failed: 'couldn’t finish building Ear Trainer #3',
+    person: 'left Ear Trainer #3 to the group',
+    empty: 'found nothing to build in Ear Trainer #3',
+    failed: 'couldn’t finish looking at Ear Trainer #3',
+    held: 'held Ear Trainer #3 back for now',
+    stopped: 'stopped on Ear Trainer #3',
+    answer: 'answered on Ear Trainer #3',
+    revise: 'updated the change for Ear Trainer #3',
+  });
+  // Each says what its card says: the words the two have in common, in the
+  // server's labels (services/homeroom-bot-activity.js), the client's
+  // (bot-activity.tsx) and the status line's.
+  const SHARED = {
+    question: 'asked you', proposed: 'waiting for approval', live: 'live', closed: 'was closed',
+    blocked: 'written', build_failed: 'finish building', person: 'the group', empty: 'nothing to build',
+    failed: 'finish looking', held: 'for now', stopped: 'stopped', answer: 'answered on', revise: 'updated the change',
+  };
+  assert.deepEqual(Object.keys(SHARED).sort(), [...tray.OUTCOMES].sort());
+  for (const outcome of tray.OUTCOMES) {
+    const words = SHARED[outcome];
+    assert.ok(plain(activity.OUTCOME_LABELS[outcome]).includes(words), `server card: ${outcome}`);
+    assert.ok(plain(ACTIVITY_OUTCOME_LABELS[outcome]).includes(words), `client card: ${outcome}`);
+    assert.ok(plain(LAST_WORDS[outcome]('X')).includes(words), `status line: ${outcome}`);
+  }
+  // None of the platform's words, anywhere the header or the tray says them.
+  const said = [
+    ...tray.OUTCOMES.map((o) => LAST_WORDS[o]('X')), ...Object.values(PHASE_LABELS), ...Object.values(SHORT_PHASES),
+    ...Object.values(ACTIVITY_OUTCOME_LABELS), ...Object.values(activity.OUTCOME_LABELS), ...Object.values(activity.TONE_WORDS),
+  ];
+  for (const line of said) assert.doesNotMatch(line, /propos|merg|\bPR\b|pull request|staging|\u2014/i, line);
 });
 
 test('the client keeps only the platform\'s own addresses as links, and known words', () => {

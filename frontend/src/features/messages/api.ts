@@ -8,6 +8,7 @@ import type {
   HomeroomBotActivityOutcome,
   HomeroomBotJob,
   HomeroomBotAction,
+  HomeroomBotGoesLive,
   HomeroomBotMeta,
   HomeroomBotPastJob,
   HomeroomBotPhase,
@@ -146,6 +147,26 @@ function normalizePlan(input: unknown): HomeroomBotPlan | null {
 }
 
 /**
+ * B7: what happens next to a change its person approved, from a ready
+ * card's metadata or the vote's own answer (services/homeroom-bot-dm.js
+ * goesLiveAfterYes), or null for anything else.
+ */
+export function normalizeGoesLive(input: unknown): HomeroomBotGoesLive | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  if (pick(row, 'soon') === true) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
+  if (pick(row, 'soon') !== false) return null;
+  const at = text(pick(row, 'at'));
+  return {
+    soon: false,
+    at: at && Number.isFinite(Date.parse(at)) ? at : null,
+    missing: Math.max(Math.floor(Number(pick(row, 'missing')) || 0), 0),
+    waitingOn: array(pick(row, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
+    more: Math.max(Math.floor(Number(pick(row, 'more')) || 0), 0),
+  };
+}
+
+/**
  * #3624: the Homeroom bot's structured part of a message (services/
  * conversations.js publicMetadata), field by field like everything else
  * here: its question, the answers to tap and their state. Null for any
@@ -171,6 +192,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
   } : null;
+  const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
   return {
     homeroomBot: {
       kind,
@@ -206,6 +228,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(pick(bot, 'updated') === true ? { updated: true } : {}),
       // B6: a card Build it moved under its plan.
       ...(strictId(pick(bot, 'movedTo')) ? { movedTo: strictId(pick(bot, 'movedTo'))! } : {}),
+      ...(goesLive ? { goesLive } : {}),
     },
   };
 }
@@ -713,7 +736,11 @@ export async function setMessageSaved(
  * page's vote is. `stale` when that version was replaced (a 409 that says
  * so), with the version it is at now.
  */
-export async function approveChange(sessionId: number, epoch: number | null): Promise<{ ok: boolean; stale: boolean; epoch: number | null; error: string | null }> {
+export async function approveChange(sessionId: number, epoch: number | null): Promise<{
+  ok: boolean; stale: boolean; epoch: number | null; error: string | null;
+  /** B7: what happens next, when the Yes settled a ready card of theirs. */
+  goesLive?: HomeroomBotGoesLive | null;
+}> {
   let response: Response;
   try {
     response = await fetch(`/api/sessions/${sessionId}/vote`, {
@@ -726,7 +753,7 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
     return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
   }
   const data = record(await response.json().catch(() => ({})));
-  if (response.ok) return { ok: true, stale: false, epoch, error: null };
+  if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
   return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };

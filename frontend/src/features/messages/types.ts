@@ -78,11 +78,28 @@ export interface HomeroomBotMeta {
    * follows the request now. This one is no longer drawn.
    */
   movedTo?: number;
+  /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
+  goesLive?: HomeroomBotGoesLive;
 }
 
 export interface HomeroomBotReady {
   group: boolean;
   last: boolean;
+  waitingOn: string[];
+  more: number;
+}
+
+/**
+ * B7: what happens next to a change its person approved. `soon`: nothing
+ * more is needed, it goes live in a minute or two. Otherwise it needs
+ * `missing` more Yes votes (0 when only its clock runs), from `waitingOn`
+ * (up to three names) and `more` others, and `at` is when it goes live
+ * anyway if nobody objects, when a clock runs on it.
+ */
+export interface HomeroomBotGoesLive {
+  soon: boolean;
+  at: string | null;
+  missing: number;
   waitingOn: string[];
   more: number;
 }
