@@ -36,6 +36,7 @@ const contentReview = require('./content-review');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
+const stagingRecovery = require('./staging-recovery');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
 const { isFrontendFile, isUiAffecting } = require('./visual-file-classifier');
@@ -2805,6 +2806,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
       stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
+      overlappedRollout: startedSoonAfterBoot(runStartedAt),
     });
     traceStatus = settled.traceStatus;
     return settled.result;
@@ -2887,6 +2889,60 @@ function holdCapture(sessionId, commitHash, { abort = null } = {}) {
   };
 }
 
+// A red verdict from a run that overlapped a platform rollout is not held
+// against the author. Every merge to main rolls the platform out, and runs in
+// flight then fail by the dozen: one slow cold page load fails every check
+// that shares its document, the capture's retry pass covers ten checks at
+// most, and only a total wipeout reads as infrastructure (#1381, #1771). The
+// same commit passes when it runs again in a quiet window.
+//
+// Two kinds of run count as overlapping. A harvested one outlived the
+// process that launched it, so a restart happened mid-run
+// (services/check-harvest.js passes the flag). A live one counts when it
+// started within this window after this process booted: the new Pod's boot
+// sweeps, the migration Job and the surge Pod all load the same nodes and
+// the one Postgres for the first few minutes. Five minutes covers that
+// burst; a run that starts later meets a settled platform, and its red
+// verdict stands. Tunable via CHECKS_ROLLOUT_BOOT_WINDOW_MS.
+const ROLLOUT_BOOT_WINDOW_MS = Number(process.env.CHECKS_ROLLOUT_BOOT_WINDOW_MS) || 5 * 60 * 1000;
+
+// When this platform process booted, stamped by server.js start(). Null in
+// any process that did not boot the platform (tests, scripts), where no
+// live run counts as overlapping a rollout.
+let platformBootedAt = null;
+
+function markPlatformBooted(at = Date.now()) {
+  platformBootedAt = Number.isFinite(at) ? at : Date.now();
+}
+
+function startedSoonAfterBoot(startedAt, {
+  bootedAt = platformBootedAt, windowMs = ROLLOUT_BOOT_WINDOW_MS,
+} = {}) {
+  if (!Number.isFinite(bootedAt) || !Number.isFinite(startedAt)) return false;
+  return startedAt >= bootedAt && startedAt - bootedAt <= windowMs;
+}
+
+// Whether an overlapping red run may be recorded as 'error' instead: only
+// when the error lane will actually run it again (in its scope, under
+// CHECK_MAX_AUTO_RETRIES). Read fresh, because a live run's session row is
+// the one it started with. Any doubt answers no, so the red verdict stands.
+async function rolloutRetryFollows(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT status, source, branch_name, checks_commit_sha, handoff_head_sha,
+              handoff_uploaded_sha, handoff_upload_checked_sha, consecutive_check_failures
+         FROM chat_sessions WHERE id = $1`,
+      [sessionId]
+    );
+    return stagingRecovery.errorVerdictWillRetry(rows[0]);
+  } catch (err) {
+    log.warn('visuals', 'Rollout retry lookup failed; the verdict stands', {
+      sessionId, err: err.message,
+    });
+    return false;
+  }
+}
+
 // Everything after the containers have ended: parse the frames, take the
 // verdict, store both halves, tell the clients. Split from captureForSession
 // so the harvester (services/check-harvest.js) can run exactly this on a
@@ -2900,10 +2956,12 @@ function holdCapture(sessionId, commitHash, { abort = null } = {}) {
 // stagingOrigin); the dispatch (testsCount, dispatched,
 // ceilingDropped); the admission (shotsOnly, admissionReason); the output
 // (stdout, runPartial, runPartialReason); and the unit-suite outcome, already
-// awaited. `send`, `operation` and `traceStep` are the live run's; a
-// harvest passes null / a no-op. Returns { traceStatus, result }: the
-// verdict the run's trace closes on, and the { state, deferred? } object
-// captureForSession hands its caller.
+// awaited. `overlappedRollout` marks a run that overlapped a platform
+// rollout (see ROLLOUT_BOOT_WINDOW_MS above): its red verdict is recorded as
+// an 'error' the error lane runs again. `send`, `operation` and `traceStep`
+// are the live run's; a harvest passes null / a no-op. Returns
+// { traceStatus, result }: the verdict the run's trace closes on, and the
+// { state, deferred? } object captureForSession hands its caller.
 async function settleCaptureRun(config, pool, run) {
   const {
     session, app, commitHash, trigger = null, send = null, operation = null,
@@ -2913,6 +2971,7 @@ async function settleCaptureRun(config, pool, run) {
     visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
+    overlappedRollout = false,
   } = run;
   const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   let traceStatus = 'error';
@@ -3096,6 +3155,21 @@ async function settleCaptureRun(config, pool, run) {
         });
       }
     }
+  }
+
+  // A red run that overlapped a platform rollout runs again rather than
+  // standing against the author (see ROLLOUT_BOOT_WINDOW_MS). Recorded as
+  // 'error', so storeChecks schedules the backoff retry the stuck-checks
+  // reconcile picks up and no check history moves. Only while that retry
+  // will happen: at CHECK_MAX_AUTO_RETRIES, or for a row outside the error
+  // lane's scope, the red verdict stands as 'failing'. A pass is untouched.
+  if (checksResult.state === 'failing' && overlappedRollout
+      && await rolloutRetryFollows(pool, session.id)) {
+    checksResult.state = 'error';
+    checksResult.errorDetail = stagingRecovery.ROLLOUT_RETRY_DETAIL;
+    log.warn('visuals', 'Checks overlapped a platform rollout; recorded as error to run again', {
+      sessionId: session.id, commitHash: commitHash || null,
+    });
   }
 
   const blockingCount = Number.isInteger(checksResult.blockingCount)
@@ -3783,6 +3857,10 @@ module.exports = {
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,
   holdCapture,
+  // A red run that overlapped a platform rollout (server.js stamps the boot).
+  ROLLOUT_BOOT_WINDOW_MS,
+  markPlatformBooted,
+  startedSoonAfterBoot,
   notifyChecks,
   RUN_TIMEOUT_MS,
   RUN_MAX_BUFFER,

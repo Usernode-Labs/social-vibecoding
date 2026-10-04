@@ -207,6 +207,8 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   assert.equal(settledWith.unitOutcome.row.status, 'pass', 'the unit-suite row comes from the Job\'s own verdict');
   assert.equal(settledWith.unitOutcome.row.summary.tests, 5);
   assert.equal(settledWith.send, null);
+  assert.equal(settledWith.overlappedRollout, true,
+    'a harvested run ran across a restart, so a red verdict from it runs again (tests/checks-rollout-overlap.test.js)');
   assert.equal(settledWith.operation, null, 'lifecycle off: settled with the plain pool');
   assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once the verdict is stored');
   assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }],

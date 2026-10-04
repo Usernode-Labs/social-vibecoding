@@ -119,6 +119,40 @@ async function findStuckCheckSessions({
   return { rows: rows.filter(isStuckCheckRecoveryScope) };
 }
 
+// #237: how many 'error' verdicts in a row the error lane above re-runs on
+// its own. storeChecks bumps consecutive_check_failures on every 'error'
+// (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
+// the row is left 'error' until a new commit or a person re-runs it.
+// Read here rather than in server.js so the checks settlement can ask the
+// same question the reconcile answers. Tunable via CHECK_MAX_AUTO_RETRIES.
+const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
+
+function checkMaxAutoRetries() {
+  const configured = Number.parseInt(
+    process.env.CHECK_MAX_AUTO_RETRIES || String(DEFAULT_CHECK_MAX_AUTO_RETRIES),
+    10
+  );
+  return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
+}
+
+// What a check run that overlapped a platform rollout and came back red
+// records instead of 'failing' (visuals.settleCaptureRun). It lands in
+// check_error_detail, which the card, the merge gate and the connector all
+// show, so it is user-facing copy: plain words, no em dashes. The surfaces
+// that word this state differently from other errors compare against it.
+const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they will run again.';
+
+// Would the error lane re-run an 'error' verdict written on this row now?
+// The row must be one findStuckCheckSessions picks up (its scope, and a
+// branch to build), and the streak, once storeChecks bumps it, must still
+// be under the cap. A red verdict is only ever re-labelled as a retry when
+// this says yes, so it never reads "will run again" when nothing will.
+function errorVerdictWillRetry(row, { maxAutoRetries = checkMaxAutoRetries() } = {}) {
+  if (!row || !row.branch_name || !isStuckCheckRecoveryScope(row)) return false;
+  const streak = Number(row.consecutive_check_failures) || 0;
+  return streak + 1 < maxAutoRetries;
+}
+
 // Does a session need its staging preview (re)built?
 //
 // THREE failure shapes leave a card without a working preview:
@@ -882,6 +916,10 @@ module.exports = {
   checkRunOverdue,
   isStuckCheckRecoveryScope,
   findStuckCheckSessions,
+  DEFAULT_CHECK_MAX_AUTO_RETRIES,
+  checkMaxAutoRetries,
+  ROLLOUT_RETRY_DETAIL,
+  errorVerdictWillRetry,
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,
   recheckHeadSha,

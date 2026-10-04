@@ -335,6 +335,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runPartial: capture ? !!capture.partial : false,
       runPartialReason: capture ? (capture.partialReason || '') : '',
       unitOutcome,
+      // A harvested run outlived the process that launched it, so it ran
+      // across a restart: a red verdict from it runs again (visuals.js,
+      // ROLLOUT_BOOT_WINDOW_MS) instead of standing against the author.
+      overlappedRollout: true,
     });
     verdict = settled.traceStatus;
     // The live capture's finally block does not run after adoption. Without
