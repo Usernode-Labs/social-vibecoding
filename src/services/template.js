@@ -1022,6 +1022,18 @@ const APP_AUDIENCE = process.env.USERNODE_APP_ID
   ? 'usernode:app:' + process.env.USERNODE_APP_ID
   : null;
 
+// Visitors with no Homeroom account ("guests") may look around this app at
+// its own address, read-only (every public app). The platform marks
+// them with a token of their own: ES256, signed by a key of its own (its
+// public half is USERNODE_GUEST_JWT_PUBLIC_KEY), this audience, \`pur:
+// 'guest'\`, \`guest: true\`, and no id or username. Such a visitor is
+// \`req.guest\`, never \`req.user\`, and every write they try is answered 401
+// \`account_required\`, which the bridge turns into "Make an account to
+// continue".
+const GUEST_AUDIENCE = APP_AUDIENCE ? APP_AUDIENCE + ':guest' : null;
+const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
+  .replace(/\\\\n/g, '\\n');
+
 // Paths that stay open without authentication. Add a path here (and add it
 // with \`app.get\`/\`app.post\` below) if you deliberately want it public.
 // Everything else requires a valid platform-issued JWT.
@@ -1091,12 +1103,28 @@ app.use((req, res, next) => {
       if (claims && claims.pur === 'iframe') req.user = claims;
     } catch {}
   }
+  if (!req.user && token && GUEST_PUBLIC_KEY && GUEST_AUDIENCE) {
+    try {
+      const guest = jwt.verify(token, GUEST_PUBLIC_KEY, {
+        algorithms: ['ES256'],
+        issuer: 'usernode',
+        audience: GUEST_AUDIENCE,
+      });
+      if (guest && guest.pur === 'guest' && guest.guest === true) req.guest = true;
+    } catch {}
+  }
 
   // Static assets (CSS/JS/images) are always served; the API and the HTML
   // shell are gated so direct hits to the staging/prod subdomain don't
-  // leak app data to the public internet.
+  // leak app data to the public internet. A guest may READ: every GET,
+  // \`/api/*\` included, so read routes must not assume req.user (use
+  // \`req.user ? req.user.id : null\`). Every write needs an account.
   if (req.method !== 'GET' || req.path.startsWith('/api/')) {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
+    if (!req.user && req.guest) {
+      if (req.method === 'GET' || req.method === 'HEAD') return next();
+      return res.status(401).json({ error: 'account_required' });
+    }
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   }
   next();
@@ -1121,7 +1149,7 @@ ${server.routes}app.use(express.static(path.join(__dirname, 'public')));
 // of a redirect, so the platform shell is never loaded INSIDE its own
 // app iframe and stray visits still don't reveal the app.
 app.get('*', (req, res) => {
-  if (!req.user) {
+  if (!req.user && !req.guest) {
     // Deep-link pass-through (platform #743): carry the visited
     // path+query into the chromeless view so share links land on the
     // shared screen, not Home. The clean platform route stores \`path\`

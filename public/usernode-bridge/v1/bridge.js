@@ -6648,6 +6648,255 @@
   })();
   /* __USERNODE_ENGAGEMENT_END__ */
 
+  // ── Guests: "Make an account to continue" (P15) ──────────────────────
+  //
+  // Every public app is open at its own address to people with no Homeroom
+  // account, read-only. Every
+  // write they try is answered with 401 and JSON `{ error:
+  // "account_required" }`: by the platform's app-host gate for a browser
+  // write, or by the app itself (services/edge-gate.js; the conventions). This
+  // block turns that answer into a bottom sheet that asks them to make one:
+  //
+  //   "Make an account to continue" (or "Make an account to <action>" when
+  //   the answer, or the app, names what they were doing), "It takes a
+  //   minute, and you'll come straight back to <App>.", and three buttons:
+  //   "Continue with email", "I have an account", "Keep looking around".
+  //
+  // Both account buttons go to /__usernode_access?account=signup|signin on
+  // the app's own host, which the gate turns into the platform's sign-up or
+  // sign-in, coming back to this same page signed in. And while the gate's
+  // guest hint is set, a slim strip says "You're looking around. Make an
+  // account to join in." with "Sign up".
+  //
+  // NARROW BY DESIGN. Only a top-level page on the app's own address (never
+  // inside the platform's frame, the native WebView or the platform itself).
+  // fetch and XMLHttpRequest are wrapped only to READ the status of the
+  // app's own same-origin requests: nothing is changed, delayed or retried,
+  // and every other response passes through untouched. An app can also ask
+  // for the sheet itself with `usernode.askForAccount({ action })`.
+  //
+  // Drawn in a closed shadow root, like the Homeroom button.
+  /* __USERNODE_GUEST_START__ */
+  (function () {
+    if (_inIframe || _hasNativeChannel) return;
+    if (window.__usernodePlatformShell || window.__usernodeGuestSheet) return;
+    window.__usernodeGuestSheet = true;
+
+    var HOST_ID = "__un-guest";
+    var ACCOUNT_PATH = "/__usernode_access";
+
+    function sameOrigin(url) {
+      try {
+        return new URL(String(url || ""), location.href).origin === location.origin;
+      } catch (_) { return false; }
+    }
+
+    // What the person was doing, from the app: plain text, short, or null.
+    function cleanAction(raw) {
+      if (typeof raw !== "string") return null;
+      var text = raw.replace(/\s+/g, " ").trim();
+      if (!text || text.length > 60) return null;
+      return text;
+    }
+
+    function appName() {
+      var title = "";
+      try { title = String(document.title || ""); } catch (_) { title = ""; }
+      title = title.replace(/\s+/g, " ").trim();
+      if (title.length > 60) title = title.slice(0, 59).trim() + "…";
+      return title || "this app";
+    }
+
+    function accountHref(kind) {
+      var next = location.pathname + location.search;
+      return ACCOUNT_PATH + "?account=" + kind + "&next=" + encodeURIComponent(next);
+    }
+
+    function guestHinted() {
+      try {
+        return /(?:^|;\s*)(?:__Host-usernode_guest|__usernode_guest)=1(?:;|$)/.test(document.cookie || "");
+      } catch (_) { return false; }
+    }
+
+    var CSS = [
+      ":host{all:initial}",
+      "*{box-sizing:border-box}",
+      "[hidden]{display:none!important}",
+      ".scrim{position:fixed;inset:0;z-index:999998;background:rgba(0,0,0,0.32)}",
+      ".sheet{position:fixed;left:0;right:0;bottom:0;z-index:999998;margin:0 auto;max-width:480px;padding:20px calc(20px + env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) calc(20px + env(safe-area-inset-left,0px));border-radius:20px 20px 0 0;background:#fff;color:#18181b;box-shadow:0 -10px 30px rgba(0,0,0,0.2);font:15px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".title{margin:0 0 6px;font-size:19px;font-weight:700}",
+      ".text{margin:0 0 16px;color:#52525b}",
+      ".btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;margin:0 0 8px;padding:0 16px;border:0;border-radius:999px;font:inherit;font-weight:650;text-decoration:none;cursor:pointer}",
+      ".primary{background:#7C3AED;color:#fff}",
+      ".secondary{background:#f4f4f5;color:#18181b}",
+      ".quiet{background:transparent;color:#52525b;margin-bottom:0}",
+      ".strip{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999997;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 76px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px));padding:6px 6px 6px 14px;border-radius:999px;background:#18181b;color:#f4f4f5;box-shadow:0 2px 10px rgba(0,0,0,0.3);font:13px/1.3 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".strip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".strip a{flex:none;padding:6px 12px;border-radius:999px;background:#7C3AED;color:#fff;font-weight:650;text-decoration:none}",
+      ".strip button{flex:none;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;color:#a1a1aa;font:18px/1 system-ui,sans-serif;cursor:pointer}",
+      "@media (prefers-color-scheme: dark){.sheet{background:#18181b;color:#f4f4f5}.text,.quiet{color:#a1a1aa}.secondary{background:#27272a;color:#f4f4f5}}",
+    ].join("\n");
+
+    var ui = null;
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text) node.textContent = text;
+      return node;
+    }
+
+    function build() {
+      if (ui) return ui;
+      if (!document.body) return null;
+      var host = el("div");
+      host.id = HOST_ID;
+      if (typeof host.attachShadow !== "function") return null;
+      var root;
+      try { root = host.attachShadow({ mode: "closed" }); } catch (_) { return null; }
+      var style = el("style");
+      style.textContent = CSS;
+      root.appendChild(style);
+
+      var scrim = el("div", "scrim");
+      scrim.hidden = true;
+      var sheet = el("div", "sheet");
+      sheet.hidden = true;
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      sheet.setAttribute("aria-labelledby", "un-guest-title");
+      var title = el("h2", "title");
+      title.id = "un-guest-title";
+      var text = el("p", "text");
+      var email = el("a", "btn primary", "Continue with email");
+      email.href = accountHref("signup");
+      var signin = el("a", "btn secondary", "I have an account");
+      signin.href = accountHref("signin");
+      var dismiss = el("button", "btn quiet", "Keep looking around");
+      dismiss.type = "button";
+      sheet.appendChild(title);
+      sheet.appendChild(text);
+      sheet.appendChild(email);
+      sheet.appendChild(signin);
+      sheet.appendChild(dismiss);
+
+      var strip = el("div", "strip");
+      strip.hidden = true;
+      var stripText = el("span", null, "You're looking around. Make an account to join in.");
+      var stripLink = el("a", null, "Sign up");
+      stripLink.href = accountHref("signup");
+      var stripClose = el("button", null, "×");
+      stripClose.type = "button";
+      stripClose.setAttribute("aria-label", "Hide");
+      strip.appendChild(stripText);
+      strip.appendChild(stripLink);
+      strip.appendChild(stripClose);
+
+      root.appendChild(strip);
+      root.appendChild(scrim);
+      root.appendChild(sheet);
+
+      function close() {
+        sheet.hidden = true;
+        scrim.hidden = true;
+      }
+      dismiss.addEventListener("click", close);
+      scrim.addEventListener("click", close);
+      stripClose.addEventListener("click", function () { strip.hidden = true; });
+      document.addEventListener("keydown", function (e) {
+        if (e && e.key === "Escape" && !sheet.hidden) close();
+      });
+
+      document.body.appendChild(host);
+      ui = { host: host, sheet: sheet, scrim: scrim, title: title, text: text,
+        email: email, signin: signin, dismiss: dismiss, strip: strip, stripLink: stripLink, stripClose: stripClose };
+      return ui;
+    }
+
+    function show(action) {
+      var u = build();
+      if (!u) return false;
+      var named = cleanAction(action);
+      u.title.textContent = named ? "Make an account to " + named : "Make an account to continue";
+      u.text.textContent = "It takes a minute, and you'll come straight back to " + appName() + ".";
+      // Links carry the page the person is on NOW, so they come back to it.
+      u.email.href = accountHref("signup");
+      u.signin.href = accountHref("signin");
+      u.scrim.hidden = false;
+      u.sheet.hidden = false;
+      try { u.email.focus(); } catch (_) {}
+      return true;
+    }
+
+    // Read an answer's body without consuming the app's copy.
+    function inspect(status, contentType, readJson, action) {
+      if (status !== 401) return;
+      if (!/json/i.test(String(contentType || ""))) return;
+      Promise.resolve().then(readJson).then(function (body) {
+        if (body && body.error === "account_required") show(body.action || action);
+      }).catch(function () {});
+    }
+
+    if (typeof window.fetch === "function") {
+      var origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var result = origFetch.apply(this, arguments);
+        try {
+          var url = input && typeof input === "object" && "url" in input ? input.url : input;
+          if (sameOrigin(url) && result && typeof result.then === "function") {
+            result.then(function (res) {
+              if (!res || res.status !== 401) return;
+              inspect(res.status, res.headers && res.headers.get && res.headers.get("content-type"),
+                function () { return res.clone().json(); });
+            }, function () {});
+          }
+        } catch (_) {}
+        return result;
+      };
+    }
+
+    if (typeof window.XMLHttpRequest === "function" && window.XMLHttpRequest.prototype) {
+      var proto = window.XMLHttpRequest.prototype;
+      var origOpen = proto.open;
+      proto.open = function (method, url) {
+        try {
+          if (sameOrigin(url) && !this.__unGuestWatch) {
+            this.__unGuestWatch = true;
+            var xhr = this;
+            xhr.addEventListener("loadend", function () {
+              if (xhr.status !== 401) return;
+              inspect(xhr.status, xhr.getResponseHeader && xhr.getResponseHeader("content-type"), function () {
+                var type = xhr.responseType;
+                if (type === "json") return xhr.response;
+                if (type && type !== "text") return null;
+                return JSON.parse(xhr.responseText);
+              });
+            });
+          }
+        } catch (_) {}
+        return origOpen.apply(this, arguments);
+      };
+    }
+
+    // The app's own way in: `usernode.askForAccount({ action: "post a photo" })`.
+    if (window.usernode && typeof window.usernode === "object") {
+      window.usernode.askForAccount = function (opts) {
+        return show(opts && opts.action);
+      };
+    }
+
+    function showStrip() {
+      if (!guestHinted()) return;
+      var u = build();
+      if (u) u.strip.hidden = false;
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", showStrip);
+    } else {
+      showStrip();
+    }
+  })();
+  /* __USERNODE_GUEST_END__ */
+
   // #2902: the shell keeps the last few apps loaded in hidden frames so that
   // coming back to one shows it exactly as it was left. A hidden app must not
   // keep playing into the room, so on `hidden` this pauses every <audio> and

@@ -100,7 +100,9 @@ function forwardedFor(req) {
 }
 
 // A request whose answer cannot depend on who is asking: no gate cookie, no
-// token in the header or the address, not a visit (which may hop to the
+// token in the header or the address, no Authorization header (the platform
+// passes any credential through untouched, and a cached guest identity must
+// never ride along with one), not a visit (which may hop to the
 // apex), not the sign-in callback, and only a read. For a public app the
 // platform answers every such request the same way, so its 2xx is reused
 // for a few seconds instead of asked again for every asset. The platform
@@ -111,6 +113,7 @@ function anonymousRead(req) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
   if (hasGateCookie(req.headers.cookie)) return false;
   if (req.headers['x-usernode-token']) return false;
+  if (req.headers.authorization) return false;
   if (String(req.headers['sec-fetch-dest'] || '').toLowerCase() === 'document') return false;
   if (req.headers['sec-websocket-key'] || req.headers.upgrade) return false;
   const url = String(req.url || '/');

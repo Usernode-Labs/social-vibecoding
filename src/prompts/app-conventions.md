@@ -329,6 +329,37 @@ Three consequences:
   adds identity to a write only when its Origin is the app's own address,
   so a sibling app cannot make a visitor's browser act as them.
 
+### Guests: people without an account (read-only)
+
+Every public app lets people with no Homeroom account look around at its own
+address. Private apps, previews and the app inside Homeroom never have
+guests. Nothing turns it on: write the app so a guest can look around.
+
+- **A guest carries a guest token**, in the same `x-usernode-token` header:
+  `ES256`, signed by a key of its own whose public half is
+  `USERNODE_GUEST_JWT_PUBLIC_KEY`, audience
+  `usernode:app:<USERNODE_APP_ID>:guest`, `pur: 'guest'`, `guest: true`,
+  and no `id` or `username`. Verify it with that key,
+  `algorithms: ['ES256']`, issuer `usernode` and that audience, and set
+  `req.guest = true`. A guest is never `req.user`, and a verifier written
+  for a person's token never accepts it. The scaffold does this.
+- **Guests read; every write needs an account.** Read routes must not
+  assume `req.user` (`req.user ? req.user.id : null`). Answer any write
+  without `req.user` with `401 { "error": "account_required" }`, optionally
+  with `"action": "post a photo"` to name what they tried; the platform's
+  edge already answers a guest's browser writes that way.
+- **Never write on GET, and check WebSocket messages yourself.** The edge
+  refuses a guest's POST, PUT, PATCH and DELETE; a write done on a GET or
+  over a WebSocket slips past it. Refuse guest writes on a socket in your
+  own handler.
+- **Asking them to join.** The bridge turns any `account_required` answer
+  to the app's own requests into a "Make an account to continue" sheet
+  that brings them back to the same page signed in. To ask before they
+  try (a disabled button, say), call
+  `usernode.askForAccount({ action: 'post a photo' })`.
+- Platform services (AI, file storage, the user directory) refuse guest
+  tokens with `account_required`.
+
 ## Database
 
 - Each app gets its own Postgres DB. Schema is applied idempotently

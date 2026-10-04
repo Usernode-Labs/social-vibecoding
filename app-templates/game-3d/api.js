@@ -1,6 +1,7 @@
 // This app's API: the game's scores and its leaderboard. server.js mounts it
-// after the sign-in check, so every route here has req.user
-// ({ id, username }). The game itself runs in the browser (public/app.js).
+// after the sign-in check: a write always has req.user ({ id, username });
+// a read may come from a guest with no account (req.guest, no req.user), so
+// reads never assume one. The game itself runs in the browser (public/app.js).
 //
 // A score is whatever the browser reports at the end of a round, so a
 // determined player could send a made-up one. That is fine for a friendly
@@ -54,7 +55,7 @@ async function leaderboard(pool, userId) {
 function routes(app, pool) {
   app.get('/api/leaderboard', async (req, res) => {
     try {
-      res.json(await leaderboard(pool, req.user.id));
+      res.json(await leaderboard(pool, req.user ? req.user.id : null));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

@@ -66,6 +66,11 @@
     '/cli/authorize', '/connect/authorize',
     '/api/me/social-identities/github/connect',
     '/api/me/social-identities/x/connect',
+    // Back to the app a guest was looking around (P15): the app-host
+    // authorize hop (services/edge-gate.js) signs them in there and returns
+    // them to the same page. It only ever redirects to an app host it can
+    // parse, never anywhere a query names.
+    '/__access/authorize',
   ];
 
   // Screen transitions come from the platform's native kit via the

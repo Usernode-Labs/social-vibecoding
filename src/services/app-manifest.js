@@ -456,6 +456,9 @@ const RESERVED_KEYS = new Set([
   // accept identities minted for a different app.
   'USERNODE_JWT_PUBLIC_KEY',
   'USERNODE_APP_ID',
+  // The public half guest tokens are verified against (P15): shadowing it
+  // would let a manifest point the container at a key of its choosing.
+  'USERNODE_GUEST_JWT_PUBLIC_KEY',
   // Retired alias of USERNODE_JWT_PUBLIC_KEY (holds the same public PEM),
   // still injected so pre-cutover scaffolds verify unchanged. The
   // RESERVATION OUTLIVES THE INJECTION: even after app-identity-env.js
