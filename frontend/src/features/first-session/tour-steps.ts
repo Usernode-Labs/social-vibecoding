@@ -79,10 +79,10 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'discussion',
       target: '#gc-messages, #gc-form',
       title: 'The group chat',
-      // Homeroom bot does not read a group's chat yet, so this does not
-      // promise that it turns a message into a request; it says what the
-      // chat is for today.
-      text: 'Say hi, or share an idea for what it should do next. The group decides what goes in.',
+      // WP-C: Homeroom bot reads a newcomer's messages here for ideas, and
+      // offers to suggest one to the group (homeroom-bot-chat.js
+      // maybeOffer), so the tour says that it does.
+      text: 'Say hi, or share an idea for what it should do next. Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in.',
       place: { above: '#gc-form' },
       last: true,
     },

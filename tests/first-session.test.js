@@ -29,8 +29,11 @@ test('the invited tour: each screen whole, then the tap that leads on, ending in
   assert.equal(steps.filter((s) => s.last).length, 1);
   assert.equal(steps[steps.length - 1].last, true);
   assert.deepEqual(steps[steps.length - 1].place, { above: '#gc-form' });
-  // It does not promise what the bot does not do yet: it reads no group chat.
-  assert.doesNotMatch(JSON.stringify(steps), /Homeroom bot (offers|turns)/);
+  // WP-C: it says what the bot does with a newcomer's idea, now that it does
+  // (homeroom-bot-chat.js maybeOffer; tests/homeroom-bot-chat-offer.test.js),
+  // and no more: it suggests, the group decides.
+  assert.match(steps[steps.length - 1].text, /Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in\./);
+  assert.doesNotMatch(JSON.stringify(steps), /Homeroom bot (builds|turns)/);
 });
 
 test('every id the tour points at is one the shell ships', () => {

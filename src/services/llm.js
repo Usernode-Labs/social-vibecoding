@@ -1942,7 +1942,10 @@ const CHAT_ASK_SCHEMA = {
   required: ['kind', 'title'],
 };
 
-async function readChatAsk({ text, appName = null, apiKey, telemetryContext }) {
+// WP-C: `toBot: false` reads a message nobody addressed to the bot (a
+// newcomer's, homeroom-bot-chat.js maybeOffer): it is an idea for the app,
+// or anything else people say in a group chat.
+async function readChatAsk({ text, appName = null, toBot = true, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   const model = 'claude-haiku-4-5';
@@ -1953,12 +1956,16 @@ async function readChatAsk({ text, appName = null, apiKey, telemetryContext }) {
       max_tokens: 80,
       messages: [{
         role: 'user',
-        content: `Somebody wrote this to Homeroom bot in the group chat of ${appName ? `"${stripLoneSurrogates(String(appName)).slice(0, 80)}"` : 'a project'}. Homeroom bot builds changes to the project's app.
+        content: `${toBot ? 'Somebody wrote this to Homeroom bot' : 'Somebody new to the group wrote this'} in the group chat of ${appName ? `"${stripLoneSurrogates(String(appName)).slice(0, 80)}"` : 'a project'}. Homeroom bot builds changes to the project's app.
 
 Decide what it is:
-- "change": it asks for a change to the app: something new, something fixed, or something to look or work differently.
+${toBot
+    ? `- "change": it asks for a change to the app: something new, something fixed, or something to look or work differently.
 - "question": it asks a question, or chats, and asks for nothing to change.
-- "unsure": it could be either.
+- "unsure": it could be either.`
+    : `- "change": it suggests or asks for a change to the app: something new, something fixed, or something to look or work differently.
+- "question": anything else: a greeting, a question, chat between people, or news, with no change to the app in it.
+- "unsure": it could be either.`}
 
 For a change, write a short title for it as a request: an imperative action starting with a verb, 5 to 10 words (e.g. "Add a Sunday watering reminder"). Otherwise the title is "".
 
