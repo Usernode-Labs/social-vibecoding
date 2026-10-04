@@ -18,17 +18,41 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 
 test('the approval rule is one sentence per regime, read from the server', () => {
+  // In the page's words (first-session run-through, 5 Oct 2026): a change
+  // "goes live", people "approve" it. It was "Members vote: a change merges
+  // at 2 yes votes (2 active members), or unopposed after a wait."
   const { approvalLine } = loadTsx(CARD);
-  assert.equal(approvalLine({ policy: 'anyone', approvals_required: null, electorate: 12, required: 5 }),
-    'Members vote: a change merges at 5 yes votes (12 active members), or unopposed after a wait.');
-  assert.equal(approvalLine({ policy: 'anyone', approvals_required: null, electorate: 1, required: 1 }),
-    'Members vote: a change merges at 1 yes vote (1 active member), or unopposed after a wait.');
+  const line = (a) => approvalLine({ policy: 'anyone', approvals_required: null, ...a });
+  assert.equal(line({ electorate: 12, required: 5 }),
+    'A change goes live when 5 of the 12 active members approve it, or after a wait if one approves and nobody objects.');
+  assert.equal(line({ electorate: 2, required: 2 }),
+    'A change goes live when both active members approve it, or after a wait if one approves and nobody objects.',
+    'a two-person group: both of them');
+  assert.equal(line({ electorate: 1, required: 1 }),
+    'A change goes live when the only active member approves it.',
+    'no wait to mention: the quiet path needs a Yes short of the threshold, and one Yes is the threshold');
+  assert.equal(line({ electorate: 3, required: 3 }), 'A change goes live when all 3 active members approve it, or after a wait if one approves and nobody objects.');
+  assert.equal(line({ electorate: 3, required: 1 }), 'A change goes live when 1 of the 3 active members approves it.');
   assert.equal(approvalLine({ policy: 'anyone', approvals_required: 2, electorate: 30, required: 2 }),
-    'A change needs 2 yes votes from members to merge.',
-    'a fixed count from dapp.json says the count, not the electorate');
+    'A change goes live once 2 members approve it.',
+    'a fixed count from dapp.json says the count, not the electorate, and has no wait');
+  assert.equal(approvalLine({ policy: 'anyone', approvals_required: 1, electorate: 30, required: 1 }),
+    'A change goes live once 1 member approves it.');
   assert.equal(approvalLine({ policy: 'invited', approvals_required: null, electorate: 3, required: 2 }),
-    'Approvers decide: 2 yes votes from 3 approvers to merge a change.');
+    'A change goes live when 2 of the 3 approvers say yes, or after a wait if one says yes and nobody says no.',
+    'invited approvers: the same math over the approvers, quiet path included');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: null, electorate: 1, required: 1 }),
+    'A change goes live when the only approver says yes.');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: 2, electorate: 3, required: 2 }),
+    'A change goes live when 2 of the 3 approvers say yes.', 'at least N approvers: no clock');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: 3, electorate: 2, required: 3 }),
+    'A change goes live when 3 approvers (there are 2) say yes.', 'a count larger than the roster says so');
   assert.equal(approvalLine(null), '');
+  for (const a of [{ electorate: 12, required: 5 }, { electorate: 2, required: 2 }]) {
+    assert.doesNotMatch(line(a), /merge|unopposed|yes vote/, 'no developer words');
+  }
+  // Changing the rules: a protected block, which never goes live on a wait.
+  assert.match(read(CARD), /<p className="dev-ws-rules-sub">Changing these rules is a change too, and it goes live only once it is approved\.<\/p>/);
 });
 
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {

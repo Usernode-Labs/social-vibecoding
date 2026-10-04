@@ -9539,6 +9539,9 @@ const AppView = {
     const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
     const mine = {
       viewer: meId != null,
+      // Homeroom bot builds requests here for this viewer: the empty strip
+      // then says to ask for a change rather than build one.
+      bot: !!AppView._botDoor(),
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
       rows: mineList.map(({ kind, item }) => {
