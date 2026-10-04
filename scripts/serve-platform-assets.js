@@ -31,6 +31,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+// Pure, and itself dependency-free: the one platform module this server reads.
+const appHostConfig = require('../src/services/app-host-config');
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = path.join(__dirname, '..', 'public');
@@ -98,6 +100,14 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/health') {
     return send(res, 200, { 'Content-Type': 'text/plain; charset=utf-8' }, 'ok', method);
+  }
+  // Where the platform is, for the bridge's Homeroom button (#3657). Built
+  // from the env this Deployment is given (services/kubernetes.js), the same
+  // document the platform serves itself (src/services/app-host-config.js).
+  if (pathname === appHostConfig.CONFIG_PATH) {
+    const doc = appHostConfig.appHostConfigFromEnv(process.env);
+    if (!doc) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'Not Found', method);
+    return send(res, 200, { ...appHostConfig.CONFIG_HEADERS }, JSON.stringify(doc), method);
   }
   if (!isAssetPath(pathname)) {
     return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'Not Found', method);

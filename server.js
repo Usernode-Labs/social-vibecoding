@@ -151,6 +151,7 @@ const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
+const appHostConfig = require('./src/services/app-host-config');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { publicApiCors } = require('./src/middleware/public-cors');
@@ -889,6 +890,22 @@ app.get('/api/iframe-token', async (req, res) => {
 app.use('/usernode-bridge', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   next();
+});
+
+// Where the platform is, for the bridge's Homeroom button on an app opened
+// at its own address (#3657): the platform origin, the apps domain and the
+// site's front door, from this deployment's settings. Same document the
+// Kubernetes asset server answers on app hosts (src/services/app-host-config.js).
+app.get('/usernode-bridge/v1/platform.json', (_req, res) => {
+  const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('./src/services/caddy');
+  const doc = appHostConfig.appHostConfig({
+    platformDomain: USERNODE_DOMAIN,
+    appsDomain: USERNODE_APPS_DOMAIN,
+    marketingBaseUrl: config.marketingBaseUrl,
+  });
+  if (!doc) return res.status(404).type('text/plain').send('Not found');
+  res.set(appHostConfig.CONFIG_HEADERS);
+  return res.send(JSON.stringify(doc));
 });
 
 // Build-scoped asset URLs — /b/<build sha>/js/app.js and so on. A deployed
