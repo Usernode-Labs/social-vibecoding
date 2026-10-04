@@ -97,3 +97,14 @@ test('a fallback-served answer is billed at the model that answered', async () =
   const out = await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
   assert.equal(out.model, 'claude-opus-5-5');
 });
+
+test('the summary guidance asks for the five labelled sections a voter reads', async () => {
+  const c = client([reply()]);
+  await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
+  const system = String(c.calls[0].params.system);
+  for (const label of ['Problem:', 'Proposed solution:', 'Expected impact:', 'Risks:', 'Estimated effort:']) {
+    assert.ok(system.includes(label), `${label} is named`);
+  }
+  assert.match(system, /600 characters/, 'the whole summary stays within its cap');
+  assert.match(system, /Low, Medium or High/, 'risk and effort stay short words');
+});

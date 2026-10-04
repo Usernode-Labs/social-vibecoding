@@ -1448,3 +1448,34 @@ test('a STALE author summary is replaced by a regeneration, as it always could b
     restore();
   }
 });
+
+// ── The summary's labelled sections ─────────────────────────────────────
+// The summary a voter reads first is written as five labelled lines now
+// (Problem / Proposed solution / Expected impact / Risks / Estimated
+// effort). The page reads the labels out of the summary text, so both
+// guidance sites have to keep asking for them. This measures the RESOLVED
+// description the connector client sees (a recorder standing in for the MCP
+// server, as mcp-instruction-budget.test.js does), not the source text.
+test('submit_work’s summary guidance names the five labelled sections', () => {
+  const tools = require('../src/services/mcp-tools');
+  const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
+  const specs = new Map();
+  tools.registerTools({
+    registerTool(name, spec) { specs.set(name, spec); },
+  }, {
+    accessToken: 'svmcp_test',
+    scopes: [READ_SCOPE, WRITE_SCOPE],
+    user: { id: 7, username: 'ada' },
+    clientName: 'Claude', clientId: 'c1',
+    origin: 'https://usernode.example',
+    baseUrl: 'http://platform.internal',
+    pool: null, config: {}, tokenId: null, grantId: null,
+  });
+  const field = specs.get('submit_work').inputSchema.summary;
+  const text = String(field.description || (field._def && field._def.description) || '');
+  assert.ok(text.length > 0, 'the summary parameter carries a description');
+  for (const label of ['Problem:', 'Proposed solution:', 'Expected impact:', 'Risks:', 'Estimated effort:']) {
+    assert.ok(text.includes(label), `${label} is named`);
+  }
+  assert.match(text, /600 characters/, 'the whole summary stays within its cap');
+});

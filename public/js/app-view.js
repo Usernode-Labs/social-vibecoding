@@ -4887,8 +4887,12 @@ const AppView = {
       if ((g.key === 'integration' || g.key === 'github') && authorsTurn && syncable) step.actions.push(syncAction());
       if (g.key === 'approvals') {
         // The count is the status pill's (the hero's status row); the step
-        // names who voted, and "?" opens How voting works.
+        // names who voted, and "?" opens How voting works. Beside them, the
+        // tally in numbers and the clock the vote is running out on, in the
+        // pill's own words.
         step.votes = AppView._voteNamesLine(d.roster);
+        step.tally = AppView._voteTallyLine(item, majority);
+        step.deadline = AppView._voteDeadlineView(item);
         step.was = AppView.thresholdWasNote(item, majority);
         step.help = !!d.helpHint;
       }
@@ -12670,7 +12674,76 @@ const AppView = {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    return `<div class="dev-issue-body">${renderMd(md)}</div>`;
+    // The summary is written as labelled sections now (llm.js and
+    // submit_work's guidance). When the text carries them, render the intro
+    // as today's paragraph and each section under its own small-caps label;
+    // anything else — every summary written before this — keeps the single
+    // paragraph, byte for byte.
+    const parsed = AppView._proposalSummarySections(md);
+    if (!parsed) return `<div class="dev-issue-body">${renderMd(md)}</div>`;
+    const parts = parsed.intro ? [renderMd(parsed.intro)] : [];
+    for (const s of parsed.sections) {
+      parts.push(
+        `<div class="dev-summary-section"><h4 class="dev-summary-label">${escapeHtml(s.name)}</h4>`
+        + `<div class="dev-summary-body">${renderMd(s.body)}</div></div>`
+      );
+    }
+    return `<div class="dev-issue-body">${parts.join('')}</div>`;
+  },
+
+  // The labels the summary guidance asks for, and the name each shows as.
+  // Aliases keep a summary written a little differently readable; the
+  // canonical name is what the label says on the page.
+  PROPOSAL_SUMMARY_LABELS: [
+    { re: /^problem$/i, name: 'Problem' },
+    { re: /^(?:proposed solution|solution)$/i, name: 'Proposed solution' },
+    { re: /^(?:expected impact|impact)$/i, name: 'Expected impact' },
+    { re: /^risks?$/i, name: 'Risks' },
+    { re: /^(?:estimated effort|effort)$/i, name: 'Estimated effort' },
+  ],
+
+  // One summary line as a section's start, or null. The label may wear
+  // markdown — "## Problem", "**Problem:**", "*Risk:*" — so heading marks
+  // and bold/italic markers come off both ends before the match, and
+  // whatever the line says after the colon (its own leading markers
+  // dropped, so "**Problem:** text" does not open with a stray **) is the
+  // section's first body line.
+  _summarySectionLabel(line) {
+    let s = String(line || '').replace(/^\s*#{1,6}\s*/, '');
+    s = s.replace(/^[\s*_]+/, '').replace(/[\s*_]+$/, '');
+    const m = /^(.*?)\s*:\s*(.*)$/.exec(s);
+    if (!m) return null;
+    const hit = AppView.PROPOSAL_SUMMARY_LABELS.find((l) => l.re.test(m[1].trim()));
+    if (!hit) return null;
+    return { name: hit.name, rest: m[2].replace(/^\s*[*_~]+\s+/, '').trim() };
+  },
+
+  // The labelled sections read out of the summary's own text — no new
+  // fields, so nothing the API serves changes. Pure: a line scan that ends
+  // { intro, sections: [{ name, body }] } when two or more canonical labels
+  // were found, and null when not (a stray "Problem:" line, or any legacy
+  // summary), which is the caller's cue to render today's single paragraph.
+  _proposalSummarySections(md) {
+    const text = typeof md === 'string' ? md : '';
+    if (!text.trim()) return null;
+    const intro = [];
+    const sections = [];
+    let cur = null;
+    for (const line of text.split(/\r?\n/)) {
+      const hit = AppView._summarySectionLabel(line);
+      if (hit) {
+        if (cur) sections.push(cur);
+        cur = { name: hit.name, body: hit.rest };
+      } else if (cur) {
+        cur.body = `${cur.body}\n${line}`;
+      } else {
+        intro.push(line);
+      }
+    }
+    if (cur) sections.push(cur);
+    if (sections.length < 2) return null;
+    for (const s of sections) s.body = s.body.trim();
+    return { intro: intro.join('\n').trim(), sections };
   },
 
   // The complete GitHub PR description is deliberately quieter than the
@@ -18810,6 +18883,58 @@ const AppView = {
     const now = parseInt(majority, 10);
     if (!Number.isFinite(was) || was < 1 || !Number.isFinite(now) || was === now) return null;
     return `Needs ${now}, was ${was} when voting opened`;
+  },
+
+  // The Votes step's tally line: the Yes and No counts, how many votes are
+  // still waiting (the required number minus what is cast, only while votes
+  // are owed), and — once anything is cast — what share of the votes cast
+  // are Yes. The same counts the status pill reads, so the two can never
+  // disagree. A contested vote or an admins-changing change is a
+  // conversation, not a count to read numbers off: the pill above says its
+  // state, and this says nothing.
+  _voteTallyLine(p, majority) {
+    if (!p || p.contested || p.requires_explicit_approval) return null;
+    const yes = p.qualified_yes_count != null
+      ? (parseInt(p.qualified_yes_count, 10) || 0) : (parseInt(p.yes_count, 10) || 0);
+    const no = p.qualified_no_count != null
+      ? (parseInt(p.qualified_no_count, 10) || 0) : (parseInt(p.no_count, 10) || 0);
+    let line = `Yes ${yes} · No ${no}`;
+    const waiting = Math.max(0, majority - yes - no);
+    if (waiting > 0) line += ` · Waiting ${waiting}`;
+    const cast = yes + no;
+    if (cast > 0) line += ` · ${Math.round((yes / cast) * 100)}% of votes cast are Yes`;
+    return line;
+  },
+
+  // The Votes step's clock line: when the window that is actually running
+  // ends, in the status pill's own order (merge first). The stamp is the
+  // absolute date and time — short on the page, the full one in the title.
+  // The rows with no clock — contested, admins-changing, "at least N
+  // approvals" — have no window armed, and say nothing.
+  _voteDeadlineView(p) {
+    if (!p || p.status === 'merged' || p.status === 'merging') return null;
+    if (p.contested || p.requires_explicit_approval || p.approvals_required != null) return null;
+    const stamp = (iso) => {
+      const d = new Date(iso);
+      if (!Number.isFinite(d.getTime())) return null;
+      return {
+        s: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        full: d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      };
+    };
+    if (p.merge_window_ends_at) {
+      const ends = stamp(p.merge_window_ends_at);
+      if (ends && Date.parse(p.merge_window_ends_at) > Date.now()) {
+        return { s: `Goes live ${ends.s}`, title: ends.full };
+      }
+    }
+    if (p.rejection_armed && p.reject_window_ends_at) {
+      const ends = stamp(p.reject_window_ends_at);
+      if (ends && Date.parse(p.reject_window_ends_at) > Date.now()) {
+        return { s: `Set aside ${ends.s}`, title: ends.full };
+      }
+    }
+    return null;
   },
 
   statusPillState(item, opts) {

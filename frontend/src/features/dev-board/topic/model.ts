@@ -419,6 +419,15 @@ export interface StepRow {
   actions?: ActionSpec[];
   /** The Votes step: who voted (the count is the status pill's). */
   votes?: string | null;
+  /** The Votes step's tally in numbers: "Yes 1 · No 0 · Waiting 1 · 50% of votes cast are Yes". */
+  tally?: string | null;
+  /**
+   * The Votes step's clock, when one is running: "Goes live Sep 25, 14:30"
+   * on the page, the full stamp (with the year) in `title` for the hover.
+   * Null says there is no clock — a contested vote, an admins-changing
+   * change, an "at least N approvals" target.
+   */
+  deadline?: { s: string; title: string } | null;
   /** #3234 on the Votes step: "Needs N, was M when voting opened". */
   was?: string | null;
   /** The Votes step's "?" — How voting works. */

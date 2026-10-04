@@ -992,6 +992,11 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
   const noSpec = all.find((a) => isVoteSpec(a, 'no'));
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
+  // The viewer's own vote, said beside the buttons: the same `gc-vote-active`
+  // signal `VoteButton` itself reads, set from `my_vote`.
+  const voted: 'yes' | 'no' | null = yesSpec && /\bgc-vote-active\b/.test(yesSpec.cls || '')
+    ? 'yes'
+    : (noSpec && /\bgc-vote-active\b/.test(noSpec.cls || '') ? 'no' : null);
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
   const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
   // The tags: priority, assignee, category, and the linkage. The state
@@ -1050,6 +1055,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
           <div className="dev-card-badges dev-card-status dev-topic-hero-status">
             {pill ? <StatusPill s={pill} /> : null}
             {vote}
+            {voted ? <span className="dev-topic-hero-voted" data-voted={voted}>{voted === 'yes' ? 'You voted Yes' : 'You voted No'}</span> : null}
           </div>
         ) : null}
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
@@ -1263,6 +1269,10 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
               {r.votes ? <span className="dev-ledger-roster dev-step-line">{r.votes}</span> : null}
               {r.help ? <HelpQuestion /> : null}
             </span>
+          ) : null}
+          {r.tally ? <span className="dev-step-line dev-step-vote-counts">{r.tally}</span> : null}
+          {r.deadline ? (
+            <span className="dev-step-line dev-step-vote-deadline" title={r.deadline.title}>{r.deadline.s}</span>
           ) : null}
           {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
         </span>

@@ -125,6 +125,67 @@ test('a stale flag without any saved summary points to the current description',
   assert.doesNotMatch(hero, /This summary may describe an earlier revision\./);
 });
 
+// ── The labelled summary sections ──────────────────────────────────────
+// The summary is written as five labelled lines now (llm.js and
+// submit_work's guidance). The page reads the labels out of the summary's
+// own text: an intro paragraph, then one small-caps label over its body.
+
+test('the section reader: aliases map to the canonical names, two labels are the minimum', () => {
+  const av = context();
+  const parsed = av._proposalSummarySections([
+    'Previews wait for sign-in.',
+    '## Problem: The preview opens on the login page.',
+    '**Proposed solution:** Sign in before it opens.',
+    '*Expected impact:*',
+    '- Fewer dead ends',
+    '- Faster first look',
+    '**Risks:** Low',
+    'Estimated effort: Medium',
+  ].join('\n'));
+  assert.deepEqual([...parsed.sections.map((s) => s.name)],
+    ['Problem', 'Proposed solution', 'Expected impact', 'Risks', 'Estimated effort']);
+  assert.deepEqual([...parsed.sections.map((s) => s.body)],
+    ['The preview opens on the login page.', 'Sign in before it opens.', '- Fewer dead ends\n- Faster first look', 'Low', 'Medium']);
+  assert.equal(parsed.intro, 'Previews wait for sign-in.');
+  // Aliases.
+  const alias = av._proposalSummarySections('Problem: A\nSolution: B\nRisk: Low');
+  assert.deepEqual([...alias.sections.map((s) => s.name)], ['Problem', 'Proposed solution', 'Risks']);
+  // A stray label, a legacy summary and nothing at all keep the paragraph.
+  assert.equal(av._proposalSummarySections('Problem: only one label'), null);
+  assert.equal(av._proposalSummarySections('Previews wait for sign-in.'), null);
+  assert.equal(av._proposalSummarySections(''), null);
+  assert.equal(av._proposalSummarySections(null), null);
+});
+
+test('a summary carrying the labelled sections renders as sections in the hero; a plain one keeps today’s paragraph', () => {
+  const av = context();
+  const md = [
+    'Previews wait for sign-in.',
+    '**Problem:** The preview opens on the login page.',
+    '**Proposed solution:** Sign in before it opens.',
+    '**Expected impact:** Fewer dead ends',
+    '**Risks:** Low',
+    '**Estimated effort:** Medium',
+  ].join('\n');
+  const { html } = render(av, { ...PR, pr_summary_md: md });
+  const hero = html.slice(html.indexOf('data-topic-sheet="hero"'), html.indexOf('data-topic-sheet="steps"'));
+  assert.match(hero, /<div class="dev-issue-body">/);
+  assert.match(hero, /Previews wait for sign-in\./, 'the intro keeps today’s paragraph');
+  let at = -1;
+  for (const label of ['Problem', 'Proposed solution', 'Expected impact', 'Risks', 'Estimated effort']) {
+    const i = hero.indexOf(`<h4 class="dev-summary-label">${label}</h4>`);
+    assert.ok(i >= 0, `${label} has its label`);
+    assert.ok(i > at, `${label} follows the one before it`);
+    at = i;
+  }
+  assert.match(hero, /<div class="dev-summary-body">[\s\S]{0,80}Sign in before it opens\./);
+  assert.match(hero, /<div class="dev-summary-body">[\s\S]{0,80}Medium/);
+  // And the plain summary is unchanged: one paragraph, no labels anywhere.
+  const plainHtml = render(av, PR).html;
+  assert.doesNotMatch(plainHtml, /dev-summary-label|dev-summary-section/);
+  assert.match(plainHtml, /Previews wait for sign-in\./);
+});
+
 test('the hero draws the card’s two rows: the status pill with Vote at its end, then the band with Preview and the ⋯ at its right end', () => {
   const av = context();
   const { html } = render(av, PR);
@@ -238,6 +299,61 @@ test('the vote step notes the threshold it opened with only when that has moved'
   const { html } = render(av, { ...PR, votes_required_at_promote: 1 });
   assert.match(html, /<span class="dev-step-line dev-step-vote-was">Needs 2, was 1 when voting opened<\/span>/);
   assert.doesNotMatch(render(av, PR).html, /dev-step-vote-was/);
+});
+
+// ── The richer vote panel ──────────────────────────────────────────────
+// The Votes step states the tally in numbers and the clock it is on, in the
+// status pill's own counts and order, so the two never disagree.
+
+test('the Votes step states the tally: waiting only while votes are owed, the share once anything is cast', () => {
+  const av = context();
+  const tally = (item) => plain(render(av, item).v.body.steps).rows[0].tally;
+  assert.equal(tally(PR), 'Yes 1 · No 0 · Waiting 1 · 100% of votes cast are Yes');
+  assert.equal(tally({ ...PR, yes_count: 0, no_count: 0 }), 'Yes 0 · No 0 · Waiting 2',
+    'nothing cast: no share, and both votes still owed');
+  assert.equal(tally({ ...PR, yes_count: 2, votes_required: 2 }), 'Yes 2 · No 0 · 100% of votes cast are Yes',
+    'the count is met: nothing waiting');
+  // Only invited approvers' votes count, so the counts are the qualifying ones.
+  assert.equal(tally({ ...PR, approval_policy: 'invited', yes_count: 5, qualified_yes_count: 1,
+    no_count: 1, qualified_no_count: 0 }), 'Yes 1 · No 0 · Waiting 1 · 100% of votes cast are Yes');
+  // A contested vote or an admins-changing change is a conversation: no tally.
+  assert.equal(tally({ ...PR, contested: true }), null);
+  assert.equal(tally({ ...PR, requires_explicit_approval: true }), null);
+  // And the line draws on the step, before the was note.
+  const { html } = render(av, PR);
+  const votes = html.slice(html.indexOf('data-note="votes"'), html.indexOf('data-note="mergeability"'));
+  assert.match(votes, /<span class="dev-step-line dev-step-vote-counts">Yes 1 · No 0 · Waiting 1 · 100% of votes cast are Yes<\/span>/);
+});
+
+test('the Votes step names the clock it is on, merge first, and says nothing when there is none', () => {
+  const av = context();
+  const deadline = (item) => plain(render(av, item).v.body.steps).rows[0].deadline;
+  assert.equal(deadline(PR), null, 'no window, no line');
+  const future = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const live = deadline({ ...PR, merge_window_ends_at: future });
+  assert.match(live.s, /^Goes live /);
+  assert.ok(live.title, 'the full stamp rides in the title');
+  assert.match(deadline({ ...PR, merge_window_ends_at: '2020-01-01T00:00:00Z',
+    reject_window_ends_at: future, rejection_armed: true }).s, /^Set aside /);
+  // The rows with no clock say nothing even from a stale cached window.
+  assert.equal(deadline({ ...PR, contested: true, merge_window_ends_at: future }), null);
+  assert.equal(deadline({ ...PR, requires_explicit_approval: true, merge_window_ends_at: future }), null);
+  assert.equal(deadline({ ...PR, approvals_required: 2, merge_window_ends_at: future }), null);
+  const { html } = render(av, { ...PR, merge_window_ends_at: future });
+  assert.match(html, /<span class="dev-step-line dev-step-vote-deadline" title="[^"]+">Goes live [^<]+<\/span>/);
+  // The clock is on its own line, and both are absent on a contested row.
+  const votes = html.slice(html.indexOf('data-note="votes"'), html.indexOf('data-note="mergeability"'));
+  assert.ok(votes.indexOf('dev-step-vote-counts') < votes.indexOf('dev-step-vote-deadline'), 'tally, then the clock');
+  assert.doesNotMatch(render(av, { ...PR, contested: true }).html, /dev-step-vote-counts|dev-step-vote-deadline/);
+});
+
+test('the hero says “You voted Yes/No” beside its buttons, and nothing when you have not voted', () => {
+  const av = context();
+  assert.doesNotMatch(render(av, PR).html, /dev-topic-hero-voted/);
+  const yes = render(av, { ...PR, my_vote: 'yes' }).html;
+  assert.match(yes, /<span class="dev-topic-hero-voted" data-voted="yes">You voted Yes<\/span>/);
+  const no = render(av, { ...PR, my_vote: 'no' }).html;
+  assert.match(no, /<span class="dev-topic-hero-voted" data-voted="no">You voted No<\/span>/);
 });
 
 test('a failing check opens its step onto the run, with each failure’s door; the merge step says the conflict in one line', () => {
@@ -437,7 +553,7 @@ test('the band is one component for the card and the hero, and the card’s pinn
   assert.match(card, /if \(!hasActions && !lead\) return dense \? <div className="gc-card-actions"><\/div> : null;/, 'a lead (the hero’s Vote) is a band on its own');
   assert.match(card, /<div className="gc-card-actions" ref=\{folded\.ref\} data-band-measured=\{folded\.measured \? '1' : undefined\}>\n\s+\{lead\}\n/, 'the lead is a fixed child before the pills');
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /<div className="dev-card-badges dev-card-status dev-topic-hero-status">\n\s+\{pill \? <StatusPill s=\{pill\} \/> : null\}\n\s+\{vote\}\n\s+<\/div>/, 'the hero’s status row is the card’s');
+  assert.match(tsx, /<div className="dev-card-badges dev-card-status dev-topic-hero-status">\n\s+\{pill \? <StatusPill s=\{pill\} \/> : null\}\n\s+\{vote\}\n\s+\{voted \? <span className="dev-topic-hero-voted" data-voted=\{voted\}>\{voted === 'yes' \? 'You voted Yes' : 'You voted No'\}<\/span> : null\}\n\s+<\/div>/, 'the hero’s status row is the card’s, with the voted line after Vote');
   assert.match(tsx, /<ActionBand actions=\{pills\} menuKey=\{card\.rail\.menuKey \|\| ''\} preview=\{card\.actionPreview \|\| card\.rail\.preview \|\| null\} dense=\{false\} \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-topic-hero > div\.dev-topic-hero-actions\.dev-card-topic \{[^}]*box-shadow: none;[^}]*--dev-edge-w: 0px;/, 'the card’s box comes off the hero’s band');

@@ -862,9 +862,10 @@ function estimateCostCents(usage, model) {
 // the first {...} object. `title` is REQUIRED (throws when empty, hard-capped
 // at 200 chars). `body` and `summary` are OPTIONAL (empty string when
 // missing/malformed) so a short or absent value never blocks PR creation;
-// `summary` is the plain-language, user-facing blurb (1-3 sentences) and is
-// length-capped defensively so a verbose model response can't dominate the
-// proposal view. Exported pure for tests.
+// `summary` is the plain-language, user-facing blurb (five labelled lines —
+// Problem / Proposed solution / Expected impact / Risks / Estimated effort)
+// and is length-capped defensively so a verbose model response can't dominate
+// the proposal view. Exported pure for tests.
 function parsePrMetadataText(text) {
   const match = String(text || '').match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON object in PR metadata response');
@@ -940,7 +941,13 @@ async function generatePrMetadata({ userRequest, ccSummary, requests, summaries,
 A pull request may bundle several updates made over multiple turns. You are given the FULL history of the user's requests and the coding agent's summaries for this PR, and possibly the session's spec doc(s). Produce metadata that reflects ALL the changes in the PR, not just the latest update:
 - A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
 - A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
-- A summary: 1-3 short sentences in plain, everyday English saying what changes for somebody USING the app — what looks different, what they can now do, or what stops going wrong. Write it from what that person would NOTICE, not from what was edited. File and directory names, function, variable, column and setting identifiers, code, and developer vocabulary belong in the description above and must not appear here. The whole group reads this first and many of them are not developers; the description sits beneath it behind a collapsed "Technical details" section, so nothing technical is lost by keeping it out of the summary.
+- A summary written as five labelled lines, each label with a colon at the start of its own line, one short everyday-English sentence each, the whole summary within about 600 characters:
+  Problem: what is wrong or missing today.
+  Proposed solution: what this change does about it.
+  Expected impact: what gets better for somebody USING the app — what looks different, what they can now do, or what stops going wrong.
+  Risks: a single word such as Low, Medium or High.
+  Estimated effort: a single word such as Low, Medium or High.
+  Write it from what a person would NOTICE, not from what was edited. File and directory names, function, variable, column and setting identifiers, code, and developer vocabulary belong in the description above and must not appear in any of the five lines. The whole group reads this first and many of them are not developers; the description sits beneath it behind a collapsed "Technical details" section, so nothing technical is lost by keeping it out of the summary.
 
 The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
 

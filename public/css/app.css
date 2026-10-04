@@ -15326,6 +15326,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 /* ── About ── */
 .dev-topic-about-body { font-size: 13.5px; line-height: 1.5; color: var(--text-primary); }
 .dev-topic-about-body .dev-issue-body { font-size: inherit; }
+/* The summary's labelled sections (Problem / Proposed solution / Expected
+   impact / Risks / Estimated effort): the platform's small-caps section
+   header over normal reading text, one block per section. No label, no
+   block — a summary without them is still the one paragraph. */
+.dev-summary-section { margin-top: 12px; }
+.dev-summary-section:first-child { margin-top: 0; }
+.dev-summary-label {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dev-summary-body { font-size: inherit; line-height: inherit; color: inherit; }
+.dev-summary-body > :first-child { margin-top: 0; }
+.dev-summary-body > :last-child { margin-bottom: 0; }
 .dev-topic-visuals { margin-top: 10px; }
 .dev-topic-visuals:first-child, .dev-topic-h + .dev-topic-visuals { margin-top: 0; }
 
@@ -15625,6 +15643,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-vote-tally { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
 /* #3234: the threshold moved during the vote; muted, beside the counts. */
 .dev-step-vote-was { color: var(--text-muted); font-size: 12.5px; }
+/* The Votes step's own tally and clock (app-view.js _voteTallyLine /
+   _voteDeadlineView): the counts in the tally's ink, the clock muted like
+   the was note. */
+.dev-step-vote-counts { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
+.dev-step-vote-deadline { color: var(--text-muted); font-size: 12.5px; }
+.dev-step-vote-deadline[title] { cursor: help; }
 
 /* ── A merge gate's step: one short line ──
    The mark, the label and the line on one row (app-view.js _stepLine), a
@@ -15644,6 +15668,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-main .dev-ledger-roster.dev-step-line { color: var(--text-muted); font-weight: 400; }
 .dev-step-main .dev-ledger-help { margin: 0; }
 .dev-step-main .dev-step-vote-was { flex-basis: 100%; font-weight: 400; }
+/* The tally and the clock each take their own line under the step, like the
+   was note. */
+.dev-step-main .dev-step-vote-counts,
+.dev-step-main .dev-step-vote-deadline { flex-basis: 100%; }
 /* The Checks step is a disclosure: the whole row is its control. */
 .dev-step-toggle {
   border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left;
@@ -15689,6 +15717,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 /* The hero's status row: the card's pill and Vote button, above the band. */
 .dev-topic-hero .dev-card-badges.dev-topic-hero-status { margin-top: 0; }
 .dev-topic-hero .dev-topic-hero-status + .gc-card-actions { margin-top: 8px; }
+/* The viewer's own vote, said beside the Yes/No buttons: a small settled
+   line in the ok ink — stated once, not shouting. */
+.dev-topic-hero-voted { font-size: 12px; font-weight: 600; color: var(--state-ok); align-self: center; white-space: nowrap; }
 
 /* ── Technical details, as a sheet over the page ──
    Opened from the ⋯ menu (DetailsSheet); body-mounted, so no frosted sheet

@@ -161,7 +161,7 @@ test('submit_work takes the user-facing half and forwards it', () => {
   const declared = TOOLS_SRC.slice(TOOLS_SRC.indexOf('summary: z.string().optional()'));
   const describe = declared.slice(0, declared.indexOf('),') + 2);
   assert.match(describe, /USER-FACING/);
-  assert.match(describe, /plain everyday English/);
+  assert.match(describe, /everyday-English sentence/);
   assert.match(describe, /No file names, no identifiers, no code/);
   // Forwarded on the same POST the testing notes ride, and omitted when
   // blank so the route writes null.
@@ -208,12 +208,18 @@ test('the charter carries the same rule without spending brief budget', () => {
 // ── The generated half, for on-platform sessions ───────────────────────
 
 test('the generated summary is told to keep identifiers out', () => {
-  const i = LLM_SRC.indexOf('- A summary:');
+  const i = LLM_SRC.indexOf('- A summary');
   assert.ok(i > 0, 'the summary instruction is still in the PR-metadata prompt');
-  const instruction = LLM_SRC.slice(i, LLM_SRC.indexOf('\n', i));
-  assert.match(instruction, /plain, everyday English/);
+  // The instruction is the five labelled lines now (Problem / Proposed
+  // solution / Expected impact / Risks / Estimated effort), so it spans
+  // several indented lines; the whole block is what is asserted.
+  const instruction = LLM_SRC.slice(i, LLM_SRC.indexOf('The SPEC section', i));
+  assert.match(instruction, /everyday-English sentence/);
   assert.match(instruction, /identifiers/, 'names what must not appear');
-  assert.match(instruction, /must not appear here/);
+  assert.match(instruction, /must not appear in any of the five lines/);
   assert.match(instruction, /Technical details/,
     'and says where that material does belong, so nothing is lost by omitting it');
+  for (const label of ['Problem:', 'Proposed solution:', 'Expected impact:', 'Risks:', 'Estimated effort:']) {
+    assert.ok(instruction.includes(label), `${label} is named`);
+  }
 });
