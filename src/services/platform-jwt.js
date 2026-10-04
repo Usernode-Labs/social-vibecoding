@@ -18,6 +18,7 @@
 //   worker         HS256   WORKER_JWT_SECRET         usernode:worker        worker:session
 //   edge grant     HS256   EDGE_JWT_SECRET           usernode:edge          edge:grant
 //   edge cookie    HS256   EDGE_JWT_SECRET           usernode:edge          edge:cookie
+//   edge anon      HS256   EDGE_JWT_SECRET           usernode:edge          edge:anon
 //
 // App identity is asymmetric on purpose: containers receive only the
 // public key, so they can verify a user token but cannot produce one.
@@ -58,6 +59,10 @@ const PUR_PROD_DEBUG = 'worker:prod-debug';
 const PUR_SHOTS = 'worker:shots';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
+// "This browser has no Homeroom session": the apex authorize hop's answer
+// for a visitor it could not sign in, so the app host stops asking for a
+// while (services/edge-gate.js). Host-bound, one minute, grants nothing.
+const PUR_EDGE_ANON = 'edge:anon';
 
 // Shell iframe tokens live an hour and are refreshed by the shell at 45
 // min (public/js/app-view.js). Capture tokens only need to outlive one
@@ -71,7 +76,11 @@ const WORKER_TTL = '24h';
 // caused the Kubernetes journal watcher to detach immediately while the
 // coding agent kept running in the worker Pod.
 const WORKER_TTL_S = 24 * 60 * 60;
-const EDGE_GRANT_TTL_S = 120;
+// The sign-in code is one redirect hop, single-use (its `jti` is redeemed
+// once, services/edge-gate.js) and bound to one host, one app, one user and
+// one platform session. A minute is plenty for the hop.
+const EDGE_GRANT_TTL_S = 60;
+const EDGE_ANON_TTL_S = 60;
 const EDGE_COOKIE_TTL_S = 12 * 60 * 60;
 
 // Audience for an app-scoped identity token. Keyed on `apps.id` — the
@@ -337,14 +346,23 @@ function verifyProdDebugToken(token) {
 
 // ── Private-app edge gate ─────────────────────────────────────────────
 //
-// Both edge purposes share EDGE_JWT_SECRET; the `pur` check is what
-// keeps a 120s grant from being replayed as a 12h access cookie.
-function signEdgeGrant({ uid, appId, host }) {
-  return jwt.sign({ uid, appId, host, pur: PUR_EDGE_GRANT }, edgeSecret(), {
+// The edge purposes share EDGE_JWT_SECRET; the `pur` check is what keeps a
+// one-minute code from being replayed as a 12h access cookie.
+//
+// `sid` names the platform session the code was minted from (a SHA-256 of
+// its token, never the token): the cookie it becomes is only good while
+// that session is, so signing out of Homeroom signs out of every app host.
+// `jti` is what makes the code single-use: the gate records it the first
+// time it is redeemed and refuses it after that.
+function signEdgeGrant({ uid, appId, host, sid = null, jti = null }) {
+  const payload = { uid, appId, host, pur: PUR_EDGE_GRANT };
+  if (sid) payload.sid = sid;
+  return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,
     audience: AUD_EDGE,
     expiresIn: EDGE_GRANT_TTL_S,
+    jwtid: jti || crypto.randomBytes(16).toString('hex'),
   });
 }
 
@@ -356,8 +374,10 @@ function verifyEdgeGrant(token) {
   });
 }
 
-function signEdgeCookie({ uid, appId, host }) {
-  return jwt.sign({ uid, appId, host, pur: PUR_EDGE_COOKIE }, edgeSecret(), {
+function signEdgeCookie({ uid, appId, host, sid = null }) {
+  const payload = { uid, appId, host, pur: PUR_EDGE_COOKIE };
+  if (sid) payload.sid = sid;
+  return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,
     audience: AUD_EDGE,
@@ -370,6 +390,23 @@ function verifyEdgeCookie(token) {
     algorithm: 'HS256',
     audience: AUD_EDGE,
     purpose: PUR_EDGE_COOKIE,
+  });
+}
+
+function signEdgeAnon({ host }) {
+  return jwt.sign({ host, pur: PUR_EDGE_ANON }, edgeSecret(), {
+    algorithm: 'HS256',
+    issuer: ISSUER,
+    audience: AUD_EDGE,
+    expiresIn: EDGE_ANON_TTL_S,
+  });
+}
+
+function verifyEdgeAnon(token) {
+  return verifyWith(token, edgeSecret(), {
+    algorithm: 'HS256',
+    audience: AUD_EDGE,
+    purpose: PUR_EDGE_ANON,
   });
 }
 
@@ -530,12 +567,14 @@ module.exports = {
   PUR_SHOTS,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
+  PUR_EDGE_ANON,
   IFRAME_TTL,
   CAPTURE_TTL,
   WORKER_TTL,
   WORKER_TTL_S,
   EDGE_GRANT_TTL_S,
   EDGE_COOKIE_TTL_S,
+  EDGE_ANON_TTL_S,
   appAudience,
   signAppIdentityToken,
   verifyAppIdentityToken,
@@ -557,6 +596,8 @@ module.exports = {
   verifyEdgeGrant,
   signEdgeCookie,
   verifyEdgeCookie,
+  signEdgeAnon,
+  verifyEdgeAnon,
   orNull,
   assertIframeKeyPair,
   generateStagingIframeKeyPair,

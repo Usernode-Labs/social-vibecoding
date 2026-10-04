@@ -420,7 +420,7 @@ test('rename: prefills the current name and PUTs to /rename', () => {
 test('fork: takes its source from the open payload, POSTs to /fork', () => {
   const src = dialog('fork-app.tsx');
   assert.match(src, /useDialog<ForkSource>\('fork'/);
-  assert.match(src, /\(fork\)`/, 'the "<name> (fork)" default is still suggested');
+  assert.match(src, /\(remix\)`/, 'the "<name> (remix)" default is suggested');
   assert.match(src, /\/fork`/);
   // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
   // on the same progress report as create/import so a real failure reason is

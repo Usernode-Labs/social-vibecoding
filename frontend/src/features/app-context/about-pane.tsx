@@ -14,8 +14,9 @@
  *      (./about-model.ts says why it is assembled rather than fixed).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, Code (public on GitHub), Fork
- *      this app.
+ *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
+ *      (a fork, to the code; "Remix" to people). A remix also says what
+ *      it was remixed from, under its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -141,18 +142,44 @@ function Icon({ children }: { children: ReactNode }): ReactNode {
 }
 
 /** A MORE row that does something (a button), dismissing the menu first when asked. */
-function ActionRow({ id, icon, label, onClick }: {
+function ActionRow({ id, icon, label, sub = null, onClick }: {
   id: string;
   icon: ReactNode;
   label: string;
+  /** A second, quieter line under the label (Remix's "Make your own copy"). */
+  sub?: string | null;
   onClick: () => void;
 }): ReactNode {
   return (
-    <button id={id} type="button" className={ROW} onClick={onClick}>
+    <button id={id} type="button" className={sub ? `${ROW} py-2` : ROW} onClick={onClick}>
       <Icon>{icon}</Icon>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-medium">{label}</span>
+          <span className="block truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{sub}</span>
+        </span>
+      ) : (
+        <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      )}
     </button>
   );
+}
+
+/**
+ * Where a remix came from: the resolved `forked_from` the app row carries
+ * (attachForkLineage in src/routes/apps.js: `{ slug, name, linkable }`, or
+ * null for an app that is not a copy and for one in demo mode). A deleted
+ * original resolves to "<deleted>" and is text, not a link. Pure; the line
+ * it feeds is pinned by tests/app-about-pane.test.js.
+ */
+function lineageOf(row: AppRow | null | undefined): { name: string; href: string | null } | null {
+  const ref = row ? row.forked_from : null;
+  if (!ref || typeof ref !== 'object') return null;
+  const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
+  const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
+    ? `#app/${encodeURIComponent(ref.slug)}`
+    : null;
+  return { name, href };
 }
 
 /**
@@ -325,6 +352,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
   const showFork = isApp && !!forkItem;
+  const lineage = isApp ? lineageOf(row) : null;
 
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
@@ -384,6 +412,26 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               {`/app/${slug}`}
             </p>
           ) : null)}
+          {/* A remix says what it was remixed from, under its description:
+              the line Discover's page draws under its version, in the same
+              amber, opening the original the way a contributor row opens a
+              person (the sheet closes first). */}
+          {isApp && lineage ? (
+            <p id="app-about-lineage" className="mt-0.5 text-xs text-amber-600 dark:text-amber-400 truncate">
+              {lineage.href ? (
+                <a
+                  href={lineage.href}
+                  className="hover:underline"
+                  title={`Remixed from ${lineage.name}: open the original`}
+                  onClick={() => { void AppContext.dismissForNav(); }}
+                >
+                  {`\u2442 Remixed from ${lineage.name}`}
+                </a>
+              ) : (
+                <span title="The original app no longer exists">{`\u2442 Remixed from ${lineage.name}`}</span>
+              )}
+            </p>
+          ) : null}
           {stack.length || pill ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
@@ -585,7 +633,8 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <ActionRow
               id="app-about-fork"
               icon={<Glyph d={GLYPHS.fork} />}
-              label="Fork this app"
+              label="Remix"
+              sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
             />
           ) : null}

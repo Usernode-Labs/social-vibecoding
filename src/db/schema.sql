@@ -11548,3 +11548,32 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS suggested_from_app_id INTEGER
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_one_open_suggestion
   ON chat_sessions (suggested_from_app_id)
   WHERE suggested_from_app_id IS NOT NULL AND status IN ('active', 'promoted', 'merging');
+
+-- ── App-host sign-in (#3657; services/edge-gate.js) ──────────────────────
+--
+-- Opening an app at its own address while signed in to Homeroom signs the
+-- person in there too: the app host's gate sends the browser to the apex
+-- (/__access/authorize), which reads the real platform session and sends it
+-- back with a one-minute sign-in code bound to the host, the app, the user
+-- and that session. The gate trades the code for a host-only cookie.
+--
+-- The code is SINGLE-USE. Its `jti` is recorded here the first time it is
+-- redeemed (INSERT ... ON CONFLICT DO NOTHING; first writer wins on every
+-- platform process at once), and a second presentation finds the row and is
+-- refused. Rows are only needed until the code would have expired anyway, so
+-- each redemption also clears a bounded batch of expired ones.
+CREATE TABLE IF NOT EXISTS edge_grant_redemptions (
+  jti          CHAR(32) PRIMARY KEY CHECK (jti ~ '^[0-9a-f]{32}$'),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  redeemed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE edge_grant_redemptions IS 'staging:private';
+CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
+  ON edge_grant_redemptions (expires_at);
+
+-- The app-host cookie names its platform session by a SHA-256 of the
+-- session token (never the token itself), and every gated request checks
+-- that session is still live, so signing out of Homeroom signs out of every
+-- app host at once. This index is that lookup.
+CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
+  ON sessions (encode(sha256(token::bytea), 'hex'));

@@ -23,6 +23,7 @@ const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, github
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
+const edgeGate = require('../services/edge-gate');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
@@ -50,24 +51,25 @@ const MAX_INITIAL_APPROVERS = 20;
 const validateVisibilityCombo = createOptions.visibilityComboError;
 
 // A source must have finished the durable parts of provisioning before a
-// fork can take a database/repository snapshot. `awaiting_secrets` is safe:
-// its DB and repo are complete and only private deploy input is missing.
+// fork can take a repository snapshot. `awaiting_secrets` is safe: its repo
+// is complete and only private deploy input is missing. People see a fork
+// as a "remix", so these messages say so.
 // Keeping this as a shared message builder lets both initial fork and Retry
 // reject the known race before creating another async failure row.
 function forkSourceReadinessError(sourceApp) {
-  if (!sourceApp) return 'The source app for this fork no longer exists.';
-  if (sourceApp.self_hosted) return 'The platform app cannot be forked.';
+  if (!sourceApp) return 'The app this copy came from no longer exists.';
+  if (sourceApp.self_hosted) return 'Homeroom itself cannot be remixed.';
   if (sourceApp.status === 'creating') {
-    return 'This app is still being set up. Try forking it again once it is ready.';
+    return 'This app is still being set up. Try remixing it again once it is ready.';
   }
   if (sourceApp.status === 'error') {
-    return 'This app cannot be forked until its setup error is fixed.';
+    return 'This app cannot be remixed until its setup error is fixed.';
   }
   if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
-    return 'This app is not ready to fork yet.';
+    return 'This app is not ready to remix yet.';
   }
   if (!sourceApp.repo_url) {
-    return 'This app is not ready to fork yet because its repository is still being prepared.';
+    return 'This app is not ready to remix yet because its code is still being set up.';
   }
   return null;
 }
@@ -1231,10 +1233,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   // Fork an existing app into a brand-new, independent app owned by the
-  // forker. Mirrors POST /api/apps: same quota/cap gate, same slug
-  // derivation, same insert-CTE (app row + creator membership) — plus a
-  // reference-only `forked_from` and an async forkApp() worker that
-  // clones the source's repo, public DB data, and non-private secrets.
+  // forker (people see this as "Remix"). Mirrors POST /api/apps: same
+  // quota/cap gate, same slug derivation, same insert-CTE (app row +
+  // creator membership) — plus a reference-only `forked_from` and an async
+  // forkApp() worker that copies the source's code into a new repository
+  // and gives the copy an EMPTY database of its own. Nobody's data, keys,
+  // chat or members come with it.
   router.post('/api/apps/:slug/fork', drainGuard, appCreateLimiter, async (req, res) => {
     const { name } = req.body;
     if (!name?.trim()) {
@@ -1281,13 +1285,26 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!slug) return res.status(400).json({ error: 'Invalid app name' });
 
       // Reference-only lineage: appId + slug, NEVER the name (resolved
-      // live at serialize time). Inherit the source's visibility.
-      const forkedFrom = JSON.stringify({ appId: sourceApp.id, slug: sourceApp.slug });
+      // live at serialize time), and when the copy was made. The worker adds
+      // `sourceSha` (the source commit it actually cloned) and `forkBaseSha`
+      // (the copy's own first commit) once the repository is copied, so
+      // what the copy changed later can be told apart from what it copied.
+      //
+      // A copy always starts as Just you (private to build, private to
+      // view), whatever the source's audience: what the remixer made is
+      // theirs until they invite people or open it up. The worker strips
+      // the copied dapp.json's `visibility` block so the first deploy does
+      // not put the source's audience back.
+      const forkedFrom = JSON.stringify({
+        appId: sourceApp.id,
+        slug: sourceApp.slug,
+        forkedAt: new Date().toISOString(),
+      });
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
                              collab_visibility, view_visibility, forked_from)
-           VALUES ($1, $2, $3, 'creating', $4, $5, $6::jsonb)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1295,7 +1312,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO NOTHING
          )
          SELECT * FROM new_app`,
-        [name.trim(), slug, req.user.id, sourceApp.collab_visibility, sourceApp.view_visibility, forkedFrom]
+        [name.trim(), slug, req.user.id, forkedFrom]
       );
       const appRow = rows[0];
       log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
@@ -2888,41 +2905,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // ── Edge-gate authorize hop (view-private apps) ─────────────────────
+  // ── App-host authorize hop ─────────────────────────────────────────
   //
-  // Platform session cookies are host-only (deliberately — child apps
-  // run user-authored code and must never see the platform credential),
-  // so a direct visit to a view-private app's subdomain carries no
-  // session for the edge gate (/__caddy/access in routes/internal.js)
-  // to read. The gate bounces bare browser GETs here, to the apex,
-  // where the session cookie IS present and authMiddleware has already
-  // resolved req.user (or redirected to /login.html). We re-run the
-  // standard view-level access check and, when allowed, send the
-  // browser back to the app host with a 120s single-purpose grant the
-  // gate exchanges for a per-host scoped access cookie. Non-members get
-  // the same existence-hiding 404 every other surface returns.
+  // Platform session cookies are host-only (deliberately: child apps run
+  // user-authored code and must never see the platform credential), so a
+  // visit to an app's own address carries no session for the app-host gate
+  // to read. The gate sends the browser here, to the apex, where the
+  // session IS present: a signed-in person who may view the app goes back
+  // with a single-use sign-in code bound to the host, the app, them and this
+  // session; anyone else goes where an unsigned visitor always went.
+  // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
+  // lets this one path through without a session so it can answer for a
+  // signed-out visitor too.
   router.get('/__access/authorize', async (req, res) => {
     try {
-      const parsed = appAccess.parseAppHost(req.query.host);
-      if (!parsed) return res.status(404).send('Not found');
-      const rawNext = typeof req.query.next === 'string' ? req.query.next : '/';
-      const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
-
-      const app = await appAccess.getAppForUser(
-        pool, parsed.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
-      );
-      if (!app) return res.status(404).send('Not found');
-
-      const grant = appAccess.mintAccessGrant({
-        uid: req.user.id,
-        appId: app.id,
-        host: parsed.host,
-      });
-      return res.redirect(
-        302,
-        `https://${parsed.host}/__usernode_access`
-          + `?grant=${encodeURIComponent(grant)}&next=${encodeURIComponent(next)}`
-      );
+      return await edgeGate.handleAuthorize(pool, req, res);
     } catch (err) {
       log.error('apps', 'Edge authorize failed', { host: req.query.host, message: err.message });
       return res.status(500).send('Internal server error');
@@ -3126,13 +3123,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         sourceApp = await findForkSource(pool, appRow);
         if (!sourceApp && !appRow.repo_url) {
           return res.status(409).json({
-            error: 'The source app for this fork no longer exists, so the fork cannot be retried.',
+            error: 'The app this copy came from no longer exists, so the copy cannot be retried.',
           });
         }
         if (sourceApp && !appRow.repo_url) {
           if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
             return res.status(403).json({
-              error: 'You no longer have access to the source app for this fork.',
+              error: 'You no longer have access to the app this copy came from.',
             });
           }
           const readinessError = forkSourceReadinessError(sourceApp);

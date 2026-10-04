@@ -107,7 +107,7 @@ function render(patch, { apps = [ROW], parked = null, items = null } = {}) {
       isYours: (a) => !!((a.is_collaborator && !a.your_apps_hidden) || a.is_favorited),
       menuItemsFor: () => items || [
         { key: 'install', label: 'Add to Home Screen', run: () => {} },
-        { key: 'fork', label: 'Fork this app', run: () => {} },
+        { key: 'fork', label: 'Remix', run: () => {} },
       ],
     },
   };
@@ -164,6 +164,29 @@ test('Add to home screen and Fork are the app page\'s own items, and absent with
   const none = render({ target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev' }, { items: [] });
   assert.doesNotMatch(none, /app-about-a2hs|app-about-fork/,
     'a laptop has no home screen, and the platform row cannot be forked');
+});
+
+// People see a fork as a "Remix". The row says what it does under its label,
+// and a copy says what it was remixed from, under its description, the way
+// Discover's page does.
+test('Remix says "Make your own copy", and a copy says what it was remixed from', () => {
+  const patch = { target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev' };
+  const plain = render(patch);
+  assert.match(plain, /id="app-about-fork"[^>]*>[\s\S]*?>Remix<[\s\S]*?>Make your own copy</);
+  assert.doesNotMatch(plain, /Fork this app/);
+  assert.doesNotMatch(plain, /app-about-lineage/, 'an app that is not a copy has no lineage line');
+
+  const copy = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: 'Book Club', linkable: true } };
+  const html = render(patch, { apps: [copy] });
+  assert.match(html, /id="app-about-lineage"[^>]*>(?:<[^>]+>)*\u2442 Remixed from Book Club</);
+  assert.match(html, /id="app-about-lineage"[^>]*><a href="#app\/book-club"/, 'it opens the original');
+  assert.ok(html.indexOf('id="app-about-tagline"') < html.indexOf('id="app-about-lineage"'),
+    'under the description');
+
+  const orphan = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: '<deleted>', linkable: false } };
+  const gone = render(patch, { apps: [orphan] });
+  assert.match(gone, /\u2442 Remixed from &lt;deleted&gt;/);
+  assert.doesNotMatch(gone, /id="app-about-lineage"[^>]*><a /, 'a deleted original is text, not a link');
 });
 
 test('About Homeroom: the three figures instead of the actions, the platform\'s note, its roster', () => {

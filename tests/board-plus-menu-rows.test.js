@@ -68,7 +68,7 @@ test('the subtitles survive: this is not the chip menu’s one-line row', () => 
   assert.match(menu, /Renames are proposals, applied once voted in/);
   assert.match(menu, /Report a problem or idea without building it yourself/);
   assert.match(menu, /Your computer &middot; your own tools\. You have already built it/);
-  assert.match(menu, /Stand up your own independent copy/);
+  assert.match(menu, /title="Remix"\s+sub="Make your own copy"/);
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 

@@ -16,7 +16,7 @@ const github = require('../services/github');
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
 const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('../services/caddy');
-const appAccess = require('../services/app-access');
+const edgeGate = require('../services/edge-gate');
 // #1037: shared draft-card creation (validation, de-dupe, insert, live
 // push), also used by the Mayor's in-process draft_issue_report tool
 // (src/routes/sessions.js). The ws / session-bus plumbing the draft card
@@ -84,78 +84,19 @@ async function isKnownHost(pool, rawDomain) {
 // plenty of headroom for normal use (typical session pushes 1–5 times)
 // while preventing 1000+/sec API hammering.
 
-// ── Edge visibility gate (Caddy forward_auth) ─────────────────────────
+// ── App-host gate (Caddy forward_auth, and the Kubernetes gate proxy) ──
 //
-// The Caddyfile's wildcard site forward_auths EVERY request to a child-
-// app / staging subdomain here before proxying it to the app container.
-// This closes the "direct <slug>.<domain> access isn't gated" hole for
-// view-private apps: the platform UI checks were already in place, but
-// anyone holding the URL could hit the container straight through Caddy.
-//
-// Decision tree (per request, in order):
-//   1. host → slug (parseAppHost; staging previews inherit the prod
-//      app's visibility). Unknown/unroutable host → 404.
-//   2. view-public app → 200. This is the hot path: one 10s-TTL cached
-//      lookup, no session work at all, so public apps stay ~zero-cost.
-//   3. /__usernode_access callback → exchange a short-lived grant
-//      (minted by the apex /__access/authorize route from the user's
-//      real platform session) for a per-host scoped access cookie.
-//   4. Scoped access cookie → verify + re-check membership → 200.
-//   5. Platform iframe JWT (?token= query or x-usernode-token header,
-//      the exact credential the shell already injects) → membership
-//      check; header → 200 directly (API fetches always carry it);
-//      query → 302-to-self that sets the scoped cookie so the page's
-//      assets (which carry neither token nor header) pass too.
-//   6. Nothing valid: browser GETs bounce to the apex authorize route
-//      (which reads the existing session cookie — host-only, so it
-//      never reaches subdomains directly); everything else gets the
-//      same existence-hiding 404 the API routes use.
-//
-// The scoped cookie is a JWT bound to {host, appId, uid} — NOT the
-// platform session token. Child apps run user-authored code, so the
-// platform credential must never be readable on their hosts; the scoped
-// cookie grants nothing beyond "may load this one host" and membership
-// is still re-verified server-side on every request.
-//
-// Both the grant and the cookie are signed with EDGE_JWT_SECRET, an
-// authority that exists nowhere but the platform process (see
-// src/services/platform-jwt.js). They are distinguished by their `pur`
-// claim, so a 120s grant cannot be replayed as a 12h cookie even though
-// they share a key. Step 5's iframe token is a third authority again —
-// the RS256 app-identity key, verified against the app whose host is
-// being gated, so a token minted for another app cannot open this one.
-
-const ACCESS_COOKIE = '__usernode_access';
-// 12h, re-minted via authorize after expiry. The signer owns the TTL;
-// mirrored here for the cookie's own maxAge.
-const ACCESS_COOKIE_TTL_S = platformJwt.EDGE_COOKIE_TTL_S;
-// Marker appended when we 302-to-self to set the cookie from an iframe
-// token. If we see it again WITHOUT the cookie (cookies blocked), we
-// serve the page anyway rather than redirect-looping — the app itself
-// still auths via the token, only same-host asset caching degrades.
-const RETRY_MARKER = '__ua';
+// Every request to an app or preview host is checked before it reaches the
+// app: GET /__caddy/access below. The decision (members-only for private
+// apps, the single-use sign-in code that signs a person in at the app's own
+// address, identity only on same-origin requests) lives in
+// src/services/edge-gate.js, whose header has the whole tree.
 
 // A benchmark trial (services/bench/runner.js) replays a request as it stood
 // at a past commit; GitHub and the platform answer as they are now (later
 // comments, the request closed by its fix). Its prompt already carries the
 // request's thread as it stood, so usernode-issues answers with nothing.
 const BENCH_ISSUES_NOTE = 'Issues are not available in a benchmark trial: the request is in your prompt as it stood.';
-
-function authorizeUrl(host, next) {
-  return `https://${USERNODE_DOMAIN}/__access/authorize`
-    + `?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
-}
-
-function parseUriQuery(uri) {
-  try { return new URL('http://x' + uri).searchParams; } catch { return new URLSearchParams(); }
-}
-
-// `next` must be a same-host relative path — never absolute / protocol-
-// relative — so the grant callback can't be used as an open redirect.
-function safeNext(raw) {
-  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return '/';
-  return raw;
-}
 
 function internalRoutes(_config) {
   const router = Router();
@@ -269,132 +210,18 @@ function internalRoutes(_config) {
   router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
 
+  // The app-host gate (services/edge-gate.js): Caddy's forward_auth and the
+  // Kubernetes gate proxy (scripts/app-gate.js) both ask here.
   router.get('/__caddy/access', async (req, res) => {
-    const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
-    const method = String(req.headers['x-forwarded-method'] || 'GET').toUpperCase();
-    const uri = typeof req.headers['x-forwarded-uri'] === 'string' && req.headers['x-forwarded-uri']
-      ? req.headers['x-forwarded-uri'] : '/';
     try {
-      const parsed = appAccess.parseAppHost(rawHost);
-      if (!parsed) return res.status(404).send('Not found');
-      const { slug, host } = parsed;
-
-      const vis = await appAccess.getHostVisibility(pool, slug);
-      if (!vis) return res.status(404).send('Not found');
-      if (vis.suspended) return res.status(403).send('App suspended by moderation');
-      if (!vis.viewPrivate) return res.status(200).send('ok');
-
-      const query = parseUriQuery(uri);
-
-      // 3. Grant callback from the apex authorize route. Handled before
-      // the cookie so a fresh grant always re-mints (cookie refresh).
-      // This path never reaches the app container — deny responses are
-      // copied to the client by forward_auth, which is exactly how the
-      // Set-Cookie + redirect get out.
-      if (uri.startsWith('/__usernode_access')) {
-        const grant = platformJwt.orNull(
-          () => platformJwt.verifyEdgeGrant(query.get('grant') || '')
-        );
-        if (grant && grant.host === host
-            && grant.appId === vis.appId
-            && await appAccess.isViewMember(pool, vis.appId, grant.uid)) {
-          const cookieToken = platformJwt.signEdgeCookie({
-            uid: grant.uid, appId: vis.appId, host,
-          });
-          res.cookie(ACCESS_COOKIE, cookieToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: ACCESS_COOKIE_TTL_S * 1000,
-          });
-          return res.redirect(302, safeNext(query.get('next')));
-        }
-        // Bad/expired grant: restart the dance rather than dead-ending.
-        return res.redirect(302, authorizeUrl(host, safeNext(query.get('next'))));
-      }
-
-      // 4. Scoped access cookie.
-      const cookiePayload = platformJwt.orNull(
-        () => platformJwt.verifyEdgeCookie(req.cookies?.[ACCESS_COOKIE] || '')
-      );
-      if (cookiePayload && cookiePayload.host === host
-          && cookiePayload.appId === vis.appId
-          && await appAccess.isViewMember(pool, vis.appId, cookiePayload.uid)) {
-        return res.status(200).send('ok');
-      }
-
-      // 5. Platform iframe JWT — the credential the shell injects on
-      // iframe load (?token=) and that app frontends forward on fetches
-      // (x-usernode-token). Same verification as the child apps' own
-      // middleware (see app-conventions.md).
-      const headerToken = typeof req.headers['x-usernode-token'] === 'string'
-        ? req.headers['x-usernode-token'] : null;
-      const queryToken = query.get('token');
-      const iframeJwt = platformJwt.orNull(
-        () => platformJwt.verifyAppIdentityToken(
-          queryToken || headerToken || '', { appId: vis.appId }
-        )
-      );
-      if (iframeJwt && Number.isInteger(iframeJwt.id)
-          && await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)) {
-        // WebSocket handshakes can't follow redirects — the 302 cookie-set
-        // dance below would kill the upgrade. forward_auth copies the
-        // original request headers (including Upgrade/Sec-WebSocket-*), so
-        // detect the handshake and allow it as-is (the WS carries ?token=
-        // for the app's own auth). Sec-WebSocket-Key is checked too in case
-        // an intermediary strips the hop-by-hop Upgrade header.
-        const isWsUpgrade = String(req.headers.upgrade || '').toLowerCase() === 'websocket'
-          || !!req.headers['sec-websocket-key'];
-        if (!queryToken || isWsUpgrade || query.get(RETRY_MARKER) === '1') {
-          // Header-credentialed fetch, WS upgrade, or cookie-set retry that
-          // came back cookieless: allow this request as-is.
-          return res.status(200).send('ok');
-        }
-        // Initial iframe document load: set the scoped cookie and bounce
-        // back to the same URL (+ loop-breaker marker) so the page's
-        // asset requests pass via the cookie.
-        // The cookie is an edge credential regardless of which credential
-        // earned it, so it is minted with the edge authority here too.
-        const cookieToken = platformJwt.signEdgeCookie({
-          uid: iframeJwt.id, appId: vis.appId, host,
-        });
-        res.cookie(ACCESS_COOKIE, cookieToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: ACCESS_COOKIE_TTL_S * 1000,
-        });
-        const sep = uri.includes('?') ? '&' : '?';
-        return res.redirect(302, `${uri}${sep}${RETRY_MARKER}=1`);
-      }
-
-      // 6. No valid credential. Top-level document navigations to a
-      // PRODUCTION app host (share links pasted into a browser) go to
-      // the platform shell's chromeless view — the shell embeds the app
-      // with a real iframe token, so the link works instead of ending
-      // at the app container's own 401 (the authorize dance below only
-      // satisfies THIS gate; the app never receives a token on a direct
-      // visit). Sec-Fetch-Dest distinguishes the address-bar navigation
-      // from iframe/asset/fetch loads, which — like staging previews
-      // and older browsers that don't send the header — keep the
-      // existing flow: browser GETs go authorize via the apex (where
-      // the platform session cookie lives); everything else gets the
-      // existence-hiding 404 the API surfaces use.
-      const isDocNav = method === 'GET'
-        && String(req.headers['sec-fetch-dest'] || '').toLowerCase() === 'document';
-      if (isDocNav && parsed.label === slug) {
-        return res.redirect(302, `https://${USERNODE_DOMAIN}/#app/${slug}/full`);
-      }
-      if (method === 'GET') {
-        return res.redirect(302, authorizeUrl(host, uri));
-      }
-      return res.status(404).send('Not found');
+      return await edgeGate.handleAccess(pool, req, res);
     } catch (err) {
       // Fail closed: an error must never open a private app.
-      log.error('internal-api', 'Caddy access check failed', {
-        host: rawHost, err: err.message,
+      log.error('internal-api', 'App-host gate check failed', {
+        host: req.headers['x-forwarded-host'] || req.headers.host, err: err.message,
       });
-      return res.status(503).send('unavailable');
+      if (!res.headersSent) return res.status(503).send('unavailable');
+      return undefined;
     }
   });
 
