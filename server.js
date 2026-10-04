@@ -4286,11 +4286,17 @@ async function resumeDetachedTurnInner({
       ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
       : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
     if (deadline != null) {
+      const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
         botTimedOut = true;
         Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
-      }, Math.max(0, deadline - Date.now()));
-      if (typeof botClock.unref === 'function') botClock.unref();
+      }, botClockMs);
+      // Unref only a clock that has time left to wait: it must not hold a
+      // shutting-down process open for a turn's whole budget. A turn already
+      // past its deadline is stopped on the next tick, and an unref'd 0 ms
+      // timer can be skipped entirely when nothing else keeps the loop alive,
+      // leaving the adoption waiting on a stop that never comes.
+      if (botClockMs > 0 && typeof botClock.unref === 'function') botClock.unref();
     }
   }
 
