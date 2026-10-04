@@ -149,6 +149,7 @@ async function provisionMissingRepo(config, pool, app) {
 
   const botUsername = await github.getBotUsername();
   let repoUrl;
+  let lineage = null;
   if (app.forked_from) {
     const { copyRepoTree, findForkSource } = require('./app-forker');
     const sourceApp = await findForkSource(pool, app);
@@ -165,6 +166,9 @@ async function provisionMissingRepo(config, pool, app) {
         tempDir,
       });
       repoUrl = copied.repoUrl;
+      // The commits this copy was cut from and starts at, recorded as the
+      // fork worker records them (app-forker forkApp).
+      lineage = { sourceSha: copied.sourceSha || null, forkBaseSha: copied.mainSha || null };
     } finally {
       await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
     }
@@ -194,6 +198,13 @@ async function provisionMissingRepo(config, pool, app) {
   // container heal paths take over from here on the next tick.
   await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, app.id]);
   app.repo_url = repoUrl;
+  if (lineage) {
+    await pool.query(
+      `UPDATE apps SET forked_from = forked_from || $1::jsonb
+        WHERE id = $2 AND jsonb_typeof(forked_from) = 'object'`,
+      [JSON.stringify(lineage), app.id]
+    );
+  }
   log.info('app-heal', app.forked_from
     ? 'Fork repository restored from source app'
     : 'GitHub repo provisioned for repo-less app', {

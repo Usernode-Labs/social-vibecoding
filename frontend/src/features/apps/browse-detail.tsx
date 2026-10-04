@@ -22,7 +22,7 @@
  *    popover.
  *
  * SHARE leads that card (the prototype's About sheet lists "More": Share,
- * Add to home screen, Fork this app). It is not one of Home.menuItemsFor's
+ * Add to home screen, Remix). It is not one of Home.menuItemsFor's
  * items, so it is its own row: a flag on the descriptor (`canShare`, the same
  * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
  *
@@ -62,6 +62,8 @@ type ActionView = {
   index: number;
   label: string;
   title: string | null;
+  /** The line under the label, when the menu item has one (Remix). */
+  sub?: string | null;
   danger: boolean;
   disabled: boolean;
 };
@@ -236,13 +238,13 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
                 <a
                   href={view.forkedFrom.href}
                   className="hover:underline"
-                  title={`Forked from ${view.forkedFrom.name}: open the original`}
+                  title={`Remixed from ${view.forkedFrom.name}: open the original`}
                 >
-                  {`\u2442 Forked from ${view.forkedFrom.name}`}
+                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
                 </a>
               ) : (
                 <span className="opacity-90" title="The original app no longer exists">
-                  {`\u2442 Forked from ${view.forkedFrom.name}`}
+                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
                 </span>
               )}
             </p>
@@ -327,6 +329,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
               tooltip={a.title || undefined}
               disabled={a.disabled}
               title={a.label}
+              subtitle={a.sub || undefined}
               onClick={(e) => controller()?._runDetailAction(a.index, e.currentTarget)}
             />
           ))}

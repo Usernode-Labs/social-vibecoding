@@ -42,7 +42,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'
 //
 // A ready descriptor for the live-app checks: the
 // Open button, the Share row leading the action card, an action row labelled
-// "View on GitHub", a second labelled "Fork this app", the fork-lineage
+// "View on GitHub", a second labelled "Remix" (with its "Make your own copy"
+// line), the fork-lineage
 // anchor, and a contributor row for the demo seed the contributors check
 // quotes.
 const DETAIL = {
@@ -61,7 +62,7 @@ const DETAIL = {
   canShare: true,
   actions: [
     { index: 0, label: 'View on GitHub', title: 'See the source', danger: false, disabled: false },
-    { index: 1, label: 'Fork this app', title: null, danger: false, disabled: false },
+    { index: 1, label: 'Remix', title: 'Make your own copy', sub: 'Make your own copy', danger: false, disabled: false },
     { index: 2, label: 'Delete app', title: null, danger: true, disabled: true },
   ],
   contributors: {
@@ -235,7 +236,7 @@ test('every declared #browse-detail selector matches the RENDERED detail page', 
 
 test('the text each declared check quotes is still rendered', () => {
   const text = treeOf(renderDetail()).text;
-  for (const phrase of ['Share', 'Fork this app', 'View on GitHub', 'staging-demo-lead']) {
+  for (const phrase of ['Share', 'Remix', 'Make your own copy', 'View on GitHub', 'staging-demo-lead']) {
     assert.ok(text.includes(phrase), `the detail page stopped rendering "${phrase}"`);
   }
 });

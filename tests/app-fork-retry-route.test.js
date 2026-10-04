@@ -80,6 +80,9 @@ const pool = {
     if (/SELECT \* FROM apps WHERE slug = \$1/.test(text)) {
       return sourceApp && params[0] === sourceApp.slug ? { rows: [sourceApp] } : { rows: [] };
     }
+    if (/WITH new_app AS/.test(text)) {
+      return { rows: [{ id: 77, name: params[0], slug: params[1], created_by: params[2], status: 'creating' }] };
+    }
     return { rows: [], rowCount: 1 };
   },
 };
@@ -189,7 +192,7 @@ test('a missing source stops an uncopied fork retry with an actionable reason', 
   try {
     const { res, body } = await post(server, '/api/apps/forked-app/retry');
     assert.equal(res.status, 409);
-    assert.match(body.error, /source app.*no longer exists/i);
+    assert.match(body.error, /came from no longer exists/i);
     assert.equal(forkCalls.length, 0);
     assert.equal(createCalls.length, 0);
     assert.ok(!queries.some((q) => /retry_count = retry_count \+ 1/.test(q.sql)),
@@ -210,6 +213,34 @@ test('forking a source still being created is refused before a fork row is inser
     assert.match(body.error, /still being set up/i);
     assert.ok(!queries.some((q) => /INSERT INTO apps/.test(q.sql)));
     assert.equal(forkCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+// A remix starts as Just you, whatever the original's audience, and its
+// lineage records when it was made. The worker adds the two commits once the
+// repository is copied (tests/app-forker-reliability.test.js).
+test('a remix is inserted as Just you with reference-only lineage', async () => {
+  failedApp = null;
+  sourceApp = source({ collab_visibility: 'public', view_visibility: 'public' });
+  currentUser = { id: 5, username: 'fork-owner', canAdminWrite: true };
+  const server = await startServer();
+  try {
+    const before = Date.now();
+    const { res, body } = await post(server, '/api/apps/source-app/fork', { name: 'My Copy' });
+    assert.equal(res.status, 201, JSON.stringify(body));
+    const insert = queries.find((q) => /WITH new_app AS/.test(q.sql));
+    assert.ok(insert, 'the copy row is inserted');
+    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb\)/,
+      'private to build and to view: Just you');
+    assert.ok(!insert.params.includes('public'), 'the original\'s audience is not passed through');
+    const lineage = JSON.parse(insert.params[3]);
+    assert.deepEqual(Object.keys(lineage), ['appId', 'slug', 'forkedAt']);
+    assert.equal(lineage.appId, 11);
+    assert.equal(lineage.slug, 'source-app');
+    assert.ok(Date.parse(lineage.forkedAt) >= before - 1000, 'forkedAt is when the copy was made');
+    assert.equal(forkCalls.length, 1, 'the worker copies it');
   } finally {
     server.close();
   }

@@ -1101,7 +1101,7 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Forked from <name>", under the version chip.
+    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1172,6 +1172,9 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
+          // The line under the label, for an item that has one (Remix's
+          // "Make your own copy"); absent for every other row.
+          ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,
         })),

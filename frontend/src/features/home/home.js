@@ -2497,14 +2497,14 @@ const Home = {
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a fork.
-    // The full "Forked from <name>" label lives in the app-view header;
+    // corner (opposite the hamburger badge) marking this tile as a remix.
+    // The full "Remixed from <name>" label lives on the app's own page;
     // here it's glyph-only with the resolved live name (or "<deleted>")
     // in the tooltip. `forked_from` is null for non-forks.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Remixed from ${escapeHtml(forkName)}" aria-label="Remixed from ${escapeHtml(forkName)}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -3730,16 +3730,19 @@ const Home = {
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
-    // Fork: available to anyone who can see the app (every card in this
-    // list is already visibility-filtered server-side, so presence here
-    // implies view access). Hidden for the platform self-app, which has
-    // no per-app repo/DB/container to clone. Reuses the same fork dialog
-    // + POST /api/apps/:slug/fork flow as the app-view header action.
+    // Fork, which people see as "Remix": available to anyone who can see
+    // the app (every card in this list is already visibility-filtered
+    // server-side, so presence here implies view access). Hidden for the
+    // platform self-app, which has no per-app repo/DB/container to copy.
+    // Reuses the same dialog + POST /api/apps/:slug/fork flow as the
+    // Workshop "+" menu. `sub` is the line a row with room for one shows
+    // under the label (About, Discover); the popover shows it as a tooltip.
     if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
       items.push({
         key: 'fork',
-        label: 'Fork this app',
-        title: 'Create your own independent copy of this app',
+        label: 'Remix',
+        sub: 'Make your own copy',
+        title: 'Make your own copy',
         run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
       });
     }
