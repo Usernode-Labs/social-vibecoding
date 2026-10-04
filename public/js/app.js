@@ -4018,6 +4018,14 @@ const App = {
         const result = await joined.json().catch(() => ({}));
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
+        // Read Home's challenges again now. Home painted them above, before
+        // the confirm, and they are cached for a minute (HomePanels.TTL_MS),
+        // while the redeem has just counted "Join a community"
+        // (challengeScorer.scoreOnJoin, before it answered). The welcome's
+        // tour opens on Home within seconds, and the cached read still said
+        // Not started beside the community they had just joined (first-session
+        // run-through, 2026-10-04).
+        if (result.status === 'joined') window.HomePanels?.ensureLoaded?.({ force: true });
         if (result.slug) {
           if (welcome({ ...standing, newAccount: false }, result.slug)) return;
           toast(`You joined ${result.name || name}.`);

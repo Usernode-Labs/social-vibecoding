@@ -105,6 +105,23 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   assert.match(join, /try \{ return \(await app\._inviteFollow\) === true; \} catch \(_\) \{ return false; \}/);
 });
 
+test('a join from the confirm reads Home\'s challenges again before the welcome opens on Home', () => {
+  // Home painted its challenges before the confirm and caches them for a
+  // minute, while the redeem counts "Join a community" before it answers
+  // (routes/community-invites.js scoreOnJoin). The invited tour's first
+  // screen is Home, where the cached read said Not started beside the
+  // community just joined (first-session run-through, 2026-10-04).
+  const app = read('public/js/app.js');
+  const follow = app.slice(app.indexOf('async _followInvite(token) {'), app.indexOf('_deepLinkTarget() {'));
+  assert.match(follow, /if \(!joined\.ok \|\| !result\.ok\) \{[^\n]*return; \}\s+joinedHere = true;\s+(?:\/\/[^\n]*\n\s*)*if \(result\.status === 'joined'\) window\.HomePanels\?\.ensureLoaded\?\.\(\{ force: true \}\);\s+if \(result\.slug\) \{\s+if \(welcome\(/,
+    'after a join that went through, and before the welcome or the hub');
+  const route = read('src/routes/community-invites.js');
+  assert.match(route, /if \(result\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+return res\.json\(result\);/,
+    'the credit is written before the answer the refresh follows');
+  const panels = read('frontend/src/features/home/home-panels.js');
+  assert.match(panels, /ensureLoaded\(opts\) \{\s+const force = !!\(opts && opts\.force\);/, 'force skips the minute-long cache');
+});
+
 test('a link answers the join screen for the person it brings in', () => {
   const invites = read('src/services/community-invites.js');
   assert.match(invites, /SET needs_communities_choice = FALSE,\s+getting_started_seen = COALESCE\(getting_started_seen, '\{\}'::jsonb\)\s+\|\| jsonb_build_object\('join_answer', 'invite'\)\s+WHERE id = \$1 AND needs_communities_choice = TRUE/);
