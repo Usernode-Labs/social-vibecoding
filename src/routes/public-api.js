@@ -217,6 +217,9 @@ function publicApiRoutes(config) {
       story_landing: await firstSession.storyLandingEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
       terms_link: await currentTermsLink(),
+      // The same, from the Homeroom app's own sheets (the bridge's
+      // signInWithProvider), once the app's client IDs are saved.
+      native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
     });
   });
 

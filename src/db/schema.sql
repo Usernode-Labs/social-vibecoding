@@ -197,6 +197,11 @@ CREATE TABLE IF NOT EXISTS sign_in_providers (
 );
 COMMENT ON TABLE sign_in_providers IS 'staging:private';
 COMMENT ON COLUMN sign_in_providers.secret_enc IS 'staging:private';
+-- Native sign-in, in the Homeroom app's own Apple and Google sheets: the
+-- app's client IDs, which its ID tokens carry as their audience. Apple: the
+-- app's bundle ID. Google: the iOS client ID (an Android token carries the
+-- web client ID, `client_id`). Empty means the app does not offer it.
+ALTER TABLE sign_in_providers ADD COLUMN IF NOT EXISTS app_client_ids TEXT[] NOT NULL DEFAULT '{}';
 
 -- An account's Apple or Google identity: the provider's stable subject, so
 -- the next sign-in finds the account even if the address on it changed.
@@ -236,6 +241,21 @@ CREATE INDEX IF NOT EXISTS idx_oauth_sign_in_states_expires
 COMMENT ON TABLE oauth_sign_in_states IS 'staging:private';
 COMMENT ON COLUMN oauth_sign_in_states.nonce IS 'staging:private';
 COMMENT ON COLUMN oauth_sign_in_states.code_verifier IS 'staging:private';
+-- A native sign-in's state: started by the page, finished by the ID token
+-- the app's own sheet returned. Neither kind is spent by the other's route.
+ALTER TABLE oauth_sign_in_states ADD COLUMN IF NOT EXISTS native BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- A native sign-in's ID token is spent once: its hash, kept until the
+-- token itself expires.
+CREATE TABLE IF NOT EXISTS native_sign_in_tokens (
+  token_hash VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  provider   TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_native_sign_in_tokens_expires
+  ON native_sign_in_tokens (expires_at);
+COMMENT ON TABLE native_sign_in_tokens IS 'staging:private';
 
 -- The username step after a provider sign-in made (or found) an account that
 -- has never chosen a handle: the web_signup_sessions shape, for a step that

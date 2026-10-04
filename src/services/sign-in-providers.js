@@ -41,6 +41,23 @@
  *   5. An account that has never chosen a username is not signed in yet:
  *      like the email code's set-password step (#3575), it gets a short
  *      continuation and the sheet asks for the handle (completeUsername).
+ *
+ * INSIDE THE HOMEROOM APP the providers' pages refuse its web view, so the
+ * app asks with its own sheet instead (the bridge's signInWithProvider), and
+ * the ID token it gets back is the same proof, issued to the app:
+ *
+ *   1. beginNativeSignIn: a single-use state and a nonce, bound to this web
+ *      view by the same binder cookie. The app hands the nonce to the
+ *      provider's sheet (Apple: its SHA-256, as Apple's docs ask).
+ *   2. verifyNativeIdToken: signature, issuer, an audience among the app's
+ *      client IDs (`app_client_ids`, set in the console beside the rest),
+ *      the nonce, and spent once (native_sign_in_tokens). Google's sheet
+ *      may not carry the nonce on every app build; a token without one is
+ *      taken only within NATIVE_FRESH_S of being issued, and still only once.
+ *   3. signIn and the username step, exactly as above.
+ *
+ * The app offers a provider only once the web sign-in for it is set up and
+ * switched on and the app's client IDs are saved (offeredNativeProviders).
  */
 
 const crypto = require('crypto');
@@ -59,6 +76,10 @@ const CACHE_MS = 10 * 1000;
 const PROVIDER_TIMEOUT_MS = 10 * 1000;
 // Apple's client secret lives five minutes: it is made for one exchange.
 const APPLE_SECRET_TTL_S = 5 * 60;
+// A native ID token without the nonce is taken only this soon after it was issued.
+const NATIVE_FRESH_S = 5 * 60;
+const APP_CLIENT_IDS_MAX = 5;
+const ID_TOKEN_MAX = 8192;
 
 const ENDPOINTS = Object.freeze({
   google: Object.freeze({
@@ -148,6 +169,7 @@ async function withTransaction(pool, fn) {
 function emptyRow(provider) {
   return {
     provider, enabled: false, clientId: null, teamId: null, keyId: null,
+    appClientIds: [],
     secret: null, secretSaved: false, secretUnreadable: false,
     updatedAt: null, updatedBy: null,
   };
@@ -177,7 +199,7 @@ async function readProviders(pool, config, { fresh = false, strict = false } = {
   for (const provider of PROVIDERS) out[provider] = emptyRow(provider);
   try {
     const { rows } = await pool.query(
-      `SELECT s.provider, s.enabled, s.client_id, s.team_id, s.key_id, s.secret_enc,
+      `SELECT s.provider, s.enabled, s.client_id, s.team_id, s.key_id, s.app_client_ids, s.secret_enc,
               s.updated_at, u.username AS updated_by
          FROM sign_in_providers s
          LEFT JOIN users u ON u.id = s.updated_by`
@@ -191,6 +213,7 @@ async function readProviders(pool, config, { fresh = false, strict = false } = {
         clientId: row.client_id || null,
         teamId: row.team_id || null,
         keyId: row.key_id || null,
+        appClientIds: Array.isArray(row.app_client_ids) ? row.app_client_ids.filter(Boolean) : [],
         secret,
         secretSaved: !!row.secret_enc,
         secretUnreadable: !!row.secret_enc && !secret,
@@ -232,6 +255,22 @@ async function offeredProviders(pool, config) {
   return offeredFrom(await readProviders(pool, config), config);
 }
 
+function nativeOfferedFrom(rows, config) {
+  return offeredFrom(rows, config).filter((p) => rows[p].appClientIds.length > 0);
+}
+
+/** The providers the Homeroom app's own sheets offer: set up, and the app's client IDs saved. */
+async function offeredNativeProviders(pool, config) {
+  return nativeOfferedFrom(await readProviders(pool, config), config);
+}
+
+/** The audiences a native ID token may carry. */
+function nativeAudiences(provider, row) {
+  return provider === 'google' && row.clientId
+    ? [...row.appClientIds, row.clientId]
+    : [...row.appClientIds];
+}
+
 /** The console's view: everything but the secrets. */
 async function adminView(pool, config) {
   const rows = await readProviders(pool, config, { fresh: true, strict: true });
@@ -248,9 +287,11 @@ async function adminView(pool, config) {
         complete: gaps.length === 0,
         missing: gaps,
         offered: row.enabled && gaps.length === 0 && !!origin,
+        nativeOffered: row.enabled && gaps.length === 0 && !!origin && row.appClientIds.length > 0,
         clientId: row.clientId,
         teamId: row.teamId,
         keyId: row.keyId,
+        appClientIds: row.appClientIds,
         secretSaved: row.secretSaved,
         secretUnreadable: row.secretUnreadable,
         callbackUrl: callbackUrl(config, provider),
@@ -289,6 +330,27 @@ function trimmedField(value) {
 }
 
 /**
+ * The app's client IDs as the console sends them: a list, or one string
+ * split on commas, spaces and new lines. null when the field was left out.
+ */
+function appClientIdsFrom(provider, value) {
+  if (value === undefined || value === null) return null;
+  const list = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(/[\s,]+/) : null);
+  if (!list) throw new SignInProviderError('invalid_app_client_ids', 'Send the app client IDs as a list.');
+  const ids = [...new Set(list.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean))];
+  if (ids.length > APP_CLIENT_IDS_MAX) {
+    throw new SignInProviderError('invalid_app_client_ids', `At most ${APP_CLIENT_IDS_MAX} app client IDs.`);
+  }
+  for (const id of ids) {
+    if (!CLIENT_ID_RE.test(id)) {
+      throw new SignInProviderError('invalid_app_client_ids',
+        provider === 'apple' ? `"${id.slice(0, 60)}" does not look like a bundle ID.` : `"${id.slice(0, 60)}" does not look like a client ID.`);
+    }
+  }
+  return ids;
+}
+
+/**
  * Save one provider's settings. Fields left out keep their value; an empty
  * ID clears it; a secret is replaced only when a new one is sent, never
  * echoed back. `clear: true` removes the provider's row altogether. A
@@ -311,10 +373,14 @@ async function saveProvider(pool, config, provider, input, actorId = null) {
     clientId: current.clientId,
     teamId: current.teamId,
     keyId: current.keyId,
+    appClientIds: current.appClientIds,
     secret: current.secret,
     secretUnreadable: current.secretUnreadable,
   };
   let secretEnc = null;
+
+  const appClientIds = appClientIdsFrom(provider, body.appClientIds);
+  if (appClientIds !== null) next.appClientIds = appClientIds;
 
   const clientId = trimmedField(body.clientId);
   if (clientId !== null) {
@@ -368,13 +434,14 @@ async function saveProvider(pool, config, provider, input, actorId = null) {
 
   await pool.query(
     `INSERT INTO sign_in_providers
-       (provider, enabled, client_id, team_id, key_id, secret_enc, updated_at, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+       (provider, enabled, client_id, team_id, key_id, app_client_ids, secret_enc, updated_at, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6::text[], $7, NOW(), $8)
      ON CONFLICT (provider) DO UPDATE
        SET enabled = EXCLUDED.enabled,
            client_id = EXCLUDED.client_id,
            team_id = EXCLUDED.team_id,
            key_id = EXCLUDED.key_id,
+           app_client_ids = EXCLUDED.app_client_ids,
            secret_enc = COALESCE(EXCLUDED.secret_enc, sign_in_providers.secret_enc),
            updated_at = NOW(),
            updated_by = EXCLUDED.updated_by`,
@@ -382,7 +449,7 @@ async function saveProvider(pool, config, provider, input, actorId = null) {
       provider, next.enabled, next.clientId,
       provider === 'apple' ? next.teamId : null,
       provider === 'apple' ? next.keyId : null,
-      secretEnc, actorId,
+      next.appClientIds, secretEnc, actorId,
     ]
   );
   caches.delete(pool);
@@ -423,6 +490,7 @@ async function cleanupExpired(pool) {
   try {
     await pool.query("DELETE FROM oauth_sign_in_states WHERE expires_at < NOW() - INTERVAL '1 hour'");
     await pool.query("DELETE FROM oauth_signup_sessions WHERE expires_at < NOW() - INTERVAL '1 hour'");
+    await pool.query("DELETE FROM native_sign_in_tokens WHERE expires_at < NOW() - INTERVAL '1 hour'");
   } catch (err) {
     log.warn('sign-in-providers', 'Expired sign-in state cleanup failed', { err: err.message });
   }
@@ -475,17 +543,45 @@ async function beginSignIn(pool, config, provider, { from = null, followInvite =
 }
 
 /**
+ * Start a native sign-in in the Homeroom app: { state, nonce, binder }. The
+ * page keeps `state`, the app's sheet gets `nonce`, and the route keeps
+ * `binder` in the same HttpOnly cookie as a round trip's.
+ */
+async function beginNativeSignIn(pool, config, provider, { from = null, followInvite = false } = {}) {
+  const rows = await readProviders(pool, config);
+  if (!isProvider(provider) || !nativeOfferedFrom(rows, config).includes(provider)) {
+    throw new SignInProviderError('not_offered', 'That sign-in is not set up in the app.', 404);
+  }
+  const state = randomToken();
+  const binder = randomToken();
+  const nonce = randomToken(16);
+  await cleanupExpired(pool);
+  await pool.query(
+    `INSERT INTO oauth_sign_in_states
+       (state_hash, provider, binder_hash, nonce, follow_invite, started_from, native, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)`,
+    [
+      sha256Hex(state), provider, sha256Hex(binder), nonce, followInvite === true,
+      STARTED_FROM.includes(from) ? from : null,
+      new Date(Date.now() + STATE_TTL_MS),
+    ]
+  );
+  return { state, nonce, binder };
+}
+
+/**
  * Spend the state the callback came back with. null when it is unknown or
  * expired; `{ mismatch: true, return_to }` when it was started in another
- * browser (spent all the same, so it cannot be tried again).
+ * browser (spent all the same, so it cannot be tried again). A native
+ * sign-in's state is spent only by the native route, and the other way round.
  */
-async function consumeState(pool, provider, state, binder) {
+async function consumeState(pool, provider, state, binder, { native = false } = {}) {
   if (!isProvider(provider) || typeof state !== 'string' || !state || state.length > 200) return null;
   const { rows } = await pool.query(
     `DELETE FROM oauth_sign_in_states
-      WHERE state_hash = $1 AND provider = $2
+      WHERE state_hash = $1 AND provider = $2 AND native = $3
       RETURNING binder_hash, nonce, code_verifier, follow_invite, started_from, return_to, expires_at`,
-    [sha256Hex(state), provider]
+    [sha256Hex(state), provider, native === true]
   );
   const row = rows[0];
   if (!row || new Date(row.expires_at) <= new Date()) return null;
@@ -528,6 +624,10 @@ async function verifyIdToken(provider, clientId, idToken, nonce, deps = {}) {
   if (typeof payload.nonce !== 'string' || payload.nonce !== nonce) {
     throw new SignInProviderError('bad_token', `${LABELS[provider]} sign-in could not be confirmed. Try again.`, 502);
   }
+  return claimsFrom(provider, payload);
+}
+
+function claimsFrom(provider, payload) {
   const subject = typeof payload.sub === 'string' ? payload.sub : '';
   if (!subject || subject.length > 255) {
     throw new SignInProviderError('bad_token', `${LABELS[provider]} sign-in could not be confirmed. Try again.`, 502);
@@ -539,6 +639,58 @@ async function verifyIdToken(provider, clientId, idToken, nonce, deps = {}) {
     emailVerified: payload.email_verified === true || payload.email_verified === 'true',
     name: typeof payload.name === 'string' ? payload.name.slice(0, 100) : null,
   };
+}
+
+/**
+ * A native sign-in's ID token, as the app's own sheet returned it: its
+ * claims, once the signature, issuer, an app audience and the nonce check
+ * out and the token has not been spent before. `state` is consumeState's
+ * row (native). The nonce may come back as given or as its SHA-256 (hex).
+ */
+async function verifyNativeIdToken(pool, config, provider, idToken, state, deps = {}) {
+  const rows = await readProviders(pool, config);
+  if (!isProvider(provider) || !nativeOfferedFrom(rows, config).includes(provider)) {
+    throw new SignInProviderError('not_offered', 'That sign-in is not set up in the app.', 404);
+  }
+  const row = rows[provider];
+  const refused = () => new SignInProviderError('bad_token', `${LABELS[provider]} sign-in could not be confirmed. Try again.`, 502);
+  if (typeof idToken !== 'string' || !idToken || idToken.length > ID_TOKEN_MAX) throw refused();
+  const { jwtVerify } = await import('jose');
+  const keys = deps.jwks || await providerKeys(provider);
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(idToken, keys, {
+      issuer: [...ENDPOINTS[provider].issuers],
+      audience: nativeAudiences(provider, row),
+      clockTolerance: 60,
+    }));
+  } catch (err) {
+    log.warn('sign-in-providers', 'Native ID token refused', { provider, err: err.code || err.message });
+    throw refused();
+  }
+  const nonce = state && typeof state.nonce === 'string' ? state.nonce : '';
+  if (typeof payload.nonce === 'string') {
+    if (!nonce || (payload.nonce !== nonce && payload.nonce !== sha256Hex(nonce))) throw refused();
+  } else {
+    // Apple's sheet always carries it. Google's may not, on an older app
+    // build: such a token counts only while it is fresh.
+    const now = Math.floor((deps.now || Date.now()) / 1000);
+    if (provider !== 'google' || typeof payload.iat !== 'number' || now - payload.iat > NATIVE_FRESH_S) throw refused();
+  }
+  const claims = claimsFrom(provider, payload);
+  const expiresAt = new Date((typeof payload.exp === 'number' ? payload.exp : Math.floor(Date.now() / 1000) + 3600) * 1000);
+  const { rows: spent } = await pool.query(
+    `INSERT INTO native_sign_in_tokens (token_hash, provider, expires_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (token_hash) DO NOTHING
+     RETURNING token_hash`,
+    [sha256Hex(idToken), provider, expiresAt]
+  );
+  if (!spent.length) {
+    log.warn('sign-in-providers', 'Native ID token used twice', { provider });
+    throw refused();
+  }
+  return claims;
 }
 
 /** The code for the person's verified claims. `state` is consumeState's row. */
@@ -797,13 +949,18 @@ module.exports = {
   readProviders,
   missing,
   offeredProviders,
+  offeredNativeProviders,
+  nativeAudiences,
+  NATIVE_FRESH_S,
   adminView,
   saveProvider,
   normalizePrivateKey,
   appleClientSecret,
   beginSignIn,
+  beginNativeSignIn,
   consumeState,
   verifyIdToken,
+  verifyNativeIdToken,
   exchangeCode,
   signIn,
   completeUsername,

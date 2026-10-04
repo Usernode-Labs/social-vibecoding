@@ -221,6 +221,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   sign_in_providers: ['secret_enc'],
   oauth_sign_in_states: ['state_hash', 'binder_hash', 'nonce', 'code_verifier'],
   oauth_signup_sessions: ['token_hash'],
+  // A spent native sign-in's ID token, hashed: nothing to read in it, and
+  // nothing a console needs.
+  native_sign_in_tokens: ['token_hash'],
   mobile_auth_tokens: ['token_hash'],
   // The waitlist's own email verification code, same shape and same
   // reasoning as mobile_otp_codes above: bcrypt, but a six-digit space is

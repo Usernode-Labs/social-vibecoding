@@ -199,6 +199,9 @@ export interface WaitlistOptions {
    *  for the sign-in screens' "By continuing, you agree to Homeroom's
    *  terms". Absent or null, the notice names the terms without a link. */
   terms_link?: string | null;
+  /** The same, from the Homeroom app's own sheets: those whose app client
+   *  IDs are saved too. The app offers one only when its build can. */
+  native_sign_in_providers?: string[];
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

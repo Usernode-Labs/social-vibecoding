@@ -221,4 +221,97 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     assert.equal(off.status, 303);
     assert.equal(cookiesFrom(off).hr_oauth_result, 'error-not_offered');
   });
+
+  await t.test('inside the app over HTTP: a state and a nonce, the app\'s ID token, the account', async () => {
+    const config = { cliAuthOrigin: 'http://localhost', dataEncryptionKey: 'pg-test-key', jwtSecret: 'test' };
+    const { privateKey: appleKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    await providers.saveProvider(pool, config, 'apple', {
+      clientId: 'com.example.web', teamId: 'ABCDE12345', keyId: 'XYZ9876543',
+      secret: appleKey.export({ type: 'pkcs8', format: 'pem' }), enabled: true,
+    }, null);
+    const { SignJWT, exportJWK, createLocalJWKSet } = await import('jose');
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' }] });
+    const appleToken = (claims) => new SignJWT(claims)
+      .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
+      .setIssuer('https://appleid.apple.com').setAudience('com.onhomeroom.app').setIssuedAt().setExpirationTime('5m')
+      .sign(privateKey);
+    const realVerify = providers.verifyNativeIdToken;
+    providers.verifyNativeIdToken = (p, c, provider, idToken, state) => realVerify(p, c, provider, idToken, state, { jwks });
+    const poolMod = require('../src/db/pool');
+    const priorPool = poolMod.getPool;
+    poolMod.getPool = () => pool;
+    const { signInProviderRoutes } = require('../src/routes/sign-in-providers');
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use(signInProviderRoutes(config));
+    poolMod.getPool = priorPool;
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => { providers.verifyNativeIdToken = realVerify; server.close(); });
+    const base = `http://localhost:${server.address().port}`;
+    const post = (path, body, cookie = '') => fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+    const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
+
+    // Not offered in the app until its client IDs are saved.
+    assert.equal((await post('/api/auth/oauth/apple/native/start', { from: 'story' })).status, 404);
+    await providers.saveProvider(pool, config, 'apple', { appClientIds: ['com.onhomeroom.app'] }, null);
+
+    const begin = async () => {
+      const res = await post('/api/auth/oauth/apple/native/start', { from: 'invite', follow: true });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.match(res.headers.getSetCookie().join('\n'), /hr_oauth_binder=[^;]+; Max-Age=600; Path=\/api\/auth\/oauth; Expires=[^;]+; HttpOnly; SameSite=Lax/);
+      return { ...body, binder: cookiesFrom(res).hr_oauth_binder };
+    };
+
+    // Without the binder of the web view that started it, nobody is signed in.
+    const stray = await begin();
+    const strayToken = await appleToken({ sub: '001.native', email: 'native@example.com', email_verified: 'true', nonce: sha(stray.nonce) });
+    const refused = await post('/api/auth/oauth/apple/native', { state: stray.state, idToken: strayToken });
+    assert.equal(refused.status, 422);
+    assert.equal((await refused.json()).code, 'expired');
+
+    // With it: a new account, so the username step, then the session.
+    const first = await begin();
+    const token = await appleToken({ sub: '001.native', email: 'native@example.com', email_verified: 'true', nonce: sha(first.nonce) });
+    const made = await post('/api/auth/oauth/apple/native', { state: first.state, idToken: token }, `hr_oauth_binder=${first.binder}`);
+    assert.equal(made.status, 200);
+    assert.deepEqual(await made.json(), { next: 'username', created: true });
+    const madeCookies = cookiesFrom(made);
+    assert.ok(madeCookies.hr_oauth_signup);
+    assert.equal(madeCookies.session, undefined, 'no session before the username');
+    assert.equal(await count(
+      `SELECT COUNT(*)::int AS n FROM user_oauth_identities i JOIN users u ON u.id = i.user_id
+        WHERE i.provider = 'apple' AND i.subject = '001.native' AND u.email = 'native@example.com'`), 1);
+    const finish = await post('/api/auth/oauth/finish', { username: 'native_person' }, `hr_oauth_signup=${madeCookies.hr_oauth_signup}`);
+    assert.equal(finish.status, 200);
+    assert.equal((await finish.json()).user.username, 'native_person');
+
+    // The same token again, on a fresh state: spent.
+    const again = await begin();
+    const replay = await post('/api/auth/oauth/apple/native', { state: again.state, idToken: token }, `hr_oauth_binder=${again.binder}`);
+    assert.equal(replay.status, 502);
+    assert.equal((await replay.json()).code, 'bad_token');
+
+    // A second sign-in finds the linked account and signs straight in.
+    const next = await begin();
+    const token2 = await appleToken({ sub: '001.native', email: 'native@example.com', email_verified: 'true', nonce: sha(next.nonce) });
+    const signedIn = await post('/api/auth/oauth/apple/native', { state: next.state, idToken: token2 }, `hr_oauth_binder=${next.binder}`);
+    assert.equal(signedIn.status, 200);
+    const body = await signedIn.json();
+    assert.deepEqual([body.next, body.created, body.user.username, body.user.isAdmin], ['signed-in', false, 'native_person', false]);
+    assert.ok(cookiesFrom(signedIn).session, 'the ordinary web session');
+
+    // A token another nonce was given to signs nobody in.
+    const other = await begin();
+    const wrong = await appleToken({ sub: '001.native', email: 'native@example.com', email_verified: 'true', nonce: sha('not-this-one') });
+    const mismatch = await post('/api/auth/oauth/apple/native', { state: other.state, idToken: wrong }, `hr_oauth_binder=${other.binder}`);
+    assert.equal(mismatch.status, 502);
+  });
 });

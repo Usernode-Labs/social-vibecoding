@@ -113,6 +113,7 @@
     ackPendingSocialNotification: true,
     setSocialBadgeCount: true,
     manageStaking: true,
+    signInWithProvider: true,
   };
   var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
@@ -5220,6 +5221,27 @@
   window.usernode.requestPermissions = function () {
     return callNativeChromeAction(
       "requestPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // signInWithProvider({ provider, nonce }) → { idToken }. The app's own
+  // Sign in with Apple or Google sheet, for the sign-in sheet's buttons
+  // inside the app, whose web view the providers' own pages refuse.
+  // `nonce` is the server's (POST /api/auth/oauth/:provider/native/start);
+  // Apple's sheet carries its SHA-256. Rejects with usernodeCode
+  // "cancelled" when the person closes the sheet. Feature-detect the
+  // capability signInWithApple / signInWithGoogle, never the version.
+  // May pend on the provider's sheet, like a permission dialog.
+  window.usernode.signInWithProvider = function (options) {
+    var provider = options && options.provider;
+    var nonce = options && options.nonce;
+    if ((provider !== "apple" && provider !== "google") ||
+        typeof nonce !== "string" || !nonce) {
+      return Promise.reject(new Error("provider (apple or google) and nonce are required"));
+    }
+    return callNativeChromeAction(
+      "signInWithProvider", { provider: provider, nonce: nonce },
+      _PERMISSION_REQUEST_TIMEOUT_MS
     );
   };
 
