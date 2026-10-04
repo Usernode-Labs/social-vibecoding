@@ -107,14 +107,17 @@ export interface BotRequestChip {
  * B9: the card under a message of the viewer's that asked Homeroom bot for
  * something (homeroom-bot-chat.js cardOf): filed (it builds it), group (filed
  * for the group), unsure (asks first), question (pointed at its chat), busy
- * (too many this hour), failed (could not file it).
+ * (too many this hour), failed (could not file it). WP-C: offer, an idea of
+ * a newcomer's offered as a request; `first`, their first request on the
+ * project, which says it stays.
  */
 export interface BotRequestCard {
   messageId: number;
-  kind: 'filed' | 'group' | 'unsure' | 'question' | 'busy' | 'failed';
+  kind: 'filed' | 'group' | 'unsure' | 'question' | 'busy' | 'failed' | 'offer';
   title: string | null;
   issueNumber: number | null;
   typicalMinutes?: number;
+  first?: boolean;
 }
 
 /**

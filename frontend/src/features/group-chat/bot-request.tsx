@@ -2,7 +2,8 @@ import type { BotRequestCard, BotRequestChip } from './transcript-store';
 
 /*
  * B9: a request asked of Homeroom bot in a project's chat, on the message
- * that asked it (services/homeroom-bot-chat.js).
+ * that asked it (services/homeroom-bot-chat.js). WP-C: or an idea of a
+ * newcomer's, which their card offers to suggest to the group.
  *
  * THE CHIP is what everybody in the room sees, first in the message's
  * reactions row: its status, set by the server alone, never a reaction
@@ -62,13 +63,21 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   );
 }
 
+/** WP-C: under somebody's first request on a project. */
+export const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
+
 /** Pure: what a card says. */
 export function cardWords(card: BotRequestCard): string {
+  const stays = card.first ? ` ${STAYS_LINE}` : '';
   switch (card.kind) {
     case 'filed':
-      return `Got it: ${card.title || 'your request'}.${card.typicalMinutes ? ` Usually about ${card.typicalMinutes} minutes.` : ''}`;
+      return `Got it: ${card.title || 'your request'}.${card.typicalMinutes ? ` Usually about ${card.typicalMinutes} minutes.` : ''}${stays}`;
     case 'group':
-      return `Filed as a request for the group: ${card.title || 'your request'}.`;
+      return `Filed as a request for the group: ${card.title || 'your request'}.${stays}`;
+    case 'offer':
+      return card.title
+        ? `Suggest this to the group? It goes in the project’s requests as “${card.title}”, in your name.`
+        : 'Suggest this to the group? It goes in the project’s requests, in your name.';
     case 'unsure':
       return `Want me to file this as a request?${card.title ? ` ${card.title}` : ''}`;
     case 'question':
@@ -94,6 +103,10 @@ export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCar
   if (card.kind === 'group' && card.issueNumber) buttons.push({ key: 'request', label: 'See request', act: () => actions.onRequest?.(card.issueNumber as number) });
   if (card.kind === 'unsure') {
     buttons.push({ key: 'file', label: 'File it', primary: true, act: actions.onFile });
+    buttons.push({ key: 'not-now', label: 'Not now', act: actions.onDismiss });
+  }
+  if (card.kind === 'offer') {
+    buttons.push({ key: 'file', label: 'Suggest it', primary: true, act: actions.onFile });
     buttons.push({ key: 'not-now', label: 'Not now', act: actions.onDismiss });
   }
   if (card.kind === 'question') buttons.push({ key: 'chat', label: 'Open chat', act: actions.onOpenChat });

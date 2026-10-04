@@ -9951,8 +9951,24 @@ CREATE TABLE IF NOT EXISTS chat_bot_requests (
   title           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed'))
+  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'))
 );
+-- WP-C: 'offer', a newcomer's message that reads as an idea, offered to them
+-- as a request (homeroom-bot-chat.js maybeOffer). A table made before it has
+-- the five-kind check; widen it once.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'chat_bot_requests'::regclass
+       AND conname = 'chat_bot_requests_kind_check'
+       AND pg_get_constraintdef(oid) NOT LIKE '%offer%'
+  ) THEN
+    ALTER TABLE chat_bot_requests DROP CONSTRAINT chat_bot_requests_kind_check;
+    ALTER TABLE chat_bot_requests ADD CONSTRAINT chat_bot_requests_kind_check
+      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_requester
   ON chat_bot_requests(requester_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_issue

@@ -27,6 +27,15 @@
 // edit or a message a connector posted (E7). Membership is the room's own
 // gate (communities.chatNeedsJoin). The socket has no rate limit, so filings
 // are capped per person by a count.
+//
+// WP-C: somebody NEW to a project (joined in the last two weeks, nothing
+// asked for there yet) need not know to mention the bot. When a message of
+// theirs reads as an idea for the app, their card offers to suggest it to the
+// group ("Suggest it" / "Not now"); Suggest it files it as a request in their
+// name, like any other, whether or not the bot is theirs. At most two offers
+// per person per project, never on a message a few words long, and the reads
+// behind them are budgeted per person and per hour. The first request
+// somebody files says, once, that it stays on the project with their name.
 
 const log = require('./logger');
 
@@ -36,6 +45,33 @@ const BOT_MENTION_ALL_RE = /(^|[^\w])@(?:homeroom_bot\b|homeroom\s+bot\b)[,:]?\s
 // Filings one person may make from chats in an hour.
 const FILINGS_PER_HOUR = 10;
 const MAX_TITLE = 120;
+
+// WP-C: the newcomer's offer.
+const OFFER_WITHIN_DAYS = 14;
+const OFFERS_PER_PROJECT = 2;
+const OFFER_MIN_WORDS = 4;
+// The reads an offer costs: per person per day, and for everybody per hour.
+const OFFER_READS_PER_DAY = 6;
+const OFFER_READS_PER_HOUR = 120;
+const offerReads = { people: new Map(), hour: { at: 0, n: 0 } };
+
+/**
+ * Pure (on the counters above): take one offer read for `userId` at `now`,
+ * or false when their day's or everybody's hour's are spent.
+ */
+function takeOfferRead(userId, now = Date.now(), budget = offerReads) {
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  if (now - budget.hour.at >= HOUR) budget.hour = { at: now, n: 0 };
+  let mine = budget.people.get(userId);
+  if (!mine || now - mine.at >= DAY) mine = { at: now, n: 0 };
+  if (budget.hour.n >= OFFER_READS_PER_HOUR || mine.n >= OFFER_READS_PER_DAY) return false;
+  budget.hour.n += 1;
+  mine.n += 1;
+  budget.people.set(userId, mine);
+  if (budget.people.size > 5000) budget.people.delete(budget.people.keys().next().value);
+  return true;
+}
 
 // What the chip on a message can say. `stopped` takes the chip away.
 const STATUSES = new Set(['reading', 'building', 'ready', 'live']);
@@ -81,8 +117,51 @@ async function botFor(pool, { app, user, settings = null, deps = {} }) {
   }
 }
 
+/**
+ * WP-C: whether `user` is new to `app` and has asked for nothing there yet,
+ * so a message of theirs that reads as an idea is offered as a request:
+ * { builds, settings } for filing it (builds only when the bot is theirs and
+ * builds here), or null. Never throws.
+ */
+async function newcomerHere(pool, { app, user, deps = {} }) {
+  try {
+    if (!app?.id || !user?.id || user.isSynthetic) return null;
+    if (!await isNewcomer(pool, app.id, user.id)) return null;
+    return await filingFor(pool, { app, user, deps });
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not read whether somebody is new here', { app: app?.slug, err: err.message });
+    return null;
+  }
+}
+
+/** WP-C: the one query behind newcomerHere, cheap enough for every message. */
+async function isNewcomer(pool, appId, userId) {
+  const { rows } = await pool.query(
+    `SELECT (SELECT COUNT(*)::int FROM chat_bot_requests r WHERE r.app_id = a.id AND r.requester_id = $2) AS asked,
+            EXISTS (SELECT 1 FROM issues i WHERE i.app_id = a.id AND i.created_by = $2) AS requested
+       FROM apps a
+       JOIN community_members m ON m.community_id = a.community_id AND m.user_id = $2
+      WHERE a.id = $1 AND a.created_by IS DISTINCT FROM $2
+        AND m.joined_at > NOW() - make_interval(days => $3::int)`,
+    [appId, userId, OFFER_WITHIN_DAYS],
+  );
+  const row = rows[0];
+  return !!row && !row.requested && row.asked < OFFERS_PER_PROJECT;
+}
+
+/**
+ * How a request of `user`'s on `app` is filed when they took an offer: as
+ * the bot's own when the bot is theirs (botFor), else for the group.
+ */
+async function filingFor(pool, { app, user, deps = {} }) {
+  const here = await botFor(pool, { app, user, deps });
+  if (here) return here;
+  const settings = await botModule(deps).readSettings(pool);
+  return { builds: false, settings };
+}
+
 /** The card under a request's message, for its requester alone. Pure. */
-function cardOf(row, { builds = true, typicalMinutes = null } = {}) {
+function cardOf(row, { builds = true, typicalMinutes = null, first = false } = {}) {
   return {
     messageId: Number(row.chat_message_id),
     kind: row.kind,
@@ -90,7 +169,18 @@ function cardOf(row, { builds = true, typicalMinutes = null } = {}) {
     issueNumber: row.issue_number == null ? null : Number(row.issue_number),
     ...(row.kind === 'filed' && Number.isFinite(typicalMinutes) ? { typicalMinutes } : {}),
     ...(builds === false && row.kind === 'filed' ? { kind: 'group' } : {}),
+    // WP-C: their first request on the project, which says it stays.
+    ...(first && row.issue_number != null ? { first: true } : {}),
   };
+}
+
+/** WP-C: the number of `user`'s first request on `appId`, or null. */
+async function firstRequestOf(pool, appId, userId) {
+  const { rows } = await pool.query(
+    'SELECT MIN(github_issue_number)::int AS n FROM issues WHERE app_id = $1 AND created_by = $2',
+    [appId, userId],
+  );
+  return rows[0]?.n ?? null;
 }
 
 /** Send a requester their card, on every tab they have open. */
@@ -221,10 +311,11 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
     }
   }
   const typicalMinutes = here.builds ? await dmModule(deps).typicalMinutes(pool).catch(() => null) : null;
+  const first = await firstRequestOf(pool, app.id, user.id).catch(() => null);
   log.info('homeroom-bot-chat', 'Filed a request asked for in a project\'s chat', {
     app: app.slug, issueNumber: filed.issueNumber, userId: user.id, builds: here.builds,
   });
-  return cardOf(row, { builds: here.builds, typicalMinutes });
+  return cardOf(row, { builds: here.builds, typicalMinutes, first: first === Number(filed.issueNumber) });
 }
 
 /**
@@ -233,9 +324,14 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
  * Resolves { ok, card } or { ok: false, status, error, code }.
  */
 async function askFromMessage(pool, config, { app, user, messageId, content, chosen = false, deps = {} }) {
-  const here = await botFor(pool, { app, user, deps });
-  if (!here) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.', code: 'not_enabled' };
   const { rows: [already] } = await pool.query('SELECT * FROM chat_bot_requests WHERE chat_message_id = $1', [messageId]);
+  // WP-C: Suggest it, under an offer this person was made, files it whether
+  // or not the bot is theirs.
+  const offered = chosen && already?.kind === 'offer' && Number(already.requester_id) === Number(user.id);
+  const here = offered
+    ? await filingFor(pool, { app, user, deps })
+    : await botFor(pool, { app, user, deps });
+  if (!here) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.', code: 'not_enabled' };
   if (already && (already.issue_number != null || !chosen)) {
     return { ok: true, card: cardOf(already, { builds: here.builds }), already: true };
   }
@@ -247,7 +343,8 @@ async function askFromMessage(pool, config, { app, user, messageId, content, cho
     return { ok: false, status: 429, error: 'You\'ve asked me for a lot in the last hour. Try again in a little while.', code: 'busy', card };
   }
   let kind = 'change';
-  let title = null;
+  // WP-C: File it / Suggest it keeps the title the card already showed.
+  let title = chosen && already?.title ? already.title : null;
   if (!chosen) {
     try {
       const read = await (deps.readAsk || require('./llm').readChatAsk)({ text: words, appName: app.name || app.slug });
@@ -304,13 +401,52 @@ async function personRow(pool, userId) {
  */
 async function noteChatMessage(pool, config, { appId, userId, messageId, content, thread = null, postedVia = null, deps = {} }) {
   try {
-    if (thread || postedVia === 'agent' || !mentionsBot(content) || !appId || !userId) return null;
+    if (thread || postedVia === 'agent' || !appId || !userId) return null;
+    const mentioned = mentionsBot(content);
+    // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
+    if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
     const [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
+    if (!mentioned) return await maybeOffer(pool, { app, user, messageId, content, deps });
     return await askFromMessage(pool, config, { app, user, messageId, content, deps });
   } catch (err) {
     log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug, messageId, err: err.message });
+    return null;
+  }
+}
+
+/** Pure: how many words a message has. */
+function wordCount(text) {
+  return String(text || '').trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * WP-C: a message from somebody new to the project, not addressed to the
+ * bot. When it reads as an idea for the app, their card offers to suggest it
+ * to the group. Resolves the card, or null. Never throws.
+ */
+async function maybeOffer(pool, { app, user, messageId, content, deps = {} }) {
+  try {
+    const words = String(content || '').replace(/\s+/g, ' ').trim();
+    if (wordCount(words) < OFFER_MIN_WORDS) return null;
+    const here = await newcomerHere(pool, { app, user, deps });
+    if (!here) return null;
+    if (!(deps.takeOfferRead || takeOfferRead)(Number(user.id))) return null;
+    const read = await (deps.readAsk || require('./llm').readChatAsk)({
+      text: words, appName: app.name || app.slug, toBot: false,
+    });
+    if (read?.kind !== 'change') return null;
+    const row = await record(pool, {
+      messageId, appId: app.id, userId: user.id, kind: 'offer', title: read.title || fallbackTitle(words),
+    });
+    if (!row) return null;
+    const card = cardOf(row);
+    pushCard(user.id, app.slug, card, deps);
+    log.info('homeroom-bot-chat', 'Offered to suggest a newcomer\'s idea', { app: app.slug, userId: user.id, messageId });
+    return card;
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not offer to suggest a message', { app: app?.slug, messageId, err: err.message });
     return null;
   }
 }
@@ -335,7 +471,7 @@ async function requestFromMessage(pool, config, { app, user, messageId, dismiss 
   if (dismiss) {
     await pool.query(
       `UPDATE chat_bot_requests SET kind = 'dismissed', updated_at = NOW()
-        WHERE chat_message_id = $1 AND requester_id = $2 AND kind IN ('unsure', 'question')`,
+        WHERE chat_message_id = $1 AND requester_id = $2 AND kind IN ('unsure', 'question', 'offer')`,
       [id, user.id],
     );
     return { ok: true, dismissed: true };
@@ -356,10 +492,15 @@ async function myRequests(pool, { app, user, deps = {} }) {
     [app.id, user.id],
   );
   const typicalMinutes = here?.builds ? await dmModule(deps).typicalMinutes(pool).catch(() => null) : null;
+  const first = rows.some((row) => row.issue_number != null)
+    ? await firstRequestOf(pool, app.id, user.id).catch(() => null) : null;
   return {
     bot: !!here,
     builds: !!here?.builds,
-    cards: rows.map((row) => cardOf(row, { builds: row.kind === 'group' ? false : true, typicalMinutes })),
+    cards: rows.map((row) => cardOf(row, {
+      builds: row.kind === 'group' ? false : true, typicalMinutes,
+      first: first != null && Number(row.issue_number) === first,
+    })),
   };
 }
 
@@ -368,6 +509,16 @@ module.exports = {
   personRow,
   BOT_MENTION_RE,
   FILINGS_PER_HOUR,
+  OFFER_WITHIN_DAYS,
+  OFFERS_PER_PROJECT,
+  OFFER_MIN_WORDS,
+  OFFER_READS_PER_DAY,
+  OFFER_READS_PER_HOUR,
+  takeOfferRead,
+  newcomerHere,
+  isNewcomer,
+  maybeOffer,
+  wordCount,
   mentionsBot,
   askedWords,
   fallbackTitle,
