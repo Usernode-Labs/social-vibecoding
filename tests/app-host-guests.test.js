@@ -1,16 +1,15 @@
 // Guests at a public app's own address (P15): people with no Homeroom
-// account may look around an app that welcomes them (dapp.json
-// `"guests": true`), read-only; every write needs an account and asks for
-// one.
+// account may look around every public app, read-only; every write needs
+// an account and asks for one.
 //
 // What it pins, by running the real code:
 //   * the guest token: ES256 under a key of its own, audience
 //     `usernode:app:<id>:guest`, `pur: 'guest'`, `guest: true`, no id or
 //     username, and refused by EVERY verifier written for a person's token,
 //     the frozen pre-cutover scaffold (no options at all) included;
-//   * the app-host gate (src/services/edge-gate.js): a guest is admitted to an
-//     opted-in view-public app at its production address, never to a
-//     private app, a preview or an app that has not opted in; a guest's
+//   * the app-host gate (src/services/edge-gate.js): a guest is admitted to
+//     every view-public app at its production address, never to a private
+//     app or a preview, and no dapp.json key turns that off; a guest's
 //     browser write is refused with 401 account_required; the account links
 //     go to the platform and come back through the authorize hop;
 //   * the platform's own services (AI, storage, the user directory) refuse a
@@ -82,23 +81,24 @@ test('the guest key is derived, not stored: every platform process signs alike',
   assert.ok(manifest.RESERVED_KEYS.has('USERNODE_GUEST_JWT_PUBLIC_KEY'), 'and no dapp.json can shadow it');
 });
 
-test('dapp.json opts in with a literal true, and nothing else', () => {
-  const { readGuests } = require('../src/services/app-manifest');
-  assert.equal(readGuests({ guests: true }), true);
-  for (const v of [false, 'true', 1, {}, null, undefined]) assert.equal(readGuests({ guests: v }), false);
+test('there is no opt-in: a dapp.json `guests` key turns nothing on or off', () => {
+  const manifest = require('../src/services/app-manifest');
+  assert.equal(manifest.readGuests, undefined, 'no reader for it');
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'guests-'));
-  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ guests: true, secrets: [] }));
-  assert.equal(require('../src/services/app-manifest').read(dir).guests, true);
-  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ secrets: [] }));
-  assert.equal('guests' in require('../src/services/app-manifest').read(dir), false, 'absent unless set');
+  for (const v of [true, false]) {
+    fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ guests: v, secrets: [] }));
+    assert.equal('guests' in manifest.read(dir), false, `guests: ${v} is not carried into the manifest`);
+  }
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'edge-gate.js'), 'utf8'), /manifest_snapshot/,
+    'the gate reads no per-app switch');
 });
 
 // ── The gate ───────────────────────────────────────────────────────────
 
 const APPS = {
-  guestapp: { id: GUEST_APP_ID, view_visibility: 'public', guests: true },
-  pubapp: { id: PUB_APP_ID, view_visibility: 'public', guests: false },
-  privapp: { id: PRIV_APP_ID, view_visibility: 'private', guests: true },
+  guestapp: { id: GUEST_APP_ID, view_visibility: 'public' },
+  pubapp: { id: PUB_APP_ID, view_visibility: 'public' },
+  privapp: { id: PRIV_APP_ID, view_visibility: 'private' },
 };
 const byId = (id) => Object.values(APPS).find((a) => a.id === Number(id));
 const live = new Set([`${SID}:${MEMBER_ID}`]);
@@ -112,10 +112,6 @@ const fakePool = {
     if (/SELECT view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {
       const a = byId(params[0]);
       return { rows: a ? [{ view_visibility: a.view_visibility }] : [] };
-    }
-    if (/manifest_snapshot -> 'guests'/.test(sql)) {
-      const a = byId(params[0]);
-      return { rows: a ? [{ guests: a.guests }] : [] };
     }
     if (/FROM app_collaborators WHERE app_id = \$1 AND status = 'member'/.test(sql)) return { rows: [{ user_id: MEMBER_ID }] };
     if (/SELECT is_admin FROM users WHERE id/.test(sql)) return { rows: [{ is_admin: false }] };
@@ -151,13 +147,14 @@ test.beforeEach(() => {
   delete process.env.APP_HOST_SIGNIN;
 });
 
-function gate({ host, uri = '/', method = 'GET', cookie, token, dest, site, origin } = {}) {
+function gate({ host, uri = '/', method = 'GET', cookie, token, authorization, dest, site, origin } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(`${baseUrl}/__caddy/access`, {
       headers: {
         Host: host, 'X-Forwarded-Host': host, 'X-Forwarded-Method': method, 'X-Forwarded-Uri': uri,
         ...(cookie ? { Cookie: cookie } : {}),
         ...(token ? { 'x-usernode-token': token } : {}),
+        ...(authorization ? { Authorization: authorization } : {}),
         ...(dest ? { 'Sec-Fetch-Dest': dest } : {}),
         ...(site ? { 'Sec-Fetch-Site': site } : {}),
         ...(origin ? { Origin: origin } : {}),
@@ -175,7 +172,7 @@ const guestOf = (r) => r.headers['x-usernode-identity']
   && platformJwt.orNull(() => platformJwt.verifyGuestToken(r.headers['x-usernode-identity'], { appId: GUEST_APP_ID }));
 const memberCookie = (host, appId) => `__usernode_access=${platformJwt.signEdgeCookie({ uid: MEMBER_ID, appId, host, sid: SID })}`;
 
-test('a visitor with no account is admitted to an app that welcomes guests, as a guest', async () => {
+test('a visitor with no account is admitted to a public app, as a guest', async () => {
   const r = await gate({ host: GUEST_HOST, site: 'same-origin', dest: 'empty', cookie: '__usernode_anon=1' });
   assert.equal(r.status, 200);
   assert.ok(guestOf(r), 'a guest token for this app');
@@ -188,10 +185,11 @@ test('a visitor with no account is admitted to an app that welcomes guests, as a
   assert.equal(first.status, 302);
 });
 
-test('never a guest where it is not welcome: other apps, private apps, previews, sibling requests', async () => {
+test('every public app has guests; never a private app, a preview or a sibling request', async () => {
   const plain = await gate({ host: PLAIN_HOST, site: 'same-origin' });
   assert.equal(plain.status, 200);
-  assert.equal(plain.headers['x-usernode-identity'], undefined, 'an app that has not opted in');
+  assert.ok(platformJwt.orNull(() => platformJwt.verifyGuestToken(plain.headers['x-usernode-identity'], { appId: PUB_APP_ID })),
+    'any public app, with nothing in its dapp.json');
   const priv = await gate({ host: PRIV_HOST, site: 'same-origin' });
   assert.equal(priv.status, 302, 'a private app stays members-only');
   const preview = await gate({ host: `guestapp--s42.${DOMAIN}`, site: 'same-origin' });
@@ -211,12 +209,24 @@ test('a guest’s write is refused with 401 account_required', async () => {
     assert.match(r.headers['content-type'], /application\/json/);
     assert.deepEqual(JSON.parse(r.body), { error: 'account_required', message: 'Make an account to continue.' });
   }
-  // Carrying a guest token itself changes nothing.
-  const carried = await gate({
-    host: GUEST_HOST, method: 'POST', origin: `https://${GUEST_HOST}`,
-    token: platformJwt.signGuestToken({ appId: GUEST_APP_ID }),
-  });
-  assert.equal(carried.status, 401);
+});
+
+test('a request carrying its own credential is the app’s to judge, valid or not', async () => {
+  // Guests are on for every public app, so the gate must not second-guess
+  // how an existing app sends its person's token: anything carried passes
+  // untouched, exactly as before guests existed, and the app decides. A
+  // carried guest token is refused by the app itself (the scaffold test).
+  const origin = `https://${GUEST_HOST}`;
+  for (const [label, opts] of [
+    ['a guest token', { token: platformJwt.signGuestToken({ appId: GUEST_APP_ID }) }],
+    ['an expired or foreign token', { token: 'not-a-token' }],
+    ['an iframe token in the query', { uri: '/api/save?token=x' }],
+    ['an Authorization header', { authorization: 'Bearer abc' }],
+  ]) {
+    const r = await gate({ host: GUEST_HOST, method: 'POST', origin, site: 'same-origin', ...opts });
+    assert.equal(r.status, 200, label);
+    assert.equal(r.headers['x-usernode-identity'], undefined, `${label}: nothing is added over it`);
+  }
 });
 
 test('what still writes: a person, a server-to-server call, a preflight', async () => {
@@ -244,7 +254,9 @@ test('the anonymous answer marks a guest for the bridge; signing in clears it', 
   assert.ok(hint, 'the hint is set');
   assert.doesNotMatch(hint, /HttpOnly/, 'readable by the bridge, on purpose');
   const plain = await gate({ host: PLAIN_HOST, uri: `/__usernode_access?anon=${encodeURIComponent(platformJwt.signEdgeAnon({ host: PLAIN_HOST }))}&next=%2F` });
-  assert.ok(!(plain.headers['set-cookie'] || []).some((c) => c.startsWith('__usernode_guest=')), 'not where guests are not welcome');
+  assert.ok((plain.headers['set-cookie'] || []).some((c) => c.startsWith('__usernode_guest=1')), 'on every public app');
+  const priv = await gate({ host: PRIV_HOST, uri: `/__usernode_access?anon=${encodeURIComponent(platformJwt.signEdgeAnon({ host: PRIV_HOST }))}&next=%2F` });
+  assert.ok(!(priv.headers['set-cookie'] || []).some((c) => c.startsWith('__usernode_guest=')), 'never on a private app');
 
   const code = platformJwt.signEdgeGrant({ uid: MEMBER_ID, appId: GUEST_APP_ID, host: GUEST_HOST, sid: SID });
   const signedIn = await gate({ host: GUEST_HOST, uri: `/__usernode_access?code=${encodeURIComponent(code)}&next=%2F` });
@@ -365,7 +377,7 @@ test('the scaffold: a guest reads, a guest’s write is account_required, a forg
   const { getTemplateFiles } = require('../src/services/template.js');
   const { appIdentityEnv } = require('../src/services/app-identity-env');
   const files = getTemplateFiles('Guests', 'guests-1a2b3c', 'postgres://x', null, {});
-  assert.equal(JSON.parse(files.find((f) => f.path === 'dapp.json').content).guests, true, 'new apps welcome guests');
+  assert.equal('guests' in JSON.parse(files.find((f) => f.path === 'dapp.json').content), false, 'nothing to opt in to');
   const source = files.find((f) => f.path === 'server.js').content;
   const env = { PORT: '3000', DATABASE_URL: 'postgres://x', ...appIdentityEnv({ id: GUEST_APP_ID }) };
   const { auth } = loadScaffoldMiddleware(source, env);

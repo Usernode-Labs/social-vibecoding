@@ -948,18 +948,6 @@ const MAX_LLM_PURPOSE_LENGTH = 140;
 // here: garbage values (non-string purpose, non-positive or
 // non-integer cap) are dropped, an absent/empty block resolves to
 // null and the dialog falls back to generic copy. Never throws.
-// Optional top-level `"guests": true`: the app welcomes visitors who have no
-// Homeroom account, read-only, at its own address (P15). Only a literal
-// `true` opts in; the platform's app-host gate (services/edge-gate.js) then
-// hands such a visitor a guest token (audience `usernode:app:<id>:guest`)
-// and refuses their writes with 401 `account_required`. It is read off the
-// PRODUCTION deploy's snapshot, so a proposal cannot turn it on before it
-// merges. Omitted from the manifest unless set, so every existing snapshot
-// and shape stays as it was.
-function readGuests(parsed) {
-  return parsed?.guests === true;
-}
-
 function readLlm(parsed) {
   const raw = parsed?.llm;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -1193,7 +1181,6 @@ function read(cloneDir) {
     icon: readIcon(parsed),
     admins: readAdmins(parsed),
     platform_env: platformEnv,
-    ...(readGuests(parsed) ? { guests: true } : {}),
   };
 }
 
@@ -1949,7 +1936,6 @@ module.exports = {
   readDescription,
   MAX_DESCRIPTION_LENGTH,
   readLlm,
-  readGuests,
   readVisibility,
   readGovernance,
   readScreenshot,

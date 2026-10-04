@@ -6650,8 +6650,8 @@
 
   // ── Guests: "Make an account to continue" (P15) ──────────────────────
   //
-  // A public app that welcomes guests (dapp.json `"guests": true`) is open
-  // at its own address to people with no Homeroom account, read-only. Every
+  // Every public app is open at its own address to people with no Homeroom
+  // account, read-only. Every
   // write they try is answered with 401 and JSON `{ error:
   // "account_required" }`: by the platform's app-host gate for a browser
   // write, or by the app itself (services/edge-gate.js; the conventions). This

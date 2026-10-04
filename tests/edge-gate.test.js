@@ -86,8 +86,6 @@ const fakePool = {
       const app = APPS[params[0]];
       return { rows: app ? [{ ...app, created_by: 1, self_hosted: false, moderation_suspended_at: null }] : [] };
     }
-    // P15: none of these apps welcomes guests (tests/app-host-guests.test.js).
-    if (/manifest_snapshot -> 'guests'/.test(sql)) return { rows: [{ guests: false }] };
     if (/SELECT runtime_name FROM apps WHERE id/.test(sql)) {
       const app = byId(params[0]);
       return { rows: app ? [{ runtime_name: app.runtime_name }] : [] };
@@ -221,15 +219,18 @@ const callback = (host, c, next = '/deep/link') =>
 
 const setCookies = (r) => (r.headers['set-cookie'] || []);
 const identityOf = (r) => r.headers['x-usernode-identity'];
+// A guest token for the public app (P15): who a visitor with no person is.
+const guestOf = (r) => identityOf(r)
+  && platformJwt.orNull(() => platformJwt.verifyGuestToken(identityOf(r), { appId: PUB_APP_ID }));
 const isAuthorize = (loc) => typeof loc === 'string' && loc.startsWith(`https://${DOMAIN}/__access/authorize?`);
 const chromeless = (slug) => `https://${DOMAIN}/#app/${slug}/full`;
 
 // ── Basics ─────────────────────────────────────────────────────────────
 
-test('a view-public app passes with no credentials, and nothing is added', async () => {
+test('a view-public app passes with no credentials, as a guest (P15)', async () => {
   const r = await gate({ host: PUB_HOST });
   assert.equal(r.status, 200);
-  assert.equal(identityOf(r), undefined);
+  assert.ok(guestOf(r), 'a guest, never a person (tests/app-host-guests.test.js)');
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 
@@ -312,7 +313,7 @@ test('signing out of Homeroom signs out of the app host', async () => {
   state.liveSessions.clear();
   const fetchR = await gate({ host: PUB_HOST, cookie: accessCookie(MEMBER_ID, PUB_HOST, PUB_APP_ID), site: 'same-origin' });
   assert.equal(fetchR.status, 200);
-  assert.equal(identityOf(fetchR), undefined, 'no identity once the session is gone');
+  assert.ok(guestOf(fetchR), 'no person once the session is gone: a guest (P15)');
   const nav = await gate({ host: PUB_HOST, cookie: accessCookie(MEMBER_ID, PUB_HOST, PUB_APP_ID), dest: 'document' });
   assert.ok(isAuthorize(nav.headers.location), 'and a visit asks again');
 });
@@ -323,11 +324,11 @@ test('a cookie for another host, another app, or blocked by the person opens not
     accessCookie(MEMBER_ID, PUB_HOST, PRIV_APP_ID),
   ]) {
     const r = await gate({ host: PUB_HOST, cookie, site: 'same-origin' });
-    assert.equal(identityOf(r), undefined);
+    assert.ok(guestOf(r), 'no person: a guest (P15)');
   }
   state.blocked.add(`${MEMBER_ID}:${PUB_APP_ID}`);
   const blocked = await gate({ host: PUB_HOST, cookie: accessCookie(MEMBER_ID, PUB_HOST, PUB_APP_ID), site: 'same-origin' });
-  assert.equal(identityOf(blocked), undefined);
+  assert.ok(guestOf(blocked), 'no person: a guest (P15)');
 });
 
 test('a request carrying its own token keeps it: no identity is added over it', async () => {

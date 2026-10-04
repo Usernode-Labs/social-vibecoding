@@ -236,6 +236,8 @@ test('anonymous reads of a public app are asked once per few seconds; nothing el
   assert.equal(anonymousRead(req({ headers: { cookie: 'theme=dark' } })), true, 'the app’s own cookies do not matter');
   assert.equal(anonymousRead(req({ headers: { cookie: 'a=1; __Host-usernode_access=x' } })), false, 'the gate cookie does');
   assert.equal(anonymousRead(req({ headers: { 'x-usernode-token': 't' } })), false);
+  assert.equal(anonymousRead(req({ headers: { authorization: 'Bearer t' } })), false,
+    'a credential of the app’s own is passed through, never answered from the cache');
   assert.equal(anonymousRead(req({ url: '/?token=t' })), false);
   assert.equal(anonymousRead(req({ headers: { 'sec-fetch-dest': 'document' } })), false, 'a visit may hop');
   assert.equal(anonymousRead(req({ url: '/__usernode_access?code=x' })), false);

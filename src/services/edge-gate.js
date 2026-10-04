@@ -66,14 +66,20 @@
 //
 // ── Guests (P15) ────────────────────────────────────────────────────────
 //
-// A view-public app whose dapp.json says `"guests": true` (its production
-// deploy's snapshot) is open to people with no Homeroom account, at its own
-// production address only:
+// Every view-public app (a public community's, or a public app with
+// invite-only building) is open to people with no Homeroom account, at its
+// own production address only:
 //
+//   * a visitor counts as a guest only when the request carries no
+//     credential at all: one that carries the iframe token, the
+//     `x-usernode-token` header or an Authorization header goes to the app
+//     untouched, as it always did, valid or not;
 //   * such a visitor's requests carry a GUEST token (platform-jwt
 //     signGuestToken: audience `usernode:app:<id>:guest`, `pur: 'guest'`,
 //     `guest: true`, no id or username), under the same same-origin rules
-//     as a person's identity. No app that has not opted in accepts it;
+//     as a person's identity. No verifier written for a person's token
+//     accepts it, so an app that has not learned about guests treats them
+//     as the signed-out visitor it already saw;
 //   * every write they make from a browser (POST, PUT, PATCH, DELETE with
 //     an Origin or Sec-Fetch-Site) is refused here with 401 and JSON
 //     `{ error: 'account_required' }`, which the bridge turns into a
@@ -82,10 +88,10 @@
 //   * a readable, host-only hint cookie tells the bridge to show its
 //     "You're looking around" strip. It grants nothing.
 //
-// Never on a preview, never on a private app, never when the app has not
-// opted in. `/__usernode_access?account=signup|signin&next=` sends the
-// visitor to the platform's sign-up or sign-in, which brings them back
-// through the authorize hop, signed in.
+// Never on a preview and never on a private app.
+// `/__usernode_access?account=signup|signin&next=` sends the visitor to the
+// platform's sign-up or sign-in, which brings them back through the
+// authorize hop, signed in.
 //
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
 // identity from the cookie, no guests, the chromeless view for a direct visit
@@ -257,7 +263,6 @@ function boundedSet(map, key, value) {
 }
 
 const liveSessions = new Map();      // `${sid}:${uid}` -> at
-const guestOptIns = new Map();       // appId -> { at, on }
 const guestTokens = new Map();       // appId -> { at, token }
 const identities = new Map();        // `${appId}:${uid}` -> { at, token }
 const upstreams = new Map();         // host -> { at, name }
@@ -265,7 +270,7 @@ let captureId = { at: 0, id: null };
 
 function resetCachesForTest() {
   liveSessions.clear(); identities.clear(); upstreams.clear();
-  guestOptIns.clear(); guestTokens.clear();
+  guestTokens.clear();
   captureId = { at: 0, id: null };
 }
 
@@ -331,20 +336,6 @@ async function mintIdentity(pool, appId, uid) {
   });
   boundedSet(identities, key, { at: Date.now(), token });
   return token;
-}
-
-// Has this app opted in to guests? Read off its production deploy's dapp.json
-// snapshot (services/app-manifest.js readGuests), cached like visibility.
-async function guestsEnabled(pool, appId) {
-  const hit = guestOptIns.get(appId);
-  if (hit && Date.now() - hit.at < 10_000) return hit.on;
-  const { rows } = await pool.query(
-    "SELECT (manifest_snapshot -> 'guests') = 'true'::jsonb AS guests FROM apps WHERE id = $1",
-    [appId]
-  );
-  const on = rows[0]?.guests === true;
-  boundedSet(guestOptIns, appId, { at: Date.now(), on });
-  return on;
 }
 
 // One guest token per app, reused like a person's identity.
@@ -501,10 +492,8 @@ async function handleAccess(pool, req, res) {
       const ok = platformJwt.orNull(() => platformJwt.verifyEdgeAnon(anon));
       if (ok && ok.host === host && !vis.viewPrivate && signin) {
         res.cookie(names.anon, '1', cookieOptions(ANON_TTL_S));
-        if (await guestsEnabled(pool, vis.appId)) {
-          // Readable on purpose: it only tells the bridge to show its strip.
-          res.cookie(names.guest, '1', { ...cookieOptions(GUEST_HINT_TTL_S), httpOnly: false });
-        }
+        // Readable on purpose: it only tells the bridge to show its strip.
+        res.cookie(names.guest, '1', { ...cookieOptions(GUEST_HINT_TTL_S), httpOnly: false });
         return redirect(checkUrl('anon'));
       }
       // Never bounce again from here: a loop-breaker, not a dead end.
@@ -545,17 +534,15 @@ async function handleAccess(pool, req, res) {
 
   // ── View-public apps ──────────────────────────────────────────────────
   if (!vis.viewPrivate) {
-    const guests = signin && await guestsEnabled(pool, vis.appId);
-    // The app authenticates a token the request already carries. Where
-    // guests are welcome, only a person's token counts as one: a guest
-    // token (or anything else) carried by the request is a guest.
-    if (ownToken || queryToken) {
-      if (!guests) return allow();
-      const person = platformJwt.orNull(
-        () => platformJwt.verifyAppIdentityToken(queryToken || ownToken, { appId: vis.appId })
-      );
-      if (person && Number.isInteger(person.id)) return allow();
-    }
+    // Every public app welcomes guests wherever the sign-in half is on.
+    const guests = signin;
+    // A request that carries a credential of its own (the iframe token, the
+    // header the frontend forwards it in, or an Authorization header) is the
+    // app's to authenticate, exactly as before guests existed: valid or not,
+    // it passes untouched. Only a request with no credential at all can be a
+    // guest, so turning guests on for every public app changes nothing for
+    // a signed-in person, however an existing app sends their token.
+    if (ownToken || queryToken || header(req.headers, 'authorization')) return allow();
     if (signin && cookie?.sid
         && await appAccess.isViewMember(pool, vis.appId, cookie.uid)
         && await sessionLive(pool, cookie.sid, cookie.uid)) {
@@ -687,7 +674,6 @@ module.exports = {
   sessionLive,
   redeemOnce,
   mintIdentity,
-  guestsEnabled,
   accountUrl,
   upstreamFor,
   handleAccess,

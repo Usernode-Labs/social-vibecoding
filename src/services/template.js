@@ -986,9 +986,6 @@ value = "build"
           // A starter's tile icon and the checks its first proposal runs.
           ...(starter ? { icon: { emoji: starter.icon } } : {}),
           secrets: [],
-          // Welcome visitors with no Homeroom account, read-only, at this
-          // app's own address (they get req.guest; see server.js).
-          guests: true,
           ...(governanceBlock ? { governance: governanceBlock } : {}),
           ...(starter ? { tests: starter.tests } : {}),
         },
@@ -1026,7 +1023,7 @@ const APP_AUDIENCE = process.env.USERNODE_APP_ID
   : null;
 
 // Visitors with no Homeroom account ("guests") may look around this app at
-// its own address, read-only (dapp.json \`"guests": true\`). The platform marks
+// its own address, read-only (every public app). The platform marks
 // them with a token of their own: ES256, signed by a key of its own (its
 // public half is USERNODE_GUEST_JWT_PUBLIC_KEY), this audience, \`pur:
 // 'guest'\`, \`guest: true\`, and no id or username. Such a visitor is

@@ -331,10 +331,9 @@ Three consequences:
 
 ### Guests: people without an account (read-only)
 
-A public app can let people with no Homeroom account look around at its own
-address. It opts in with `"guests": true` at the top of `dapp.json` (new
-apps have it). Private apps, previews and the app inside Homeroom never have
-guests.
+Every public app lets people with no Homeroom account look around at its own
+address. Private apps, previews and the app inside Homeroom never have
+guests. Nothing turns it on: write the app so a guest can look around.
 
 - **A guest carries a guest token**, in the same `x-usernode-token` header:
   `ES256`, signed by a key of its own whose public half is
