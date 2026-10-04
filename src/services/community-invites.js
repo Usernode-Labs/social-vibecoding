@@ -191,6 +191,15 @@ function clampInt(value, fallback, min, max) {
   return n;
 }
 
+// WP-D: 0 asks for no limit: a link with no end date (`days: 0`) or for any
+// number of people (`maxUses: 0`), stored as NULL, which works until it is
+// turned off. The first session's invite asks for both: the project is the
+// gift, so its link should outlive any week.
+const NO_LIMIT = 0;
+function isNoLimit(value) {
+  return value === NO_LIMIT || value === String(NO_LIMIT);
+}
+
 /**
  * Why a link cannot be used, or null when it can. A link whose maker can no
  * longer grant what it grants (removed from the group, left the community,
@@ -200,8 +209,8 @@ function clampInt(value, fallback, min, max) {
 function deadReason(invite, now = new Date()) {
   if (!invite) return 'unknown';
   if (invite.revoked_at || invite.maker_holds === false) return 'revoked';
-  if (new Date(invite.expires_at) <= now) return 'expired';
-  if (invite.uses >= invite.max_uses) return 'used_up';
+  if (invite.expires_at != null && new Date(invite.expires_at) <= now) return 'expired';
+  if (invite.max_uses != null && invite.uses >= invite.max_uses) return 'used_up';
   return null;
 }
 
@@ -257,8 +266,10 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
   }
   const cleaned = cleanNote(note);
   if (!cleaned.ok) return { ok: false, status: 400, error: cleaned.error };
-  const d = clampInt(days, DEFAULT_DAYS, LIMITS.minDays, LIMITS.maxDays);
-  const u = clampInt(maxUses, DEFAULT_USES, LIMITS.minUses, LIMITS.maxUses);
+  const noEnd = isNoLimit(days);
+  const anyone = isNoLimit(maxUses);
+  const d = noEnd ? NO_LIMIT : clampInt(days, DEFAULT_DAYS, LIMITS.minDays, LIMITS.maxDays);
+  const u = anyone ? NO_LIMIT : clampInt(maxUses, DEFAULT_USES, LIMITS.minUses, LIMITS.maxUses);
   if (d === null) {
     return { ok: false, status: 400, error: `A link lasts between ${LIMITS.minDays} and ${LIMITS.maxDays} days.` };
   }
@@ -268,7 +279,7 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
   const { rows: live } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM community_invites
       WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
-        AND expires_at > NOW() AND uses < max_uses`,
+        AND (expires_at IS NULL OR expires_at > NOW()) AND (max_uses IS NULL OR uses < max_uses)`,
     [app.id, user.id]
   );
   if ((live[0]?.n || 0) >= MAX_LIVE_PER_MAKER) {
@@ -277,15 +288,15 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
   const token = newToken();
   const { rows } = await pool.query(
     `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, expires_at, note)
-     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 || ' days')::interval, $7)
+     VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::int IS NULL THEN NULL ELSE NOW() + make_interval(days => $6::int) END, $7)
      RETURNING id, token, created_by, max_uses, uses, expires_at, created_at, note`,
-    [token, app.community_id, app.id, user.id, u, String(d), cleaned.note]
+    [token, app.community_id, app.id, user.id, anyone ? null : u, noEnd ? null : d, cleaned.note]
   );
   events.record(pool, {
     type: events.EVENT_TYPES.INVITE_LINK_CREATED,
     userId: user.id,
     appId: app.id,
-    metadata: { inviteId: rows[0].id, days: d, maxUses: u, hasNote: !!cleaned.note },
+    metadata: { inviteId: rows[0].id, days: noEnd ? null : d, maxUses: anyone ? null : u, hasNote: !!cleaned.note },
   });
   return { ok: true, link: serializeLink({ ...rows[0], created_by_username: user.username }, user.id) };
 }
@@ -302,13 +313,53 @@ async function listInvites(pool, { app, user }) {
        FROM community_invites i
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.app_id = $1
-        AND i.revoked_at IS NULL AND i.expires_at > NOW() AND i.uses < i.max_uses
+        AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
         AND ($3::boolean OR i.created_by = $2)
       ORDER BY i.created_at DESC, i.id DESC
       LIMIT 50`,
     [app.id, user?.id || null, manages]
   );
   return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function inDays(ms) {
+  const days = Math.max(1, Math.round(ms / DAY_MS));
+  return days === 1 ? 'a day' : `${days} days`;
+}
+
+/**
+ * WP-D: the one line on what joining means for the people a link brings,
+ * said from the project's real rule (services/governance.js, and the default
+ * gate's numbers in active-users.js), never written out by hand: with one
+ * other person using it, who has to say yes, and what happens when only one
+ * of them does. Small on purpose: information, not a warning. `app` carries
+ * id and locked. Never throws; null when the rule cannot be read.
+ */
+async function joiningRule(pool, app) {
+  try {
+    const governance = require('./governance');
+    const votes = require('./active-users');
+    const gov = await governance.getGovernance(pool, app.id);
+    const admin = app.locked ? ' An admin has to say yes too.' : '';
+    if (gov.approvalsRequired != null) {
+      const n = gov.approvalsRequired;
+      const whose = gov.approverPolicy === 'invited' ? ' from its approvers' : '';
+      return `A change goes live once it has ${n === 1 ? 'a yes' : `${n} yes votes`}${whose}.${admin}`;
+    }
+    if (gov.approverPolicy === 'invited') return `A change goes live once its approvers back it.${admin}`;
+    // Two people using it: the maker and the first person the link brings.
+    const required = votes.requiredVotes(2, 0);
+    if (required <= 1) return `With one other person using it, a change goes live when either of you says yes.${admin}`;
+    const lazy = votes.lazyWindowMs(2, 1, 0);
+    const wait = lazy == null ? '' : `, or ${inDays(lazy)} after one of you says yes if the other doesn't answer`;
+    return `With one other person using it, a change goes live when you both say yes${wait}.${admin}`;
+  } catch (err) {
+    log.warn('invites', 'Could not read the joining rule', { appId: app?.id, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -415,7 +466,30 @@ async function pictureFor(db, appId) {
     [appId]
   );
   if (ill[0]) return { kind: 'illustration', id: ill[0].id, darkId: ill[0].dark_id || null };
+  // WP-D: a project still being built has no shot yet; the sketch its maker
+  // was shown (services/app-sketch.js) stands in for it.
+  const { rows: sketch } = await db.query(
+    `SELECT 1 FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+    [appId]
+  );
+  if (sketch[0]) return { kind: 'sketch' };
   return null;
+}
+
+/**
+ * WP-D: the sketch page a live link's picture frames, as the project's own
+ * sketch route serves it, or null: the link must be live and its project's
+ * picture must be the sketch.
+ */
+async function sketchPage(pool, token, { theme = null } = {}) {
+  const invite = await loadInvite(pool, token);
+  if (deadReason(invite)) return null;
+  const picture = await pictureFor(pool, invite.app_id);
+  if (!picture || picture.kind !== 'sketch') return null;
+  const appSketch = require('./app-sketch');
+  const row = await appSketch.readSketch(pool, invite.app_id);
+  if (appSketch.sketchStatus(row) !== 'ready') return null;
+  return appSketch.sketchDocument({ name: invite.name || invite.slug, design: row.design, html: row.html, theme });
 }
 
 /**
@@ -438,6 +512,7 @@ async function pictureBytes(pool, token) {
 function pictureUrls(token, picture) {
   if (!picture) return null;
   if (picture.kind === 'shot') return { kind: 'shot', url: `/api/public/invites/${token}/picture`, darkUrl: null };
+  if (picture.kind === 'sketch') return { kind: 'sketch', url: `/api/public/invites/${token}/sketch.html`, darkUrl: null };
   return {
     kind: 'illustration',
     url: `/app-illustrations/${picture.id}`,
@@ -774,6 +849,9 @@ module.exports = {
   NOTE_MAX,
   cleanNote,
   pictureBytes,
+  sketchPage,
+  joiningRule,
+  NO_LIMIT,
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
   INVITE_COOKIE,

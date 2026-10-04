@@ -11352,6 +11352,11 @@ CREATE TABLE IF NOT EXISTS community_invites (
 );
 CREATE INDEX IF NOT EXISTS idx_community_invites_app ON community_invites (app_id, created_by);
 COMMENT ON TABLE community_invites IS 'staging:private';
+-- WP-D: a link may have no end date (expires_at NULL) and work for any number
+-- of people (max_uses NULL): it works until it is turned off. The first
+-- session's invite is made this way (services/community-invites.js NO_LIMIT).
+ALTER TABLE community_invites ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE community_invites ALTER COLUMN max_uses DROP NOT NULL;
 
 -- The maker's own words, shown on the page a link opens and in its preview
 -- ("Come help with our run tracker!"). Plain text, at most 280 characters;

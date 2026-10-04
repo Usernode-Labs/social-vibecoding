@@ -38,9 +38,11 @@ export type InviteLink = {
   id: number;
   token: string;
   path: string;
-  maxUses: number;
+  /** null: any number of people (WP-D). */
+  maxUses: number | null;
   uses: number;
-  expiresAt: string;
+  /** null: no end date; it works until it is turned off (WP-D). */
+  expiresAt: string | null;
   createdBy: string | null;
   mine: boolean;
 };
@@ -53,6 +55,8 @@ export type InviteState = {
   defaults: { days: number; maxUses: number };
   limits: { minDays: number; maxDays: number; minUses: number; maxUses: number };
   skipsLeft: number | null;
+  /** WP-D: what joining means here, from the project's real rule. */
+  joiningRule?: string | null;
 };
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left '
@@ -66,16 +70,20 @@ const SECONDARY = 'inline-flex flex-1 basis-0 min-w-0 items-center justify-cente
   + 'rounded-full text-sm font-semibold bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 '
   + 'dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors';
 
-const DAY_CHOICES = [1, 7, 30];
-const USE_CHOICES = [1, 5, 10, 25, 50, 100];
+// 0 asks for no limit (WP-D): no end date, or any number of people.
+const NO_LIMIT = 0;
+const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
+const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
 /** The sentence under the link. */
 export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, grant: string, now = Date.now()): string {
-  const days = daysUntil(link.expiresAt, now);
-  const when = days <= 1 ? 'It expires within a day' : `It expires in ${days} days`;
   const who = grant === 'collaborator'
     ? 'Anyone with this link can join and build with you.'
     : 'Anyone with this link can join.';
+  if (link.expiresAt == null && link.maxUses == null) return `${who} It works until you turn it off.`;
+  const days = link.expiresAt == null ? null : daysUntil(link.expiresAt, now);
+  const when = days == null ? 'It has no end date' : days <= 1 ? 'It expires within a day' : `It expires in ${days} days`;
+  if (link.maxUses == null) return `${who} ${when}.`;
   // Before anyone has used it, the number it was made for; after, what is
   // left of it.
   const count = link.uses ? Math.max(0, link.maxUses - link.uses) : link.maxUses;
@@ -85,8 +93,10 @@ export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'u
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */
 export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
+  const used = link.maxUses == null ? `${link.uses} joined` : `${link.uses} of ${link.maxUses} used`;
+  if (link.expiresAt == null) return `${used} · no end date`;
   const days = daysUntil(link.expiresAt, now);
-  return `${link.uses} of ${link.maxUses} used · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
+  return `${used} · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
 }
 
 /** The line about people new to Homeroom. */
@@ -245,6 +255,11 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       <p className="px-5 pt-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
         {newcomerLine(state.skipsLeft)}
       </p>
+      {state.joiningRule ? (
+        <p data-invite-rule="" className="px-5 pt-2 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
+          {state.joiningRule}
+        </p>
+      ) : null}
       {error ? <p role="alert" className="px-5 pt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 
       {changing ? (
@@ -252,16 +267,16 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
             <span className="block pb-1">Expires after</span>
             <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
-              {DAY_CHOICES.filter((d) => d >= state.limits.minDays && d <= state.limits.maxDays).map((d) => (
-                <option key={d} value={d}>{d === 1 ? '1 day' : `${d} days`}</option>
+              {DAY_CHOICES.filter((d) => d === NO_LIMIT || (d >= state.limits.minDays && d <= state.limits.maxDays)).map((d) => (
+                <option key={d} value={d}>{d === NO_LIMIT ? 'Until you turn it off' : d === 1 ? '1 day' : `${d} days`}</option>
               ))}
             </Select>
           </label>
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
             <span className="block pb-1">Works for</span>
             <Select value={String(uses)} onChange={(e) => setUses(Number(e.target.value))}>
-              {USE_CHOICES.filter((n) => n >= state.limits.minUses && n <= state.limits.maxUses).map((n) => (
-                <option key={n} value={n}>{n === 1 ? '1 person' : `${n} people`}</option>
+              {USE_CHOICES.filter((n) => n === NO_LIMIT || (n >= state.limits.minUses && n <= state.limits.maxUses)).map((n) => (
+                <option key={n} value={n}>{n === NO_LIMIT ? 'Anyone with the link' : n === 1 ? '1 person' : `${n} people`}</option>
               ))}
             </Select>
           </label>

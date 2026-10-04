@@ -119,7 +119,11 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
   // The link outlives a week, and the note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
-  assert.match(src, /const LINK_DAYS = 30;\s+const LINK_USES = 100;/);
+  // WP-D: until it is turned off, for anyone it reaches (0 is no limit).
+  assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
+  assert.equal(require('../src/services/community-invites').NO_LIMIT, 0);
+  assert.match(src, /Anyone with the link can join, until you turn it off\./);
+  assert.match(src, /setRule\(data\.joiningRule\)/);
   assert.match(src, /Your note is also your first message in the group chat\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
