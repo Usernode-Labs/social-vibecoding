@@ -63,6 +63,18 @@
 // the card is read from then and finds the run the work already has.
 // Work that has a card, a restart of that look included, gets no second.
 //
+// UNDER THE PLAN (B6, first session 4 October). A first version's card
+// starts when its request is queued, like any request's, so it sits above
+// the plan the read wrote (homeroom-bot-dm.js sendPlanCard) and above every
+// newer plan "Change something" asked for. Build it collapsed the plan to its
+// answers and nothing appeared under it: the build went on in a card the
+// person had scrolled past, and only the tray showed it. So Build it moves
+// the request's card under the plan (cardUnderPlan): the card is sent again
+// where the person is, read from the plan's own run (`lookAt`), counting its
+// time from the tap. The card above stops being the request's card (its
+// record goes) and says where it went (`movedTo`), so the client stops
+// drawing it. There is still one card per request, and it notifies nobody.
+//
 // ONE PERSON'S, ALWAYS. Every row is read by the signed-in person's own id:
 // the route takes no user, conversation or message parameter. An app they
 // can no longer view is left out, whatever the records say.
@@ -111,12 +123,14 @@ function proposalHref(slug, sessionId) {
  * `joined` to work already under way (catchUpCards) lands at the end of the
  * DM, after the work began, so it says the work was started earlier. A card
  * started by filing the request (#3767) says it was filed, not that the
- * work began: it may wait in the queue first, and the card says so.
+ * work began: it may wait in the queue first, and the card says so. A card
+ * moved under a plan by Build it (`go`, cardUnderPlan) says it is building.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
-  joined = false, filed = false, queued = false, lowAllowance = false,
+  joined = false, filed = false, queued = false, lowAllowance = false, go = false,
 } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
+  if (go) return `${line}\n\nBuilding ${firstVersion ? 'the first version' : 'this'} now. This card updates as I go.`;
   // The one place the weekly limit is mentioned before it is reached: under
   // a fifth of the week's building time left (dm.allowanceLow).
   const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
@@ -139,11 +153,12 @@ function jobCardKey(jobKey) {
  * Send one card to `requester` (somebody the bot talks to in a DM) about
  * `issueNumber` on `app`, with `key`. `startedAt`, for a card that joins
  * work already under way, is when that work began: the card is read from
- * then (cardRows). Resolves what sendDm did, or null.
+ * then (cardRows). `lookAt`, for a card moved under a plan (cardUnderPlan),
+ * is the look it is read from. Resolves what sendDm did, or null.
  */
 async function sendCard(pool, {
   app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false, dm,
-  hello = null,
+  hello = null, lookAt = null, go = false,
 }) {
   const context = {
     appName: app.name || app.slug,
@@ -151,7 +166,7 @@ async function sendCard(pool, {
     issueTitle: requester.issueTitle || null,
     firstVersion: !!requester.firstVersion,
   };
-  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance });
+  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, go });
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -171,6 +186,7 @@ async function sendCard(pool, {
       // B3: a reply to it stays in the DM, for the bot to read: a card is
       // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
       ...(startedAt ? { startedAt } : {}),
+      ...(lookAt ? { lookAt } : {}),
     },
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it.
@@ -272,6 +288,56 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {
+      app: app?.slug, issueNumber, userId: requester?.userId, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * B6: Build it was tapped under a first version's plan (`planMessageId`,
+ * the plan of `runId`): the request's card follows the build from under the
+ * plan (see UNDER THE PLAN at the top). Its key is the one catchUpCards
+ * gives the same run's build (pieceOf), so the two can only be one message.
+ * A card already under the plan carries on where it is. Never throws: Build
+ * it has been decided by then. Resolves what sendDm did, or null.
+ */
+async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, requester, bot, settings = null, deps = {} }) {
+  try {
+    const n = Number(issueNumber);
+    const run = Number(runId);
+    if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !Number.isInteger(run) || run <= 0) return null;
+    const dm = dmModule(deps);
+    const s = settings || await settingsModule(deps).readSettings(pool);
+    if (!dm.hasBot(s, requester)) return null;
+    const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
+    if (existing && existing.messageId > Number(planMessageId)) {
+      return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
+    }
+    // Read from the look that wrote the plan: its run is the build's.
+    const { rows: [planned] = [] } = await pool.query(
+      'SELECT created_at FROM homeroom_bot_runs WHERE id = $1 AND app_id = $2 AND issue_number = $3',
+      [run, app.id, n],
+    );
+    const lookAt = iso(planned?.created_at);
+    if (!lookAt) return null;
+    const sent = await sendCard(pool, {
+      app, issueNumber: n, requester, bot, key: `hrbot-activity-run-${run}`, lookAt, go: true, dm,
+    });
+    if (!sent?.messageId) return null;
+    await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
+    if (existing && existing.messageId !== Number(sent.messageId)) {
+      await pool.query('DELETE FROM homeroom_bot_dm_messages WHERE message_id = $1 AND kind = $2', [existing.messageId, KIND]);
+      await dm.setQuestionState(pool, existing.messageId, { movedTo: Number(sent.messageId) }, {
+        ws: deps.ws || null, conversationId: existing.conversationId, userId: requester.userId,
+      });
+    }
+    log.info('homeroom-bot-activity', 'Moved a first version\'s card under its plan', {
+      app: app.slug, issueNumber: n, userId: requester.userId, runId: run, from: existing?.messageId || null,
+    });
+    return sent;
+  } catch (err) {
+    log.warn('homeroom-bot-activity', 'Could not move a card under its plan', {
       app: app?.slug, issueNumber, userId: requester?.userId, err: err.message,
     });
     return null;
@@ -390,8 +456,18 @@ function cardOf(row, entry) {
     doing: entry.doing || null,
     stepSince: entry.since || null,
     ...(Number.isFinite(entry.stepTimeLimitMinutes) ? { stepLimitMinutes: entry.stepTimeLimitMinutes } : {}),
+    // How long the step usually takes (progress.typicalMinutes), when it is
+    // one that takes a while rather than waits on somebody.
+    ...(typicalOf(entry) ? { typicalMinutes: typicalOf(entry) } : {}),
     ...(entry.waitingOn ? { waitingOn: entry.waitingOn } : {}),
   };
+}
+
+/** Pure: a progress entry's typical minutes, `{ from, to }`, or null. */
+function typicalOf(entry) {
+  const range = entry?.typicalMinutes;
+  if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= 0) return null;
+  return { from: range.from, to: range.to };
 }
 
 /**
@@ -751,12 +827,14 @@ function demoState({ working = null, done = null, underWay = null }, now = Date.
     cards.push({
       messageId: underWay, startedAt: ago(DEMO_UNDER_WAY.startedMinutesAgo), links, state: 'working', stage: 'planning',
       step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build', stepSince: ago(7), stepLimitMinutes: 20,
+      typicalMinutes: { from: 3, to: 8 },
     });
   }
   if (working) {
     cards.push({
       messageId: working, startedAt: ago(9), links, state: 'working', stage: 'building',
       step: 3, of: 6, stepName: 'Build it', doing: 'building it', stepSince: ago(4), stepLimitMinutes: 30,
+      typicalMinutes: { from: 10, to: 25 },
     });
   }
   if (done) {
@@ -793,6 +871,7 @@ module.exports = {
   requestCard,
   continueCard,
   startCard,
+  cardUnderPlan,
   outcomeOf,
   endedAt,
   linksOf,

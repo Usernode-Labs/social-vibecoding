@@ -136,6 +136,21 @@ export function isActivityMessage(message: ConversationMessage): boolean {
   return !!message.sender.bot && message.metadata?.homeroomBot?.kind === 'activity' && !message.deleted;
 }
 
+/**
+ * B6: whether an activity card was moved under a first version's plan by
+ * Build it (services/homeroom-bot-activity.js cardUnderPlan). The card under
+ * the plan follows the request now, so the transcript leaves this one out.
+ */
+export function isMovedActivity(message: ConversationMessage): boolean {
+  return isActivityMessage(message) && !!message.metadata?.homeroomBot?.movedTo;
+}
+
+/** "usually 10 to 25 minutes": how long a step usually takes, or null. */
+export function typicalText(range?: { from: number; to: number } | null): string | null {
+  if (!range || !(range.to > 0)) return null;
+  return range.from >= range.to ? `usually about ${range.to} minutes` : `usually ${range.from} to ${range.to} minutes`;
+}
+
 // ── The view ──
 
 const LINK_CLASS = buttonVariants({ layout: 'iconRow', variant: 'pillNeutral', size: 'sm', ink: 'neutral' });
@@ -210,10 +225,12 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
     lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
     eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
     const elapsed = spanText(card.startedAt, at);
+    const usually = typicalText(card.typicalMinutes);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
         <span role="status">{capitalized(card.doing || 'working on it')}</span>
+        {usually ? <span>{` · ${usually}`}</span> : null}
         {elapsed ? <span>{` · ${elapsed} so far`}</span> : null}
       </>
     );

@@ -209,6 +209,42 @@ test('a build the bot is still on is the work Now shows, not an earlier run; one
   assert.deepEqual(stalled.history[0].earlier.map((r) => r.outcome), ['question'], 'and the run still going is not an earlier run');
 });
 
+// B6, first session 4 October: a newcomer's first version showed "2 earlier
+// runs" beside its build. They were its plans, replaced by Change something
+// before Build it was tapped: to them, the plan being updated.
+test('B6: a first version\'s plan replaced before Build it is not one of its earlier runs, in Now, Needs you or History', () => {
+  const fv = { slug: 'flat-4b-chores', name: 'Flat 4B Chores', issue_title: 'First version of Flat 4B Chores', first_version: true };
+  const replaced = (id, hoursAgo, why) => run(id, 1, hoursAgo, {
+    ...fv, verdict: 'ready', build_ok: false, build_error: `skipped: ${why}`, plan_only: true,
+  });
+  const rows = [
+    run(4, 1, 0.2, { ...fv, verdict: 'ready' }),
+    replaced(3, 0.4, 'its creator asked to change the plan'),
+    replaced(2, 0.6, 'the request was read again'),
+    run(1, 1, 0.8, { ...fv, verdict: 'failed' }),
+  ];
+  const building = { project: 'flat-4b-chores', projectName: 'Flat 4B Chores', number: 1, firstVersion: true, stage: 'building',
+    step: 4, of: 7, stepName: 'Build it', doing: 'building it', busyNow: true, since: at(0.1).toISOString() };
+  const now = tray.arrange([building], rows).now[0];
+  assert.deepEqual([now.firstVersion, now.stepName, now.doing], [true, 'Build it', 'building it']);
+  assert.deepEqual(now.earlier.map((r) => [r.id, r.outcome]), [[1, 'failed']], 'its plans are not earlier runs; a look that failed still is');
+  const built = [run(4, 1, 0.2, { ...fv, verdict: 'ready', proposal_session_id: 40, proposal_status: 'promoted', proposal_at: at(0.05) }), ...rows.slice(1)];
+  const history = tray.arrange([], built).history[0];
+  assert.deepEqual([history.id, history.outcome], [4, 'proposed']);
+  assert.deepEqual(history.earlier.map((r) => r.id), [1], 'nor once it is built');
+  const waiting = { ...building, stage: 'question', waitingOn: 'them', busyNow: false };
+  const needsYou = tray.arrange([waiting], [run(6, 1, 0.05, { ...fv }), ...rows]).needsYou[0];
+  assert.deepEqual(needsYou.earlier.map((r) => r.id), [4, 1]);
+  assert.equal(tray.planOnly({ plan_only: true }), true);
+  assert.equal(tray.planOnly({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request was closed before its build started' }), false,
+    'a build that stopped is still an earlier run');
+  // The read says which runs were only a plan: one awaitGo wrote, never
+  // gone ahead with (goAhead records the choices), that stopped unbuilt.
+  const source = read('src/services/homeroom-bot-tray.js');
+  assert.match(source, /\(r\.plan IS NOT NULL AND r\.plan->'chosen' IS NULL AND r\.build_ok IS FALSE\s+AND r\.build_session_id IS NULL AND r\.proposal_session_id IS NULL\) AS plan_only,/);
+  assert.match(read('src/services/homeroom-bot.js'), /plan = COALESCE\(plan, '\{\}'::jsonb\) \|\| jsonb_build_object\('chosen', \$3::jsonb\)/);
+});
+
 test('#8 (WP3): a second build of a request leads History with neither "stopped" nor its own news', () => {
   // Plant Pal, 3 October: run A's proposal went up for a vote, and run B
   // built the same request again. Out of Now (the vote is the group's), the
