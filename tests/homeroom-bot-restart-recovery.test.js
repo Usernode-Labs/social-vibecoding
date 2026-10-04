@@ -303,6 +303,21 @@ test('the bot\'s clock carries across the restart: a turn past its budget is sto
   assert.equal(rec.params[5], 'the build ran past its time limit (finished after a restart)');
 });
 
+test('a clock already past its deadline is not unref\'d, so the stop it owes always comes', () => {
+  // The case above awaits a journal that only the clock's stopTurn resolves.
+  // An unref'd 0 ms timer can be skipped when nothing else holds the event
+  // loop open, and node:test then cancels this test and every one after it
+  // ("17 cancelled, 0 failed" in the platform's unit run).
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+  const at = src.indexOf('botClock = setTimeout(');
+  assert.ok(at > 0, 'the bot clock is armed in server.js');
+  const block = src.slice(at - 200, at + 900);
+  assert.match(block, /const botClockMs = Math\.max\(0, deadline - Date\.now\(\)\);/);
+  assert.match(block, /if \(botClockMs > 0 && typeof botClock\.unref === 'function'\) botClock\.unref\(\);/);
+  assert.doesNotMatch(block, /^\s*if \(typeof botClock\.unref === 'function'\) botClock\.unref\(\);/m,
+    'never unref the clock unconditionally');
+});
+
 // ── A spec turn ──────────────────────────────────────────────────────────
 
 const SPEC = '# Refresh feeds\n\n## User-facing changes\n\nFeeds refresh.\n\n## Technical implementation\n\nPoll hourly.';
