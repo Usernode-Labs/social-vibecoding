@@ -296,8 +296,10 @@ test('the installation client is recorded as its own credential', async () => {
   const src = read('src/services/github.js');
   assert.match(src, /return instrument\(await app\.getInstallationOctokit\(id\), `installation:\$\{owner\}`\);/);
   assert.match(src, /return instrument\(new Octokit\(\{ auth: pat \}\), 'pat'\);/);
-  assert.doesNotMatch(src.replace(/return instrument\(new Octokit\(\{ auth: pat \}\), 'pat'\);/, ''), /new Octokit\(/,
-    'every bot-token client in github.js comes from patOctokit');
+  assert.match(src, /return instrument\(new Octokit\(\{ auth: token, log: octokitLog \}\), `installation:\$\{owner\}`\);/,
+    'and the REST client reads go through (services/github.js getReadOctokit)');
+  assert.equal((src.match(/new Octokit\(/g) || []).length, 2,
+    'every client github.js builds is one of those two, both recorded');
 });
 
 test('a test double without the hook API passes through untouched', () => {

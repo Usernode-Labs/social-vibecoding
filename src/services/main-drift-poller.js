@@ -119,7 +119,10 @@ const headCache = new Map();
 // but it is a subprocess per app per tick, it cannot give the self-hosted
 // row its commit date and subject, and a 304 already costs nothing.
 async function fetchRemoteHead(owner, repo) {
-  const octokit = await github.getOctokit(owner);
+  // A read: through the App installation when GITHUB_READS_VIA_APP says so,
+  // with the bot token behind it (services/github.js getReadOctokit). A 304
+  // is passed through as itself, never retried with the bot token.
+  const octokit = await github.getReadOctokit(owner);
   const key = `${owner}/${repo}`.toLowerCase();
   const cached = headCache.get(key);
   // `repos.getBranch` returns the tip commit; cheaper than listing

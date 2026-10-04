@@ -55,6 +55,10 @@ const SAME_WINDOW_MS = 60 * 1000;
 
 // credential -> Map<resource, { limit, remaining, used, resetAt, observedAt }>
 const state = new Map();
+// Which credential answered the reads routed by services/github.js
+// getReadOctokit (GITHUB_READS_VIA_APP), since this process started: the
+// App installation, or the bot token, and why the bot token.
+const reads = { installation: 0, pat: 0, patReasons: {} };
 // "<credential>@<resetAt>" for the windows already logged as held.
 const heldLogged = new Set();
 
@@ -156,6 +160,29 @@ function core(credential, { now = Date.now() } = {}) {
     observedAt: entry.observedAt,
     expired,
   };
+}
+
+/**
+ * Whether the credential's core budget is known to be used up for the
+ * current window: nothing left and the reset still ahead.
+ */
+function isExhausted(credential, { now = Date.now() } = {}) {
+  const c = core(credential, { now });
+  return !!(c && !c.expired && c.remaining <= 0);
+}
+
+/**
+ * Count one routed read: 'installation', or 'pat' with the reason the bot
+ * token answered it (no_installation, budget_used_up, status_403, ...).
+ */
+function noteRead(source, reason = null) {
+  if (source === 'installation') {
+    reads.installation += 1;
+    return;
+  }
+  reads.pat += 1;
+  const why = String(reason || 'unknown').slice(0, 32);
+  reads.patReasons[why] = (reads.patReasons[why] || 0) + 1;
 }
 
 function installationCredentials() {
@@ -276,6 +303,7 @@ function snapshot({ now = Date.now() } = {}) {
   return {
     reservePercent: Math.round(RESERVE_RATIO * 100),
     credentials: rows,
+    reads: { installation: reads.installation, pat: reads.pat, patReasons: { ...reads.patReasons } },
   };
 }
 
@@ -380,12 +408,17 @@ function githubUnavailableBody(err, { now = Date.now() } = {}) {
 function _resetForTests() {
   state.clear();
   heldLogged.clear();
+  reads.installation = 0;
+  reads.pat = 0;
+  reads.patReasons = {};
 }
 
 module.exports = {
   RESERVE_RATIO,
   record,
   core,
+  isExhausted,
+  noteRead,
   snapshot,
   demoSnapshot,
   alertFigures,

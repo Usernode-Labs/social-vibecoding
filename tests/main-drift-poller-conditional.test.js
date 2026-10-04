@@ -67,6 +67,8 @@ stub(ids.github, {
     return m ? { owner: m[1], repo: m[2] } : null;
   },
   getOctokit: async () => octokit,
+  // main's tip is a read (services/github.js getReadOctokit).
+  getReadOctokit: async () => octokit,
   isEnabled: () => true,
 });
 
@@ -162,12 +164,12 @@ test('a 304 for a repo with nothing cached is still an error, never a guess', as
     rest: { repos: { getBranch: async () => { throw notModified(); } } },
   };
   const github = require(ids.github);
-  const prior = github.getOctokit;
-  github.getOctokit = async () => bare;
+  const prior = github.getReadOctokit;
+  github.getReadOctokit = async () => bare;
   try {
     await assert.rejects(poller.fetchRemoteHead('usernode-bot', 'never-read'), (err) => err.status === 304);
   } finally {
-    github.getOctokit = prior;
+    github.getReadOctokit = prior;
   }
 });
 

@@ -97,6 +97,12 @@
       "description": "Emergency kill switch for before/after shots of each proposal's declared changes. On by default; set exactly false only to stop collecting the declared changes, taking the shots, and showing them together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
+      "key": "GITHUB_READS_VIA_APP",
+      "group": "Platform",
+      "default": "on",
+      "description": "Whether everyday GitHub reads go through the GitHub App installation, which has its own hourly budget, instead of the bot token (GITHUB_BOT_TOKEN). On whenever the App is configured. Writes always use the bot token, and an App read that is refused or out of budget is sent again with it. Set off to read with the bot token only, as before."
+    },
+    {
       "key": "MAX_APPS",
       "group": "Scaling",
       "default": "50",
