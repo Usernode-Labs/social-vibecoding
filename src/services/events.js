@@ -159,6 +159,18 @@ const EVENT_TYPES = Object.freeze({
   // observations so the admin report can say how much telemetry arrived,
   // how much was retried/dropped locally, and when reporting last worked.
   UI_TELEMETRY_DELIVERY: 'ui_telemetry_delivery',
+  // The admin Journey's creation path, written by services/journey-events.js
+  // and read by services/journey.js creationPath. No backfill: nothing
+  // recorded these moments before.
+  //   app_running    a project's first successful run (once, beside
+  //                  apps.first_running_at). metadata: { secondsFromCreation }
+  //   preview_opened a preview answered as ready to somebody, once per
+  //                  viewer per change. metadata: { sessionId, viewerRole }
+  //   change_live    a change merged and deployed, once per change.
+  //                  metadata: { sessionId, requesterIds, firstVersion, live, sha }
+  APP_RUNNING: 'app_running',
+  PREVIEW_OPENED: 'preview_opened',
+  CHANGE_LIVE: 'change_live',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

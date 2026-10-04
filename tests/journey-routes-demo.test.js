@@ -38,6 +38,8 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     nextSteps: '/api/admin/journey/next-steps',
     person: '/api/admin/journey/people/900102',
     leftOut: '/api/admin/journey/left-out',
+    creation: '/api/admin/journey/creation',
+    pairs: '/api/admin/journey/pairs',
   };
   for (const [key, p] of Object.entries(paths)) {
     const res = await fetch(`${base}${p}${p.includes('?') ? '&' : '?'}demo=1`);
@@ -60,4 +62,23 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     loops,
   ]);
   for (const p of left) assert.equal(named.includes(`"userId":${p.userId}`), false, `${p.username} is left out of the demo`);
+
+  // The creation path and the pairs narrow by cohort and by "all time" the
+  // way the real readings do, and say "not recorded" before their records.
+  const creation = await (await fetch(`${base}/api/admin/journey/creation?demo=1`)).json();
+  assert.deepEqual(creation.steps.map((x) => [x.key, x.reached, x.of]),
+    [['created', 5, 5], ['running', 5, 5], ['first_version', 3, 5], ['preview', 3, 5], ['change_live', 1, 5]]);
+  assert.equal(creation.weeks.length, 8);
+  assert.equal(creation.weeks[0].steps.find((x) => x.key === 'running').reached.recorded, false,
+    'a week before the record began reads "not recorded", never 0');
+  const cohort = await (await fetch(`${base}/api/admin/journey/creation?demo=1&cohort=2026-10-05`)).json();
+  assert.ok(cohort.examples.every((x) => [900101, 900102, 900103].includes(x.userId)), 'a cohort narrows the examples');
+  const allTime = await (await fetch(`${base}/api/admin/journey/creation?demo=1&week=all`)).json();
+  assert.equal(allTime.week, 'all');
+  const pairs = await (await fetch(`${base}/api/admin/journey/pairs?demo=1`)).json();
+  assert.deepEqual([pairs.count, pairs.of, pairs.open, pairs.trend.length], [2, 4, 1, 8]);
+  assert.ok(pairs.examples.every((x) => x.pair.length === 2 && ['invite', 'members'].includes(x.via)));
+  const cohortPairs = await (await fetch(`${base}/api/admin/journey/pairs?demo=1&cohort=2026-09-24`)).json();
+  assert.ok(cohortPairs.of <= pairs.of && cohortPairs.trend.every((t) => t.count <= t.of));
+  assert.equal((await fetch(`${base}/api/admin/journey/pairs?demo=1&cohort=x`)).status, 400);
 });

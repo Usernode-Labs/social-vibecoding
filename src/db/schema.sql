@@ -573,6 +573,13 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
 -- the IS NULL guard makes the backfill a one-shot.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_deploy_at TIMESTAMPTZ;
 UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
+-- When the project first ran: set once, by the first successful deploy in
+-- services/app-creator.js (services/journey-events.js markFirstRunning),
+-- beside an `app_running` event. last_deploy_at cannot answer it, since
+-- every merge moves it. NULL for a project that never ran, and for every
+-- project from before this column: it is not backfilled, because nothing
+-- recorded the moment (the admin Journey's creation path says so).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS first_running_at TIMESTAMPTZ;
 -- Snapshot of `dapp.json` from the last successful clone (createApp +
 -- rebuildProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the
@@ -2844,6 +2851,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
   ON events (user_id, (metadata->>'batchId'))
   WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
+
+-- The admin Journey's creation path (services/journey-events.js): a
+-- preview counts as opened once per viewer per change, however often it is
+-- reopened, and a merged change is recorded live once, however often its
+-- merge's tail runs again after a restart.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_preview_opened_once
+  ON events (session_id, user_id)
+  WHERE event_type = 'preview_opened';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
+  ON events (session_id)
+  WHERE event_type = 'change_live';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging

@@ -898,6 +898,22 @@ function adminRoutes(config) {
       return { change, invite };
     }));
 
+  // The creation path and the pairs follow the page's filters like the
+  // stages and loops: a week or all time, everyone or one admit cohort.
+  router.get('/api/admin/journey/creation', journeyRead('creation path', (req, day) => journeyDemoData.creation(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.creationPath(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/pairs', journeyRead('pairs', (req, day) => journeyDemoData.pairs(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.pairs(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
   router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
     async (req, ctx) => {
       if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);

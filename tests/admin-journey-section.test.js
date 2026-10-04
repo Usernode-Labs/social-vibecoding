@@ -16,7 +16,7 @@
 //    person for the left-out list) and writes only the left-out list;
 //  - a reading the platform does not record reads "not recorded yet", and
 //    Hear back reads "coming", never a number;
-//  - it is drawn as six chart cards, and every mark carries its count: a
+//  - it is drawn as eight chart cards, and every mark carries its count: a
 //    percentage only ever sizes a mark, it is never printed;
 //  - nothing from the API becomes a link;
 //  - the demo payloads ride on ?demo=1, and the demo list cannot be edited;
@@ -58,7 +58,7 @@ test('it reads the Journey routes and writes only the left-out list', () => {
     assert.ok(p.startsWith('/api/admin/journey/') || p === '/api/admin/support/search',
       `${p} is a Journey route or Support's search`);
   }
-  for (const route of ['summary', 'cohorts', 'first-mile', 'stages', 'loops', 'next-steps', 'people/', 'left-out']) {
+  for (const route of ['summary', 'cohorts', 'first-mile', 'stages', 'loops', 'next-steps', 'people/', 'left-out', 'creation', 'pairs']) {
     assert.ok(src.includes(`/api/admin/journey/${route}`), `the page reads ${route}`);
   }
   const writes = [...src.matchAll(/method: '(POST|DELETE|PUT|PATCH)'/g)].map((m) => m[1]);
@@ -77,8 +77,8 @@ test('a missing record reads "not recorded yet", and Hear back reads "coming"', 
   assert.match(src, /\(v as Coming\)\.status === 'coming'/);
 });
 
-test('six chart cards, every mark counted, no percentage printed, no links from data', () => {
-  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'invite', 'next', 'coverage', 'team']) {
+test('eight chart cards, every mark counted, no percentage printed, no links from data', () => {
+  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'invite', 'next', 'coverage', 'team', 'creation', 'pairs']) {
     assert.ok(src.includes(`id="admin-journey-${id}"`), `the ${id} card`);
   }
   for (const line of src.split('\n').filter((l) => l.includes('%'))) {
@@ -118,13 +118,32 @@ test('filters: all time or a week, everyone or one cohort; a person gets a view 
   assert.match(src, /useState<Scope>\(\{ week: 'all', cohort: null \}\)/, 'the default is all time, for everyone');
   assert.match(src, /if \(week\) q\.set\('week', scope\.week\);\n  if \(scope\.cohort\) q\.set\('cohort', scope\.cohort\);/,
     'the summary, stages and loops reads carry the scope');
-  for (const read of ['summary', 'stages', 'loops']) {
+  for (const read of ['summary', 'stages', 'loops', 'creation', 'pairs']) {
     assert.ok(src.includes(`scoped('/api/admin/journey/${read}', scope)`), `${read} follows the filters`);
   }
   assert.match(src, /\{person != null \? <PersonView userId=\{person\}/, 'one person replaces the cards');
   assert.match(src, /\{scope\.cohort \? null : \(?\s*<div id="admin-journey-checks"/,
     'the platform-wide checks leave a cohort view instead of reading as the cohort\'s');
   assert.match(src, /\{scope\.cohort \? null : <div className="mt-1 mb-4" id="admin-journey-team">/);
+});
+
+test('the creation path and the pairs: steps against targets, by week, and the aha out of second members', () => {
+  assert.match(src, /<CreationCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<PairsCard scope=\{scope\} onOpen=\{openPerson\} \/>/,
+    'both sit under the first mile and follow the filters');
+  for (const [key, label] of [['created', 'Created'], ['running', 'Running'], ['first_version', 'First version ready'],
+    ['preview', 'Preview opened'], ['change_live', 'Requested change live']]) {
+    assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} step`);
+  }
+  assert.match(src, /\{shown == null \? <Num v=\{st\.reached\} \/>/, 'a step not recorded yet reads so, never 0');
+  assert.match(src, /if \(!cell \|\| isNotRecorded\(cell\.reached\)\) \{/, 'and so does a week before it was recorded');
+  assert.match(src, /id="admin-journey-creation-weeks"/, 'by week');
+  assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/,
+    'each step\'s median, coloured against its target');
+  assert.match(src, /id="admin-journey-pairs-count" className=\{JUI\.headline\}>\{data\.count\}</);
+  assert.match(src, /of \{plural\(data\.of, 'project', 'projects'\)\} that got a second member/);
+  assert.match(src, /<Trend trend=\{data\.trend\} shown=\{data\.week === 'all' \? last : data\.week\} label="Pairs" \/>/,
+    'a small weekly trend');
+  assert.match(src, /data-journey-pair=\{e\.slug\}/, 'and a few example rows');
 });
 
 test('one declared check opens the demo page', () => {
