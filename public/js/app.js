@@ -3931,82 +3931,103 @@ const App = {
   // link says why, once.
   async _followInvite(token) {
     App._markNavigationVia?.('handed');
-    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
-    App.restoreFromHash();
-    const toast = (msg, error) => {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
-    };
-    const DEAD = {
-      expired: 'That invite link has expired.',
-      revoked: 'That invite link was turned off.',
-      used_up: 'That invite link has been used as many times as it allows.',
-      unknown: 'That invite link does not work.',
-    };
-    const openHub = (slug) => {
-      if (!slug) return;
-      if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
-      App.navigateToApp(slug, 'dev');
-    };
-    // "You're in" and the first-session tour (features/first-session), for
-    // somebody this link has just let into the project. It answers false
-    // when it will not show (already shown for this project, or the island
-    // is not there), and they land on the hub as before.
-    const welcome = (standing, slug) => {
-      const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
-      if (!fs || typeof fs.welcome !== 'function' || !slug) return false;
-      const project = standing.project || {};
-      return fs.welcome({
-        slug,
-        name: project.name || slug,
-        iconEmoji: project.iconEmoji || null,
-        iconUrl: project.iconUrl || null,
-        inviterName: standing.inviterName || standing.inviter || null,
-        inviterMadeIt: !!standing.inviterMadeIt,
-        newAccount: !!standing.newAccount,
-      });
-    };
+    // The first-run join step waits for this (frontend/src/features/auth/
+    // communities-first-run.js): somebody a link is bringing into a group is
+    // asked to join it, not what to make. Resolves true once they are in.
+    let joinedHere = false;
+    let settle = () => {};
+    App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
-      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-      const standing = await res.json().catch(() => ({}));
-      if (standing.mine === 'joined' && standing.slug) {
-        // Joined by the sign-in that brought them here (within the last
-        // half hour), not a member reopening an old link.
-        const fresh = standing.joinedAt && Date.now() - Date.parse(standing.joinedAt) < 30 * 60 * 1000;
-        if (fresh && welcome(standing, standing.slug)) return;
-        openHub(standing.slug);
-        return;
+      try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
+      App.restoreFromHash();
+      const toast = (msg, error) => {
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
+      };
+      const DEAD = {
+        expired: 'That invite link has expired.',
+        revoked: 'That invite link was turned off.',
+        used_up: 'That invite link has been used as many times as it allows.',
+        unknown: 'That invite link does not work.',
+      };
+      const openHub = (slug) => {
+        if (!slug) return;
+        if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+        App.navigateToApp(slug, 'dev');
+      };
+      // "You're in" and the first-session tour (features/first-session), for
+      // somebody this link has just let into the project. It answers false
+      // when it will not show (already shown for this project, or the island
+      // is not there), and they land on the hub as before.
+      const welcome = (standing, slug) => {
+        const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
+        if (!fs || typeof fs.welcome !== 'function' || !slug) return false;
+        const project = standing.project || {};
+        return fs.welcome({
+          slug,
+          name: project.name || slug,
+          iconEmoji: project.iconEmoji || null,
+          iconUrl: project.iconUrl || null,
+          inviterName: standing.inviterName || standing.inviter || null,
+          inviterMadeIt: !!standing.inviterMadeIt,
+          newAccount: !!standing.newAccount,
+        });
+      };
+      try {
+        const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+        const standing = await res.json().catch(() => ({}));
+        if (standing.mine === 'joined' && standing.slug) {
+          joinedHere = true;
+          // Joined by the sign-in that brought them here (within the last
+          // half hour), not a member reopening an old link.
+          const fresh = standing.joinedAt && Date.now() - Date.parse(standing.joinedAt) < 30 * 60 * 1000;
+          if (fresh && welcome(standing, standing.slug)) return;
+          openHub(standing.slug);
+          return;
+        }
+        if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
+        const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+        const count = standing.memberCount || 0;
+        // Who it is from, in the words the invite page uses, then their note.
+        const from = standing.inviterMadeIt && standing.inviterName
+          ? `${standing.inviterName} made it and invited you.`
+          : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
+        // Join was already pressed on the link's own page, and the person chose
+        // "Sign in with a password" from its sheet (features/auth/
+        // sign-in-sheet.tsx): that press was the consent, so it is not asked
+        // for a second time.
+        let pressed = false;
+        try {
+          pressed = sessionStorage.getItem('usernode:invite-join') === `/invite/${token}`;
+          sessionStorage.removeItem('usernode:invite-join');
+        } catch (_) { /* asked as before */ }
+        const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
+          title: `Join ${name}?`,
+          message: from
+            + (standing.note ? ` “${standing.note}”` : '')
+            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
+            // WP-E: the link's maker hears when somebody joins through it.
+            + (standing.inviterName || standing.inviter
+              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
+          confirmLabel: 'Join',
+          cancelLabel: 'Not now',
+        }) : true;
+        if (!ok) return;
+        const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const result = await joined.json().catch(() => ({}));
+        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+        joinedHere = true;
+        if (result.slug) {
+          if (welcome({ ...standing, newAccount: false }, result.slug)) return;
+          toast(`You joined ${result.name || name}.`);
+          openHub(result.slug);
+        }
+      } catch (_) {
+        toast('Could not open that invite link. Try again.', true);
       }
-      if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-      const name = standing.project && standing.project.name ? standing.project.name : 'this project';
-      const count = standing.memberCount || 0;
-      // Who it is from, in the words the invite page uses, then their note.
-      const from = standing.inviterMadeIt && standing.inviterName
-        ? `${standing.inviterName} made it and invited you.`
-        : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
-      const ok = window.ConfirmModal ? await ConfirmModal.show({
-        title: `Join ${name}?`,
-        message: from
-          + (standing.note ? ` “${standing.note}”` : '')
-          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
-          // WP-E: the link's maker hears when somebody joins through it.
-          + (standing.inviterName || standing.inviter
-            ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
-        confirmLabel: 'Join',
-        cancelLabel: 'Not now',
-      }) : true;
-      if (!ok) return;
-      const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
-        method: 'POST', credentials: 'same-origin',
-      });
-      const result = await joined.json().catch(() => ({}));
-      if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
-      if (result.slug) {
-        if (welcome({ ...standing, newAccount: false }, result.slug)) return;
-        toast(`You joined ${result.name || name}.`);
-        openHub(result.slug);
-      }
-    } catch (_) {
-      toast('Could not open that invite link. Try again.', true);
+    } finally {
+      settle(joinedHere);
     }
   },
 
