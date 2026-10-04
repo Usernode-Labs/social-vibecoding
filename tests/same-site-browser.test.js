@@ -107,6 +107,12 @@ const OWN = 'has its own Origin/Sec-Fetch-Site check';
 const FILTER = 'a method filter, rate limit or 404/405 fallback: changes nothing itself';
 
 const EXEMPT = new Map([
+  // Apple answers sign-in with a cross-site form POST by design
+  // (response_mode=form_post). The route changes nothing: it hands the
+  // fields to the GET callback, which counts only with the binder cookie of
+  // the browser that started the trip.
+  ['sign-in-providers.js POST /api/auth/oauth/apple/callback', 'the provider\'s own cross-site answer; it only redirects to the binder-checked GET'],
+  ['sign-in-providers.js POST /api/auth/oauth/finish', JSON_FIELD],
   ['agent-session-drafts.js POST /api/agent-sessions/:id/drafts', JSON_FIELD],
   ['agent-sessions.js POST /api/agent-sessions/:id/attachments', RAW],
   ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],
@@ -142,6 +148,9 @@ const EXEMPT = new Map([
   ['auth.js POST /api/me/wallet-change-password', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-register', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-link-login', JSON_FIELD],
+  // SESSION_MINT_PATHS names it for the live-session guard; the handler is
+  // sign-in-providers.js's, below.
+  ['auth.js POST /api/auth/oauth/finish', JSON_FIELD],
   ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
   ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
   ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],

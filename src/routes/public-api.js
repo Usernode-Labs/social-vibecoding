@@ -31,6 +31,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const firstSession = require('../services/first-session');
+const signInProviders = require('../services/sign-in-providers');
 const { clientIp } = require('../services/client-ip');
 const {
   waitlistJoinLimiter,
@@ -182,13 +183,19 @@ function publicApiRoutes(config) {
   //
   // `story_landing` is the first session's switch (services/first-session.js):
   // true, the landing tells the story and asks people to get started rather
-  // than pointing at the waitlist. Off when it cannot be read.
+  // than pointing at the waitlist. On unless an admin switched it off, and on
+  // when it cannot be read.
+  //
+  // `sign_in_providers` is which of Apple and Google the sign-in sheet
+  // offers beside the email code (services/sign-in-providers.js): only those
+  // an admin has set up and switched on, Apple first; none when unreadable.
   router.get('/api/public/waitlist/options', async (_req, res) => {
     res.json({
       ...questions.publicOptions(),
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
+      sign_in_providers: await signInProviders.offeredProviders(pool, config),
     });
   });
 

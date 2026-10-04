@@ -581,6 +581,8 @@ app.use(socialIdentityRoutes(config));
 // consent POST must never be satisfiable by a bearer token approving itself.
 app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
+// Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
+app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
 app.use(credentialRoutes(config));
 app.use(globalChatRoutes(config));
 app.use(appRoutes(config));

@@ -404,7 +404,7 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'marketing_url', 'story_landing', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'marketing_url', 'sign_in_providers', 'story_landing', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live

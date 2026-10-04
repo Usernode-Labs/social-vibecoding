@@ -137,7 +137,10 @@ test('the console island imports every admin module, console first', () => {
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',
     'admin-node',
-    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover', 'admin-staging-reap',
+    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover',
+    // Sign-in providers: Continue with Apple / Google, set up with each one's keys.
+    'admin-sign-in',
+    'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.

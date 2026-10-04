@@ -32,7 +32,7 @@
  *     is what the legacy module did for exactly the same reason.
  */
 
-import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 
 import { alertVariants } from '@/components/ui/alert';
@@ -49,17 +49,47 @@ import {
   fx,
   hasSession,
   hiddenLast,
+  isNative,
   legacy,
   type PublicApp,
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
 import { DeadInvite, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
-import { SignInSheet } from './sign-in-sheet';
+import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
+
+/**
+ * Apple and Google, as the sign-in sheet offers them: those the options say
+ * an admin set up, Apple first, and none inside the Homeroom app, whose web
+ * view the providers' own pages refuse to sign in from.
+ */
+export function signInProvidersFrom(options: WaitlistOptions | null): SignInProvider[] {
+  const list = Array.isArray(options?.sign_in_providers) ? options!.sign_in_providers! : [];
+  // Nothing listed is also the prerender's answer, where there is no window
+  // to ask whether this is the app.
+  if (!list.length || typeof window === 'undefined' || isNative()) return [];
+  return (['apple', 'google'] as const).filter((p) => list.includes(p));
+}
+
+// The way back from a provider (routes/sign-in-providers.js) leaves its
+// outcome in a short-lived cookie the page can read, never in the URL. Read
+// once and cleared, so a reload does not reopen the sheet.
+const PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
+const PROVIDER_RESULT_RE = /^(username|error-[a-z_]{1,40})$/;
+
+export function takeProviderResult(): SignInResume | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${PROVIDER_RESULT_COOKIE}=([^;]*)`));
+  if (!match) return null;
+  document.cookie = `${PROVIDER_RESULT_COOKIE}=; Max-Age=0; path=/`;
+  let value = '';
+  try { value = decodeURIComponent(match[1]); } catch { return null; }
+  return PROVIDER_RESULT_RE.test(value) ? (value as SignInResume) : null;
+}
 
 /**
  * The offline explanation's box (#2443) — the Alert primitive's `notice`
@@ -503,7 +533,9 @@ export function LandingScreen() {
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
   // the story's Get started or Sign in.
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
-  const closeSheet = useCallback(() => setSheet(null), []);
+  // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
+  const [resume, setResume] = useState<SignInResume | null>(null);
+  const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -568,6 +600,15 @@ export function LandingScreen() {
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn;
+  const providers = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
+  // Back from a provider without a session: reopen the sheet the trip left,
+  // the invite's Join on its link, the story's otherwise.
+  useEffect(() => {
+    const result = takeProviderResult();
+    if (!result) return;
+    setResume(result);
+    setSheet(inviteTokenFrom(location.pathname) ? 'join' : 'start');
+  }, []);
   // A new account made from the story is asked what to make next
   // (../first-session/make.tsx), not which communities to join.
   const startedFromStory = useCallback(async (kind: 'existing' | 'new') => {
@@ -1565,8 +1606,14 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro="Sign in or make an account with your email. It takes a minute."
+          intro={providers.length
+            ? 'Sign in or make an account. It takes a minute.'
+            : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
+          providers={providers}
+          from="invite"
+          returnTo={location.pathname}
+          resume={resume}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
         />
@@ -1575,7 +1622,13 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
           title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
-          intro={sheet === 'signin' ? 'Welcome back. We\'ll email you a code.' : 'With your email. It takes a minute.'}
+          intro={sheet === 'signin'
+            ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
+            : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
+          providers={providers}
+          from={sheet === 'signin' ? 'signin' : 'story'}
+          returnTo="/"
+          resume={resume}
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}

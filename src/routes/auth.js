@@ -121,6 +121,10 @@ const SESSION_MINT_PATHS = [
   '/api/auth/wallet-reset-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
+  // The username step after an Apple or Google sign-in made the account
+  // (routes/sign-in-providers.js). Its callback mints a session too, by GET,
+  // and makes the same check itself.
+  '/api/auth/oauth/finish',
 ];
 
 function createSessionCookie(res, token, expiresAt) {
@@ -1916,4 +1920,6 @@ function authRoutes(config) {
   return router;
 }
 
-module.exports = { authRoutes, DEV_FLOWS };
+// Apple and Google sign-in (routes/sign-in-providers.js) mints the same
+// session, with the same cookie, and answers with the same role fields.
+module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields };

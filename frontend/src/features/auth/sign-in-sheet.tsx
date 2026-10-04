@@ -14,6 +14,16 @@
  *   account  POST /api/auth/otp/set-password: a password, and the username
  *            when the account has none, which mints the session.
  *
+ * Continue with Apple and Continue with Google come first when an admin has
+ * set them up (`providers`, from the waitlist options; never inside the
+ * Homeroom app, whose web view the providers' pages refuse). Either leaves
+ * the page for the provider (GET /api/auth/oauth/:provider/start) and comes
+ * back to it signed in, or (`resume`) to this sheet: at
+ *
+ *   username POST /api/auth/oauth/finish, when the provider's sign-in made
+ *            an account that has no username yet, which mints the session;
+ *   or the first step again, with what went wrong.
+ *
  * Every success ends in finishLogin(), so where the person lands is the
  * shell's decision (AuthScreens.finishLogin, then the invite link's path).
  * `followInvite` tells the verify route that this sign-in is the Join the
@@ -31,7 +41,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { XIcon } from '@/components/ui/icons';
+import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
 
 import {
   blockedOffline,
@@ -42,7 +52,49 @@ import {
   USERNAME_RULE,
 } from './shared';
 
-type Step = 'email' | 'code' | 'account';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username';
+
+export type SignInProvider = 'apple' | 'google';
+
+/** What the provider's way back left for the sheet (routes/sign-in-providers.js). */
+export type SignInResume = 'username' | `error-${string}`;
+
+// What went wrong at the provider, in words. The codes are the server's.
+const RESUME_ERRORS: Record<string, string> = {
+  cancelled: 'Sign-in was cancelled.',
+  expired: 'That sign-in took too long, or started somewhere else. Try again.',
+  no_verified_email: 'That account has no verified email address to sign in with. Use your email instead.',
+  password_required: 'This account signs in with a password. Use "Sign in with a password" below.',
+  admin_password_required: 'This admin account signs in with a password. Use "Sign in with a password" below.',
+  linked_elsewhere: 'Your Homeroom account is linked to a different account there. Use your email instead.',
+  logout_required: 'You are already signed in. Reload the page.',
+};
+const RESUME_FALLBACK = 'That did not work. Try again, or use your email.';
+
+export function resumeError(resume: SignInResume | null | undefined): string | null {
+  if (!resume || !resume.startsWith('error-')) return null;
+  return RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK;
+}
+
+/** Where the provider's sign-in starts: carries what the sheet knows across the trip. */
+export function providerStartUrl(provider: SignInProvider, { from, followInvite, returnTo }: {
+  from: 'invite' | 'story' | 'signin';
+  followInvite: boolean;
+  returnTo: string;
+}): string {
+  const params = new URLSearchParams({ from, return: returnTo });
+  if (followInvite) params.set('follow', '1');
+  return `/api/auth/oauth/${provider}/start?${params.toString()}`;
+}
+
+const PROVIDER_LABEL: Record<SignInProvider, string> = { apple: 'Apple', google: 'Google' };
+// Apple's button is solid black (white on dark), Google's is white with a
+// hairline, as their sign-in guidelines draw them; both the sheet's pill shape.
+const PROVIDER_BUTTON: Record<SignInProvider, string> = {
+  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-semibold text-white dark:bg-white dark:text-black disabled:opacity-60',
+  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
+};
+const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
 
 // The server holds a second code back for this long (routes/auth.js); the
 // resend counts it down rather than pretending to send.
@@ -62,6 +114,14 @@ export type SignInSheetProps = {
   intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
+  /** Apple and Google, when an admin has set them up; empty inside the app. */
+  providers?: readonly SignInProvider[];
+  /** Which screen opened it, carried across a provider's trip. */
+  from?: 'invite' | 'story' | 'signin';
+  /** Where a provider's trip comes back to: Home, or the invite link. */
+  returnTo?: string;
+  /** Back from a provider: the username step, or what went wrong. */
+  resume?: SignInResume | null;
   /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
@@ -72,8 +132,12 @@ export type SignInSheetProps = {
   primaryClass: string;
 };
 
-export function SignInSheet({ open, title, intro, followInvite = false, beforeFinish, onClose, primaryClass }: SignInSheetProps) {
-  const [step, setStep] = useState<Step>('email');
+export function SignInSheet({
+  open, title, intro, followInvite = false, providers = [], from = 'signin', returnTo = '/', resume = null,
+  beforeFinish, onClose, primaryClass,
+}: SignInSheetProps) {
+  const firstStep: Step = providers.length ? 'choose' : 'email';
+  const [step, setStep] = useState<Step>(firstStep);
   const [email, setEmail] = useState('');
   const [needsUsername, setNeedsUsername] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +149,7 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
   const firstField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
   const usernameField = useRef<HTMLInputElement>(null);
+  const providerUsernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
   const confirmField = useRef<HTMLInputElement>(null);
 
@@ -94,20 +159,30 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
     return () => cancelAnimationFrame(raf);
   }, [open]);
 
-  // A fresh start each time it opens: the address stays, the rest goes.
+  // A fresh start each time it opens: the address stays, the rest goes. Back
+  // from a provider, it opens where that left off.
   useEffect(() => {
     if (!open) return;
-    setStep('email');
-    setError(null);
+    setStep(resume === 'username' ? 'username' : firstStep);
+    setError(resumeError(resume));
     setBusy(false);
-  }, [open]);
+  }, [open, resume, firstStep]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || step === 'choose') return;
     const field = step === 'email' ? firstField : step === 'code' ? codeField
-      : (needsUsername ? usernameField : passwordField);
+      : step === 'username' ? providerUsernameField
+        : (needsUsername ? usernameField : passwordField);
     field.current?.focus();
   }, [open, step, needsUsername]);
+
+  // Back from the provider's page by the browser's Back button, the page can
+  // come out of the back-forward cache as it was left: busy. Undo that.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => { if (e.persisted) setBusy(false); };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
 
   // Escape closes, like every sheet in the shell.
   useEffect(() => {
@@ -237,15 +312,63 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
     }
   }, [needsUsername, beforeFinish]);
 
+  // Off to the provider. The page leaves, so busy stays on until it does.
+  const continueWith = useCallback((provider: SignInProvider) => {
+    setError(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    window.location.assign(providerStartUrl(provider, { from, followInvite, returnTo }));
+  }, [from, followInvite, returnTo]);
+
+  const finishProviderAccount = useCallback(async () => {
+    setError(null);
+    const handle = (providerUsernameField.current?.value || '').trim();
+    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus(); return; }
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const res = await fetchSessionMint('/api/auth/oauth/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ username: handle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.user) {
+        if (data.field === 'username') {
+          setError(data.error || 'Choose another username.');
+          providerUsernameField.current?.focus();
+          return;
+        }
+        // The continuation is gone: start over from the first step.
+        setStep(firstStep);
+        setError(data.error || 'Your sign-in expired. Start again.');
+        return;
+      }
+      await beforeFinish?.('new');
+      await finishLogin();
+    } catch (err) {
+      setError(sessionMintFailureMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [beforeFinish, firstStep]);
+
   if (!open) return null;
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
-  const heading = step === 'email' ? title : step === 'code' ? 'Check your email' : 'Finish your account';
-  const sub = step === 'email'
+  const heading = step === 'choose' || step === 'email' ? title
+    : step === 'code' ? 'Check your email'
+      : step === 'username' ? 'Pick a username' : 'Finish your account';
+  const sub = step === 'choose' || (step === 'email' && !providers.length)
     ? intro
-    : step === 'code'
-      ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
-      : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+    : step === 'email'
+      ? 'We\'ll email you a 6-digit code.'
+      : step === 'code'
+        ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
+        : step === 'username'
+          ? 'Your username is public on Homeroom. It is how people @mention you.'
+          : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
 
   return (
     <div data-sign-in-sheet={step} className="fixed inset-0 z-50">
@@ -274,6 +397,29 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
         </div>
         <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
 
+        {step === 'choose' ? (
+          <div className="mt-5 flex flex-col gap-2.5">
+            {providers.map((provider) => (
+              <button
+                key={provider}
+                type="button"
+                data-sign-in-provider={provider}
+                disabled={busy}
+                className={PROVIDER_BUTTON[provider]}
+                onClick={() => continueWith(provider)}
+              >
+                {provider === 'apple'
+                  ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
+                  : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
+                {`Continue with ${PROVIDER_LABEL[provider]}`}
+              </button>
+            ))}
+            <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
+              Continue with email
+            </button>
+          </div>
+        ) : null}
+
         {step === 'email' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
             <div className={FIELD_GROUP}>
@@ -283,6 +429,21 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            {providers.length ? (
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
+            ) : null}
+          </form>
+        ) : null}
+
+        {step === 'username' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishProviderAccount(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>Username</label>
+                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -328,7 +489,7 @@ export function SignInSheet({ open, title, intro, followInvite = false, beforeFi
 
         {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
 
-        {step === 'email' ? (
+        {step === 'choose' || step === 'email' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             {'New to Homeroom? This makes your account. '}
             <a href="#login" onClick={onClose} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">Sign in with a password</a>
