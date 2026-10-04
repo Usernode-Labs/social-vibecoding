@@ -152,6 +152,11 @@ function loadBridge({
     fetch: fetchImpl,
   };
   if (appUser) sandbox.App = { user: appUser };
+  // The shell's app-frame lookup (frontend/src/features/app-frame/mount.ts):
+  // the relay forwards only for a source this names. Empty until a case
+  // registers a frame with ownedAppFrame().
+  const appFrames = new Map();
+  sandbox.__usernodeAppFrameFor = (source) => appFrames.get(source) || null;
   sandbox.window = sandbox;
   sandbox.parent = sandbox;
   sandbox.globalThis = sandbox;
@@ -206,6 +211,7 @@ function loadBridge({
   return {
     sandbox,
     nativePosts,
+    appFrames,
     silentMethods,
     errorMethods,
     // Let a method that was dropped start answering (a native side that was
@@ -221,6 +227,61 @@ function loadBridge({
       for (const listener of windowListeners[type] || []) listener(event);
     },
   };
+}
+
+// A production app frame the shell owns, connected the way a real app's
+// bridge starts: registered with the shell's lookup, then a `discover` the
+// relay acks (which binds the frame to its app). Responses land in `replies`;
+// acks are kept apart in `frame.acks` so a case can index its replies.
+function ownedAppFrame(loaded, replies = [], {
+  slug = 'echo-app',
+  name = 'Echo',
+  origin = 'https://child.example',
+  mounted = true,
+  discover = true,
+} = {}) {
+  const acks = [];
+  const frame = {
+    acks,
+    postMessage(value, targetOrigin) {
+      if (value && value.__usernode_relay === 'discover-ack') {
+        acks.push({ value, origin: targetOrigin });
+      } else {
+        replies.push({ value, origin: targetOrigin });
+      }
+    },
+  };
+  loaded.appFrames.set(frame, { slug, name, origin, mounted });
+  if (discover) {
+    loaded.dispatchMessage({
+      source: frame, origin, data: { __usernode_relay: 'discover' },
+    });
+  }
+  return frame;
+}
+
+// A window the shell does NOT name as one of its app frames: a staging
+// preview, the landing viewer, or a page nested inside an app.
+function strangerFrame() {
+  const posted = [];
+  return {
+    posted,
+    postMessage(value, targetOrigin) { posted.push({ value, origin: targetOrigin }); },
+  };
+}
+
+function relayRequest(loaded, source, origin, method, id, args = {}) {
+  loaded.dispatchMessage({
+    source,
+    origin,
+    data: { __usernode_relay: 'request', id, method, args },
+  });
+}
+
+async function settleReplies(replies, count) {
+  for (let i = 0; i < 50 && replies.length < count; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 test('exact-session calls carry both closure-only root and realm claims', async () => {
@@ -693,9 +754,7 @@ test('notification permission and navigation actions require the top-frame capab
 
     const relayed = loadBridge();
     const childReplies = [];
-    const child = {
-      postMessage(value, origin) { childReplies.push({ value, origin }); },
-    };
+    const child = ownedAppFrame(relayed, childReplies);
     for (const method of methods) {
       relayed.dispatchMessage({
         source: child,
@@ -937,9 +996,7 @@ test('parent relay denies root methods and injects both claims for realm calls',
     'privilegedBridgeCapability', 'establishNativeSession',
   ] });
   const childReplies = [];
-  const child = {
-    postMessage(value, origin) { childReplies.push({ value, origin }); },
-  };
+  const child = ownedAppFrame(loaded, childReplies);
   const dispatch = (method, id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -981,9 +1038,7 @@ test('native realm gate rejects top-frame and iframe wallet calls until establis
     'submitTransaction',
   ] });
   const childReplies = [];
-  const child = {
-    postMessage(value, origin) { childReplies.push({ value, origin }); },
-  };
+  const child = ownedAppFrame(loaded, childReplies);
   const relayWalletRead = (id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -1334,9 +1389,7 @@ test('trusted top frame records a dual-claim relayed child-app submission', asyn
     },
   });
   await establishRealm(loaded);
-  const child = {
-    postMessage(value, origin) { childReplies.push({ value, origin }); },
-  };
+  const child = ownedAppFrame(loaded, childReplies);
 
   loaded.dispatchMessage({
     source: child,
@@ -1372,6 +1425,11 @@ test('trusted top frame records a dual-claim relayed child-app submission', asyn
   const relayed = loaded.nativePosts.at(-1);
   assert.equal(relayed.privilegedCapability, 'navigation-capability');
   assert.equal(relayed.realmSessionClaim, 'realm-23');
+  assert.match(relayed.id, /^relay-/);
+  assert.deepEqual(relayed.relayApp, { slug: 'echo-app', name: 'Echo' },
+    'native is told which app is sending, beside the exact args');
+  assert.deepEqual(Object.keys(relayed.args).sort(),
+    ['amount', 'destinationPubkey', 'memo']);
   for (let i = 0; i < 20 && explorerRequests.length === 0; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
@@ -1380,6 +1438,316 @@ test('trusted top frame records a dual-claim relayed child-app submission', asyn
   const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
   assert.equal(receipts.items.length, 1);
   assert.equal(receipts.items[0].destinationPubkey, 'ut1-child-recipient');
+});
+
+// ── The relay answers only the shell's own production app frames ─────────
+//
+// A relayed call runs with the top frame's native session, so the phone
+// treats it as Homeroom asking. The cases below are the frames that must NOT
+// get that: a frame the shell does not name, a staging preview, the landing
+// viewer, a page nested inside an app, and an app frame navigated to another
+// site. None of them gets an ack or a reply, so each looks exactly like a
+// desktop browser with no wallet behind it.
+
+const WALLET_CAPABILITIES = [
+  'privilegedBridgeCapability', 'establishNativeSession', 'submitTransaction',
+];
+
+test('relay: a frame the shell does not own gets no ack and no reply', async () => {
+  const loaded = loadBridge({ capabilities: WALLET_CAPABILITIES });
+  await establishRealm(loaded);
+  const before = loaded.nativePosts.length;
+  const stranger = strangerFrame();
+  const origin = 'https://stranger.example';
+
+  loaded.dispatchMessage({
+    source: stranger, origin, data: { __usernode_relay: 'discover' },
+  });
+  relayRequest(loaded, stranger, origin, 'getNodeAddress', 'address');
+  relayRequest(loaded, stranger, origin, 'submitTransaction', 'send', {
+    destinationPubkey: 'ut1-attacker', amount: 5, memo: '',
+  });
+  relayRequest(loaded, stranger, origin, 'signMessage', 'sign', {
+    message: 'Homeroom login',
+  });
+  relayRequest(loaded, stranger, origin, 'openExternal', 'open', {
+    url: 'https://stranger.example/next',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  assert.deepEqual(stranger.posted, [],
+    'no ack and no error: either would tell the page a wallet is here');
+  assert.equal(loaded.nativePosts.length, before, 'nothing reached native');
+
+  // A top frame with no lookup at all (any page that is not the platform
+  // shell) relays nothing, even for a frame that would otherwise qualify.
+  const bare = loadBridge({ capabilities: WALLET_CAPABILITIES });
+  await establishRealm(bare);
+  delete bare.sandbox.__usernodeAppFrameFor;
+  const replies = [];
+  const app = ownedAppFrame(bare, replies);
+  relayRequest(bare, app, 'https://child.example', 'getNodeAddress', 'a');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(app.acks, []);
+  assert.deepEqual(replies, []);
+
+  // A lookup that throws is a refusal, not a crash.
+  const broken = loadBridge({ capabilities: WALLET_CAPABILITIES });
+  broken.sandbox.__usernodeAppFrameFor = () => { throw new Error('boom'); };
+  const other = strangerFrame();
+  broken.dispatchMessage({
+    source: other, origin, data: { __usernode_relay: 'discover' },
+  });
+  assert.deepEqual(other.posted, []);
+});
+
+// The REAL shell lookup (frontend/src/features/app-frame/), wired the way
+// mount.ts publishes it, so the two halves are proved together: the staging
+// preview, the landing viewer and a page nested in an app are not named, the
+// app on screen is, and a kept app is named but hidden.
+async function realShellLookup(loaded, { slug, name, appUrl }) {
+  const href = (rel) => new URL(rel, `file://${__filename}`).href;
+  const storeMod = await import(href('../frontend/src/features/app-frame/app-frame-store.js'));
+  const bridgeMod = await import(href('../frontend/src/features/app-frame/app-frame-bridge.js'));
+  const { appFrameStore, appFrameRefs } = storeMod;
+  const { appFrameBridge } = bridgeMod;
+  appFrameStore.set({
+    slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    seq: 0, navigatedAt: 0, title: '', build: '', stale: false, kept: [],
+  });
+  appFrameRefs.iframe = null;
+  appFrameRefs.kept = {};
+  const frameWindow = (label) => {
+    const posted = [];
+    return {
+      label,
+      posted,
+      postMessage(value, targetOrigin) { posted.push({ value, origin: targetOrigin }); },
+    };
+  };
+  const makeFrame = (label) => {
+    const el = {
+      _src: '',
+      contentWindow: frameWindow(label),
+      ownerDocument: { defaultView: { location: { origin: 'https://social.example' } } },
+      getAttribute(attr) { return attr === 'src' ? (el._src || null) : null; },
+    };
+    Object.defineProperty(el, 'src', {
+      get() { return el._src; },
+      set(v) { el._src = v; },
+    });
+    return el;
+  };
+  // What the island does on mount: register THE frame, then setSrc points it.
+  const appEl = makeFrame('app');
+  appFrameBridge.mount({ slug, title: name });
+  appFrameRefs.iframe = appEl;
+  assert.equal(appFrameBridge.setSrc(`${appUrl}/?token=t`), true);
+  // The preview and the landing viewer are frames too, just not app frames.
+  const previewEl = makeFrame('preview');
+  previewEl.src = 'https://echo-app-staging.example/';
+  const viewerEl = makeFrame('viewer');
+  viewerEl.src = appUrl;
+  loaded.sandbox.__usernodeAppFrameFor = (source) => appFrameBridge.appForSource(source);
+  return {
+    appEl, previewEl, viewerEl, appFrameBridge, appFrameRefs, appFrameStore,
+    // What the island does when the app is left: the element stays, kept.
+    keep() {
+      appFrameBridge.retire();
+      appFrameRefs.iframe = null;
+      appFrameRefs.kept[slug] = appEl;
+    },
+    reset() {
+      appFrameStore.set({ slug: '', active: false, sandboxReady: false, title: '', kept: [] });
+      appFrameRefs.iframe = null;
+      appFrameRefs.kept = {};
+    },
+  };
+}
+
+test('relay: a staging preview, the landing viewer and a page nested in an app are refused',
+  async () => {
+    const loaded = loadBridge({ capabilities: WALLET_CAPABILITIES });
+    await establishRealm(loaded);
+    const appUrl = 'https://echo-app.example';
+    const shell = await realShellLookup(loaded, { slug: 'echo-app', name: 'Echo', appUrl });
+    try {
+      const before = loaded.nativePosts.length;
+      const nested = strangerFrame();
+      const cases = [
+        ['staging preview', shell.previewEl.contentWindow, 'https://echo-app-staging.example'],
+        ['landing viewer', shell.viewerEl.contentWindow, appUrl],
+        ['page nested in the app', nested, 'https://ads.example'],
+        ['app frame navigated to another site', shell.appEl.contentWindow, 'https://elsewhere.example'],
+      ];
+      for (const [label, source, origin] of cases) {
+        loaded.dispatchMessage({ source, origin, data: { __usernode_relay: 'discover' } });
+        relayRequest(loaded, source, origin, 'getNodeAddress', `${label}-address`);
+        relayRequest(loaded, source, origin, 'submitTransaction', `${label}-send`, {
+          destinationPubkey: 'ut1-recipient', amount: 1, memo: '',
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      for (const [label, source] of cases) {
+        assert.deepEqual(
+          (source.posted || []).filter((p) => p.value && p.value.__usernode_relay),
+          [],
+          `${label}: no ack and no reply`
+        );
+      }
+      assert.equal(loaded.nativePosts.length, before, 'nothing reached native');
+    } finally {
+      shell.reset();
+    }
+  });
+
+// The explorer answers at once, so the receipt observer a relayed submission
+// starts settles inside the case instead of polling past it.
+async function settledExplorer(url) {
+  if (String(url) === '/explorer-api/active_chain') {
+    return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+  }
+  if (String(url) === '/explorer-api/test-chain/transactions') {
+    return {
+      ok: true,
+      json: async () => ({ items: [{ tx_id: 'tx-authoritative', block_height: 84 }] }),
+    };
+  }
+  return { ok: false };
+}
+
+test('relay: the app on screen is bound at discover and forwarded with its name', async () => {
+  const loaded = loadBridge({
+    capabilities: WALLET_CAPABILITIES, appUser: { id: 41 }, fetchImpl: settledExplorer,
+  });
+  await establishRealm(loaded);
+  const appUrl = 'https://echo-app.example';
+  const shell = await realShellLookup(loaded, { slug: 'echo-app', name: 'Echo', appUrl });
+  try {
+    const win = shell.appEl.contentWindow;
+    const relayed = () => win.posted.filter((p) => p.value && p.value.__usernode_relay === 'response');
+
+    loaded.dispatchMessage({ source: win, origin: appUrl, data: { __usernode_relay: 'discover' } });
+    assert.deepEqual(JSON.parse(JSON.stringify(win.posted.at(-1))), {
+      value: { __usernode_relay: 'discover-ack' }, origin: appUrl,
+    }, 'acked, to the app origin only');
+
+    relayRequest(loaded, win, appUrl, 'getNodeAddress', 'address');
+    await settleReplies({ get length() { return relayed().length; } }, 1);
+    const address = loaded.nativePosts.at(-1);
+    assert.equal(address.method, 'getNodeAddress');
+    assert.match(address.id, /^relay-/);
+    assert.deepEqual(address.relayApp, { slug: 'echo-app', name: 'Echo' });
+    assert.equal(address.realmSessionClaim, 'realm-41');
+    assert.equal(relayed()[0].value.value, 'ut1-sender');
+    assert.equal(relayed()[0].origin, appUrl);
+
+    relayRequest(loaded, win, appUrl, 'submitTransaction', 'send', {
+      destinationPubkey: 'ut1-recipient', amount: 3, memo: 'hi',
+      confirmation: { title: 'Send', subtitle: 'Sending 3 UT' },
+    });
+    await settleReplies({ get length() { return relayed().length; } }, 2);
+    const send = loaded.nativePosts.at(-1);
+    assert.equal(send.method, 'submitTransaction');
+    assert.deepEqual(send.relayApp, { slug: 'echo-app', name: 'Echo' });
+    assert.deepEqual(JSON.parse(JSON.stringify(send.args)), {
+      destinationPubkey: 'ut1-recipient', amount: 3, memo: 'hi',
+      confirmation: { title: 'Send', subtitle: 'Sending 3 UT' },
+    }, 'the app is named beside the args, never inside them');
+    assert.deepEqual(JSON.parse(JSON.stringify(relayed()[1].value.value)), {
+      txId: 'tx-authoritative',
+    });
+
+    // Signing is refused with words an app can show as they are.
+    const posts = loaded.nativePosts.length;
+    relayRequest(loaded, win, appUrl, 'signMessage', 'sign', { message: 'hello' });
+    assert.equal(relayed()[2].value.error, "Signing from inside apps isn't available yet");
+    assert.equal(loaded.nativePosts.length, posts, 'the signing sheet never opens');
+
+    // Left for Home: the app is kept alive, hidden. It is still named, so a
+    // request gets a clear answer, but nothing reaches the wallet.
+    shell.keep();
+    const kept = shell.appFrameBridge.appForSource(win);
+    assert.deepEqual({ ...kept }, {
+      slug: 'echo-app', name: 'Echo', origin: appUrl, mounted: false,
+    });
+    relayRequest(loaded, win, appUrl, 'submitTransaction', 'hidden-send', {
+      destinationPubkey: 'ut1-recipient', amount: 3, memo: '',
+    });
+    assert.equal(relayed()[3].value.error,
+      'This app is in the background. Open it to continue.');
+    assert.equal(loaded.nativePosts.length, posts, 'a hidden app cannot raise the wallet');
+  } finally {
+    shell.reset();
+  }
+});
+
+test('relay: an owned frame must connect first, and a hidden app is refused until shown',
+  async () => {
+    const loaded = loadBridge({ capabilities: WALLET_CAPABILITIES });
+    await establishRealm(loaded);
+    const before = loaded.nativePosts.length;
+    const replies = [];
+
+    // Owned, but no `discover` was ever acked for it: not bound to an app.
+    const unbound = ownedAppFrame(loaded, replies, { discover: false });
+    relayRequest(loaded, unbound, 'https://child.example', 'getNodeAddress', 'unbound');
+    assert.equal(replies[0].value.error, 'Reload this app to continue.');
+
+    // Bound, then the shell names a DIFFERENT app for the same window.
+    const rebound = ownedAppFrame(loaded, replies);
+    assert.equal(rebound.acks.length, 1);
+    loaded.appFrames.get(rebound).slug = 'another-app';
+    relayRequest(loaded, rebound, 'https://child.example', 'getNodeAddress', 'rebound');
+    assert.equal(replies[1].value.error, 'Reload this app to continue.');
+
+    // A kept-alive app is acked (it is the user's app) but cannot use the
+    // relay while hidden; once it is the mounted app again, it can.
+    const hidden = ownedAppFrame(loaded, replies, { slug: 'kept-app', mounted: false });
+    assert.equal(hidden.acks.length, 1);
+    relayRequest(loaded, hidden, 'https://child.example', 'getNodeAddress', 'hidden');
+    assert.equal(replies[2].value.error,
+      'This app is in the background. Open it to continue.');
+    assert.equal(loaded.nativePosts.length, before);
+
+    loaded.appFrames.get(hidden).mounted = true;
+    relayRequest(loaded, hidden, 'https://child.example', 'getNodeAddress', 'shown');
+    await settleReplies(replies, 4);
+    assert.equal(replies[3].value.error, null);
+    assert.equal(replies[3].value.value, 'ut1-sender');
+    assert.deepEqual(loaded.nativePosts.at(-1).relayApp, { slug: 'kept-app', name: 'Echo' });
+
+    // An app frame with no name of its own is named by its slug.
+    const unnamed = ownedAppFrame(loaded, replies, { slug: 'quiet-app', name: '' });
+    relayRequest(loaded, unnamed, 'https://child.example', 'getNodeAddress', 'unnamed');
+    await settleReplies(replies, 5);
+    assert.deepEqual(loaded.nativePosts.at(-1).relayApp, { slug: 'quiet-app', name: 'quiet-app' });
+  });
+
+test('relay: signing from an app is refused before the session gate, on every platform',
+  async () => {
+    // No session yet: the app still gets the signing answer, not "session".
+    const loaded = loadBridge({ capabilities: WALLET_CAPABILITIES });
+    const replies = [];
+    const app = ownedAppFrame(loaded, replies);
+    relayRequest(loaded, app, 'https://child.example', 'signMessage', 'sign', { message: 'x' });
+    assert.equal(replies[0].value.error, "Signing from inside apps isn't available yet");
+    assert.equal(loaded.nativePosts.length, 0);
+    // The platform itself still signs from the top frame (no relay involved).
+    await establishRealm(loaded);
+    await loaded.sandbox.signMessage('top-frame message');
+    assert.equal(loaded.nativePosts.at(-1).method, 'signMessage');
+    assert.equal('relayApp' in loaded.nativePosts.at(-1), false);
+  });
+
+test('relay: the bridge carries no platform-specific refusal', () => {
+  const server = bridgeSource.slice(
+    bridgeSource.indexOf('// ── Iframe-relay server'),
+    bridgeSource.indexOf('function sleep(ms)')
+  );
+  assert.ok(server.length > 0);
+  assert.doesNotMatch(server, /\b(ios|iphone|ipad|android|userAgent)\b|navigator\.platform/i,
+    'the wallet stays available inside apps on every phone');
 });
 
 test('explorer outage leaves one bounded pending receipt and reads do not retry',

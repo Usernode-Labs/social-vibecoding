@@ -1376,6 +1376,69 @@ test('#2902: resuming a kept app is the SAME element and the SAME document, as i
   assert.equal(h.surface(), 'app');
 });
 
+// The phone wallet relay (public/usernode-bridge.js) forwards a frame's calls
+// only when `appForSource` names it, through `window.__usernodeAppFrameFor`
+// (mount.ts). Driven here over the real AppView flows: an app frame is named
+// with its app and origin, mounted or kept; a preview, a nested page and a
+// frame not yet pointed at an app are not.
+test('the wallet relay names production app frames only: mounted, or kept and hidden', async () => {
+  const h = await makeHarness();
+  const { bridge } = h;
+  const named = (win) => {
+    const app = bridge.appForSource(win);
+    return app ? { ...app } : app;
+  };
+  assert.equal(named(null), null);
+  assert.equal(named(h.stagingIframe.contentWindow), null, 'the staging preview is not an app frame');
+
+  h.AppView.appData = {
+    slug: 'app-a', name: 'Garden', url: 'https://app-a.example', status: 'running', self_hosted: false,
+  };
+  h.AppView.iframeToken = 'tok-a';
+  h.AppView.iframeTokenSlug = 'app-a';
+  h.AppView.renderAppTab();
+  const a = h.bridge.frame();
+  assert.deepEqual(named(a.contentWindow),
+    { slug: 'app-a', name: 'Garden', origin: 'https://app-a.example', mounted: true },
+    'the app on screen, by its name and the origin it was pointed at');
+  assert.equal(named({ parent: a.contentWindow }), null, 'a page nested inside the app is not the app');
+  assert.equal(named(h.stagingIframe.contentWindow), null);
+
+  // Parked behind its Workshop it is still THE frame.
+  bridge.park();
+  assert.equal(named(a.contentWindow).mounted, true);
+  bridge.activate();
+
+  // Another app opens: app-a is kept alive, hidden, and named as such.
+  const b = openApp(h, 'app-b');
+  assert.deepEqual(named(a.contentWindow),
+    { slug: 'app-a', name: 'Garden', origin: 'https://app-a.example', mounted: false });
+  assert.deepEqual(named(b.contentWindow),
+    { slug: 'app-b', name: 'app-b', origin: 'https://app-b.example', mounted: true });
+
+  // Back to Home: nothing is mounted, both are kept.
+  h.AppView._retireAppFrame();
+  assert.equal(named(b.contentWindow).mounted, false);
+  assert.equal(named(a.contentWindow).mounted, false);
+
+  // A frame mounted for an app but not yet pointed at it holds the fully
+  // restricted blank document, which is not the app.
+  bridge.mount({ slug: 'app-c', title: 'Pending' });
+  assert.equal(named(bridge.frame().contentWindow), null);
+
+  // A frame that is let go is no longer anyone's.
+  bridge.evictAll();
+  assert.equal(named(a.contentWindow), null);
+  assert.equal(named(b.contentWindow), null);
+});
+
+test('the wallet relay lookup is published beside the frame seam', () => {
+  assert.match(MOUNT,
+    /__usernodeAppFrameFor = \(source: unknown\) => appFrameBridge\.appForSource\(source\)/);
+  const relay = read('public/usernode-bridge.js');
+  assert.match(relay, /var _RELAY_APP_LOOKUP = "__usernodeAppFrameFor";/);
+});
+
 test('#2902: the keep-alive list is least-recently-used, three apps deep', async () => {
   const h = await makeHarness();
   openApp(h, 'app-a');

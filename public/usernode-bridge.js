@@ -642,21 +642,84 @@
   // its own copy of this bridge and is responsible for those decisions
   // in its own origin. The parent only relays raw Usernode.postMessage
   // payloads, which keeps cross-origin behaviour predictable.
+  //
+  // WHO may use it. A relayed call runs with THIS frame's native session,
+  // so the phone treats it as the platform asking. Only the production app
+  // frames the platform shell owns qualify. A staging preview (code nobody
+  // has voted in), the landing viewer, and any page an app nests inside its
+  // own frame do not. This bridge cannot see the shell's frames, so the
+  // shell publishes a lookup, `window.__usernodeAppFrameFor(source)`
+  // (frontend/src/features/app-frame/mount.ts), that answers
+  // `{ slug, name, origin, mounted }` for one of its production app frames
+  // and null for anything else. A top frame without that lookup (any page
+  // that is not the platform shell) relays nothing at all.
+  //
+  //   * `discover` is acked only for such a frame, and the app it belongs
+  //     to is recorded against that frame (`_relayBoundApps`).
+  //   * `request` is forwarded only from a frame bound that way, only while
+  //     the app is the mounted one (a hidden, kept-alive app cannot raise
+  //     the wallet over another screen, the same rule every other shell
+  //     relay applies), and it carries `relayApp: { slug, name }` so native
+  //     can say which app is asking.
+  //   * A frame the shell does not own gets NO reply, to `discover` or to
+  //     `request`. Any reply, an error included, would tell an arbitrary
+  //     page that it is running inside the phone app with a wallet behind
+  //     it. A real bridge never sends `request` without an ack, so the only
+  //     thing dropped silently is a hand-made request; the frame sees what
+  //     it would see in a desktop browser.
+  //
+  // The origin is part of the match. An app frame that has been navigated
+  // to another site keeps its window object but not its origin, and that
+  // other site is not the app.
+  var _RELAY_APP_LOOKUP = "__usernodeAppFrameFor";
+  var _relayBoundApps = typeof WeakMap === "function" ? new WeakMap() : null;
+  var _RELAY_SIGN_REFUSED = "Signing from inside apps isn't available yet";
+  var _RELAY_APP_HIDDEN = "This app is in the background. Open it to continue.";
+  var _RELAY_APP_UNBOUND = "Reload this app to continue.";
+
+  function relayAppFor(source, origin) {
+    var lookup = window[_RELAY_APP_LOOKUP];
+    if (typeof lookup !== "function" || !source) return null;
+    var app = null;
+    try { app = lookup(source); } catch (_) { return null; }
+    if (!app || typeof app !== "object") return null;
+    if (typeof app.slug !== "string" || !app.slug) return null;
+    if (typeof app.origin !== "string" || !app.origin ||
+        typeof origin !== "string" || app.origin !== origin) {
+      return null;
+    }
+    return {
+      slug: app.slug,
+      name: (typeof app.name === "string" && app.name.trim())
+        ? app.name.trim() : app.slug,
+      mounted: app.mounted === true,
+    };
+  }
+
   if (_hasNativeChannel) {
     console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
       var data = e.data;
       if (!data || !e.source) return;
-      var origin = e.origin || "*";
+      var kind = data.__usernode_relay;
+      if (kind !== "discover" && kind !== "request") return;
+      var origin = e.origin;
       var source = e.source;
-      if (data.__usernode_relay === "discover") {
-        console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
+      var relayApp = relayAppFor(source, origin);
+      if (!relayApp) {
+        console.warn(_BRIDGE_TAG, "ignoring relay", kind,
+          "from a frame that is not an app the shell owns", origin);
+        return;
+      }
+      if (kind === "discover") {
+        if (_relayBoundApps) _relayBoundApps.set(source, relayApp.slug);
+        console.log(_BRIDGE_TAG, "← discover from", relayApp.slug, origin,
+          "→ acking");
         try {
           source.postMessage({ __usernode_relay: "discover-ack" }, origin);
         } catch (_) { /* iframe gone, ignore */ }
         return;
       }
-      if (data.__usernode_relay !== "request") return;
       var origId = data.id;
       function reply(value, error) {
         try {
@@ -665,6 +728,19 @@
             origin
           );
         } catch (_) { /* iframe gone, ignore */ }
+      }
+      // The frame is the app's own, so an error here tells it nothing new.
+      if (_relayBoundApps && _relayBoundApps.get(source) !== relayApp.slug) {
+        console.warn(_BRIDGE_TAG, "refusing relay from an app frame",
+          "that never connected", relayApp.slug, data.method);
+        reply(null, _RELAY_APP_UNBOUND);
+        return;
+      }
+      if (!relayApp.mounted) {
+        console.warn(_BRIDGE_TAG, "refusing relay from a hidden app",
+          relayApp.slug, data.method);
+        reply(null, _RELAY_APP_HIDDEN);
+        return;
       }
       // The native capability is delivered only into this top-frame JS
       // realm. Never let a child bootstrap it or ask the parent to exercise
@@ -676,6 +752,16 @@
           "from child iframe", origin);
         reply(null,
           "Privileged Usernode methods are only available to the top-level page");
+        return;
+      }
+      // The phone's signing sheet names the platform, not the app, so a
+      // signature an app asks for would be one the person thinks they are
+      // giving Homeroom. Refused here until native can name the app; the
+      // message is written for the app to show as it is.
+      if (data.method === "signMessage") {
+        console.warn(_BRIDGE_TAG, "refusing relayed signMessage from",
+          relayApp.slug);
+        reply(null, _RELAY_SIGN_REFUSED);
         return;
       }
       if (isRealmSessionMethod(data.method) && !_realmSession) {
@@ -709,8 +795,8 @@
         ? relayRealmSession.generation : null;
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
-      console.log(_BRIDGE_TAG, "← relay request",
-        data.method, "id", origId, "→ native id", nativeId);
+      console.log(_BRIDGE_TAG, "← relay request", data.method,
+        "from", relayApp.slug, "id", origId, "→ native id", nativeId);
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
@@ -751,10 +837,14 @@
         realmSessionGeneration: relayRealmGeneration,
       };
       try {
+        // `relayApp` rides beside `args`, never inside it: native checks
+        // `args` field by field, and a confirm sheet that can name the app
+        // ("<App> wants to send") reads it from here.
         var relayPayload = {
           method: data.method,
           id: nativeId,
           args: nativeArgs,
+          relayApp: { slug: relayApp.slug, name: relayApp.name },
         };
         if (relayRealmSession) {
           relayPayload.privilegedCapability = _privilegedCapability;
