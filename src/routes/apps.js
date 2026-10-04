@@ -23,6 +23,7 @@ const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, github
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
+const edgeGate = require('../services/edge-gate');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
@@ -2904,41 +2905,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // ── Edge-gate authorize hop (view-private apps) ─────────────────────
+  // ── App-host authorize hop ─────────────────────────────────────────
   //
-  // Platform session cookies are host-only (deliberately — child apps
-  // run user-authored code and must never see the platform credential),
-  // so a direct visit to a view-private app's subdomain carries no
-  // session for the edge gate (/__caddy/access in routes/internal.js)
-  // to read. The gate bounces bare browser GETs here, to the apex,
-  // where the session cookie IS present and authMiddleware has already
-  // resolved req.user (or redirected to /login.html). We re-run the
-  // standard view-level access check and, when allowed, send the
-  // browser back to the app host with a 120s single-purpose grant the
-  // gate exchanges for a per-host scoped access cookie. Non-members get
-  // the same existence-hiding 404 every other surface returns.
+  // Platform session cookies are host-only (deliberately: child apps run
+  // user-authored code and must never see the platform credential), so a
+  // visit to an app's own address carries no session for the app-host gate
+  // to read. The gate sends the browser here, to the apex, where the
+  // session IS present: a signed-in person who may view the app goes back
+  // with a single-use sign-in code bound to the host, the app, them and this
+  // session; anyone else goes where an unsigned visitor always went.
+  // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
+  // lets this one path through without a session so it can answer for a
+  // signed-out visitor too.
   router.get('/__access/authorize', async (req, res) => {
     try {
-      const parsed = appAccess.parseAppHost(req.query.host);
-      if (!parsed) return res.status(404).send('Not found');
-      const rawNext = typeof req.query.next === 'string' ? req.query.next : '/';
-      const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
-
-      const app = await appAccess.getAppForUser(
-        pool, parsed.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
-      );
-      if (!app) return res.status(404).send('Not found');
-
-      const grant = appAccess.mintAccessGrant({
-        uid: req.user.id,
-        appId: app.id,
-        host: parsed.host,
-      });
-      return res.redirect(
-        302,
-        `https://${parsed.host}/__usernode_access`
-          + `?grant=${encodeURIComponent(grant)}&next=${encodeURIComponent(next)}`
-      );
+      return await edgeGate.handleAuthorize(pool, req, res);
     } catch (err) {
       log.error('apps', 'Edge authorize failed', { host: req.query.host, message: err.message });
       return res.status(500).send('Internal server error');

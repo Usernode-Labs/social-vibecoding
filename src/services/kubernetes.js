@@ -627,7 +627,7 @@ function platformAssetLabels() {
 // Prefix rules by longest match, so order is belt-and-braces rather than
 // the mechanism. `assetBackend` false omits them entirely, which is what
 // keeps an asset-backend failure from changing how an app itself is routed.
-function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }) {
+function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend, gateBackend = null }) {
   const assetPaths = assetBackend ? PLATFORM_ASSET_PREFIXES.map((prefix) => ({
     path: prefix,
     pathType: 'Prefix',
@@ -644,7 +644,10 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
       ingressClassName: cfg.ingressClassName,
       rules: [{ host: hostname, http: { paths: [
         ...assetPaths,
-        { path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } },
+        // Everything else goes to the app, through the app-host gate when it
+        // is on (APP_GATE; scripts/app-gate.js), straight to the app's own
+        // Service when it is off.
+        { path: '/', pathType: 'Prefix', backend: { service: { name: gateBackend || name, port: { number: 3000 } } } },
       ] } }],
       tls: [{ hosts: [hostname], secretName: cfg.appTlsSecretName || 'social-apps-wildcard-tls' }],
     },
@@ -834,6 +837,178 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
   return platformAssetBackend;
 }
 
+// ── The app-host gate (#3657) ────────────────────────────────────────────
+//
+// On the standalone deployment Caddy forward_auths every app-host request
+// to the platform (GET /__caddy/access). Cilium's Envoy has no such hook, so
+// on Kubernetes the gate is a small proxy Deployment of the platform's own
+// image in the app namespace (scripts/app-gate.js): each app Ingress's
+// catch-all path points at it, it asks the platform about each request, and
+// passes what is allowed on to the app's Service. The asset prefixes keep
+// going straight to the asset backend.
+//
+// APP_GATE (config.kubernetes.appGate) is the switch, and it is OFF unless
+// set: turning it on needs the app namespace's network policy to let the
+// gate's pods (app.kubernetes.io/name=usernode-app-gate) reach the app pods
+// and the platform Service, which this repository does not manage. `on`
+// brings the gate up, waits for it, then repoints every managed Ingress;
+// `off` repoints them all back to their own Services. Both run at platform
+// boot (leader) and on every deploy, so the env var is the source of truth;
+// scripts/app-gate-switch.js applies either mode immediately in an incident.
+const APP_GATE_NAME = 'usernode-app-gate';
+const APP_GATE_MANAGED_BY = 'social-vibecoding-app-gate';
+const APP_GATE_HEALTH_PATH = '/__usernode_gate/health';
+
+function appGateMode(config) {
+  return String(config?.kubernetes?.appGate || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off';
+}
+
+function appGateLabels() {
+  return {
+    'app.kubernetes.io/part-of': PART_OF,
+    'app.kubernetes.io/name': APP_GATE_NAME,
+    'app.kubernetes.io/managed-by': APP_GATE_MANAGED_BY,
+  };
+}
+
+// Pure, so the shape can be asserted without a cluster.
+function appGateDeploymentManifest({ namespace, image, cfg, platformUrl }) {
+  const selectorLabels = { 'social.usernode.io/runtime-name': APP_GATE_NAME };
+  const labels = appGateLabels();
+  const health = { httpGet: { path: APP_GATE_HEALTH_PATH, port: 'http' } };
+  return {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name: APP_GATE_NAME, namespace, labels },
+    spec: {
+      // Every app request crosses it: never fewer than two, never both down.
+      replicas: 2,
+      strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
+      selector: { matchLabels: selectorLabels },
+      template: {
+        metadata: { labels: { ...labels, ...selectorLabels } },
+        spec: {
+          serviceAccountName: cfg.generatedAppServiceAccount,
+          automountServiceAccountToken: false,
+          securityContext: nodePodSecurityContext(),
+          containers: [{
+            name: 'gate', image, imagePullPolicy: 'IfNotPresent',
+            command: ['node', 'scripts/app-gate.js'],
+            // Where to ask, and nothing else: the gate holds no keys and
+            // reads no database; the platform decides.
+            env: [
+              { name: 'GATE_PLATFORM_URL', value: String(platformUrl || '') },
+              { name: 'GATE_UPSTREAM_PORT', value: '3000' },
+            ],
+            ports: [{ name: 'http', containerPort: 3000 }],
+            startupProbe: { ...health, periodSeconds: 1, failureThreshold: 60 },
+            readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
+            livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
+            resources: { requests: { cpu: '100m', memory: '96Mi' }, limits: { cpu: '1', memory: '384Mi' } },
+            securityContext: containerSecurityContext(),
+          }],
+        },
+      },
+    },
+  };
+}
+
+let appGateBackend = null;
+let appGateBackendRetryAfter = 0;
+
+// Same memo and cool-off as the asset backend (above), for the same reasons.
+async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfterMs = 300000 } = {}) {
+  if (appGateMode(config) !== 'on') return null;
+  if (appGateBackend) return appGateBackend;
+  if (Date.now() < appGateBackendRetryAfter) return null;
+  appGateBackend = (async () => {
+    const cfg = config.kubernetes;
+    const namespace = cfg.appNamespace;
+    const platformUrl = process.env.PLATFORM_INTERNAL_URL || '';
+    if (!platformUrl) throw new Error('PLATFORM_INTERNAL_URL is not set; the app gate has nowhere to ask');
+    const { core, apps } = getClients();
+    const platform = await apps.readNamespacedDeployment({
+      namespace: cfg.platformNamespace || 'social-platform',
+      name: cfg.platformDeployment || 'social-vibecoding',
+    });
+    const containers = platform?.spec?.template?.spec?.containers || [];
+    const image = (containers.find((c) => c.name === 'platform') || containers[0] || {}).image;
+    if (!image) throw new Error('platform Deployment exposes no container image');
+    await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
+      apiVersion: 'v1', kind: 'Service', metadata: { name: APP_GATE_NAME, namespace, labels: appGateLabels() },
+      spec: {
+        selector: { 'social.usernode.io/runtime-name': APP_GATE_NAME },
+        ports: [{ name: 'http', port: 3000, targetPort: 3000 }],
+        type: 'ClusterIP',
+      },
+    });
+    await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace,
+      appGateDeploymentManifest({ namespace, image, cfg, platformUrl }));
+    // Only a gate that answers may carry the apps' traffic.
+    await waitForDeployment(namespace, APP_GATE_NAME, { timeoutMs: readyTimeoutMs });
+    return APP_GATE_NAME;
+  })().catch((err) => {
+    appGateBackend = null;
+    appGateBackendRetryAfter = Date.now() + retryAfterMs;
+    throw err;
+  });
+  return appGateBackend;
+}
+
+// The catch-all path of one Ingress, pointed through the gate (`on`) or at
+// the app's own Service (`off`: the Ingress and the Service share the
+// runtime name, see deployApplication). Every other path is kept verbatim.
+// Null when nothing changes.
+function ingressWithGateRoute(ingress, mode) {
+  const own = ingress?.metadata?.name;
+  if (!own) return null;
+  const target = mode === 'on' ? APP_GATE_NAME : own;
+  let changed = false;
+  const rules = (ingress?.spec?.rules || []).map((rule) => {
+    if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
+    const paths = rule.http.paths.map((item) => {
+      if (item?.path !== '/' || !item?.backend?.service) return item;
+      const current = item.backend.service.name;
+      // Only ever swap between the two names this code writes.
+      if (current !== own && current !== APP_GATE_NAME) return item;
+      if (current === target) return item;
+      changed = true;
+      return { ...item, backend: { ...item.backend, service: { ...item.backend.service, name: target } } };
+    });
+    return changed ? { ...rule, http: { ...rule.http, paths } } : rule;
+  });
+  if (!changed) return null;
+  return { ...ingress, spec: { ...ingress.spec, rules } };
+}
+
+// Point every managed app/preview Ingress at the mode's backend. `on` brings
+// the gate up first and does nothing if it does not come up; `off` needs
+// nothing up. `force` is scripts/app-gate-switch.js's incident override.
+async function reconcileAppGateIngresses(config, { force = null } = {}) {
+  const mode = force || appGateMode(config);
+  if (mode === 'on') {
+    const gate = await ensureAppGateBackend(
+      force ? { ...config, kubernetes: { ...config.kubernetes, appGate: 'on' } } : config
+    );
+    if (!gate) return { mode, updated: 0, skipped: 'gate_unavailable' };
+  }
+  const namespace = config.kubernetes.appNamespace;
+  const { networking } = getClients();
+  if (!networking?.listNamespacedIngress || !networking?.replaceNamespacedIngress) return { mode, updated: 0 };
+  const listed = await networking.listNamespacedIngress({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  let updated = 0;
+  for (const ingress of listed.items || []) {
+    if (ingress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    const body = ingressWithGateRoute(ingress, mode);
+    if (!body) continue;
+    await networking.replaceNamespacedIngress({ name: ingress.metadata.name, namespace, body });
+    updated += 1;
+  }
+  return { mode, updated };
+}
+
 // `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
 // stay at 100m so scheduling is unchanged). Staging previews pass
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
@@ -939,8 +1114,20 @@ async function deployApplication(config, {
         namespace, app: app.slug, error: err?.message,
       });
     }
+    // The app-host gate (APP_GATE): a new or redeployed app goes behind it
+    // only once it is up; otherwise straight to its own Service, as before.
+    let gateBackend = null;
+    if (appGateMode(config) === 'on') {
+      try {
+        gateBackend = await ensureAppGateBackend(config);
+      } catch (err) {
+        log.warn('kubernetes', 'app gate unavailable — app deploys without it', {
+          namespace, app: app.slug, error: err?.message,
+        });
+      }
+    }
     await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
-      appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
+      appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend, gateBackend }));
   }
   try {
     await waitForDeployment(namespace, name, {
@@ -2395,6 +2582,10 @@ module.exports = {
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
   _platformAssetEnvForTest: platformAssetEnv,
+  APP_GATE_NAME, APP_GATE_HEALTH_PATH, appGateMode, ensureAppGateBackend, reconcileAppGateIngresses,
+  _appGateDeploymentManifestForTest: appGateDeploymentManifest,
+  _ingressWithGateRouteForTest: ingressWithGateRoute,
+  _resetAppGateForTest: () => { appGateBackend = null; appGateBackendRetryAfter = 0; },
   _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
   _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,

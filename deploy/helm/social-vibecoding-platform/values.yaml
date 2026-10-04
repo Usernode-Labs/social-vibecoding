@@ -105,6 +105,18 @@ config:
   domain: social-vibecoding.example.invalid
   # Empty retains the historical <slug>.<domain> layout.
   appsDomain: ""
+  # The app-host gate (scripts/app-gate.js): "on" routes every app and preview
+  # Ingress through a platform-owned check (members-only private apps, and
+  # signing people in at an app's own address); "off" routes them straight to
+  # their own Services. Before "on", the app namespace's policy (foundation)
+  # must allow pods labelled app.kubernetes.io/name=usernode-app-gate to reach
+  # app pods on 3000 and the platform Service, and allow ingress-controller
+  # traffic to the gate. "off" again, plus an Argo sync, is the fallback.
+  appGate: "off"
+  # "off" stops signing people in at an app's own address (no hop to the
+  # platform for a sign-in, no identity added to app requests); the gate
+  # itself, and members-only private apps, are unaffected.
+  appHostSignin: "on"
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
   # Waitlist skips by invite-tree generation (INVITE_TREE_BUDGETS): people let

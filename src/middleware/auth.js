@@ -158,6 +158,11 @@ const GATE_OPEN_PATHS = [
   // reaches this gate.)
   '/api/auth/',
   '/api/iframe-token',
+  // The app-host authorize hop (services/edge-gate.js): opening an app at
+  // its own address signs the person in there, and an account without
+  // platform access can use login-required apps (the entry above, for the
+  // same reason).
+  '/__access/authorize',
   // Following an invite link from the waiting room queues its community
   // for the day the account is let in (services/community-invites.js).
   // Only the by-token reads and redeem, and the queued list the waiting
@@ -555,6 +560,9 @@ function redirectOrReject(req, res, next) {
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
+  // The app-host authorize hop answers a signed-out visitor itself (back to
+  // the app, or to the chromeless view), so it runs without a session.
+  if (req.path === '/__access/authorize') return next();
   // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
   // without a session and boots into the in-SPA landing/login screens
   // (auth-screens.js); every data read stays behind the /api/* 401
