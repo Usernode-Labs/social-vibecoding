@@ -19389,6 +19389,39 @@ html.un-kb #platform-tabs {
   display: none;
 }
 
+/* KEYBOARD UP IN THE HOMEROOM APP, BAR AND STRIP GONE THERE TOO (first-session
+   run, 4 October 2026). `un-kb` is the kit's answer to "do the keys COVER the
+   page", and in the phone app they never do: its Flutter shell resizes the
+   web view to end at the keyboard, so the page just gets shorter, the kit
+   measures nothing covered, and `un-kb` stays off. The bar and the Resume
+   strip, fixed to the foot of a page that now ends at the keys, were drawn on
+   the keyboard and over the composer, half covering Send, while every screen
+   still reserved their band. `platform-kb-open` is the page's own answer
+   (frontend/src/lib/keyboard-open.ts: a text field focused and the visible
+   page shorter than at rest by a keyboard's height), written on a phone
+   layout only, and it takes the same two bars away so the composer sits
+   directly on the keys. `!important` on the band for the reason the side
+   panel's document gives below: the rules that reserve it key off the bars'
+   own classes, not this one. The home-indicator strip is behind the keys as
+   well, so the safe-area clearances drop exactly as they do under `un-kb`.
+   Everything returns the moment the field lets go. */
+@media (max-width: 767px) {
+  html.platform-kb-open body {
+    --platform-bar-h: 0px !important;
+    --platform-tabs-h: 0px !important;
+  }
+  html.platform-kb-open #platform-tabs,
+  html.platform-kb-open #platform-parked {
+    display: none;
+  }
+  html.platform-kb-open .platform-safe-scroll {
+    padding-bottom: 0 !important;
+  }
+  html.platform-kb-open .platform-safe-bar {
+    padding-bottom: 0.5rem !important;
+  }
+}
+
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
      rounds this saves: `sticky` puts a bar's resting place at the mercy of

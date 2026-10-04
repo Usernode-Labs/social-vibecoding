@@ -385,12 +385,26 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // moment it is sent — faded until the server has it, with a Retry if it
   // never does — so the box empties at once and is ready for the next one.
   // The button does not wait on the round trip or change its glyph.
+  //
+  // THE FIELD KEEPS THE KEYBOARD THROUGH A SEND (first-session run, 4 Oct
+  // 2026). In the iOS app, sending with the keyboard up blanked the whole
+  // conversation, header and composer included, until the keyboard was put
+  // away. The likely sequence (read from the code, not measured): a button
+  // takes no focus on Apple platforms, so the tap on Send cleared it from
+  // the field and the keyboard started down; the refocus below, a frame
+  // later, brought it back with iOS's reveal-the-field scroll, while the
+  // app's shell was resizing its web view around the keyboard, and nothing
+  // put that scroll back until the keyboard closed. So Send keeps focus
+  // where it is (`onMouseDown` on the button: the field never blurs), and
+  // the refocus, which is for the keyboard or mouse user who moved focus to
+  // Send, never scrolls. Every other focus in this feature is
+  // `preventScroll` for the same reason.
   function submit() {
     if (uploading || (!value.trim() && !attachments.length && !object)) return;
     setError(''); notifyTyping(false);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
     setValue(''); setAttachments([]); setObject(null);
-    requestAnimationFrame(() => inputRef.current?.focus());
+    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
     send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
   }
 
@@ -472,7 +486,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           ) : null}
         </div>
         <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
-        <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* The count's line is always laid out, empty or not: it appearing
