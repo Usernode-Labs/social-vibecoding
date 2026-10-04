@@ -891,9 +891,31 @@ server-side session while the server is unreachable or queue a later retry.
   state.
   `onPageStarted`/`onPageFinished` are intentionally not authority or listener
   readiness signals because their ordering differs across WebView platforms.
+- The parent bridge relays only for the production app frames the SV shell
+  owns. The shell publishes `window.__usernodeAppFrameFor(source)`
+  (`frontend/src/features/app-frame/mount.ts`), which names such a frame as
+  `{ slug, name, origin, mounted }` and answers null for anything else; the
+  relay also requires the message's origin to equal that `origin`. A staging
+  preview, the landing viewer, a page nested inside an app, an app frame
+  navigated to another site, and any top frame that is not the shell get no
+  `discover-ack` and no reply, so they behave as in a desktop browser. An ack
+  binds the frame to its app. A request from an owned frame that never
+  connected, or from an app kept alive while hidden, gets an error reply and
+  is not forwarded.
+- Every relayed request carries `relayApp: { slug, name }` at the top level of
+  the native payload, beside `args` and never inside it (`args` is checked
+  field by field). Native may read it to name the app on the confirm sheet
+  ("<App> wants to send"). Relayed ids still start with `relay-`.
+- Relayed `signMessage` is refused by the web bridge with "Signing from inside
+  apps isn't available yet": the signing sheet names Homeroom, not the app
+  asking. Signing from the trusted top frame is unchanged.
 - The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
   their existing relay behavior only while the current realm claim is live.
+- These checks are the web half. Android's WebView injects the `Usernode`
+  channel into child frames too, so a child can post to native directly;
+  session-bound methods still fail there because the realm claim and the
+  privileged capability live only in the top frame's closure.
 - Loopback origins are not privileged by default. Flutter development builds
   can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
   switch is additionally gated by Flutter debug mode and cannot enable

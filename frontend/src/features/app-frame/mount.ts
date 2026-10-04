@@ -83,6 +83,13 @@ if (typeof window !== 'undefined') {
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
 
+  // The phone wallet relay in the shared bridge (public/usernode-bridge.js)
+  // forwards a frame's calls only when this names the frame as one of the
+  // shell's production apps. A page without it relays nothing, so this is the
+  // one place that decides. See `appForSource` in ./app-frame-bridge.js.
+  (window as unknown as { __usernodeAppFrameFor?: (source: unknown) => unknown })
+    .__usernodeAppFrameFor = (source: unknown) => appFrameBridge.appForSource(source);
+
   // #1945: the head's theme module rewrites the theme-color meta from the
   // shell's own mode on every theme change (Theme.set, an OS flip, another
   // tab). While an app is on screen the meta carries the APP's tone, so put

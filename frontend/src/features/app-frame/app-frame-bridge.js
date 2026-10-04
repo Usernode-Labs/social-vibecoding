@@ -421,6 +421,58 @@ export const appFrameBridge = {
   },
 
   /**
+   * Which production app posted `source`: the mounted frame's, or one kept
+   * alive behind it (#2902). Answers `{ slug, name, origin, mounted }`, or null
+   * for every other window: the staging preview, the landing viewer, a page an
+   * app nests inside its own frame, a frame that has not been pointed at an app
+   * yet, and anything else.
+   *
+   * The reader is the phone wallet relay in the shared bridge
+   * (public/usernode-bridge.js), through `window.__usernodeAppFrameFor`
+   * (./mount.ts). That relay acts with the platform's own native session, so
+   * being named here is what lets a frame reach the wallet at all, and nothing
+   * else may be. `origin` is where this frame was pointed, so the relay can
+   * tell the app's own document from another site the frame was navigated to
+   * later. `mounted` is true only for THE frame (`#app-iframe`): a kept app is
+   * hidden, and the relay holds it to the rule every shell relay applies to a
+   * hidden app.
+   *
+   * @param {unknown} source a message event's `source`
+   * @returns {{ slug: string, name: string, origin: string, mounted: boolean } | null}
+   */
+  appForSource(source) {
+    if (!source) return null;
+    const state = appFrameStore.get();
+    /**
+     * @param {string} slug
+     * @param {string} title
+     * @param {HTMLIFrameElement | null | undefined} el
+     * @param {boolean} ready the frame's sandbox was switched for an app load
+     * @param {boolean} mounted
+     */
+    const entry = (slug, title, el, ready, mounted) => {
+      if (!slug || !el || !ready || el.contentWindow !== source) return null;
+      const src = srcOf(el);
+      const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
+      if (!isSafeAppFrameSrc(src, platformOrigin)) return null;
+      let origin = '';
+      try {
+        origin = new URL(src).origin;
+      } catch {
+        return null;
+      }
+      return { slug, name: title || slug, origin, mounted };
+    };
+    const found = entry(state.slug, state.title, appFrameRefs.iframe, state.sandboxReady, true);
+    if (found) return found;
+    for (const k of state.kept) {
+      const kept = entry(k.slug, k.title, appFrameRefs.kept[k.slug], k.sandboxReady, false);
+      if (kept) return kept;
+    }
+    return null;
+  },
+
+  /**
    * Install the frame's load handler.
    *
    * `el.onload = fn` rather than `addEventListener`, deliberately: the element
