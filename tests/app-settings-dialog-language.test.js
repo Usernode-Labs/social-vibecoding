@@ -64,3 +64,18 @@ test('the App settings loading line is muted like the other dialogs\'', () => {
   // fetch is out, and that is a live-region update, not decoration.
   assert.match(line, /role="status"/, `the loading line stays a status region:\n${line}`);
 });
+
+// Private decides who can OPEN the app. Every repository is public on GitHub
+// (services/github.js createRepo makes them public, and an import must be
+// public already), so the Access section says so once, under its own
+// description and in the same muted ink, whichever mode is chosen.
+test('the Access section says the code is public on GitHub either way', () => {
+  const said = 'The code is public on GitHub either way.';
+  const line = element(said);
+  assert.match(line, /^<p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">/,
+    `the line is the description's muted ink:\n${line}`);
+  const description = src.indexOf('Choose who can use this app and who can build changes for it.');
+  const modes = src.indexOf('role="radiogroup" aria-label="App access"');
+  assert.ok(description > 0 && description < src.indexOf(said) && src.indexOf(said) < modes,
+    'under the description, before the modes');
+});

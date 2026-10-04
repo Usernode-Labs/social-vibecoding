@@ -364,7 +364,7 @@ export function DevPlusMenu({
                 data-plus="make-private"
                 icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
                 title="Make it private"
-                sub="Only invited people can see it and build it. Members vote first"
+                sub="Only invited people can open and build it. Code stays public on GitHub."
                 // It renders after the menu was wired (once the community
                 // read answers), so it closes the menu itself.
                 onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}

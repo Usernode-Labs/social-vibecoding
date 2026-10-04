@@ -55,8 +55,8 @@
  * Try, Vote and Suggest say "Join a community first." and carry no button:
  * the server's `needs_join`, which is that step's own done state, and
  * nothing else. It used to be "no default app", which disagreed with the
- * tick both ways. Keeping Homeroom, or making a project only you can see,
- * does not tick Join (onboarding.js COMMUNITY_JOINED, by design), so the Join
+ * tick both ways. Keeping Homeroom, or making a Just-you project, does
+ * not tick Join (onboarding.js COMMUNITY_JOINED, by design), so the Join
  * row says so while it is to do. Once Join is ticked nothing is locked: with
  * no default app the server sends the first app Discover leads with
  * (onboarding.js fallbackApp), and with none at all the three go to
@@ -356,12 +356,12 @@ const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
 
 /**
  * What does not tick Join, said on its row while it is to do: the
- * platform's own project every account starts in, and a project only you
- * can see ("Just me" when it was made). Neither is a community you found
+ * platform's own project every account starts in, and a Just-you project
+ * ("Just me" when it was made). Neither is a community you found
  * (onboarding.js COMMUNITY_JOINED). After the challenge's own task, which is
  * the admin's words.
  */
-export const JOIN_NOTE = 'Homeroom and projects only you can see don’t count.';
+export const JOIN_NOTE = 'Homeroom and Just-you projects don’t count.';
 
 /** The Join row's line while it is to do: its task, then what does not count. */
 export function joinDetail(detail: string): string {

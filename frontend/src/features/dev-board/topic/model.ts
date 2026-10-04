@@ -363,7 +363,7 @@ export interface HeroView {
   kind: string;
   /** "PR#2473", linking to GitHub when the change has a pull request. */
   ref: { s: string; href: string | null } | null;
-  /** "In review", "Merged", "Private change", "Visible to the group". */
+  /** "In review", "Merged", "Not shared yet", "Visible to the group". */
   status: string;
   /** "5h ago", with the full stamp as its title. */
   age: { s: string; title?: string } | null;

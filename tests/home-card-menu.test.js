@@ -212,6 +212,9 @@ test('renderAppPillsHtml: always display-only spans, ordered, self-trimming', ()
   assert.match(html, /1 in dev/);
   assert.match(html, /3 issues/);
   assert.match(html, /Private</, 'privacy chip last');
+  // Private decides who can OPEN the app; its code is public on GitHub, so
+  // the tooltip says open, never see.
+  assert.match(html, /title="Only members can open and use this app"/);
   const order = ['Missing secrets', '2 to vote', '1 in dev', '3 issues', 'Private']
     .map((s) => html.indexOf(s));
   assert.ok(order.every((idx, i) => idx !== -1 && (i === 0 || idx > order[i - 1])),

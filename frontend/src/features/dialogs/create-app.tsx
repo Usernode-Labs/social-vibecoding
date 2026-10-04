@@ -229,11 +229,17 @@ function ruleWords(approvers: Approvers, approvals: number | null): string {
   return approvals ? `People I pick, at least ${approvals} yes` : 'People I pick, a majority of them';
 }
 
+/**
+ * Every repository is public on GitHub, whoever may open the project, so a
+ * line that keeps people out also says the code stays public.
+ */
+const CODE_PUBLIC = 'Code stays public on GitHub.';
+
 function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
   if (v.build === 'public' && v.view === 'public') return 'Anyone can find it, join and build';
-  if (v.build === 'private' && v.view === 'public') return 'Anyone can see it; only people invited can build';
+  if (v.build === 'private' && v.view === 'public') return `Anyone can see it; only people invited can build. ${CODE_PUBLIC}`;
   if (v.build === 'public') return 'Anyone can build it';
-  return 'Private to the people invited';
+  return `Private to the people invited. ${CODE_PUBLIC}`;
 }
 
 /**
@@ -583,8 +589,8 @@ export function descriptionLeft(length: number): string {
 
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
-  { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or make it public later, from its page.' },
-  { key: 'invited', title: 'A private community', caption: 'Private to you and the people you invite.' },
+  { key: 'solo', title: 'Just me', caption: 'Only you can open it. Its code is public on GitHub. Invite people or open it up later.' },
+  { key: 'invited', title: 'A private community', caption: 'Only you and the people you invite can open it. Its code is public on GitHub.' },
   { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
 ];
 

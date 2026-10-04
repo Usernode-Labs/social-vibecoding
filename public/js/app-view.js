@@ -4804,7 +4804,7 @@ const AppView = {
     const underway = ['active', 'paused'].includes(item.status);
     const n = parseInt(item.pr_number, 10) || 0;
     const status = underway
-      ? (item.shared_at ? 'Visible to the group' : 'Private change')
+      ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
       : ({ promoted: 'In review', merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
@@ -5235,8 +5235,8 @@ const AppView = {
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
-    body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a public discussion. The agent workspace stays private unless you share it separately.' : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
+    body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.' : null;
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? 'In review' : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -11600,7 +11600,7 @@ const AppView = {
   // ── Session cards in the In progress area ──────────────────────────
   // The viewer's PRIVATE in-progress (active/paused, not-yet-promoted)
   // sessions render pinned at the top of the In progress column (kanban)
-  // / top of the list (list view) under the "Only you can see" caption;
+  // / top of the list (list view) under the "Yours · not shared" divider;
   // their VISIBLE (shared) sessions render below the archived toggle
   // under the "Visible to everyone." caption, signaling they appear on
   // everyone's board; other users' shared sessions render at the bottom
@@ -11810,7 +11810,7 @@ const AppView = {
       ? `Imported pull request by ${author} · not up for vote yet`
       : (shared
         ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
-        : 'Only you can see this');
+        : 'Only you can see this here. Code is on public GitHub.');
 
     // "Open chat" is GONE as a pill. Tapping this card opens the card itself
     // (see above); the dev chat — its working surface — is the "Open session"
@@ -12041,12 +12041,12 @@ const AppView = {
   // These replaced two full grey sentences. The long copy is now the
   // divider label's tooltip, and the private group's own cards carry the
   // muted shell, so the information survives at a fraction of the height.
-  PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions.',
+  PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions here. Their code is on public GitHub.',
   VISIBLE_DIVIDER_TITLE: 'Visible to everyone, including a live preview of your changes.',
   OTHERS_DIVIDER_TITLE: 'Dev sessions other people have made visible.',
 
   _privateDividerRow() {
-    return { t: 'divider', key: 'div:private', d: { label: 'Yours · private', title: AppView.PRIVATE_DIVIDER_TITLE } };
+    return { t: 'divider', key: 'div:private', d: { label: 'Yours · not shared', title: AppView.PRIVATE_DIVIDER_TITLE } };
   },
 
   _visibleDividerRow() {

@@ -365,7 +365,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
       assert.equal(c.vote, null);
       assert.deepEqual(rows(c), [
         ['tour', 'See how Homeroom works.', 'Start'],
-        ['join', 'Find people to build with. Homeroom and projects only you can see don’t count.', 'Join'],
+        ['join', 'Find people to build with. Homeroom and Just-you projects don’t count.', 'Join'],
         ['try', ...LOCK], ['vote', ...LOCK], ['suggest', ...LOCK],
       ]);
 

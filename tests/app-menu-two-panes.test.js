@@ -60,6 +60,11 @@ test('each fact appears only when there is one', () => {
   });
   assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
   assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
+  // The row says what the code is: every repository is public on GitHub
+  // (services/github.js createRepo), whoever the project lets open it.
+  assert.match(full, /id="improve-row-github"[^>]*>[\s\S]*?>Code<\/span><span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub<\/span><\/a>/,
+    'Code, with Public on GitHub muted at the end of the row');
+  assert.doesNotMatch(full, /View on GitHub/);
   assert.match(full, /id="improve-row-share"/);
   // The design draws the version as a PILL beside the builders' avatars —
   // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
@@ -67,7 +72,7 @@ test('each fact appears only when there is one', () => {
   assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
     'the version is a pill in the identity block, not a row');
   // The design's MORE order: Share, Add to home screen, then the source
-  // (View on GitHub is its "Source code"), then Fork.
+  // (the Code row is its "Source code"), then Fork.
   assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
     'sharing leads, the repository follows — the design\'s order');
 });

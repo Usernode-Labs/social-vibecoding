@@ -249,8 +249,13 @@ export function AppSettingsDialog() {
         className={`mb-4 ${app?.can_manage && !app.self_hosted ? '' : 'hidden'}`}
       >
         <h3 className="font-semibold mb-1">Access</h3>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1">
           Choose who can use this app and who can build changes for it.
+        </p>
+        {/* Private decides who can open it; every repository is public on
+            GitHub (services/github.js createRepo), whichever is chosen. */}
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+          The code is public on GitHub either way.
         </p>
         <div role="radiogroup" aria-label="App access" className="space-y-2">
           {ACCESS_MODES.map((mode) => {
