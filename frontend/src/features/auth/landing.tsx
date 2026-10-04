@@ -55,7 +55,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { DeadInvite, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
 import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -562,7 +562,11 @@ export function LandingScreen() {
   // its three cards take the place of the illustration, the rail and the
   // waitlist pitch, which are hidden rather than unmounted for the same
   // reason the session's two action blocks are (the id inventory reads them).
-  const invite = useInvitePreview();
+  // While the preview is on its way the pitch stays hidden too, with a quiet
+  // placeholder where the cards go, so an invited friend never sees the
+  // waitlist first; a dead link, or one whose preview cannot be read, gets
+  // the pitch back once that is known.
+  const { preview: invite, pending: invitePending } = useInvitePreview();
   const madeForYou = !!invite?.live;
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
   // the story's Get started or Sign in.
@@ -633,7 +637,7 @@ export function LandingScreen() {
     setSession(hasSession());
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
-  const pitchHidden = madeForYou || storyOn;
+  const pitchHidden = madeForYou || storyOn || invitePending;
   const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
@@ -1288,11 +1292,13 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it for
-              whom, the project itself, the note and the way in. Only on
-              /invite/<token>, and only once its preview is back — nothing
-              here on any other visit. A dead link says why, above the pitch.
+              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
+              project itself, the note and the way in. Only on
+              /invite/<token>, with a placeholder in their place until its
+              preview is back — nothing here on any other visit. A dead link
+              says why, above the pitch.
           */}
+          {invitePending && !invite ? <InvitePending /> : null}
           {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
           {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*

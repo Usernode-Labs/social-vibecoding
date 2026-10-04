@@ -289,12 +289,25 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.membersLine(1), '1 person is in it.');
   assert.equal(card.membersLine(0), '');
   // "Made for you": the gift when the sender made it, the invitation when not.
-  const made = { live: true, reason: null, project: { name: 'Sunday Run Club', iconEmoji: '🏃', iconUrl: null },
-    inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, memberCount: 4 };
-  assert.equal(card.madeLine(made), 'Maya made this for Sunday Run Club');
+  // A community and its one project share a name, so the gift names the
+  // project ("made Flat 4B Chores", not "made this for Flat 4B Chores"); only
+  // a community named apart from its project is what it was made for.
+  const made = { live: true, reason: null, project: { name: 'Flat 4B Chores', iconEmoji: '🧹', iconUrl: null },
+    inviter: 'jordan_t1004', inviterName: 'jordan_t1004', inviterMadeIt: true, memberCount: 4 };
+  assert.equal(card.madeLine(made), 'jordan_t1004 made Flat 4B Chores');
+  assert.equal(card.madeLine({ ...made, communityName: 'Flat 4B Chores' }), 'jordan_t1004 made Flat 4B Chores');
+  assert.equal(card.madeLine({ ...made, communityName: ' flat 4b chores ' }), 'jordan_t1004 made Flat 4B Chores');
+  assert.equal(card.madeLine({ ...made, communityName: null }), 'jordan_t1004 made Flat 4B Chores');
+  const forGroup = { ...made, project: { name: 'Run Tracker', iconEmoji: '🏃', iconUrl: null },
+    inviter: 'maya', inviterName: 'Maya', communityName: 'Sunday Run Club' };
+  assert.equal(card.madeForName(forGroup), 'Sunday Run Club');
+  assert.equal(card.madeLine(forGroup), 'Maya made this for Sunday Run Club');
+  assert.equal(card.madeForName(made), null);
   assert.equal(card.underLine(made), 'and invited you to join · 4 people are in it');
+  assert.equal(card.underLine({ ...made, memberCount: 1 }), 'and invited you to join · 1 person is in it');
   assert.equal(card.underLine({ ...made, memberCount: 0 }), 'and invited you to join');
-  assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@maya invited you to join Sunday Run Club.');
+  assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
+  assert.equal(card.madeLine({ ...forGroup, inviterMadeIt: false }), '@maya invited you to join Run Tracker.');
   assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
@@ -350,14 +363,21 @@ test(`a link carries its maker's note: plain text, one paragraph, at most 280 ch
   assert.match(read('src/routes/community-invites.js'), /maxUses: req\.body\?\.maxUses, note: req\.body\?\.note,/);
 });
 
-test(`the preview reads like the page: who made it for whom, their note, the project's picture`, () => {
+test(`the preview reads like the page: who made it, their note, the project's picture`, () => {
   const live = {
     live: true,
     project: { name: 'Sunday Run Club', iconUrl: '/app-icons/abc', description: 'A run tracker', picture: null },
     inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, note: 'Come help with our run tracker!', memberCount: 4,
   };
   const tags = routes.previewTags(live, 'https://homeroom.example');
-  assert.match(tags, /og:title" content="Maya made this for Sunday Run Club"/);
+  // The community shares its project's name, so the title names the project.
+  assert.match(tags, /og:title" content="Maya made Sunday Run Club"/);
+  assert.match(tags, /twitter:title" content="Maya made Sunday Run Club"/);
+  assert.doesNotMatch(tags, /made this for/);
+  assert.match(routes.previewTags({ ...live, communityName: 'sunday run club' }, null), /og:title" content="Maya made Sunday Run Club"/);
+  // A community named apart from its project is what it was made for.
+  const forGroup = routes.previewTags({ ...live, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null);
+  assert.match(forGroup, /og:title" content="Maya made this for Sunday Run Club"/);
   assert.match(tags, /og:description" content="Come help with our run tracker!"/);
   assert.match(tags, /og:image" content="https:\/\/homeroom\.example\/app-icons\/abc"/);
   assert.match(tags, /twitter:card" content="summary"/);
@@ -398,8 +418,9 @@ test('the picture is served only through a live link, and only an after-shot of 
 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /const \{ preview: invite, pending: invitePending \} = useInvitePreview\(\);/);
   assert.match(landing, /const madeForYou = !!invite\?\.live;/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
   for (const hidden of [
     "hiddenLast(pitchHidden, 'grow')",
     "hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
