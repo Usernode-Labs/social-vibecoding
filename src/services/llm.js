@@ -1511,6 +1511,30 @@ Respond with ONLY a JSON object: {"description": "..."}. No prose before or afte
   return { description: description.slice(0, max), usage: resp.usage, model };
 }
 
+// The first session's sketch of a new project's main screen
+// (services/app-sketch.js owns the prompt, the parse and the sanitizer).
+// One helper call; this only sends it and hands back the reply's text.
+// THROWS with no key or on a provider error; the caller records a failed
+// sketch and the made screen carries on without one.
+async function generateAppSketch({ system, user, model = 'claude-haiku-4-5', maxTokens = 4000, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: String(user || '') }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'app_sketch' },
+    apiKey,
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return { text, usage: resp.usage, model };
+}
+
 // One graded unit for the challenge scorer (services/topochain/
 // challenge-grader.js): a season challenge whose points depend on how useful
 // the thing somebody did was, rather than on whether they did it.
@@ -2828,7 +2852,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
-  generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription,
+  generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription, generateAppSketch,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).

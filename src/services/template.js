@@ -607,7 +607,7 @@ api.routes(app, pool);
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   // `template` is the create screen's starter (services/app-templates.js).
   // Absent or `empty` writes exactly what every new app always got; a
@@ -1387,7 +1387,7 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
-  if (!starter) return files;
+  if (!starter) return sketch ? withSketch(files, appName, sketch, { screen: true }) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
   const own = appTemplates.starterFiles(template, {
@@ -1395,7 +1395,73 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
   const ownPaths = new Set(own.map((f) => f.path));
-  return [...files.filter((f) => !ownPaths.has(f.path)), ...own];
+  const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
+  return sketch ? withSketch(all, appName, sketch, { screen: false }) : all;
+}
+
+// The first session's sketch (services/app-sketch.js), when it was ready in
+// time for the first commit. The repository always carries it as
+// design/sketch.html and design/sketch.json. On the Empty starter it is also
+// the screen: it takes the placeholder notice's place, inside the same
+// sentinels so "Starter template" above still says what to remove; the
+// Press! example and its footer are hidden rather than removed (the page's
+// script looks them up); the kit's accent becomes the sketch's, contrast
+// checked; and "## Design" starts from it. A starter of its own keeps its
+// screen and gets the files only.
+const STARTER_NOTICE_OPEN = '<!-- usernode-starter-notice@1';
+const STARTER_NOTICE_CLOSE = '<!-- /usernode-starter-notice@1 -->';
+const PRESS_SECTION = '<section class="flex flex-col items-center gap-5">';
+const STARTER_FOOTER = '<p class="text-center text-small text-muted">Built on Homeroom.';
+
+function sketchScreen(index, appName, html) {
+  const appSketch = require('./app-sketch');
+  const open = index.indexOf(STARTER_NOTICE_OPEN);
+  const openEnd = open === -1 ? -1 : index.indexOf('-->', open) + 3;
+  const close = index.indexOf(STARTER_NOTICE_CLOSE);
+  if (open === -1 || close < openEnd) return index;
+  // Hidden after the sentinels only: the sketch's own markup may use the
+  // same classes.
+  const after = index.slice(close)
+    .replace(PRESS_SECTION, PRESS_SECTION.replace('>', ' hidden>'))
+    .replace(STARTER_FOOTER, STARTER_FOOTER.replace('">', '" hidden>'));
+  return `${index.slice(0, openEnd)}\n    ${appSketch.starterBlock({ name: appName, html })}\n    ${after}`;
+}
+
+function sketchDesignSection(design) {
+  const palette = design.accentName
+    ? `accent: ${design.accentName}, from the sketch (already set in the kit's tokens); neutrals: the kit's warm greys`
+    : 'the sketch\'s accent, already set in the kit\'s tokens; neutrals: the kit\'s warm greys';
+  // Function replacers: the model's words may hold a "$", which a
+  // replacement string would read as a pattern.
+  return DESIGN_CLAUDE_SECTION
+    .replace(
+      /- \*\*Palette:\*\* _\([^)]*\)_/,
+      () => `- **Palette:** ${palette}`
+    )
+    .replace(
+      /- \*\*Signature element:\*\* _\([^)]*\)_/,
+      () => `- **Signature element:** ${design.signature || '_(the one thing on screen drawn from this app\'s subject)_'}`
+    )
+    .replace(
+      'change follows it, and updates it when a request changes the look on purpose.\n',
+      'change follows it, and updates it when a request changes the look on purpose.\n\n'
+      + '- **Sketch:** `design/sketch.html` is the sketch this app\'s creator was shown\n'
+      + '  when they made it, and `design/sketch.json` says its job, layout and words.\n'
+      + '  The first version keeps them; list any change under Assumptions.\n'
+    );
+}
+
+function withSketch(files, appName, sketch, { screen }) {
+  const appSketch = require('./app-sketch');
+  const out = !screen ? files : files.map((file) => {
+    if (file.path === 'public/index.html') return { ...file, content: sketchScreen(file.content, appName, sketch.html) };
+    if (file.path === 'styles/tailwind-input.css') {
+      return { ...file, content: file.content.replace(DESIGN_KIT_CSS, () => appSketch.retokenKitCss(DESIGN_KIT_CSS, sketch.design)) };
+    }
+    if (file.path === 'CLAUDE.md') return { ...file, content: file.content.replace(DESIGN_CLAUDE_SECTION, () => sketchDesignSection(sketch.design)) };
+    return file;
+  });
+  return [...out, ...appSketch.designFiles({ name: appName, sketch })];
 }
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.

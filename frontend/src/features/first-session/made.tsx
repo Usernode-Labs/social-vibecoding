@@ -19,8 +19,17 @@
  * the maker's first message in the group's chat (the sheet says so), so the
  * people it brings find it waiting there.
  *
- * Until the sketch exists (the first-session plan's WP-B), this screen shows
- * the build's progress where the sketch will go.
+ *   sketch    A sketch of its main screen (services/app-sketch.js), drawn
+ *             from the description in about half a minute: "Sketching…" from
+ *             GET /api/apps/:slug/sketch, read every two seconds, then the
+ *             page itself in a frame with an empty `sandbox` (no script, its
+ *             own origin). Without one (no description, no model, a reply
+ *             that was not usable) the card shows the build as before.
+ *
+ * Every line says what is true for this project: when Homeroom bot builds
+ * it (`made.conversationId`, its DM), its step and "messages you"; when it
+ * does not, the description is the project's first request, for whoever
+ * builds it.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -34,11 +43,116 @@ import type { Made } from './make';
 type FirstVersion = { step?: number; of?: number; stepName?: string | null; ready?: boolean } | null;
 
 /** "Step 2 of 7: Read the description", or what to say without a build. */
-export function buildLine(fv: FirstVersion, appStatus: string | null): string {
+export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
   if (fv && fv.ready) return 'Version one is ready to try.';
   if (fv && fv.step && fv.of) return `Step ${fv.step} of ${fv.of}${fv.stepName ? `: ${fv.stepName}` : ''}`;
   if (appStatus === 'creating') return 'Setting it up…';
-  return 'Homeroom bot builds it from your description.';
+  return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
+}
+
+/** The line under the build's: who tells them, or who builds it. */
+export function buildNote(botBuilds: boolean): string {
+  return botBuilds
+    ? 'Homeroom bot messages you when it\'s ready to try.'
+    : 'You or anyone you invite can build it from there.';
+}
+
+export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
+
+/** Under the sketch: what it is, and what happens to it. */
+export function sketchCaption(name: string, botBuilds: boolean): string {
+  return botBuilds
+    ? `A sketch from your description. Homeroom bot builds the real ${name} from it.`
+    : `A sketch from your description. Nothing on it works yet: the real ${name} is built from it, by you or anyone you invite.`;
+}
+
+// Stop asking after this long: a sketch is drawn in well under a minute.
+const SKETCH_POLL_MS = 2000;
+const SKETCH_GIVE_UP_MS = 90 * 1000;
+
+/** The shell's look, so the sketch is drawn in the same one. */
+function useDarkClass(): boolean {
+  const read = () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const [dark, setDark] = useState(read);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setDark(read()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
+/** GET /api/apps/:slug/sketch until it is ready, failed, or there is none. */
+function useSketch(slug: string): SketchState {
+  const [state, setState] = useState<SketchState>('loading');
+  useEffect(() => {
+    let live = true;
+    let timer = 0;
+    const started = Date.now();
+    const read = async () => {
+      const data = await fetch(`/api/apps/${encodeURIComponent(slug)}/sketch`, { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      if (!live) return;
+      const status = data?.status;
+      if (status === 'ready' || status === 'failed' || status === 'none') { setState(status); return; }
+      // A read that failed is asked again; the card shows the build meanwhile.
+      if (status === 'pending') setState('pending');
+      if (Date.now() - started > SKETCH_GIVE_UP_MS) { setState((s) => (s === 'pending' ? 'failed' : s)); return; }
+      timer = window.setTimeout(() => { void read(); }, SKETCH_POLL_MS);
+    };
+    void read();
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [slug]);
+  return state;
+}
+
+function SketchCard({ made, tile, sketch, line, botBuilds, busy }: {
+  made: Made;
+  tile: string;
+  sketch: 'pending' | 'ready';
+  line: string;
+  botBuilds: boolean;
+  busy: boolean;
+}) {
+  const dark = useDarkClass();
+  return (
+    <div data-first-session-sketch={sketch} className="mt-4 rounded-[20px] bg-white p-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className="flex items-center gap-3 px-1 pb-3">
+        <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
+        <div className="min-w-0 flex-1">
+          <h1 id="first-session-made-title" className="truncate text-[17px] font-semibold leading-snug">{made.name}</h1>
+          <p className="flex items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
+            {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
+            <span data-first-session-build="" className="truncate">{line}</span>
+          </p>
+        </div>
+      </div>
+      <div className="relative h-[380px] overflow-hidden rounded-[14px] bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800">
+        {sketch === 'ready' ? (
+          <iframe
+            title={`A sketch of ${made.name}`}
+            src={`/api/apps/${encodeURIComponent(made.slug)}/sketch.html?theme=${dark ? 'dark' : 'light'}`}
+            sandbox=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full border-0"
+          />
+        ) : (
+          <div role="status" className="flex h-full flex-col gap-4 p-5">
+            <p className="pr-16 text-[14px] text-zinc-500 dark:text-zinc-400">{`Sketching ${made.name} from your description…`}</p>
+            <div className="h-6 w-2/3 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-700" />
+            <div className="h-20 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
+            <div className="h-11 w-1/2 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-700" />
+            <div className="h-24 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
+          </div>
+        )}
+        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+      </div>
+      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
+        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds)}
+      </p>
+    </div>
+  );
 }
 
 const NOTE_DEFAULT = 'Come try it with me!';
@@ -242,6 +356,11 @@ export function MadeScreen({ made, me, onContinue }: {
     return () => { live = false; window.clearInterval(t); };
   }, [made.slug]);
 
+  const botBuilds = made.conversationId != null;
+  const sketch = useSketch(made.slug);
+  const line = buildLine(fv, appStatus, botBuilds);
+  // Something is under way: the project being set up, or the bot's build.
+  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready));
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div
@@ -255,16 +374,20 @@ export function MadeScreen({ made, me, onContinue }: {
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
-        <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
-          <h1 id="first-session-made-title" className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</h1>
-          {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-          <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
-            {fv && fv.ready ? null : <span className="status-dot creating" aria-hidden="true" />}
-            <span data-first-session-build="">{buildLine(fv, appStatus)}</span>
+        {sketch === 'pending' || sketch === 'ready' ? (
+          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} />
+        ) : (
+          <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+            <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
+            <h1 id="first-session-made-title" className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</h1>
+            {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
+            <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
+              {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
+              <span data-first-session-build="">{line}</span>
+            </div>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds)}</p>
           </div>
-          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">Homeroom bot messages you when it's ready to try.</p>
-        </div>
+        )}
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's built.</p>

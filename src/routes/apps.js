@@ -1177,6 +1177,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         },
       });
 
+      // The first session's sketch (services/app-sketch.js): started BEFORE
+      // creation, which waits a little for it so the repository's first
+      // commit can carry it. Only from "What do you want to make?", only
+      // with a description to draw from, and never a reason the create fails.
+      if (req.body.from === 'first-session' && !repoUrlNormalized
+          && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
+        await require('../services/app-sketch').startSketch(pool, {
+          app: appRow, user: req.user, brief: req.body.brief,
+        }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
+      }
+
       // Kick off async creation — don't await. If it throws, flip to error.
       createApp(config, appRow).catch(async (err) => {
         log.error('apps', 'Async app creation failed', { appId: appRow.id, err: err.message });
@@ -1564,6 +1575,61 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The first session's sketch (services/app-sketch.js). The made screen
+  // polls the status, then frames the page. Anyone who may view the app may
+  // see it; a project without one answers { status: 'none' }.
+  router.get('/api/apps/:slug/sketch', async (req, res) => {
+    try {
+      const appSketch = require('../services/app-sketch');
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const row = await appSketch.readSketch(pool, app.id);
+      const status = appSketch.sketchStatus(row);
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        status,
+        ...(status === 'ready' ? {
+          job: row.design?.job || null,
+          primaryAction: row.design?.primaryAction || null,
+          accentName: row.design?.accentName || null,
+          committed: !!row.committed_at,
+        } : {}),
+      });
+    } catch (err) {
+      log.error('apps', 'Failed to read sketch', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The sketch as a page of its own, for the made screen's frame. It is
+  // model output from a user's description, so besides being sanitized to
+  // static markup (services/app-sketch.js) it is served sandboxed: no
+  // script, no network, no form, its own opaque origin, framed only here.
+  router.get('/api/apps/:slug/sketch.html', async (req, res) => {
+    try {
+      const appSketch = require('../services/app-sketch');
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`
+      );
+      if (!app) return res.status(404).type('text/plain').send('Not found');
+      const row = await appSketch.readSketch(pool, app.id);
+      if (appSketch.sketchStatus(row) !== 'ready') return res.status(404).type('text/plain').send('Not found');
+      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
+      res.set({
+        'Content-Security-Policy': appSketch.SKETCH_CSP,
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      });
+      res.type('html').send(appSketch.sketchDocument({
+        name: app.name || app.slug, design: row.design, html: row.html, theme,
+      }));
+    } catch (err) {
+      log.error('apps', 'Failed to render sketch', { message: err.message });
+      res.status(500).type('text/plain').send('Internal server error');
     }
   });
 

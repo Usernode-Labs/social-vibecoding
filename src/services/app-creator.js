@@ -16,6 +16,7 @@ const appTemplates = require('./app-templates');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const journeyEvents = require('./journey-events');
+const appSketch = require('./app-sketch');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
 
 // Record which step of creation is running, and tell the connected
@@ -128,6 +129,11 @@ async function createApp(config, appRow) {
     if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
+        // The first session's sketch (services/app-sketch.js), if one is
+        // being drawn: waited for a little, so the first commit can carry it
+        // and the starter's screen can be it. No sketch row, no wait.
+        const sketch = await appSketch.whenReady(pool, appId).catch(() => null);
+
         // adoptExisting: a Retry after a create that died between the
         // GitHub create call and the repo_url persist re-runs with the
         // SAME slug, so the repo already exists on the bot account and a
@@ -140,13 +146,20 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow), sketch });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
 
         await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
         useGitHub = true;
+        if (sketch) {
+          await appSketch.markCommitted(pool, appId).catch(() => {});
+        } else {
+          // One still being drawn is committed on its own when it is ready
+          // (the design files only). Not awaited; never throws.
+          appSketch.commitWhenReady(pool, { appId, name, owner: botUsername, repo: slug });
+        }
       } catch (err) {
         // GitHub is enabled but the repo couldn't be provisioned. Falling
         // back to a local build here used to leave a healthy-looking app

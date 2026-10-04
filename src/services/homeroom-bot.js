@@ -363,6 +363,11 @@ const FIRST_VERSION_NOTE = [
   'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
   'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
   'bread app) and a rough layout. The spec settles the details; never ask about them.',
+  // The first session's sketch (services/app-sketch.js): when the request
+  // names one, its creator has already seen this screen.
+  'When the request names a design target (`design/sketch.html`, described in `design/sketch.json`), its creator has',
+  'already seen that screen: plan the first version as it, with its job, layout, words and accent, and list any change',
+  'under `assumptions` with the reason.',
   // B6: the creator sees the plan before anything is built, and taps Build
   // it or asks for changes (homeroom-bot-dm.js sendPlanCard).
   'Its creator sees your plan before anything is built, and taps Build it or asks for changes. So with `ready`, also',
