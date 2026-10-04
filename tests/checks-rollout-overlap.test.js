@@ -466,3 +466,43 @@ test('the demo fixture serves the sentence the settle path writes, and the card 
   assert.equal(notes[0].rows[0].parts.join(''), ROLLOUT_RETRY_DETAIL,
     'the reason is the first line of the checks note');
 });
+
+test('the board card tag and the status pill read it as running again, not as broken', () => {
+  const AppView = makeAppView();
+  const MergeStatus = require('../public/js/merge-status.js');
+  const gates = (checks) => ({ gates: [
+    { key: 'approvals', state: 'waiting' }, { key: 'checks', state: checks }, { key: 'github', state: 'pending' },
+  ] });
+  const retry = {
+    status: 'promoted', check_state: 'error', check_error_detail: ROLLOUT_RETRY_DETAIL,
+    test_results: [], mergeRequirements: gates('active'),
+  };
+  const blocked = { ...retry, check_error_detail: 'Staging preview unreachable', mergeRequirements: gates('blocked') };
+
+  // One rule on both sides: an error the checks gate still counts as in progress.
+  assert.equal(AppView._checksWillRetry(retry), true);
+  assert.equal(MergeStatus.checksWillRetry(retry), true);
+  assert.equal(AppView._checksWillRetry(blocked), false);
+  assert.equal(MergeStatus.checksWillRetry(blocked), false);
+  assert.equal(MergeStatus.checksWillRetry({ ...retry, mergeRequirements: null }), false,
+    'no recorded gate: the error keeps blocking');
+
+  const [reason] = AppView.blockReasons(retry);
+  assert.equal(reason.key, 'checks_retry');
+  assert.equal(reason.label, 'Checks will run again');
+  assert.equal(reason.running, true, 'in flight and nobody need act');
+  assert.equal(reason.detail, `${ROLLOUT_RETRY_DETAIL} Merge is blocked until they pass.`);
+  const tag = AppView.statusTagSpecs(retry, {}).find((t) => t.data['data-status-tag'] === 'checks_retry');
+  assert.equal(tag.cls, AppView.STATUS_TAG_CLS.running);
+  assert.equal(tag.spinner, true);
+
+  const pill = MergeStatus.lifecycle(retry);
+  assert.equal(pill.key, 'checks_running');
+  assert.equal(pill.label, 'Checks will run again');
+  assert.match(pill.title, /^Checks ran while Homeroom was updating, so they will run again\. Merge is blocked until they pass\.$/);
+
+  // Every other error still reads as the red "couldn't run".
+  assert.equal(AppView.blockReasons(blocked)[0].key, 'checks_error');
+  assert.equal(AppView.blockReasons(blocked)[0].label, 'Checks couldn’t run');
+  assert.equal(MergeStatus.lifecycle(blocked).key, 'checks_error');
+});

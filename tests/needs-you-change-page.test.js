@@ -330,6 +330,30 @@ test('a run in progress opens its step by itself: the build as its steps, then t
   assert.equal(plain(render(av, moot).v.body.steps).rows.find((r) => r.gate === 'checks').run, null);
 });
 
+test('a run that overlapped a platform update says it will run again, and opens onto its reason', () => {
+  const av = context();
+  const reason = 'Checks ran while Homeroom was updating, so they will run again.';
+  const item = {
+    ...PR, check_state: 'error', check_error_detail: reason, test_results: [],
+    mergeRequirements: { gates: gates({ checks: { state: 'active', detail: { note: 'they ran while Homeroom was updating and will run again' } } }), evaluated: true, provisional: false },
+  };
+  const { v, html } = render(av, item);
+  const checks = plain(v.body.steps).rows.find((r) => r.gate === 'checks');
+  assert.equal(checks.state, 'active');
+  assert.equal(checks.line, 'Will run again', 'nothing is running yet, so the line does not say Running');
+  assert.equal(checks.run.live, false);
+  assert.equal(checks.run.open, true, 'the reason is read without a tap');
+  assert.equal(checks.run.note, reason);
+  assert.match(html, /aria-expanded="true" aria-controls="dev-step-run-checks"/);
+  assert.match(html, /<p class="dev-step-run-note">Checks ran while Homeroom was updating, so they will run again\.<\/p>/);
+  assert.equal(checks.actions.length, 0, 'no re-run button: the run goes again on its own');
+  // The page's Tested line says the same, with the in-progress mark.
+  assert.deepEqual(plain(v.body.tested), { state: 'running', text: 'Testing will run again' });
+  // Any other error, which blocks on the author, still reads as broken.
+  const blocked = { ...item, mergeRequirements: { ...item.mergeRequirements, gates: gates({ checks: { state: 'blocked' } }) } };
+  assert.deepEqual(plain(av._testedLine(blocked)), { state: 'broken', text: 'Testing couldn’t finish' });
+});
+
 // #2588 retired the tail this test used to end on. The sheet's rows are the
 // merge gates and the states of the change — a failed preview, console
 // errors — and nothing else: the provenance notes that used to draw after
