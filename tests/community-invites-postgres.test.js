@@ -50,7 +50,10 @@ async function connectPool() {
       id SERIAL PRIMARY KEY, username TEXT NOT NULL, display_name TEXT,
       is_admin BOOLEAN NOT NULL DEFAULT FALSE,
       has_platform_access BOOLEAN NOT NULL DEFAULT FALSE,
-      platform_access_granted_at TIMESTAMPTZ);
+      platform_access_granted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
+      getting_started_seen JSONB);
     CREATE TABLE communities (id SERIAL PRIMARY KEY);
     CREATE TABLE apps (
       id SERIAL PRIMARY KEY, slug TEXT NOT NULL, name TEXT,
@@ -160,7 +163,17 @@ test('invite links against a real PostgreSQL', async (t) => {
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {
       const bo = as(2, 'bo', true);
+      // A new account, still to answer the join screen: the link answers it.
+      await pool.query('UPDATE users SET needs_communities_choice = TRUE WHERE id = 2');
       const joined = await invites.redeem(pool, { token, user: bo });
+      const answered = await pool.query(
+        "SELECT needs_communities_choice, getting_started_seen->>'join_answer' AS answer FROM users WHERE id = 2");
+      assert.deepEqual(answered.rows, [{ needs_communities_choice: false, answer: 'invite' }]);
+      // The standing says when, and that the account is about as old as that.
+      const standing = await invites.standing(pool, token, bo);
+      assert.equal(standing.mine, 'joined');
+      assert.ok(Date.now() - Date.parse(standing.joinedAt) < 60 * 1000);
+      assert.equal(standing.newAccount, true);
       assert.deepEqual([joined.status, joined.slug, joined.name], ['joined', 'arena', 'Arena']);
       assert.equal(await member(1, 2), true);
       const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = 1 AND user_id = 2');

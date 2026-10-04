@@ -77,6 +77,7 @@ import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
 import { OnboardingTour } from './features/home/tour';
+import { FirstSession } from './features/first-session';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
@@ -560,6 +561,13 @@ export function Shell() {
           settled and Home is on screen. See features/home/tour/index.tsx.
       */}
       <Island name="OnboardingTour"><OnboardingTour /></Island>
+      {/*
+          "You're in" and the first-session tour after an invite
+          (features/first-session). Renders nothing until
+          App._followInvite opens it, so it adds nothing to the
+          prerendered document.
+      */}
+      <Island name="FirstSession"><FirstSession /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets

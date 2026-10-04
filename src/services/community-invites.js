@@ -501,12 +501,32 @@ async function standing(pool, token, user) {
   const invite = await loadInvite(pool, token);
   if (!invite || !user) return { ...base, mine: null, slug: null };
   const { rows } = await pool.query(
-    'SELECT status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
+    'SELECT status, applied_at FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
     [invite.id, user.id]
   );
   const inIt = await alreadyHasGrant(pool, invite, user.id);
   const mine = inIt ? 'joined' : (rows[0]?.status || null);
-  return { ...base, mine, slug: inIt ? invite.slug : null };
+  // When THIS link joined them, so the shell can tell somebody it just let
+  // in (the sign-in they came through followed it) from a member opening an
+  // old link: only the first gets "You're in".
+  const appliedAt = inIt && rows[0]?.status === 'joined' ? rows[0].applied_at : null;
+  // Whether the account is about as old as its joining: made by the sign-up
+  // this link opened, so "You're in" tells it what Homeroom is.
+  let newAccount = false;
+  if (appliedAt) {
+    const { rows: u } = await pool.query(
+      `SELECT created_at >= $2::timestamptz - INTERVAL '1 hour' AS fresh FROM users WHERE id = $1`,
+      [user.id, appliedAt]
+    );
+    newAccount = !!u[0]?.fresh;
+  }
+  return {
+    ...base,
+    mine,
+    slug: inIt ? invite.slug : null,
+    joinedAt: appliedAt instanceof Date ? appliedAt.toISOString() : (appliedAt || null),
+    newAccount,
+  };
 }
 
 /**
@@ -580,6 +600,20 @@ async function redeem(pool, { token, user }) {
     const { rows: after } = await client.query(
       'SELECT status FROM community_invite_redemptions WHERE id = $1',
       [redemption[0].id]
+    );
+    // Somebody who arrived by a link has their community: the join screen
+    // a new account answers ("What communities do you want to join?",
+    // services/onboarding.js) is not put between them and it. Answered
+    // as 'invite' for the admin Journey page, and communities_onboarded_at
+    // stays NULL, so the Getting started card stays out of their first
+    // session too.
+    await client.query(
+      `UPDATE users
+          SET needs_communities_choice = FALSE,
+              getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                     || jsonb_build_object('join_answer', 'invite')
+        WHERE id = $1 AND needs_communities_choice = TRUE`,
+      [user.id]
     );
     await client.query('COMMIT');
 
