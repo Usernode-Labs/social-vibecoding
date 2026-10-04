@@ -339,6 +339,9 @@ type Mode =
 
 // Set by the signed-out story's sheet for an account it just made
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
+// An account that signed in any other way (a password, a code, a provider)
+// is asked through make() below instead, by the join screen it would
+// otherwise have seen (../auth/communities-first-run.js).
 const MAKE_FLAG = 'usernode:first-session:make';
 
 function viewerName(): string {
@@ -358,7 +361,7 @@ export function FirstSession() {
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
-      setMode({ kind: 'make' });
+      setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
     };
     if (legacy().App?.user) check();
     document.addEventListener('sv:authed', check);
@@ -375,6 +378,15 @@ export function FirstSession() {
         if (!info || !info.slug || seen(info.slug)) return false;
         markSeen(info.slug);
         setMode({ kind: 'welcome', info });
+        return true;
+      },
+      // "What do you want to make?" for an account that is due the join
+      // screen and did not come through the story's sheet. Nothing else is
+      // open by the time the join screen's turn comes, and if the story's
+      // own flag got there first this leaves its screen as it is.
+      make(): boolean {
+        try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
+        setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
         return true;
       },
     };

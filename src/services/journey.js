@@ -491,9 +491,10 @@ function firstMileSteps(row, now = new Date()) {
       : { done: false, stuck: row.username_shown_at ? 'Username sheet shown, not answered' : 'Username not chosen' },
     join: row.communities_onboarded_at
       ? { done: true, at: t(row.communities_onboarded_at), note: seen.join_answer || null }
-      // Not asked: an invite link, the signed-out story, or a project made
-      // in the first session answered it (join_answer 'invite', 'story' or
-      // 'made'), or the account predates the screen.
+      // Not asked: an invite link, the signed-out story, the first session
+      // asked in its place at another sign-in, or a project made in the
+      // first session answered it (join_answer 'invite', 'story', 'sign_in'
+      // or 'made'), or the account predates the screen.
       : (hasAccount && row.needs_communities_choice === false
         ? { done: true, at: null, note: seen.join_answer ? `not asked: ${seen.join_answer}` : 'not asked', weak: true }
         : { done: false, stuck: row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
