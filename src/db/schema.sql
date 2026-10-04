@@ -11882,3 +11882,14 @@ CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
 -- app host at once. This index is that lookup.
 CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
   ON sessions (encode(sha256(token::bytea), 'hex'));
+
+-- A change that went live inside another one (services/included-changes.js):
+-- when a change merges, an open change whose head commit is one of the
+-- merged pull request's own commits was built on, so its work is live too.
+-- It is marked merged with the merge it went live in (merged_at and
+-- merge_commit_sha are that merge's), and this names the change that
+-- carried it, so its page says "Live, included in #8" and nothing asks for
+-- its vote. NULL for every change that merged on its own. ON DELETE SET
+-- NULL: deleting the carrying change leaves this one merged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;

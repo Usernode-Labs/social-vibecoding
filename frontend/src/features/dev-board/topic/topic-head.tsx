@@ -726,6 +726,31 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
+/**
+ * On a change's page: the change it went live inside
+ * (services/included-changes.js). The same box, row and chip as
+ * `AddressedBy`, read from the other end again: that names the change that
+ * closed an issue, this the change that carried this one live.
+ */
+function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+  return (
+    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+      <h4 className="dev-topic-h">{r.heading}</h4>
+      <div className="mt-2">
+        <a
+          href={r.href}
+          className={REF_ROW}
+          data-included-in={r.sessionId}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
+      </div>
+    </aside>
+  );
+}
+
 function IssueAssociations({
   proposalId,
   issues,
@@ -1087,6 +1112,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
         : null}
       {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
+      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
