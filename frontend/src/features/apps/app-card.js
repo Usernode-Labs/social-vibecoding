@@ -131,7 +131,7 @@ export function appPillsFor(app) {
     ? {
       icon: 'lock',
       label: 'Private',
-      tip: 'Only collaborators can see and use this app',
+      tip: 'Only members can open and use this app',
     }
     : (app.collab_visibility === 'private'
       ? {

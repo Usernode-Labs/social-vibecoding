@@ -175,7 +175,14 @@ test('an import names each answer its repo’s dapp.json replaces, and only answ
   assert.deepEqual(all.find((o) => o.key === 'gov'),
     { key: 'gov', label: 'Who approves changes', repo: 'People I pick, at least 2 yes', yours: 'Members vote' });
   assert.equal(all.find((o) => o.key === 'name').yours, 'Book club');
-  assert.equal(all.find((o) => o.key === 'vis').repo, 'Anyone can see it; only people invited can build');
+  assert.equal(all.find((o) => o.key === 'vis').repo,
+    'Anyone can see it; only people invited can build. Code stays public on GitHub.');
+  // Every repository is public on GitHub, so a line that keeps people out
+  // says the code is not kept with it; a public one has nothing to add.
+  assert.equal(repoOverrides({ visibility: { build: 'private', view: 'private' } }, { ...answers, audience: 'open' })[0].repo,
+    'Private to the people invited. Code stays public on GitHub.');
+  assert.equal(repoOverrides({ visibility: { build: 'public', view: 'public' } }, answers)[0].repo,
+    'Anyone can find it, join and build');
   // The check comes before the name and the approval steps now: a blank
   // name, a blank line or a rule not chosen yet is nothing to replace.
   assert.deepEqual(repoOverrides(repo, { ...answers, name: '', description: '', approvers: null }).map((o) => o.key), ['vis']);
@@ -206,6 +213,19 @@ test('an import names each answer its repo’s dapp.json replaces, and only answ
   assert.match(SRC, /'data-repo-sets': repoSets\.join\(' '\)/);
   assert.match(SRC, /const repoSets = \[\.\.\.overrides\.map\(\(o\) => o\.key\), \.\.\.\(repoGov && !overrides\.some\(\(o\) => o\.key === 'gov'\) \? \['gov'\] : \[\]\)\];/);
   assert.match(SRC, /setRepo\(manifest && typeof manifest === 'object' \? manifest : \{\}\);\s*setRepoUnread\(manifest === null\);/);
+});
+
+test('who it is for says who can open it, and that its code is public on GitHub either way', () => {
+  // createRepo (services/github.js) makes every repository public, and an
+  // import must be public already, so "Only you can see it" was never true
+  // of the code. The audience decides who can OPEN the project.
+  const html = shellMarkup();
+  const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
+  const who = card.slice(card.indexOf('data-create-step="who"'), card.indexOf('data-create-step="invite"'));
+  assert.match(who, />Just me<[\s\S]*?>Only you can open it\. Its code is public on GitHub\. Invite people or open it up later\.</);
+  assert.match(who, />A private community<[\s\S]*?>Only you and the people you invite can open it\. Its code is public on GitHub\.</);
+  assert.match(who, />A public community<[\s\S]*?>Anyone can find it, join and build\.</);
+  assert.doesNotMatch(who, /Only you can see it|Private to you/, 'no caption says the project is hidden whole');
 });
 
 test('what it should do is asked of everyone, grows with its text, and says who builds from it', () => {

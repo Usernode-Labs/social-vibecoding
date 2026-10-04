@@ -14,7 +14,8 @@
  *      (./about-model.ts says why it is assembled rather than fixed).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, View on GitHub, Fork this app.
+ *   5. MORE. Share, Add to home screen, Code (public on GitHub), Fork
+ *      this app.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -33,8 +34,11 @@
  *
  * ── The product's own truths, kept ─────────────────────────────────────
  *
- *   - `#improve-row-github` is the design's "Source code": View on GitHub,
- *     only where there is a repository, opening away from the shell.
+ *   - `#improve-row-github` is the design's "Source code": a row reading
+ *     Code, with "Public on GitHub" muted at its end, only where there is a
+ *     repository, opening away from the shell. It says public because every
+ *     repository is (services/github.js createRepo; an import must be public
+ *     already), whoever the project lets open it.
  *   - `#improve-row-share` keeps its id and, for an app, its gate and its
  *     dialog: Share hands somebody the app's live address, so it appears
  *     whenever the app HAS one (`canShare` — running, with a URL), from its
@@ -55,7 +59,7 @@
  * ── A viewer who is not served the platform's row ──────────────────────
  *
  * About Homeroom still opens for them (./platform-target.js): who it is, the
- * three figures, how it is built, Share and View on GitHub. The contributor
+ * three figures, how it is built, Share and its Code row. The contributor
  * list is the platform row's, which the API does not serve them, so it is not
  * drawn rather than drawn as an error.
  */
@@ -573,7 +577,8 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               onClick={() => { void AppContext.dismissForNav(); }}
             >
               <Icon><GitHubIcon /></Icon>
-              <span className="flex-1 min-w-0 truncate font-medium">View on GitHub</span>
+              <span className="flex-1 min-w-0 truncate font-medium">Code</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub</span>
             </a>
           ) : null}
           {showFork && forkItem ? (

@@ -430,8 +430,13 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
   }
 }
 
-/** What making it private means, said before it is proposed. */
-export const MAKE_PRIVATE_LINE = 'Only people who are invited can see it and build it. '
+/**
+ * What making it private means, said before it is proposed. Who can OPEN
+ * it: the repository stays public on GitHub (services/github.js createRepo)
+ * whatever this setting says.
+ */
+export const MAKE_PRIVATE_LINE = 'Only people who are invited can open it and build it. '
+  + 'Its code stays public on GitHub. '
   + 'Members vote on this first, and it applies once it merges.';
 
 /**

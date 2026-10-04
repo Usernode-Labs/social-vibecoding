@@ -194,7 +194,7 @@ test('a person who has not joined sees "Recently" over the same rows', () => {
 });
 
 test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are a proposal', () => {
-  const { audienceChangeLine, canMakePrivate } = loadTsx(CARD);
+  const { audienceChangeLine, canMakePrivate, MAKE_PRIVATE_LINE } = loadTsx(CARD);
   assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is up for a vote');
   assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is up for a vote');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is up for a vote');
@@ -232,6 +232,11 @@ test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are
   const menu = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title="Make it private"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
   assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('label="Settings &amp; rules"'), 'the first of Settings & rules');
+  // Private decides who can OPEN it. Every repository is public on GitHub
+  // (services/github.js createRepo), so both say the code stays public.
+  assert.equal(MAKE_PRIVATE_LINE, 'Only people who are invited can open it and build it. '
+    + 'Its code stays public on GitHub. Members vote on this first, and it applies once it merges.');
+  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub="Only invited people can open and build it\. Code stays public on GitHub\."/);
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.

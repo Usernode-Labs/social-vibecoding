@@ -1060,7 +1060,7 @@
       "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-col-divider .dev-col-divider-label",
-      "expectText": "Yours · private"
+      "expectText": "Yours · not shared"
     },
     {
       "name": "Dev board: every ⋯ menu row leads with an aligned icon",
@@ -2782,8 +2782,8 @@
     {
       "name": "Own sessions pin under the private-sessions divider",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Yours · private",
-      "expectSelector": ".dev-col-divider-label[title=\"Only you can see your active sessions.\"]"
+      "expectText": "Yours · not shared",
+      "expectSelector": ".dev-col-divider-label[title=\"Only you can see your active sessions here. Their code is on public GitHub.\"]"
     },
     {
       "name": "Shared session cards show the owner subtitle",

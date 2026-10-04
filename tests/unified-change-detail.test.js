@@ -262,11 +262,16 @@ test('the Main row reads the integration record when that is the measurement the
   assert.equal(c.filesComplete, true);
 });
 
-test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
+test('unshared changes retain sharing controls and do not pretend to have a discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Make visible'));
-  assert.match(v.body.discussion, /workspace stays private/);
+  // Not shared hides the workspace here, never the code: every repository
+  // is public on GitHub, so the line says so rather than "stays private".
+  assert.equal(v.body.discussion, 'Make this change visible to the group to start a discussion. '
+    + 'Only you can see the agent workspace here unless you share it. Its code is on public GitHub.');
+  assert.doesNotMatch(v.body.discussion, /private/);
+  assert.ok(v.card.meta.some((m) => m.t === 'text' && m.s === 'Not shared yet'), 'the card says Not shared yet');
 });
 
 test('actual shared component renders the entire card and escapes the issue title', () => {

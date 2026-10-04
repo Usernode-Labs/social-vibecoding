@@ -334,9 +334,9 @@ test('before review the page is the same shape: the change’s own status in the
   const { v, html } = render(av, mine, 'session');
   assert.equal(v.body.hero.kind, 'Change');
   assert.equal(v.body.hero.ref, null);
-  assert.equal(v.body.hero.status, 'Private change');
+  assert.equal(v.body.hero.status, 'Not shared yet');
   assert.equal(v.body.hero.verb, 'started');
-  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Private change<\/span>/);
+  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Not shared yet<\/span>/);
   // The draft's own step, then the gates it will meet once it is up for a
   // vote, drawn the way a proposal's are: one short line each, and no
   // ledger sentences under "Where it stands".

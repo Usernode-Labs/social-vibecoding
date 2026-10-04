@@ -253,7 +253,7 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.nextStepId(kept), 'tour');
   assert.deepEqual(kept.steps.map((s) => card.stepView(s, kept).detail), [
     'See how Homeroom works.',
-    'Find people to build with. Homeroom and projects only you can see don’t count.',
+    'Find people to build with. Homeroom and Just-you projects don’t count.',
     'Join a community first.', 'Join a community first.', 'Join a community first.',
   ]);
   // Never a lock once Join is ticked, in every fixture where it is.
@@ -292,9 +292,9 @@ test('every step not done has a button, a verb and an arrow, about the default a
   // The Join row says what does not count while it is to do (D1): its own
   // task, then the note.
   assert.deepEqual(view(step('join', { href: '#apps' }), here),
-    ['Its own task. Homeroom and projects only you can see don’t count.', 'Join', 'Find a community',
+    ['Its own task. Homeroom and Just-you projects don’t count.', 'Join', 'Find a community',
       'Find a community', true, { to: 'hash', href: '#apps' }]);
-  assert.equal(card.joinDetail(''), 'Homeroom and projects only you can see don’t count.');
+  assert.equal(card.joinDetail(''), 'Homeroom and Just-you projects don’t count.');
   assert.deepEqual(view(step('join', { href: '#apps', done: true }), here), ['Its own task.', null],
     'done, it is the task alone');
   assert.deepEqual(view(step('try'), here),
