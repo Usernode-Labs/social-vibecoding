@@ -98,7 +98,7 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   // The default, so it is drawn before the options arrive, and when they fail.
   assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
   assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
   assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);

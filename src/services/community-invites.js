@@ -548,7 +548,7 @@ async function preview(pool, token) {
     },
     inviter: invite.inviter || null,
     inviterName: invite.inviter_display_name || invite.inviter || null,
-    // The person who sent it made the project: "Maya made this for …".
+    // The person who sent it made the project: "Maya made Run Tracker".
     inviterMadeIt: invite.created_by != null && invite.created_by === invite.app_created_by,
     note: invite.note || null,
     memberCount: count,

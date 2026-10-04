@@ -52,19 +52,35 @@ function escapeAttr(value) {
 }
 
 /**
+ * The community a live link's project was made for, when it is named apart
+ * from the project, or null: the same rule as the page's card
+ * (frontend/src/features/auth/invite-card.tsx, madeForName). A community and
+ * its one project share a name today, and preview() sends no other.
+ */
+function madeForName(preview, projectName) {
+  const community = String((preview && preview.communityName) || '').trim();
+  const project = String(projectName || '').trim();
+  return community && community.toLowerCase() !== project.toLowerCase() ? community : null;
+}
+
+/**
  * The link-preview tags for an invite page: what iMessage, Slack and the
  * rest show when the link is pasted. A live link reads the way its page does:
- * "Maya made this for Sunday Run Club" when the person who sent it made the
- * project, with their note (else the project's line, else who invited you)
- * and its picture (else its icon). A dead or unknown one says only that it
- * is a Homeroom invite, so a pasted link discloses no more than preview()
- * does.
+ * "Maya made Run Tracker" when the person who sent it made the project ("Maya
+ * made this for Sunday Run Club" when the community it was made for has a
+ * name of its own), with their note (else the project's line, else who
+ * invited you) and its picture (else its icon). A dead or unknown one says
+ * only that it is a Homeroom invite, so a pasted link discloses no more than
+ * preview() does.
  */
 function previewTags(preview, origin) {
   const live = preview && preview.live;
   const name = live ? preview.project.name : null;
   const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
-  const title = !live ? 'Homeroom invite' : madeBy ? `${madeBy} made this for ${name}` : `Join ${name} on Homeroom`;
+  const madeFor = madeBy ? madeForName(preview, name) : null;
+  const title = !live
+    ? 'Homeroom invite'
+    : madeBy ? (madeFor ? `${madeBy} made this for ${madeFor}` : `${madeBy} made ${name}`) : `Join ${name} on Homeroom`;
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';

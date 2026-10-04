@@ -5,9 +5,9 @@
  * It is three pieces, top to bottom, each on its own card so each reads as
  * one thing:
  *
- *   who      the project's tile, "Maya made this for Sunday Run Club" (or
- *            "@ada invited you to join …" when the sender did not make it),
- *            and how many people are in it;
+ *   who      the project's tile, "Maya made Run Tracker" (or "@ada invited
+ *            you to join …" when the sender did not make it), and how many
+ *            people are in it;
  *   picture  the project itself: the after-shot of its latest change, else
  *            the Discover card's image, else the sketch its maker was shown
  *            while it is built (a sandboxed page: no script, its own origin),
@@ -24,14 +24,18 @@
  * Somebody new lands in the waiting room with the project queued unless the
  * invite tree lets them past.
  *
- * Nothing renders until the preview is back, and nothing at all on any
- * other path: the landing is every signed-out visitor's first screen, and
- * only an invite link has anything to say here. While a live link's card is
- * up, the landing hides its own pitch (landing.tsx); a dead link keeps it
- * and says why above it.
+ * Until the preview is back an invite link shows a quiet placeholder where
+ * the cards will be (InvitePending), and nothing at all renders on any other
+ * path: the landing is every signed-out visitor's first screen, and only an
+ * invite link has anything to say here. While a live link's card is up, or
+ * still on its way, the landing hides its own pitch (landing.tsx); a dead
+ * link keeps it and says why above it, and so does a preview that could not
+ * be read.
  */
 
 import { useEffect, useState } from 'react';
+
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 export type InvitePicture = { kind: 'shot' | 'illustration' | 'sketch'; url: string; darkUrl: string | null };
 
@@ -48,6 +52,13 @@ export type InvitePreview = {
   inviter?: string | null;
   inviterName?: string | null;
   inviterMadeIt?: boolean;
+  /**
+   * The community's own name, when it has one apart from its project's.
+   * Communities and projects are one-to-one today and a community carries
+   * no name of its own (the "Communities" block of src/db/schema.sql), so
+   * the server sends none and the card names the project.
+   */
+  communityName?: string | null;
   note?: string | null;
   memberCount?: number;
 };
@@ -76,13 +87,28 @@ export function invitedLine(preview: InvitePreview): string {
 }
 
 /**
- * The card's headline. "Maya made this for Sunday Run Club" when whoever
- * sent the link made the project — the gift the link is — and the plain
- * invitation otherwise.
+ * The community a project was made for, when it is named apart from the
+ * project, or null. A community with one project shares its name, and "Maya
+ * made this for Run Tracker" reads as if the project were made for itself.
+ */
+export function madeForName(preview: InvitePreview): string | null {
+  const community = (preview.communityName || '').trim();
+  const project = (preview.project?.name || '').trim();
+  return community && community.toLowerCase() !== project.toLowerCase() ? community : null;
+}
+
+/**
+ * The card's headline. "Maya made Run Tracker" when whoever sent the link
+ * made the project — the gift the link is — or "Maya made this for Sunday
+ * Run Club" when the community it was made for has a name of its own; the
+ * plain invitation otherwise.
  */
 export function madeLine(preview: InvitePreview): string {
   const name = preview.project?.name || 'a project';
-  if (preview.inviterMadeIt && preview.inviterName) return `${preview.inviterName} made this for ${name}`;
+  if (preview.inviterMadeIt && preview.inviterName) {
+    const community = madeForName(preview);
+    return community ? `${preview.inviterName} made this for ${community}` : `${preview.inviterName} made ${name}`;
+  }
   return invitedLine(preview);
 }
 
@@ -111,25 +137,46 @@ export function underLine(preview: InvitePreview): string {
   return members ? `${members}.` : '';
 }
 
+// How long the landing waits on a preview before it shows its own pitch
+// instead. A preview that arrives later still replaces it.
+export const INVITE_PREVIEW_WAIT_MS = 8000;
+
 /**
- * The preview of the invite link this page was opened on, or null — before
- * it is back, on any other path, or when it could not be read. Read in an
- * EFFECT, never the first render: the landing's interior hydrates over the
- * prerendered document, which has no invite.
+ * The preview of the invite link this page was opened on, and whether it is
+ * still on its way.
+ *
+ * `preview` is null before it is back, on any other path, or when it could
+ * not be read. It is read in an EFFECT, never the first render: the landing's
+ * interior hydrates over the prerendered document, which has no invite.
+ *
+ * `pending` is true from the first render on an invite path until the
+ * preview is back, could not be read, or has taken INVITE_PREVIEW_WAIT_MS.
+ * Its first value reads the path the way the landing's `onInvitePath` does:
+ * it only shapes the interior, which mounts on reveal (lib/mount-on-reveal.ts),
+ * and the prerender pass has no location, so there is no markup to mismatch.
  */
-export function useInvitePreview(): InvitePreview | null {
+export function useInvitePreview(): { preview: InvitePreview | null; pending: boolean } {
   const [preview, setPreview] = useState<InvitePreview | null>(null);
+  const [pending, setPending] = useState(
+    () => typeof location !== 'undefined' && !!inviteTokenFrom(location.pathname),
+  );
   useEffect(() => {
     const token = inviteTokenFrom(location.pathname);
-    if (!token) return undefined;
+    if (!token) { setPending(false); return undefined; }
     let live = true;
+    const giveUp = setTimeout(() => { if (live) setPending(false); }, INVITE_PREVIEW_WAIT_MS);
     fetch(`/api/public/invites/${encodeURIComponent(token)}`)
       .then((res) => res.json())
-      .then((body: InvitePreview) => { if (live && body && typeof body.live === 'boolean') setPreview(body); })
-      .catch(() => { /* the landing still works without the card */ });
-    return () => { live = false; };
+      .then((body: InvitePreview) => {
+        if (!live) return;
+        if (body && typeof body.live === 'boolean') setPreview(body);
+        setPending(false);
+      })
+      .catch(() => { if (live) setPending(false); /* the landing still works without the card */ })
+      .finally(() => clearTimeout(giveUp));
+    return () => { live = false; clearTimeout(giveUp); };
   }, []);
-  return preview;
+  return { preview, pending };
 }
 
 function Tile({ project, size }: { project: NonNullable<InvitePreview['project']>; size: 'card' | 'hero' }) {
@@ -182,6 +229,27 @@ function Picture({ project }: { project: NonNullable<InvitePreview['project']> }
         <p className="mt-1.5 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400 text-pretty">{project.description}</p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Where the cards will be while the preview is on its way: the first card's
+ * tile and two lines, and the picture's frame, breathing on one clock. It
+ * stands in for the landing's pitch, which an invited visitor should not see
+ * first.
+ */
+export function InvitePending() {
+  return (
+    <SkeletonGroup label="Opening your invite" data-landing-invite="pending">
+      <div className={`${CARD} mt-4 flex items-center gap-3`}>
+        <Skeleton shape="block" className="h-12 w-12 rounded-xl" />
+        <div className="min-w-0 flex-1">
+          <Skeleton className="w-3/4" />
+          <Skeleton shape="muted" className="mt-2 w-1/2" />
+        </div>
+      </div>
+      <div className={`${CARD} mt-3 h-[340px]`} />
+    </SkeletonGroup>
   );
 }
 
