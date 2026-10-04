@@ -19,6 +19,7 @@ const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
+const explicitApprovalCopy = require('../services/explicit-approval');
 const topicAttrs = require('../services/topic-attributes');
 // #2086: the featured-illustration governance kind. Its proposals are
 // opened by src/routes/app-illustrations.js (the bytes travel with the
@@ -851,6 +852,14 @@ function issueRoutes(config) {
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) as up_count,
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) as down_count,
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $2) as my_vote,
+           -- The member floor: a secret-change request carries a value, so
+           -- it needs an up vote from someone other than its author.
+           CASE WHEN i.kind = 'secret_change' THEN
+             (SELECT COUNT(*)::int FROM issue_votes
+               WHERE issue_id = i.id AND vote = 'up'
+                 AND user_id IS DISTINCT FROM i.created_by
+                 AND counts_toward_outcome(user_id, i.app_id))
+           END as other_up_count,
            -- #194: governance-thread message count for the chat badge,
            -- plus the latest thread-message timestamp for the forum
            -- feed's activity sort. chat_count counts human messages only
@@ -888,6 +897,13 @@ function issueRoutes(config) {
           pool, 'issue', rows.map((r) => r.id), electorate.approverIds
         )
         : null;
+      // A secret-change request is flagged (no timer, and a Yes from another
+      // member; services/governance.js). One community read for the list,
+      // only when one is open.
+      const memberCount = rows.some((r) => r.kind === 'secret_change')
+        ? await governanceSvc.communityMemberCount(pool, appId)
+        : undefined;
+      const secretReason = explicitApprovalCopy.secretChangeReason(!!gatedApp.self_hosted);
 
       // Strip ciphertext from secret_change rows before serializing —
       // the value should never be readable from this endpoint, even
@@ -897,11 +913,16 @@ function issueRoutes(config) {
       // visibility window) anchored on the issue's created_at, mirroring
       // the PR /promoted endpoint so governance pills get the same
       // countdown/Contested treatment.
-      const sanitized = rows.map((r) => {
+      const sanitized = rows.map((row) => {
+        const { other_up_count: otherUp, ...r } = row;
         const q = qualifiedByRow
-          ? (qualifiedByRow.get(r.id) || { yes: 0, no: 0 })
-          : { yes: r.up_count, no: r.down_count };
-        const gate = governanceSvc.computeGate(gov, electorate.active, q.yes, q.no, r.created_at);
+          ? (qualifiedByRow.get(r.id) || { yes: 0, no: 0, otherYes: 0 })
+          : { yes: r.up_count, no: r.down_count, otherYes: otherUp };
+        const flagged = r.kind === 'secret_change';
+        const gate = governanceSvc.computeGate(
+          gov, electorate.active, q.yes, q.no, r.created_at, null,
+          flagged ? { explicitApproval: true, otherYes: q.otherYes, memberCount } : {}
+        );
         const withGate = {
           ...r,
           votes_required: gate.required,
@@ -911,6 +932,9 @@ function issueRoutes(config) {
           approvals_required: gate.approvalsRequired,
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
+          ...(flagged ? governanceSvc.explicitApprovalRowFields({
+            requires_explicit_approval: true, explicit_approval_reason: secretReason,
+          }, gate) : {}),
         };
         if (withGate.kind !== 'secret_change' || !withGate.payload) return withGate;
         const { valueEnc, ...rest } = withGate.payload;
@@ -967,6 +991,13 @@ function issueRoutes(config) {
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) as up_count,
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) as down_count,
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $3) as my_vote,
+           -- The member floor, as the list reads it.
+           CASE WHEN i.kind = 'secret_change' THEN
+             (SELECT COUNT(*)::int FROM issue_votes
+               WHERE issue_id = i.id AND vote = 'up'
+                 AND user_id IS DISTINCT FROM i.created_by
+                 AND counts_toward_outcome(user_id, i.app_id))
+           END as other_up_count,
            (SELECT COUNT(*)::int FROM chat_messages cm
              WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
                AND cm.msg_type = 'message') as chat_count,
@@ -989,16 +1020,27 @@ function issueRoutes(config) {
         const governanceSvc = require('../services/governance');
         const gov = await governanceSvc.getGovernance(pool, appId);
         const electorate = await governanceSvc.getElectorate(pool, appId, gov);
+        const { other_up_count: otherUp, ...row } = proposal;
         const q = electorate.approverIds
           ? ((await governanceSvc.qualifiedCountsBatch(
-            pool, 'issue', [proposal.id], electorate.approverIds
-          )).get(proposal.id) || { yes: 0, no: 0 })
-          : { yes: proposal.up_count, no: proposal.down_count };
+            pool, 'issue', [row.id], electorate.approverIds
+          )).get(row.id) || { yes: 0, no: 0, otherYes: 0 })
+          : { yes: row.up_count, no: row.down_count, otherYes: otherUp };
+        // Same flag as the list: a secret-change request needs a Yes from
+        // another member and never applies on a timer.
+        const flagged = row.kind === 'secret_change';
         const gate = governanceSvc.computeGate(
-          gov, electorate.active, q.yes, q.no, proposal.created_at
+          gov, electorate.active, q.yes, q.no, row.created_at, null,
+          flagged
+            ? {
+              explicitApproval: true,
+              otherYes: q.otherYes,
+              memberCount: await governanceSvc.communityMemberCount(pool, appId),
+            }
+            : {}
         );
         proposal = {
-          ...proposal,
+          ...row,
           votes_required: gate.required,
           merge_window_ends_at: gate.windowEndsAt,
           contested: gate.contested,
@@ -1006,6 +1048,10 @@ function issueRoutes(config) {
           approvals_required: gate.approvalsRequired,
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
+          ...(flagged ? governanceSvc.explicitApprovalRowFields({
+            requires_explicit_approval: true,
+            explicit_approval_reason: explicitApprovalCopy.secretChangeReason(!!gatedApp.self_hosted),
+          }, gate) : {}),
         };
         // Never leak a secret_change's ciphertext, exactly as the list does.
         if (proposal.kind === 'secret_change' && proposal.payload) {
@@ -2953,7 +2999,8 @@ function issueRoutes(config) {
     if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
       const { rows: issueRows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug, a.created_by AS app_created_by
+        `SELECT i.*, a.slug AS app_slug, a.created_by AS app_created_by,
+                a.self_hosted AS app_self_hosted
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
         [issueId]
@@ -2975,11 +3022,20 @@ function issueRoutes(config) {
 
       // #788: the issue-side counterpart of the force-merge widening —
       // an app's own declared admins may force-apply that app's
-      // governance proposals. Issue proposals never carry the
-      // explicit-approval flag (they don't edit dapp.json's admins
-      // block; only a PR can), so no exception applies here.
+      // governance proposals. The exception is the one issue kind that is
+      // flagged for explicit approval, a secret change: it carries a value,
+      // and applying it on an app admin's say-so would skip the other
+      // member's Yes it waits for, so only a platform admin may.
       const appForGate = { id: issue.app_id, created_by: issue.app_created_by };
-      if (!(await appAdmins.canForceMerge(pool, appForGate, req.user))) {
+      const explicitApproval = issue.kind === 'secret_change';
+      if (!(await appAdmins.canForceMerge(pool, appForGate, req.user, { explicitApproval }))) {
+        if (explicitApproval && await appAdmins.isAppAdmin(pool, issue.app_id, req.user?.id)) {
+          return res.status(403).json({
+            error: `${explicitApprovalCopy.reasonSentence(
+              explicitApprovalCopy.secretChangeReason(!!issue.app_self_hosted)
+            )} Only a platform admin can apply it without that vote.`,
+          });
+        }
         return res.status(403).json({ error: 'Full admin access required' });
       }
 
@@ -3402,20 +3458,31 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
 
   // #646: governance-aware gate (down votes feed both gates, anchored
   // on created_at). An admin force-apply skips it, like force-merge.
+  //
+  // A secret change carries a value the app or the platform is handed, so
+  // it is flagged like a protected dapp.json change (#788): no visibility
+  // window, no lazy consensus, and an up vote from someone other than its
+  // author whenever the community has more than one member
+  // (services/governance.js applyNoTimerMerge).
   const governanceSvc = require('../services/governance');
   const gate = await governanceSvc.governedGate(pool, issue.app_id, {
     kind: 'issue', id: issue.id, openedAt: issue.created_at,
+    explicitApproval: true,
+    authorId: issue.created_by ?? null,
   });
   const upCount = gate.qualifiedYes;
   const active = gate.activeCount;
   const required = force ? upCount : gate.required;
-  // Same two apply paths as maybeApplyRenameProposal (threshold or lazy
-  // consensus); an admin force-apply skips both, like force-merge.
+  // The threshold path only (the flag turns lazy consensus off); an admin
+  // force-apply skips it, like force-merge.
   if (!force && !gate.mergeable) {
+    const floor = gate.memberFloor;
     return {
       applied: false, upCount, majority, active,
       required: gate.required, windowEndsAt: gate.windowEndsAt,
       waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
+      ...(gate.thresholdMet && floor && floor.applies && !floor.met
+        ? { awaitingOtherMember: true } : {}),
     };
   }
 

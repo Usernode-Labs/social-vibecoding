@@ -49,12 +49,16 @@ const GATES = [
     actor: 'group',
   },
   {
+    // The member floor (services/governance.js applyNoTimerMerge): a change
+    // to who runs the app, how changes are approved, who can see it, its
+    // platform settings or its keys needs a Yes from someone other than
+    // its author. Absent in a one-member community, where there is nobody
+    // else to ask; a record from before the floor (no `memberFloor` in its
+    // context) keeps the row, as it always had one.
     key: 'explicit',
-    label: 'Explicit approval',
+    label: 'A Yes from another member',
     actor: 'group',
-    // Only for a change to dapp.json's admins block, which loses the
-    // time-based merge paths entirely.
-    applies: (c) => !!c.explicitApproval,
+    applies: (c) => !!c.explicitApproval && c.memberFloor !== false,
   },
   {
     key: 'admin_yes',
@@ -122,6 +126,8 @@ const GATE_KEYS = new Set(GATES.map((g) => g.key));
 
 // The one rule for which commit a proposal's approvals and checks are about.
 const { reviewedHeadForSession, visualHeadForSession } = require('./pr-vote-revision');
+// The member floor's words: why a flagged proposal needs another member's Yes.
+const explicitApprovalCopy = require('./explicit-approval');
 
 function intOrNull(v) {
   if (v == null) return null;
@@ -474,6 +480,28 @@ function mainStep(session) {
 }
 
 /**
+ * The member-floor step, read off the serializer's columns
+ * (governance.explicitApprovalRowFields): done once someone other than the
+ * author has said Yes, waiting until then. Null when the row is not flagged
+ * or the floor does not apply (one member), or the serializer did not say.
+ */
+function explicitStep(session) {
+  const s = session || {};
+  if (!s.requires_explicit_approval || !s.needs_other_member_yes) return null;
+  const reason = s.explicit_approval_reason || null;
+  const other = intOrNull(s.other_member_yes_count) || 0;
+  return {
+    key: 'explicit',
+    label: 'A Yes from another member',
+    actor: 'group',
+    state: other >= 1 ? 'done' : 'waiting',
+    detail: other >= 1
+      ? { reason, otherYes: other }
+      : { reason, otherYes: 0, note: explicitApprovalCopy.reasonSentence(reason) },
+  };
+}
+
+/**
  * The list before the gate has ever run against this proposal.
  *
  * The recording only happens when checkAndMerge runs, and checkAndMerge runs
@@ -505,6 +533,12 @@ function provisional(session) {
     state: (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
     detail: (required != null && yes != null) ? { note: `${yes} of ${required}` } : null,
   });
+
+  // The member floor, when the serializer says it applies (a flagged row in
+  // a community of more than one). Absent otherwise, like the lock: a
+  // serializer that did not read it has not said, and is not guessed for.
+  const explicit = explicitStep(s);
+  if (explicit) out.push(explicit);
 
   const step = integrationStep(s);
   out.push({
@@ -627,7 +661,7 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLiveApprovals(withLiveMainPause(describe(record), s), s),
+    gates: withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s),
     evaluated: true,
     provisional: false,
   };
@@ -672,6 +706,26 @@ function withLiveApprovals(gates, s) {
     : entry));
 }
 
+// The same staleness for the member floor: a run that stopped at "A Yes
+// from another member" stays current after that Yes lands (a vote moves
+// neither the epoch nor the head). When the row's live columns say someone
+// other than the author has said Yes, a WAITING entry becomes done; every
+// other case stands.
+function withLiveExplicit(gates, s) {
+  if (!s.requires_explicit_approval || !s.needs_other_member_yes) return gates;
+  const other = intOrNull(s.other_member_yes_count);
+  if (other == null || other < 1) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'explicit') : -1;
+  if (idx < 0 || !gates[idx] || gates[idx].state !== 'waiting') return gates;
+  return gates.map((entry, i) => (i === idx
+    ? {
+      ...entry,
+      state: 'done',
+      detail: { reason: s.explicit_approval_reason || (entry.detail && entry.detail.reason) || null, otherYes: other },
+    }
+    : entry));
+}
+
 /**
  * Store what a run did. Best-effort by construction: this is a DESCRIPTION,
  * and a proposal must never fail to merge because its description could not
@@ -700,6 +754,7 @@ module.exports = {
   trace,
   describe,
   integrationStep,
+  explicitStep,
   mainStep,
   levelAndGreen,
   provisional,
@@ -707,5 +762,6 @@ module.exports = {
   readRequirements,
   recordIsSuperseded,
   withLiveApprovals,
+  withLiveExplicit,
   store,
 };

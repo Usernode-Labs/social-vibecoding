@@ -8,12 +8,14 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // Journey (#admin/journey, #3369): the user journey and the North Star.
 //
 // One read surface over the endpoints slice 1 shipped under
-// /api/admin/journey/* (src/services/journey.js), drawn as six chart cards
+// /api/admin/journey/* (src/services/journey.js), drawn as eight chart cards
 // so it reads at a glance: the North Star (active groups, with eight weeks
 // of trend, the week's lifecycle as units, and the votes behind it), the
 // seven stages, the first mile per admit cohort (one track per newcomer,
-// under the staircase it sums to), the change loop and the invite loop as
-// rings, and where newcomers go next. Each check sits on the card whose
+// under the staircase it sums to), the creation path (making a project to a
+// change of theirs going live, against its targets) and the pairs (the aha:
+// two people active on a project together), the change loop and the invite
+// loop as rings, and where newcomers go next. Each check sits on the card whose
 // reading it qualifies: group votes and lockstep under the North Star, the
 // team's share of live changes beside the change loop, navigation coverage
 // under the paths. Names are chips that open one person; a stage bar opens
@@ -135,6 +137,8 @@ const JUI = Object.freeze({
   stepper: 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40',
   search: 'h-6 w-full sm:w-44 rounded-full border-0 bg-zinc-100 dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500',
   mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(9,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(9,minmax(0,1fr))_2.5rem]',
+  // The creation path by week: the week, then one column per step.
+  weekGrid: 'grid items-start gap-x-2 gap-y-1 grid-cols-[3.5rem_repeat(5,minmax(0,1fr))]',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
 });
 
@@ -455,12 +459,12 @@ const LIFECYCLE_FILL: Record<string, string> = {
 // shown and the highest week carry their count.
 const TREND_LABELLED = 12;
 
-function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>; shown: string }) {
+function Trend({ trend, shown, label = 'Active groups' }: { trend: Array<{ week: string; count: number }>; shown: string; label?: string }) {
   if (!trend.length) return null;
   const max = Math.max(1, ...trend.map((t) => t.count));
   const many = trend.length > TREND_LABELLED;
   return (
-    <div className={many ? 'w-full' : 'shrink-0'} aria-label={`Active groups over ${trend.length} weeks`}>
+    <div className={many ? 'w-full' : 'shrink-0'} aria-label={`${label} over ${trend.length} weeks`}>
       <div className={`flex items-end h-14 ${many ? 'gap-0.5' : 'gap-1'}`}>
         {trend.map((t) => (
           <div key={t.week} className={`flex flex-col items-center justify-end h-full ${many ? 'flex-1 min-w-0' : 'w-5'}`}>
@@ -842,6 +846,206 @@ function InviteCard({ data, failed, onOpen }: { data: Loops | null; failed: bool
           <p className={JUI.fine}>The three cells: arrived, did something, invited someone.</p>
         </div>
       ) : <Empty>Nobody came in through an invite link this week.</Empty>}
+    </Card>
+  );
+}
+
+// ── Creation path ──────────────────────────────────────────────────────
+//
+// What happens after somebody makes a project, each step timed from the
+// moment they made it, against its target. People, not projects: a person
+// counts once per step (src/services/journey.js creationPath). A step the
+// platform only records from a later day reads "not recorded yet" for the
+// weeks before, never 0.
+
+type CreationStep = {
+  key: string; reached: Count; of: number; medianSeconds: number | null;
+  targetSeconds: number | null; withinTarget: number | null;
+};
+type Creation = {
+  week: string; finished: boolean; steps: CreationStep[];
+  targets: Record<string, number>;
+  recordedFrom: Record<string, string | null>;
+  weeks: Array<{ week: string; steps: Array<{ key: string; reached: Count; medianSeconds: number | null }> }>;
+  examples: Array<{
+    userId: number; name: string; slug: string; project: string; createdAt: string;
+    steps: Array<{ key: string; recorded: boolean; seconds: number | null }>;
+  }>;
+};
+
+const CREATION_STEPS: Array<[string, string, string]> = [
+  ['created', 'Created', 'made a project'],
+  ['running', 'Running', 'their project ran for the first time'],
+  ['first_version', 'First version ready', 'the first version built from what they described is up to try'],
+  ['preview', 'Preview opened', 'they opened a preview of their project'],
+  ['change_live', 'Requested change live', 'a change they asked for went live'],
+];
+
+const CREATION_SHORT: Record<string, string> = {
+  created: 'Made', running: 'Ran', first_version: 'First version', preview: 'Preview', change_live: 'Change live',
+};
+
+/** Seconds as a short duration: "45 s", "1.5 min", "12 min", "3 h", "2 days". */
+function dur(s: number | null | undefined): string {
+  if (s == null || !Number.isFinite(s)) return '';
+  if (s < 60) return `${Math.round(s)} s`;
+  if (s < 600) return `${Math.round(s / 6) / 10} min`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 48 * 3600) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} days`;
+}
+
+/** Green when on target, amber when over; no colour where there is no target. */
+function targetTone(seconds: number | null, target: number | null): string {
+  if (seconds == null || target == null) return 'text-zinc-600 dark:text-zinc-300';
+  return seconds <= target ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400';
+}
+
+function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
+  const { data, failed } = useJourney<Creation>(scoped('/api/admin/journey/creation', scope));
+  if (!data) return <Card id="admin-journey-creation" title="Creation path"><Loading failed={failed} what="the creation path" /></Card>;
+  const stepOf = (key: string) => data.steps.find((s) => s.key === key);
+  const later = Object.entries(data.recordedFrom || {}).filter(([, at]) => at).map(([, at]) => (at as string).slice(0, 10));
+  const since = later.length ? later.sort()[later.length - 1] : null;
+  return (
+    <Card id="admin-journey-creation" title="Creation path"
+      note={`${data.week === 'all' ? 'all time' : `week of ${weekLabel(data.week)}`} · from making a project`}>
+      <div className="space-y-2.5">
+        {CREATION_STEPS.map(([key, label, means]) => {
+          const st = stepOf(key);
+          if (!st) return null;
+          const shown = typeof st.reached === 'number' ? st.reached : null;
+          return (
+            <div key={key} data-journey-creation-step={key} title={means}>
+              <div className="flex items-baseline justify-between gap-2 text-sm">
+                <span>{label}</span>
+                <span className="tabular-nums shrink-0">
+                  {shown == null ? <Num v={st.reached} />
+                    : key === 'created' || !st.of ? plural(shown, 'person', 'people') : `${shown} of ${st.of}`}
+                </span>
+              </div>
+              {shown == null
+                ? <div className="h-2 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600" />
+                : <UnitBar n={shown} of={st.of} fill={key === 'change_live' ? 'bg-emerald-500' : 'bg-violet-500'} />}
+              {key !== 'created' && shown != null ? (
+                <div className={`mt-0.5 ${JUI.fine}`}>
+                  {st.medianSeconds == null ? 'nobody yet' : (
+                    <>
+                      median <span className={targetTone(st.medianSeconds, st.targetSeconds)}>{dur(st.medianSeconds)}</span>
+                      {st.targetSeconds != null ? ` · target ${dur(st.targetSeconds)} · ${st.withinTarget} on time` : ''}
+                    </>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {since ? <p className={`${JUI.fine} mt-2`}>Running, Preview opened and Requested change live are recorded from {weekLabel(since)}.</p> : null}
+
+      <div className={`${JUI.label} mt-4 mb-1.5`}>By week</div>
+      <div className={JUI.weekGrid} id="admin-journey-creation-weeks">
+        <span className={JUI.fine}>Week</span>
+        {CREATION_STEPS.map(([key]) => <span key={key} className={`${JUI.fine} text-right`}>{CREATION_SHORT[key]}</span>)}
+        {data.weeks.map((w) => (
+          <div key={w.week} className="contents" data-journey-creation-week={w.week}>
+            <span className="text-xs tabular-nums">{weekLabel(w.week)}</span>
+            {CREATION_STEPS.map(([key]) => {
+              const cell = w.steps.find((s) => s.key === key);
+              if (!cell || isNotRecorded(cell.reached)) {
+                return <span key={key} className={`${JUI.fine} text-right`} title="not recorded yet">?</span>;
+              }
+              const target = data.targets ? data.targets[key] ?? null : null;
+              return (
+                <span key={key} className="text-right text-xs tabular-nums">
+                  {cell.reached}
+                  {cell.medianSeconds != null && key !== 'created'
+                    ? <span className={`block text-[10px] ${targetTone(cell.medianSeconds, target)}`}>{dur(cell.medianSeconds)}</span> : null}
+                </span>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <p className={`${JUI.fine} mt-1`}>People who reached each step, with the median time. ? is not recorded yet.</p>
+
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Newest projects</div>
+      {data.examples.length ? (
+        <div className="space-y-2" id="admin-journey-creation-examples">
+          {data.examples.map((e) => (
+            <div key={e.slug} data-journey-creation-example={e.slug}>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <PersonChip person={{ userId: e.userId, name: e.name }} onOpen={onOpen} />
+                <span className="text-sm font-medium truncate min-w-0">{e.project}</span>
+              </div>
+              <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
+                {e.steps.map((st) => (
+                  <span key={st.key}>
+                    {`${CREATION_SHORT[st.key]} `}
+                    {!st.recorded ? 'not recorded'
+                      : st.seconds == null ? 'not yet'
+                        : <span className={targetTone(st.seconds, data.targets ? data.targets[st.key] ?? null : null)}>{dur(st.seconds)}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <Empty>Nobody made a project in this time.</Empty>}
+    </Card>
+  );
+}
+
+// ── Pairs ──────────────────────────────────────────────────────────────
+//
+// The aha: a project where two real people were both active within 7 days
+// of the second one joining, out of the projects that got a second member
+// (src/services/journey.js pairs). The pair is the invite link's maker and
+// the person who followed it, or else the first two members.
+
+type PairsData = {
+  week: string; finished: boolean; days: number; count: number; of: number; open: number;
+  trend: Array<{ week: string; count: number; of: number }>;
+  examples: Array<{
+    slug: string; name: string; pair: Person[]; via: string; secondJoinedAt: string;
+    bothActive: boolean; hoursToBoth: number | null; open: boolean;
+  }>;
+};
+
+function PairsCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
+  const { data, failed } = useJourney<PairsData>(scoped('/api/admin/journey/pairs', scope));
+  if (!data) return <Card id="admin-journey-pairs" title="Pairs"><Loading failed={failed} what="the pairs" /></Card>;
+  const last = data.trend.length ? data.trend[data.trend.length - 1].week : data.week;
+  return (
+    <Card id="admin-journey-pairs" title="Pairs"
+      note={`${data.week === 'all' ? 'all time' : `week of ${weekLabel(data.week)}`} · both active within ${data.days} days`}>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div id="admin-journey-pairs-count" className={JUI.headline}>{data.count}</div>
+          <div className={`${JUI.fine} mt-1`}>of {plural(data.of, 'project', 'projects')} that got a second member</div>
+          {data.open ? <div className={JUI.fine}>{data.open} still inside their {data.days} days</div> : null}
+        </div>
+        <Trend trend={data.trend} shown={data.week === 'all' ? last : data.week} label="Pairs" />
+      </div>
+      <p className={`${JUI.fine} mt-2`}>
+        Two real people both did something on the project (used it, wrote in its chat, voted, or asked an agent for a change)
+        within {data.days} days of the second one joining.
+      </p>
+      <div className="mt-4 space-y-2" id="admin-journey-pair-rows">
+        {data.examples.length ? data.examples.map((e) => (
+          <div key={e.slug} className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0" data-journey-pair={e.slug}>
+            <span className="text-sm font-medium truncate w-28 shrink-0">{e.name}</span>
+            <PersonChip person={e.pair[0]} onOpen={onOpen} />
+            <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">{e.via === 'invite' ? '→' : '+'}</span>
+            <PersonChip person={e.pair[1]} onOpen={onOpen} />
+            <span className={e.bothActive ? AdminUI.badge.success : e.open ? AdminUI.badge.outline : AdminUI.badge.warn}>
+              {e.bothActive ? `both active, ${e.hoursToBoth != null && e.hoursToBoth < 48 ? `${e.hoursToBoth} h` : days(Math.round((e.hoursToBoth || 0) / 24))}`
+                : e.open ? 'waiting' : 'only one active'}
+            </span>
+          </div>
+        )) : <Empty>No project got a second member in this time.</Empty>}
+        {data.examples.length ? <p className={JUI.fine}>→ joined through the first one&apos;s invite link · + the project&apos;s first two members</p> : null}
+      </div>
     </Card>
   );
 }
@@ -1316,6 +1520,8 @@ function JourneySection() {
           <NorthStarCard s={s} scope={scope} onOpen={openPerson} onDetails={() => setDialog('checks')} />
           <StagesCard scope={scope} onNames={setNames} />
           <div className="xl:col-span-2"><FirstMileCard cohorts={cohorts} scope={scope} onOpen={openPerson} /></div>
+          <CreationCard scope={scope} onOpen={openPerson} />
+          <PairsCard scope={scope} onOpen={openPerson} />
           <LoopCard data={loops} failed={loopsFailed} s={s} scope={scope} />
           <InviteCard data={loops} failed={loopsFailed} onOpen={openPerson} />
           <div className="xl:col-span-2"><NextCard s={s} scope={scope} /></div>

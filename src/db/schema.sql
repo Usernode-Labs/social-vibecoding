@@ -573,6 +573,13 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
 -- the IS NULL guard makes the backfill a one-shot.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_deploy_at TIMESTAMPTZ;
 UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
+-- When the project first ran: set once, by the first successful deploy in
+-- services/app-creator.js (services/journey-events.js markFirstRunning),
+-- beside an `app_running` event. last_deploy_at cannot answer it, since
+-- every merge moves it. NULL for a project that never ran, and for every
+-- project from before this column: it is not backfilled, because nothing
+-- recorded the moment (the admin Journey's creation path says so).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS first_running_at TIMESTAMPTZ;
 -- Snapshot of `dapp.json` from the last successful clone (createApp +
 -- rebuildProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the
@@ -1662,8 +1669,9 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
 
 -- #788: "explicit approval" flag — this proposal's diff changes a
--- privilege-granting block in dapp.json (today only the top-level
--- `admins` list), so the TIME-BASED merge paths are switched off for it:
+-- protected block in dapp.json (`admins`, `governance`, `visibility`,
+-- `platform_env` or `secrets`; services/explicit-approval.js), so the
+-- TIME-BASED merge paths are switched off for it:
 -- no minimum visibility window, no lazy-consensus "silence is consent"
 -- auto-merge. The app's NORMAL approval rules are otherwise untouched
 -- (same threshold, same electorate, same at-least-N / invited-approver
@@ -1672,17 +1680,42 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEG
 -- rejection countdown and the stale-PR sweep behave exactly as they do
 -- for any other proposal on that app. Implemented as the pure
 -- applyNoTimerMerge modifier in services/governance.js.
+-- A flagged proposal ALSO needs at least one qualifying Yes from someone
+-- other than its author whenever the app's community has more than one
+-- member (the member floor, services/governance.js applyNoTimerMerge), and
+-- an app admin can no longer force-merge it.
 --   requires_explicit_approval : NULL = not computed yet (the stale-PR
 --     sweeper backfills), FALSE = ordinary proposal, TRUE = flagged.
---   explicit_approval_reason   : which rule flagged it; only 'admins'
---     today, a string so a second source can be added later without a
---     schema change.
+--   explicit_approval_reason   : which block flagged it: 'admins',
+--     'governance', 'visibility', 'platform_env' or 'secrets'. ONE value,
+--     the primary block in that order, when a proposal touches several:
+--     every surface says one sentence, and the joined list would not fit
+--     the column (the full list rides on the merge debug step).
 -- Stamped at promote, at manifest-PR creation, and on every head change
 -- (native new-commit vote reset + imported-PR head sync);
 -- re-verified authoritatively in checkAndMerge just before the gate.
 -- Covered by the table-level staging:private comment.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS requires_explicit_approval BOOLEAN;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS explicit_approval_reason   VARCHAR(32);
+-- The platform's own manifest PRs that were open before visibility,
+-- governance and secret-declaration PRs were flagged at creation. Their
+-- branch prefix says what they change (services/rename-pr.js), so they are
+-- stamped here rather than left to merge on a timer until checkAndMerge's
+-- live re-check reaches them. Idempotent: a stamped row is skipped, so
+-- this touches nothing after its first boot.
+UPDATE chat_sessions
+   SET requires_explicit_approval = TRUE,
+       explicit_approval_reason = CASE
+         WHEN branch_name LIKE 'visibility/%' THEN 'visibility'
+         WHEN branch_name LIKE 'governance/%' THEN 'governance'
+         WHEN pr_title LIKE 'Declare platform variable%' THEN 'platform_env'
+         ELSE 'secrets'
+       END
+ WHERE status IN ('promoted', 'merging')
+   AND requires_explicit_approval IS NOT TRUE
+   AND (branch_name LIKE 'visibility/%'
+     OR branch_name LIKE 'governance/%'
+     OR branch_name LIKE 'secret-declare/%');
 
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
@@ -2818,6 +2851,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
   ON events (user_id, (metadata->>'batchId'))
   WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
+
+-- The admin Journey's creation path (services/journey-events.js): a
+-- preview counts as opened once per viewer per change, however often it is
+-- reopened, and a merged change is recorded live once, however often its
+-- merge's tail runs again after a restart.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_preview_opened_once
+  ON events (session_id, user_id)
+  WHERE event_type = 'preview_opened';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
+  ON events (session_id)
+  WHERE event_type = 'change_live';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -11562,6 +11606,18 @@ END $$;
 -- every fork reads as. app-creator scaffolds from it, so a Retry after a
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
+
+-- "Suggest this back" (services/suggest-back.js): a proposal opened on an
+-- original from one of its remixes records the copy it came from. NULL for
+-- every other proposal. The partial unique index is what keeps one copy to
+-- one open suggestion at a time, behind the route's own read, so two presses
+-- racing past that read cannot both land. ON DELETE SET NULL: deleting the
+-- copy leaves the proposal on the original as it is.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS suggested_from_app_id INTEGER
+  REFERENCES apps(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_one_open_suggestion
+  ON chat_sessions (suggested_from_app_id)
+  WHERE suggested_from_app_id IS NOT NULL AND status IN ('active', 'promoted', 'merging');
 
 -- ── App-host sign-in (#3657; services/edge-gate.js) ──────────────────────
 --

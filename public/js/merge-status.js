@@ -121,6 +121,41 @@
     return mins >= 1 ? mins + ' min' : '';
   }
 
+  // #788 / the member floor: why a flagged proposal needs a Yes from a member
+  // other than its author, in the words every surface uses. The server's copy
+  // is src/services/explicit-approval.js; this file loads before app-view.js
+  // in the browser and cannot require it, so the phrases are repeated here
+  // and tests/explicit-approval-vote-panel.test.js holds the two together.
+  var EXPLICIT_PHRASES = {
+    admins: 'who runs this app',
+    governance: 'how changes are approved',
+    visibility: 'who can see this app',
+    platform_env: 'this app\u2019s platform settings',
+    secrets: 'this app\u2019s keys',
+  };
+
+  // { phrase, sentence, line } for a reason; an unknown or missing reason
+  // still reads as a sentence.
+  function explicitApprovalCopy(reason) {
+    var phrase = Object.prototype.hasOwnProperty.call(EXPLICIT_PHRASES, reason)
+      ? EXPLICIT_PHRASES[reason] : null;
+    return {
+      phrase: phrase,
+      sentence: phrase
+        ? 'Changes to ' + phrase + ' need a Yes from another member.'
+        : 'This change needs a Yes from another member.',
+      line: phrase ? 'It changes ' + phrase : 'It changes a protected setting',
+    };
+  }
+
+  // Whether a flagged row is still waiting on the member floor: its
+  // community has more than one member and nobody but the author has said
+  // Yes. Only a row the server described says so (needs_other_member_yes).
+  function awaitingOtherMember(p) {
+    if (!p || !p.requires_explicit_approval || !p.needs_other_member_yes) return false;
+    return num(p.other_member_yes_count) < 1;
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -392,6 +427,15 @@
         title: 'App is locked, so it also needs at least one admin yes before it merges.',
       });
     }
+    // 8a — the member floor: the votes are in, but none of them is from a
+    // member other than the author. "Merging shortly" would be untrue.
+    if (status === 'promoted' && reached && awaitingOtherMember(p)) {
+      return descriptor('awaiting_member', 'Needs another member\u2019s Yes', 'amber', false, {
+        votes: votes,
+        title: explicitApprovalCopy(p.explicit_approval_reason).sentence,
+        explicitApproval: true,
+      });
+    }
     // 8b — passed the vote, checks green, and the APP's merges are paused by
     // a red main (services/main-watch.js). Nothing about this proposal is
     // wrong, and "merging shortly" would be a promise nobody is keeping: the
@@ -412,10 +456,10 @@
         title: 'Votes passed and checks are green. This is queued to merge.',
       });
     }
-    // 10 — proposed, still collecting votes. #788: a proposal that
-    // changes the app's admins keeps this ordinary state — its threshold
-    // is unchanged — but carries an explanatory tooltip and the
-    // `explicitApproval` flag so callers can render the amber chip.
+    // 10 — proposed, still collecting votes. #788: a flagged proposal
+    // keeps this ordinary state — its threshold is unchanged — but carries
+    // an explanatory tooltip and the `explicitApproval` flag so callers can
+    // render the lock.
     if (status === 'promoted') {
       // B10a: one word for a change that waits on the group, and the
       // creator's own words on a project that is just them, whose one Yes is
@@ -424,7 +468,8 @@
       return descriptor('in_vote', solo ? 'Waiting for your approval' : 'Waiting for approval', 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
-          ? 'This changes who can administer the app, so it won’t merge on a timer. It needs real Yes votes to reach the app’s normal threshold.'
+          ? explicitApprovalCopy(p.explicit_approval_reason).sentence
+            + ' It won\u2019t merge on a timer: it needs real Yes votes to reach the app\u2019s normal threshold.'
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
       });
@@ -498,6 +543,8 @@
     lifecycle: lifecycle,
     badgeHtml: badgeHtml,
     pillHtml: pillHtml,
+    explicitApprovalCopy: explicitApprovalCopy,
+    awaitingOtherMember: awaitingOtherMember,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.

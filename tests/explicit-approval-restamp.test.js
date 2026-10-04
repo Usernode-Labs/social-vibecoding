@@ -4,8 +4,8 @@
 //   1. sweepExplicitApproval (services/app-admins.js) — the stale-PR
 //      sweeper's per-row re-verify. Stored NULL is backfilled, stored
 //      TRUE is re-verified (and cleared when the merge-base diff no
-//      longer touches the admins block), stored FALSE is skipped with
-//      ZERO GitHub calls.
+//      longer touches a protected block), stored FALSE is skipped with
+//      ZERO GitHub calls. Every stamp carries the primary reason.
 //   2. runSyncMain (services/sync-main.js) — a successful sync push
 //      changed the branch's contents, so promoted rows re-stamp.
 //
@@ -86,6 +86,27 @@ test('sweep: a stored TRUE that still changes admins STAYS flagged', () => withG
   const out = await appAdmins.sweepExplicitApproval(pool, SESSION(true));
   assert.equal(out, true);
   assert.deepEqual(pool.stamps(), [[42, true, 'admins']]);
+}));
+
+test('sweep: a stored NULL that makes the app private is stamped with that reason', () => withGithub({
+  base: json({ visibility: { build: 'public', view: 'public' } }),
+  head: json({ visibility: { build: 'private', view: 'private' } }),
+}, async () => {
+  const pool = capturePool();
+  const out = await appAdmins.sweepExplicitApproval(pool, SESSION(null));
+  assert.equal(out, true);
+  assert.deepEqual(pool.stamps(), [[42, true, 'visibility']]);
+}));
+
+test('sweep: a stored TRUE re-stamps the primary reason when the blocks it touches change', () => withGithub({
+  base: json({ governance: { approvers: 'anyone' }, secrets: [] }),
+  head: json({ governance: { approvers: 'invited' }, secrets: [{ key: 'TOKEN' }] }),
+}, async () => {
+  const pool = capturePool();
+  const out = await appAdmins.sweepExplicitApproval(pool, SESSION(true));
+  assert.equal(out, true);
+  assert.deepEqual(pool.stamps(), [[42, true, 'governance']],
+    'governance comes before secrets in the reason order');
 }));
 
 test('sweep: a stored FALSE is skipped with ZERO GitHub calls', () => withGithub({

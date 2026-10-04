@@ -244,7 +244,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
           <span
             className="gc-vote-count-lock"
             aria-hidden="true"
-            title="This changes who can administer the app, so it won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold."
+            title={s.lockTitle || 'This change needs a Yes from another member. It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.'}
           >{'\u{1F512}'}</span>
         ) : null}
       </span>
