@@ -93,8 +93,9 @@ test('settled() resolves on every way out of the gate (#2255)', () => {
   assert.match(triggerJs, /_resolve\(\) \{\s*\n\s*TermsFirstRun\.settled\(\);/);
   // Every exit: the deterministic routes, the snapshot boot, a thrown
   // check, a 404, an unusable body, a network failure, an answer already
-  // on record, a missing sheet, and the presentation's two callbacks.
-  assert.ok((triggerJs.match(/TermsFirstRun\._resolve\(\);/g) || []).length >= 10,
+  // on record, and the end of the acceptance write (there is no sheet to
+  // close any more: the terms are accepted by continuing).
+  assert.ok((triggerJs.match(/TermsFirstRun\._resolve\(\);/g) || []).length >= 9,
     'no path out of the gate leaves settled() pending');
 });
 
@@ -135,17 +136,39 @@ test('the native launch SEQUENCES device setup → terms, never skip-until-resta
     /NativeChrome\._firstRunSheetPresented = true;\s*\n\s*NativeChrome\._firstRunSettledPromise = settledPromise;/);
 });
 
-test('the trigger presents first-run mode, blocking on native only (#1328)', () => {
-  // Passing the payload through avoids fetching /terms/current twice;
-  // `blocking` derives from the bridge's isNative flag, so web keeps the
-  // dismissible sheet. The callbacks are what replace the once-per-document
-  // latch: an answer memoizes, a teardown allows a later re-offer.
-  assert.match(triggerJs, /window\.usernode\.isNative === true/);
-  assert.match(triggerJs, /firstRun: true,\s*\n\s*blocking: native,\s*\n\s*payload,/);
+test('the trigger accepts by continuing, and never presents the sheet', () => {
+  // Passive, like most apps: the sign-in screens carry "By continuing, you
+  // agree to Homeroom's terms" (auth/waitlist-shared.tsx TermsNotice), so a
+  // never-answered current version is recorded as accepted here.
+  assert.match(triggerJs, /await TermsFirstRun\._acceptByContinuing\(payload\);/);
   assert.match(triggerJs,
-    /onAnswered: \(\) => \{\s*\n\s*TermsFirstRun\._answered = true;\s*\n\s*TermsFirstRun\._resolve\(\);/);
-  assert.match(triggerJs,
-    /onClosed: \(\) => \{\s*\n\s*TermsFirstRun\._presented = false;\s*\n\s*TermsFirstRun\._resolve\(\);/);
+    /body: JSON\.stringify\(\{ terms_version_id: payload\.id, status: 'accepted', method: 'continued' \}\),/);
+  assert.doesNotMatch(triggerJs, /showTermsSheet\(/, 'the first run no longer presents the sheet');
+  // Only somebody who accepted an earlier version hears about it, once.
+  assert.match(triggerJs, /payload\.consent\.earlier_accepted === true/);
+  assert.match(triggerJs, /We updated our terms\. By continuing to use Homeroom, you agree to them\./);
+  // A failed write is not an answer: the next check records it then.
+  assert.match(triggerJs, /if \(res\.ok && body\.success\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
+  assert.match(triggerJs, /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);
+});
+
+test('the sign-in screens say continuing is agreeing, linking the current terms', () => {
+  const shared = read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx');
+  assert.match(shared, /export function TermsNotice\(/);
+  assert.match(shared, /\{`By \$\{verb\}, you agree to Homeroom's `\}/);
+  assert.match(shared, /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
+  assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" \/>/);
+  assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
+    /Sign in\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
+  assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
+});
+
+test('the consent route takes an acceptance by continuing, and never lets it replace an answer', () => {
+  const mobile = read('src', 'routes', 'topochain', 'mobile.js');
+  assert.match(mobile, /details\.method = \['Only an acceptance can be given by continuing\.'\];/);
+  assert.match(mobile, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, 'continued', NOW\(\), NOW\(\)\)\s*\n\s*ON CONFLICT \(user_id, terms_version_id\) DO NOTHING/);
+  assert.match(mobile, /earlier_accepted: earlierRows\.length > 0,/);
+  assert.match(read('src', 'db', 'schema.sql'), /ALTER TABLE user_terms_consents ADD COLUMN IF NOT EXISTS method VARCHAR\(16\);/);
 });
 
 test('warm-entry re-check: native-gated, throttled, on foreground and online (#1328)', () => {

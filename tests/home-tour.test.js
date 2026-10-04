@@ -860,7 +860,8 @@ test('the terms gate publishes the settled() the join screen waits on', () => {
   const check = TERMS_SRC.slice(TERMS_SRC.indexOf('async _check()'));
   assert.ok((check.match(/TermsFirstRun\._resolve\(\);/g) || []).length >= 5,
     'each early return out of the check resolves the promise');
-  assert.match(TERMS_SRC, /onClosed: \(\) => \{\s*TermsFirstRun\._presented = false;\s*TermsFirstRun\._resolve\(\);/);
+  // The terms are accepted by continuing now, with no sheet: the write's end resolves it too.
+  assert.match(TERMS_SRC, /async _acceptByContinuing\(payload\) \{[\s\S]*?TermsFirstRun\._resolve\(\);\s*\},/);
 });
 
 test('Escape behaves like Skip, and focus stays in the card', () => {

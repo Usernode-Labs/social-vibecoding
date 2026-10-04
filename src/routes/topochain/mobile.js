@@ -1547,6 +1547,14 @@ function topochainMobileRoutes(config) {
         [req.user.id, current.id]
       );
       const consent = consentRows[0] || null;
+      // Has this person accepted an earlier version? The first-run gate tells
+      // them, once, that the terms changed when it accepts a new version by
+      // their continuing (frontend/src/features/settings/terms-first-run.js).
+      const { rows: earlierRows } = consent ? { rows: [] } : await pool.query(
+        `SELECT 1 FROM user_terms_consents
+          WHERE user_id = $1 AND terms_version_id <> $2 AND status = 'accepted' LIMIT 1`,
+        [req.user.id, current.id]
+      );
 
       return ok(res, {
         data: {
@@ -1559,6 +1567,7 @@ function topochainMobileRoutes(config) {
             status: consent ? consent.status : null,
             accepted: !!(consent && consent.status === 'accepted'),
             responded_at: consent ? iso(consent.responded_at) : null,
+            earlier_accepted: earlierRows.length > 0,
           },
         },
       });
@@ -1586,6 +1595,21 @@ function topochainMobileRoutes(config) {
       const status = body.status;
       if (status !== 'accepted' && status !== 'refused') {
         details.status = ['The status field must be one of: accepted, refused.'];
+      }
+
+      // 'continued': accepted by carrying on past the sign-in screens'
+      // "By continuing, you agree" notice (the first-run gate posts it).
+      // Only an acceptance can be given that way, and it never replaces an
+      // answer already on record.
+      let method = 'sheet';
+      if (body.method !== undefined && body.method !== null && body.method !== 'sheet') {
+        if (body.method !== 'continued') {
+          details.method = ['The method field must be one of: sheet, continued.'];
+        } else if (status !== 'accepted') {
+          details.method = ['Only an acceptance can be given by continuing.'];
+        } else {
+          method = 'continued';
+        }
       }
 
       let appVersion = null;
@@ -1617,17 +1641,39 @@ function topochainMobileRoutes(config) {
       const ip = clientIp(req) || null;
       const respondedAt = new Date();
 
-      const { rows } = await pool.query(
-        `INSERT INTO user_terms_consents
-           (user_id, terms_version_id, status, responded_at, ip, app_version, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-         ON CONFLICT (user_id, terms_version_id) DO UPDATE
-           SET status = EXCLUDED.status, responded_at = EXCLUDED.responded_at,
-               ip = EXCLUDED.ip, app_version = EXCLUDED.app_version, updated_at = NOW()
-         RETURNING user_id, terms_version_id, status, responded_at`,
-        [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
-      );
-      const row = rows[0];
+      let row;
+      if (method === 'continued') {
+        const { rows } = await pool.query(
+          `INSERT INTO user_terms_consents
+             (user_id, terms_version_id, status, responded_at, ip, app_version, method, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'continued', NOW(), NOW())
+           ON CONFLICT (user_id, terms_version_id) DO NOTHING
+           RETURNING user_id, terms_version_id, status, responded_at`,
+          [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
+        );
+        row = rows[0];
+        if (!row) {
+          const { rows: kept } = await pool.query(
+            `SELECT user_id, terms_version_id, status, responded_at FROM user_terms_consents
+              WHERE user_id = $1 AND terms_version_id = $2`,
+            [req.user.id, termsVersionId]
+          );
+          row = kept[0];
+        }
+      } else {
+        const { rows } = await pool.query(
+          `INSERT INTO user_terms_consents
+             (user_id, terms_version_id, status, responded_at, ip, app_version, method, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'sheet', NOW(), NOW())
+           ON CONFLICT (user_id, terms_version_id) DO UPDATE
+             SET status = EXCLUDED.status, responded_at = EXCLUDED.responded_at,
+                 ip = EXCLUDED.ip, app_version = EXCLUDED.app_version,
+                 method = EXCLUDED.method, updated_at = NOW()
+           RETURNING user_id, terms_version_id, status, responded_at`,
+          [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
+        );
+        row = rows[0];
+      }
 
       return ok(res, {
         data: {

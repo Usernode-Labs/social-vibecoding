@@ -4971,6 +4971,12 @@ CREATE TABLE IF NOT EXISTS user_terms_consents (
   updated_at        TIMESTAMPTZ,
   UNIQUE (user_id, terms_version_id)
 );
+-- How an acceptance was given: 'sheet' for the terms sheet's Accept button
+-- (Settings → About & legal), 'continued' for carrying on past the sign-in
+-- screens' "By continuing, you agree to Homeroom's terms", which the
+-- first-run terms gate records (frontend/src/features/settings/
+-- terms-first-run.js). NULL on rows written before the column existed.
+ALTER TABLE user_terms_consents ADD COLUMN IF NOT EXISTS method VARCHAR(16);
 
 -- `mobile_auth_tokens` — the private bearer embedded in a protocol-2 native
 -- credential envelope. `token_hash` stores the sha256 hex, never the token
