@@ -198,6 +198,21 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     `SELECT msg_type FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [demoStates.IDS.proposal]);
   assert.deepEqual(tail.map((row) => row.msg_type), ['vote']);
 
+  // A proposal of the member's to make the app private, flagged as the
+  // platform flags one, whose only Yes is its author's.
+  const { rows: [visibility] } = await pool.query(
+    `SELECT cs.user_id, cs.status, cs.branch_name, cs.requires_explicit_approval, cs.explicit_approval_reason,
+            COUNT(pv.*) FILTER (WHERE ${currentVotePredicateSql('pv', 'cs')})::int AS counted
+       FROM chat_sessions cs LEFT JOIN pr_votes pv ON pv.session_id = cs.id
+      WHERE cs.id = $1
+      GROUP BY cs.id`,
+    [demoStates.IDS.visibilityProposal]
+  );
+  assert.deepEqual(visibility, {
+    user_id: member, status: 'promoted', branch_name: 'visibility/shots-fixture-990858',
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility', counted: 1,
+  });
+
   // A live Ready verdict with its build, on the self app.
   const { rows: [verdict] } = await pool.query(
     `SELECT mode, verdict, build_ok, proposal_session_id FROM homeroom_bot_runs`);

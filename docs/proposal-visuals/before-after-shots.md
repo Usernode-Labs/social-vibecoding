@@ -128,6 +128,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      with a deployed preview, and enough agent sessions for "Show more";
    - a proposal with a vote of the member's on an earlier version, and a
      threshold that moved since voting opened;
+   - a proposal of the member's to make the app private, flagged for
+     explicit approval, with only the member's own Yes;
    - for the admins: a live Homeroom bot verdict with its build;
    - for every persona: the season's finished First challenges and an Always
      open challenge with its next count;

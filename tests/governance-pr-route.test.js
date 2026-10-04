@@ -199,6 +199,21 @@ test('success: opens a governance/ branch PR editing dapp.json and promotes a se
   assert.match(pr.body, /`governance` block in `dapp\.json`/);
 });
 
+test('success stamps requires_explicit_approval = true / reason = governance on the session', async () => {
+  // #788, extended: who can see the app and how changes are approved are
+  // protected like the admins list. The flag is stamped at creation, so the
+  // proposal never merges on a timer or on its author's own Yes.
+  const stamps = [];
+  const inner = poolQueryHandler;
+  poolQueryHandler = async (sql, params) => {
+    if (/UPDATE chat_sessions/.test(sql) && /requires_explicit_approval/.test(sql)) stamps.push(params);
+    return inner(sql, params);
+  };
+  const res = await propose({ approverPolicy: 'invited', approvalsRequired: 1 });
+  assert.equal(res.status, 201);
+  assert.deepEqual(stamps, [[4243, true, 'governance']]);
+});
+
 test('switching back to the default strategy writes approvals: "default"', async () => {
   appRow.approver_policy = 'invited';
   appRow.approvals_required = 1;

@@ -5569,9 +5569,13 @@ function startGovernanceApplyTicker(config) {
       );
       for (const issue of rows) {
         try {
-          // Gate-first for EVERY kind — see the header comment.
+          // Gate-first for EVERY kind — see the header comment. A secret
+          // change is flagged: no timer, and an up vote from another member
+          // (the apply helper re-checks the same gate).
           const gate = await governance.governedGate(pool, issue.app_id, {
             kind: 'issue', id: issue.id, openedAt: issue.created_at,
+            explicitApproval: issue.kind === 'secret_change',
+            authorId: issue.created_by ?? null,
           });
           if (!gate.mergeable) continue;
           // The apply helpers re-check the gate and lock the issue row
@@ -5696,12 +5700,14 @@ function startStalePrSweeper(config) {
           // #646: governance-aware gate — honors the app's approver
           // policy + at-least-N mode (governance/electorate lookups are
           // TTL-cached in the service, so no per-app cache needed here).
-          // #788: plus the no-timer modifier for an admins-changing
-          // proposal, so the sweeper can never auto-merge one on a clock.
+          // #788: plus the no-timer modifier for a flagged proposal, so
+          // the sweeper can never auto-merge one on a clock, and the
+          // member floor: never on its author's Yes alone either.
           const gate = await governance.governedGate(pool, session.app_id, {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
             explicitApproval: !!session.requires_explicit_approval,
+            authorId: session.user_id ?? null,
             // #2038: scoped by approval epoch inside the gate.
           });
           // Merge takes precedence: a row that just became mergeable should
@@ -5772,9 +5778,12 @@ function startStalePrSweeper(config) {
             await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
             continue;
           }
-          // #646: governance-aware gate for issue-vote proposals too.
+          // #646: governance-aware gate for issue-vote proposals too. A
+          // secret change is flagged, exactly as the apply helper gates it.
           const gate = await governance.governedGate(pool, issue.app_id, {
             kind: 'issue', id: issue.id, openedAt: issue.created_at,
+            explicitApproval: issue.kind === 'secret_change',
+            authorId: issue.created_by ?? null,
           });
           if (!gate.mergeable) continue;
           if (issue.kind === 'rename') {

@@ -1662,8 +1662,9 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
 
 -- #788: "explicit approval" flag — this proposal's diff changes a
--- privilege-granting block in dapp.json (today only the top-level
--- `admins` list), so the TIME-BASED merge paths are switched off for it:
+-- protected block in dapp.json (`admins`, `governance`, `visibility`,
+-- `platform_env` or `secrets`; services/explicit-approval.js), so the
+-- TIME-BASED merge paths are switched off for it:
 -- no minimum visibility window, no lazy-consensus "silence is consent"
 -- auto-merge. The app's NORMAL approval rules are otherwise untouched
 -- (same threshold, same electorate, same at-least-N / invited-approver
@@ -1672,17 +1673,42 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEG
 -- rejection countdown and the stale-PR sweep behave exactly as they do
 -- for any other proposal on that app. Implemented as the pure
 -- applyNoTimerMerge modifier in services/governance.js.
+-- A flagged proposal ALSO needs at least one qualifying Yes from someone
+-- other than its author whenever the app's community has more than one
+-- member (the member floor, services/governance.js applyNoTimerMerge), and
+-- an app admin can no longer force-merge it.
 --   requires_explicit_approval : NULL = not computed yet (the stale-PR
 --     sweeper backfills), FALSE = ordinary proposal, TRUE = flagged.
---   explicit_approval_reason   : which rule flagged it; only 'admins'
---     today, a string so a second source can be added later without a
---     schema change.
+--   explicit_approval_reason   : which block flagged it: 'admins',
+--     'governance', 'visibility', 'platform_env' or 'secrets'. ONE value,
+--     the primary block in that order, when a proposal touches several:
+--     every surface says one sentence, and the joined list would not fit
+--     the column (the full list rides on the merge debug step).
 -- Stamped at promote, at manifest-PR creation, and on every head change
 -- (native new-commit vote reset + imported-PR head sync);
 -- re-verified authoritatively in checkAndMerge just before the gate.
 -- Covered by the table-level staging:private comment.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS requires_explicit_approval BOOLEAN;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS explicit_approval_reason   VARCHAR(32);
+-- The platform's own manifest PRs that were open before visibility,
+-- governance and secret-declaration PRs were flagged at creation. Their
+-- branch prefix says what they change (services/rename-pr.js), so they are
+-- stamped here rather than left to merge on a timer until checkAndMerge's
+-- live re-check reaches them. Idempotent: a stamped row is skipped, so
+-- this touches nothing after its first boot.
+UPDATE chat_sessions
+   SET requires_explicit_approval = TRUE,
+       explicit_approval_reason = CASE
+         WHEN branch_name LIKE 'visibility/%' THEN 'visibility'
+         WHEN branch_name LIKE 'governance/%' THEN 'governance'
+         WHEN pr_title LIKE 'Declare platform variable%' THEN 'platform_env'
+         ELSE 'secrets'
+       END
+ WHERE status IN ('promoted', 'merging')
+   AND requires_explicit_approval IS NOT TRUE
+   AND (branch_name LIKE 'visibility/%'
+     OR branch_name LIKE 'governance/%'
+     OR branch_name LIKE 'secret-declare/%');
 
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,

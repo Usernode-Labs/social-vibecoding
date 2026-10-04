@@ -20,10 +20,15 @@
  *     by POST /api/apps/:slug/governance-pr; applied by
  *     reconcileAppGovernance (or seedSelfApp for the self-app);
  *   - admins PRs (top-level `admins` array, issue #788) — used by
- *     POST /api/apps/:slug/admins-pr; applied by reconcileAppAdmins.
- *     These carry explicitApproval: true, so the resulting proposal
- *     never merges on a timer and can't be force-merged by an app
- *     admin (see services/app-admins.js).
+ *     POST /api/apps/:slug/admins-pr; applied by reconcileAppAdmins;
+ *   - secret-declaration PRs (one `secrets` / `platform_env` entry) —
+ *     used by POST /api/apps/:slug/secret-declaration-pr.
+ *
+ * Every flavor but rename carries explicitApproval: true with its reason
+ * (services/explicit-approval.js), so the resulting proposal never merges
+ * on a timer, needs a Yes from a member other than its author whenever
+ * the community has more than one, and can't be force-merged by an app
+ * admin (services/governance.js, services/app-admins.js).
  */
 
 const log = require('./logger');
@@ -31,6 +36,7 @@ const github = require('./github');
 const appManifest = require('./app-manifest');
 const events = require('./events');
 const topicAttrs = require('./topic-attributes');
+const explicitApprovalReasons = require('./explicit-approval');
 
 function renamePrTitle(newName) {
   return `Rename to "${newName}"`;
@@ -53,10 +59,15 @@ function renamePrTitle(newName) {
  *   - eventMetadata        — extra pr_promoted metadata (prNumber is
  *                            added automatically);
  *   - explicitApproval     — true when the mutation touches a
- *                            privilege-granting block (#788, today the
- *                            top-level `admins` list), which switches
- *                            off the time-based merge paths for the
- *                            resulting proposal. Defaults to false.
+ *                            protected block (#788: admins, governance,
+ *                            visibility, platform_env, secrets), which
+ *                            switches off the time-based merge paths for
+ *                            the resulting proposal and adds the member
+ *                            floor. Defaults to false.
+ *   - explicitApprovalReason — which block, one of
+ *                            services/explicit-approval.js REASONS. Stored
+ *                            in explicit_approval_reason; required with
+ *                            explicitApproval.
  *
  * Throws on GitHub / DB failure so callers can map it to an HTTP error
  * or skip-and-continue. On success returns
@@ -122,16 +133,22 @@ async function createManifestPR(config, pool, app, actor, opts) {
   }
 
   // #788: stamp the explicit-approval flag directly. We KNOW what this
-  // PR mutates (opts.explicitApproval is set by the caller that built
-  // the mutation), so there's no need to round-trip GitHub to diff a
-  // file we just wrote — and stamping at creation is what makes the
-  // highest-risk path (a platform-opened admins PR) correct even if
-  // GitHub is unreachable at merge time.
+  // PR mutates (opts.explicitApproval and its reason are set by the
+  // caller that built the mutation), so there's no need to round-trip
+  // GitHub to diff a file we just wrote — and stamping at creation is
+  // what makes the highest-risk paths (a platform-opened admins,
+  // visibility, governance or secret PR) correct even if GitHub is
+  // unreachable at merge time.
   await pool.query(
     `UPDATE chat_sessions
         SET requires_explicit_approval = $2, explicit_approval_reason = $3
       WHERE id = $1`,
-    [sessionId, !!opts.explicitApproval, opts.explicitApproval ? 'admins' : null]
+    [
+      sessionId,
+      !!opts.explicitApproval,
+      opts.explicitApproval && explicitApprovalReasons.isReason(opts.explicitApprovalReason)
+        ? opts.explicitApprovalReason : null,
+    ]
   ).catch((err) => log.warn('rename-pr', 'Explicit-approval stamp failed', {
     sessionId, err: err.message,
   }));
@@ -248,6 +265,10 @@ async function createVisibilityPR(config, pool, app, { collab, view }, actor) {
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed making this app ${desc}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { visibility: true },
+    // Who can see the app is the community's to decide: no timer, and a
+    // Yes from another member.
+    explicitApproval: true,
+    explicitApprovalReason: 'visibility',
   });
 }
 
@@ -287,6 +308,10 @@ async function createGovernancePR(config, pool, app, { policy, approvalsRequired
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed changing proposal approvals to ${desc}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { governance: true },
+    // How changes are approved decides every later vote: no timer, and a
+    // Yes from another member.
+    explicitApproval: true,
+    explicitApprovalReason: 'governance',
   });
 }
 
@@ -304,9 +329,10 @@ function adminsPrTitle(usernames) {
  * when the merged PR's production rebuild runs reconcileAppAdmins.
  *
  * Passes explicitApproval: true — the resulting proposal grants
- * app-level power, so the time-based merge paths are off and only a
- * platform admin can force-merge it (services/governance.js
- * applyNoTimerMerge + services/app-admins.js canForceMerge).
+ * app-level power, so the time-based merge paths are off, it needs a Yes
+ * from another member, and only a platform admin can force-merge it
+ * (services/governance.js applyNoTimerMerge + services/app-admins.js
+ * canForceMerge).
  */
 async function createAdminsPR(config, pool, app, { usernames }, actor) {
   const desc = appManifest.describeAdmins(usernames);
@@ -322,15 +348,17 @@ async function createAdminsPR(config, pool, app, { usernames }, actor) {
       `administer this app (creator-level settings plus force-merging its proposals). ` +
       `Because it grants app-level power, the time-based merge paths are switched off for ` +
       `this proposal: it merges only when the app's normal vote threshold is met by Yes ` +
-      `votes people actually cast, and only a platform admin (never an app admin) can ` +
-      `force-merge it. The new roster applies automatically once the PR merges and the ` +
-      `app redeploys.`,
+      `votes people actually cast (one of them from a member other than the proposer, ` +
+      `when the community has more than one), and only a platform admin (never an app ` +
+      `admin) can force-merge it. The new roster applies automatically once the PR ` +
+      `merges and the app redeploys.`,
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed changing this app's admins to ${desc}. Opened PR ` +
       `#${prData.number}: it needs real Yes votes (${majority}/${activeUsers}) and won't ` +
       `merge on a timer.`,
     eventMetadata: { admins: true },
     explicitApproval: true,
+    explicitApprovalReason: 'admins',
   });
 }
 
@@ -425,7 +453,11 @@ async function createSecretDeclarationPR(config, pool, app, { scope, key, declar
       `${actor.username} proposed adding the ${isPlatform ? 'platform variable' : 'app secret'} ${key}`
       + `${hasValue ? ' (value included)' : ''}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { secretDeclaration: true, scope, key },
-    explicitApproval: false,
+    // A declaration can carry a value (held encrypted until the merge) and
+    // decides what the app or the platform is handed: no timer, and a Yes
+    // from another member, like every other change to those blocks.
+    explicitApproval: true,
+    explicitApprovalReason: isPlatform ? 'platform_env' : 'secrets',
   });
 }
 
