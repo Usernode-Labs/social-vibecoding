@@ -62,6 +62,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
+import { TermsNotice } from './waitlist-shared';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -1552,6 +1553,7 @@ export function LoginScreen() {
             <Button type="submit" data-offline-disabled="" {...SOLID}>
               Sign in
             </Button>
+            <TermsNotice verb="signing in" />
           </form>
           {/*
               The rest of board 2's action group: `gap: 10px` under the 16 the

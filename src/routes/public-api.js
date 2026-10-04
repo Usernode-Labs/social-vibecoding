@@ -189,6 +189,26 @@ function publicApiRoutes(config) {
   // `sign_in_providers` is which of Apple and Google the sign-in sheet
   // offers beside the email code (services/sign-in-providers.js): only those
   // an admin has set up and switched on, Apple first; none when unreadable.
+  //
+  // `terms_link` is the current published terms' own address, for the
+  // sign-in screens' "By continuing, you agree to Homeroom's terms"
+  // (frontend/src/features/auth/sign-in-sheet.tsx and login.tsx). "Current"
+  // is the terms gate's rule (routes/topochain/mobile.js): the latest
+  // published version. null when none is published, it has no link, or the
+  // read fails; the notice then names the terms without a link.
+  async function currentTermsLink() {
+    try {
+      const { rows } = await pool.query(
+        `SELECT terms_link FROM terms_versions
+          WHERE published_at IS NOT NULL
+          ORDER BY published_at DESC, id DESC LIMIT 1`
+      );
+      return (rows[0] && rows[0].terms_link) || null;
+    } catch (err) {
+      log.warn('public-api', 'Current terms link read failed', { err: err.message });
+      return null;
+    }
+  }
   router.get('/api/public/waitlist/options', async (_req, res) => {
     res.json({
       ...questions.publicOptions(),
@@ -196,6 +216,7 @@ function publicApiRoutes(config) {
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
+      terms_link: await currentTermsLink(),
     });
   });
 

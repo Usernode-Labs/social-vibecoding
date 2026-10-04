@@ -51,6 +51,7 @@ import {
   sessionMintFailureMessage,
   USERNAME_RULE,
 } from './shared';
+import { TermsNotice } from './waitlist-shared';
 
 type Step = 'choose' | 'email' | 'code' | 'account' | 'username';
 
@@ -495,6 +496,7 @@ export function SignInSheet({
             <a href="#login" onClick={onClose} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">Sign in with a password</a>
           </p>
         ) : null}
+        <TermsNotice className="mt-3" />
       </div>
     </div>
   );
