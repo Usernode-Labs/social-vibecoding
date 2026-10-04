@@ -23,6 +23,13 @@
  *     starter's placeholder screen and the app's own Tailwind build compiles
  *     the same class names from its markup.
  *
+ * ITS SAMPLES ARE SAMPLES. The model is told today's date and who the
+ * creator is, so any date it shows is real and the creator is "You";
+ * anyone else is a neutral placeholder ("Flatmate 2"), never an invented
+ * name. A sketch that made up flatmates and a date in January had the
+ * first version's plan asking whether the made-up flatmates were in the
+ * rota. The plan is told the same (homeroom-bot.js FIRST_VERSION_NOTE).
+ *
  * SAFE TO SHOW. The sketch is model output from a user's description, so it
  * is treated as untrusted HTML: sanitized here (no scripts, no handlers, no
  * links, no URLs at all), served with a sandbox CSP that allows no script and
@@ -486,17 +493,53 @@ Respond with ONLY a JSON object, no prose before or after:
 
 The accent: one colour chosen for this app, with a darker shade for the light look and a lighter one for the dark look. Not teal unless the subject calls for it.
 
-The markup is STATIC HTML for the body of the screen at phone width, filled with believable example content for this group (names, numbers, dates), never lorem ipsum. Rules:
+The markup is STATIC HTML for the body of the screen at phone width, filled with example content that is plainly illustrative: never lorem ipsum, and never made-up facts about the group. Rules:
+- Dates: TODAY is given with the description. Any date or weekday the screen shows is today or counted from it (this week, tomorrow, next Monday), never a date you made up.
+- People: show the creator as "You" (THE CREATOR, given with the description, says who that is). Show anyone else by a neutral placeholder from the app's subject plus a number, such as "Flatmate 2" or "Member 3", never an invented personal name. Only a person the description itself names may appear by that name.
+- Every other example (counts, amounts, items) is plain and obviously a sample.
 - Tags: header, section, div, span, p, h1, h2, h3, strong, em, small, ul, ol, li, button, input, textarea, select, option, label, table, thead, tbody, tr, th, td, hr, time. Nothing else: no script, no style, no img, no svg, no links, no style attributes, no ids, no event handlers.
 - Classes: ONLY these, exactly as written. Components: btn-primary (the one primary action, once), btn-secondary, field (inputs), list with list-row children (the usual way to show several things), card (one self-contained thing; never a card inside a card or a list), section-label (a label above a section), skeleton, state-empty. Type: text-title (once, the screen's title), text-heading, text-body, text-small, font-medium, font-semibold, font-bold, text-center, text-right, tabular-nums, truncate, line-through. Colour: text-fg, text-muted, text-accent, text-on-accent, text-danger, bg-surface, bg-raised, bg-line, bg-accent, bg-accent/10, bg-accent/20, border, border-t, border-b, border-line, border-accent, rounded-md, rounded-lg, rounded-xl, rounded-full, opacity-60. Layout: flex, inline-flex, grid, flex-col, flex-wrap, items-center, items-start, items-end, items-baseline, justify-between, justify-center, justify-end, grow, shrink-0, self-start, grid-cols-2, grid-cols-3, grid-cols-4, col-span-2, min-w-0, overflow-hidden, ml-auto, gap-1, gap-2, gap-3, gap-4, gap-6, p-/px-/py-/mt-/mb- with 0, 1, 2, 3, 4, 6 or 8, h- and w- with 1, 2, 3, 4, 8, 10, 12 or 16, w-1/4, w-1/3, w-1/2, w-2/3, w-3/4, w-full.
 - The screen's top-level elements are siblings, spaced by the page (do not wrap everything in one div). Start with a header holding the title and one short line under it in text-muted.
 - No emoji. No uppercase labels. Accent only for the primary action, the signature element and small highlights.
 - At most about 60 elements. A bar or meter is a bg-line rounded-full h-2 track holding a bg-accent rounded-full h-2 fill with a w- fraction.`;
 
-function sketchUserPrompt({ name, brief, audience }) {
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+  'October', 'November', 'December'];
+
+/**
+ * Today, as the sketch is told it: the weekday, the date in words and the
+ * ISO date, in UTC (the creator's own zone is not known here, so at most a
+ * day off). A sketch drawn without it dated a chore rota "week of Monday
+ * 20 Jan" on Sunday 4 October 2026.
+ */
+function todayLine(now = new Date()) {
+  const d = new Date(now);
+  const at = Number.isFinite(d.getTime()) ? d : new Date();
+  const words = `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
+  return `${words} (${at.toISOString().slice(0, 10)})`;
+}
+
+/**
+ * The creator as the sketch is told them: "Display name (@username)", or
+ * "@username" without a display name. Context only: the screen shows them
+ * as "You", and the name lets the model tell them apart from anyone their
+ * description names.
+ */
+function makerLine(maker) {
+  const username = oneLine(maker?.username, 40);
+  const display = oneLine(maker?.displayName, 60);
+  if (!username) return display || '';
+  return display && display.toLowerCase() !== username.toLowerCase() ? `${display} (@${username})` : `@${username}`;
+}
+
+function sketchUserPrompt({ name, brief, audience, today = null, maker = null }) {
+  const creator = makerLine(maker);
   return [
     `APP NAME:\n${String(name || '').slice(0, 120)}`,
     audience ? `WHO IT IS FOR:\n${String(audience).slice(0, 120)}` : null,
+    `TODAY:\n${todayLine(today || new Date())}`,
+    creator ? `THE CREATOR (shown on the screen as "You"):\n${creator}` : null,
     `WHAT IT SHOULD DO (the creator's words):\n${String(brief || '').slice(0, 4000)}`,
   ].filter(Boolean).join('\n\n');
 }
@@ -648,6 +691,21 @@ async function readSketch(pool, appId) {
   return rows[0] || null;
 }
 
+/**
+ * The creator, for the prompt: { username, displayName }. Read here because
+ * the session's user carries no display name. Best effort: the username the
+ * caller handed over when the read fails.
+ */
+async function makerOf(pool, user) {
+  try {
+    const { rows } = await pool.query('SELECT username, display_name FROM users WHERE id = $1', [user.id]);
+    if (rows[0]) return { username: rows[0].username, displayName: rows[0].display_name || null };
+  } catch (err) {
+    log.warn('app-sketch', 'Creator not read', { userId: user?.id, err: err.message });
+  }
+  return { username: user?.username || null, displayName: null };
+}
+
 async function generate(pool, { app, user, brief, audience, deps }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
@@ -656,9 +714,10 @@ async function generate(pool, { app, user, brief, audience, deps }) {
   let model = SKETCH_MODEL;
   let error = null;
   try {
+    const maker = await makerOf(pool, user);
     const reply = await llm.generateAppSketch({
       system: SKETCH_SYSTEM,
-      user: sketchUserPrompt({ name: app.name, brief, audience }),
+      user: sketchUserPrompt({ name: app.name, brief, audience, today: deps.now ? deps.now() : new Date(), maker }),
       model: SKETCH_MODEL,
       telemetryContext: { pool, appId: app.id },
     });
@@ -795,6 +854,8 @@ module.exports = {
   normalizeDesign,
   parseSketchReply,
   sketchUserPrompt,
+  todayLine,
+  makerLine,
   fitAccent,
   accentTokens,
   sketchCss,

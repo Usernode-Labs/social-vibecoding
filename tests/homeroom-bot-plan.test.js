@@ -97,6 +97,97 @@ test('B6: the changes a creator asked for are read again with the plan they saw,
   assert.match(prompt, /What they asked:\n- "x y"/);
 });
 
+// 2026-10-04: the sketch a first version is drawn from shows sample people
+// and dates, and a plan that could not see the project's real people asked
+// "The sketch rotates chores between Maya, Jasper and Sophie. Should you be
+// in the rotation too?" of a project of two. The plan is told the sketch's
+// samples are placeholders, and who is really in the project.
+
+const PEOPLE = {
+  people: [
+    { username: 'jordan_t1004', name: 'Jordan', creator: true, invited: false },
+    { username: 'sam_t1004', name: null, creator: false, invited: true },
+  ],
+  more: 0,
+  emailInvites: 0,
+};
+
+test('a first version\'s plan treats the sketch\'s names, dates and numbers as placeholders', () => {
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  const first = flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true }));
+  assert.match(first, /The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a `choices` question\./);
+  assert.match(first, /When the app involves the people in its group \(whose turn it is, who did what, who sees what\), plan around the project's real members, listed under WHO IS IN THIS PROJECT when known, and around new members joining later; never around people the sketch made up\./);
+  assert.ok(first.indexOf('The sketch is an illustrative look only') > first.indexOf('When the request names a design target'),
+    'right after the design target rule');
+  assert.doesNotMatch(flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), /illustrative look only/, 'only a first version');
+  const note = first.slice(first.indexOf('The sketch is an illustrative look only'), first.indexOf('never around people the sketch made up.'));
+  assert.doesNotMatch(note, /—/, 'no em dash');
+});
+
+test('a first version\'s plan is told who is in its project: members, invites not yet joined, and invites by email', () => {
+  assert.equal(bot.membersNote(null), null);
+  assert.equal(bot.membersNote({ people: [] }), null);
+  assert.equal(bot.membersNote({ people: [{ name: 'No handle' }] }), null);
+  assert.equal(bot.membersNote(PEOPLE), [
+    '==== WHO IS IN THIS PROJECT ====',
+    '',
+    'Its real people right now. Plan anything about who uses it around them, and around more people joining later:',
+    '- Jordan (@jordan_t1004), who made the project',
+    '- @sam_t1004, invited and not joined yet',
+  ].join('\n'));
+  const big = bot.membersNote({
+    people: [{ username: 'ann', name: 'ANN', creator: true }, { username: 'bo', name: 'Bo\n\nBo' }],
+    more: 3, emailInvites: 2,
+  });
+  assert.match(big, /\n- @ann, who made the project\n- Bo Bo \(@bo\)\n- and 3 more\n- and 2 invited by email, not on Homeroom yet$/,
+    'a display name that is the username is said once, and every name is one line');
+
+  // In the prompt: only a first version's, after its rules and before the reference.
+  const prompt = bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true, members: PEOPLE });
+  const at = prompt.indexOf('==== WHO IS IN THIS PROJECT ====');
+  assert.ok(at > prompt.indexOf('Its creator sees your plan'), 'after the first-version rules');
+  assert.ok(at < prompt.indexOf('PLATFORM REFERENCE'), 'before the reference');
+  assert.doesNotMatch(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, members: PEOPLE }), /WHO IS IN THIS PROJECT/, 'only a first version');
+  assert.equal(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true, members: null }),
+    bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true }), 'unchanged without it, as the benchmark replays');
+});
+
+test('a project\'s people are read from its members, then its pending invites, and its invites by email', async () => {
+  const calls = [];
+  const pool = (rows) => ({ async query(sql, params) { calls.push({ sql, params }); return { rows }; } });
+  assert.equal(await bot.projectMembers(pool([]), { id: 5 }), null, 'nobody');
+  assert.equal(await bot.projectMembers(pool([]), null), null);
+  const out = await bot.projectMembers(pool([
+    { username: 'jordan_t1004', display_name: 'Jordan', creator: true, invited: false, total: 14, by_email: 1 },
+    { username: 'sam_t1004', display_name: null, creator: false, invited: true, total: 14, by_email: 1 },
+  ]), { id: 5 });
+  assert.deepEqual(out, {
+    people: [
+      { username: 'jordan_t1004', name: 'Jordan', creator: true, invited: false },
+      { username: 'sam_t1004', name: null, creator: false, invited: true },
+    ],
+    more: 12,
+    emailInvites: 1,
+  });
+  const { sql, params } = calls.at(-1);
+  assert.deepEqual(params, [5, 12], 'at most twelve by name');
+  assert.match(sql, /JOIN community_members m ON m\.community_id = a\.community_id/, 'members');
+  assert.match(sql, /c\.status = 'invited'/, 'invited, not joined yet');
+  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM community_members m\s+WHERE m\.community_id = a\.community_id AND m\.user_id = c\.user_id\)/, 'never twice');
+  assert.match(sql, /FROM app_email_invites e\s+WHERE e\.app_id = \$1 AND e\.claimed_at IS NULL/, 'invites by email still waiting');
+  assert.equal((sql.match(/u\.is_synthetic = FALSE/g) || []).length, 2, 'no bots');
+  assert.match(sql, /ORDER BY invited, creator DESC, since, username/, 'members first, the creator first among them');
+});
+
+test('the look reads a live first version\'s people into its prompt and its snapshot, and the benchmark replays them', () => {
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
+  assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(decider\?\.requesterDecides \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+\},/,
+    'kept in the snapshot');
+  assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
+});
+
 test('B6: what a plan falls back to, and the answer each choice goes with', () => {
   assert.deepEqual(bot.planFor({ plan: { bullets: ['a'], questions: [] } }), { bullets: ['a'], questions: [] });
   assert.deepEqual(bot.planFor({ assumptions: ['Uses a list'] }).bullets, ['Uses a list']);

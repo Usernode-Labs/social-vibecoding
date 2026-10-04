@@ -2580,7 +2580,8 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = n
       ...(sketch ? [
         `**Design target:** the sketch ${username} was shown when they made it, \`design/sketch.html\``
           + ' (its job, layout, words and accent are in `design/sketch.json`). Build that screen for real: keep its'
-          + ' layout, its words and its accent, and list any change under Assumptions with the reason.',
+          + ' layout, its words and its accent, and list any change under Assumptions with the reason.'
+          + ' Its names, dates and numbers are samples, not facts about the group.',
         ...(sketch.job ? ['', `Its main screen's job: ${clip(sketch.job, 200)}`] : []),
         '',
       ] : []),
