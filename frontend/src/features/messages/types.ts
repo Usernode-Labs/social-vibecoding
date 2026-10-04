@@ -73,6 +73,11 @@ export interface HomeroomBotMeta {
   sessionId?: number;
   epoch?: number;
   updated?: boolean;
+  /**
+   * B6: an activity card Build it moved under its plan: the card that
+   * follows the request now. This one is no longer drawn.
+   */
+  movedTo?: number;
 }
 
 export interface HomeroomBotReady {
@@ -199,6 +204,8 @@ export interface HomeroomBotActivity {
   doing: string | null;
   outcome: HomeroomBotActivityOutcome | null;
   endedAt: string | null;
+  /** How long the step it is at usually takes, in minutes, when it takes a while. */
+  typicalMinutes?: { from: number; to: number };
 }
 
 export interface ConversationMember extends ConversationUser {

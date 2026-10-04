@@ -856,3 +856,181 @@ test('#3767: a request filed in the DM gets its card at once, and the card says 
   assert.equal(activity.cardText(ctx, dmSvc, { filed: true }), '**Ear Trainer** · request #13: Use MIDI\n\nFiled. This card follows it from here.');
   assert.match(activity.cardText(ctx, dmSvc), /I'm working on this now\. This card updates as I go\.$/);
 });
+
+// ── B6: a first version's card, under its plan (first session, 4 October) ──
+//
+// A first version's card starts when its request is queued, so it sat above
+// the plan, and above a second plan after "Change something". Build it
+// collapsed the plan to its answers and nothing appeared under it: the
+// build's progress went on in the card the person had scrolled past, and
+// only the tray said so. Build it now moves the request's card under the
+// plan, the same card read from the plan's run, and the one above is no
+// longer drawn.
+
+function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.123Z'), dmUsers = ['ada'], sendResult } = {}) {
+  const sent = [];
+  const queries = [];
+  const moved = [];
+  const pool = {
+    async query(sql, params) {
+      const text = String(sql);
+      queries.push([text, params]);
+      if (/FROM homeroom_bot_dm_messages d\s+JOIN conversation_messages m ON m\.id = d\.message_id AND m\.deleted_at IS NULL/.test(text)) {
+        return { rows: existing ? [{ message_id: existing.messageId, conversation_id: 5, look_at: null }] : [] };
+      }
+      if (/SELECT created_at FROM homeroom_bot_runs WHERE id = \$1/.test(text)) return { rows: runAt ? [{ created_at: runAt }] : [] };
+      return { rows: [] };
+    },
+  };
+  const dm = {
+    isDmUser: dmSvc.isDmUser,
+    hasBot: dmSvc.hasBot,
+    requestLine: dmSvc.requestLine,
+    askedLine: dmSvc.askedLine,
+    async requestStart() { return null; },
+    async sendDm(_pool, args) {
+      sent.push(args);
+      return sendResult === undefined ? { conversationId: 5, messageId: 950, duplicate: false } : sendResult;
+    },
+    async setQuestionState(_pool, messageId, patch, opts) { moved.push([messageId, patch, opts.userId]); },
+  };
+  return { pool, dm, sent, queries, moved, settings: { dmUsers } };
+}
+
+const maker = { userId: 7, username: 'ada', issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat' };
+const flat = { id: 21, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
+
+test('B6: Build it moves the request\'s card under the plan, read from the plan\'s run, and the card above stops being drawn', async () => {
+  const { pool, dm, sent, queries, moved, settings } = underPlanDeps({ existing: { messageId: 800 } });
+  const out = await activity.cardUnderPlan(pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings, deps: { dm },
+  });
+  assert.deepEqual(out, { conversationId: 5, messageId: 950, duplicate: false });
+  assert.equal(sent.length, 1, 'one card, under the plan');
+  const [card] = sent;
+  assert.equal(card.idempotencyKey, 'hrbot-activity-run-61', 'the key catching up gives the same run\'s build: never two messages');
+  assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nBuilding the first version now. This card updates as I go.');
+  assert.ok(!/—/.test(card.content));
+  assert.deepEqual(card.metadata, {
+    kind: 'activity', appSlug: 'flat-4b-chores', appName: 'Flat 4B Chores', issueNumber: 1,
+    issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat',
+    lookAt: '2026-10-04T10:02:00.123Z',
+  }, 'read from the run the plan came from; no startedAt, so its time counts from the tap');
+  assert.equal(card.moment, undefined, 'a card rings nothing (homeroom-bot-dm.js MOMENTS has no activity)');
+  assert.equal(dmSvc.momentOf(card.metadata), null);
+  const insert = queries.find(([sql]) => /INSERT INTO homeroom_bot_dm_messages/.test(sql));
+  assert.deepEqual(insert[1], [950, 7, 5, 21, 1, 'activity'], 'it is the request\'s card now');
+  const removed = queries.find(([sql]) => /DELETE FROM homeroom_bot_dm_messages WHERE message_id = \$1 AND kind = \$2/.test(sql));
+  assert.deepEqual(removed[1], [800, 'activity'], 'the card above is not the request\'s any more');
+  assert.deepEqual(moved, [[800, { movedTo: 950 }, 7]], 'and says where it went, on every device');
+});
+
+test('B6: a card already under the plan carries on; with none, Build it gives the request one; never for somebody the bot does not DM', async () => {
+  const under = underPlanDeps({ existing: { messageId: 960 } });
+  const kept = await activity.cardUnderPlan(under.pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: under.settings, deps: { dm: under.dm },
+  });
+  assert.deepEqual(kept, { messageId: 960, conversationId: 5, duplicate: true, continued: true });
+  assert.equal(under.sent.length, 0);
+  assert.equal(under.moved.length, 0);
+
+  const none = underPlanDeps();
+  assert.equal((await activity.cardUnderPlan(none.pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: none.settings, deps: { dm: none.dm },
+  })).messageId, 950);
+  assert.equal(none.sent.length, 1);
+  assert.ok(!none.queries.some(([sql]) => /DELETE FROM homeroom_bot_dm_messages/.test(sql)), 'nothing to move');
+  assert.equal(none.moved.length, 0);
+
+  const off = underPlanDeps({ existing: { messageId: 800 }, dmUsers: ['sam'] });
+  assert.equal(await activity.cardUnderPlan(off.pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: off.settings, deps: { dm: off.dm },
+  }), null);
+  assert.equal(off.sent.length + off.moved.length, 0);
+
+  const gone = underPlanDeps({ existing: { messageId: 800 }, runAt: null });
+  assert.equal(await activity.cardUnderPlan(gone.pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: gone.settings, deps: { dm: gone.dm },
+  }), null, 'no run to read it from: the card stays where it is');
+  assert.equal(gone.sent.length + gone.moved.length, 0);
+
+  const refused = underPlanDeps({ existing: { messageId: 800 }, sendResult: null });
+  assert.equal(await activity.cardUnderPlan(refused.pool, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: refused.settings, deps: { dm: refused.dm },
+  }), null);
+  assert.equal(refused.moved.length, 0, 'the card above stays until one is under the plan');
+  const thrown = await activity.cardUnderPlan({ async query() { throw new Error('database gone'); } }, {
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: refused.settings, deps: { dm: refused.dm },
+  });
+  assert.equal(thrown, null, 'Build it is decided by then: a card that cannot move never undoes it');
+});
+
+test('B6: Build it moves the card once it is decided, before the tray hears; Change something leaves the card where it is', () => {
+  const source = read('src/services/homeroom-bot-dm.js');
+  const body = source.slice(source.indexOf('async function decidePlanTap('), source.indexOf('async function changePlan('));
+  const answered = body.indexOf("status: 'answered', chosen: 'build', answer: BUILD_IT");
+  const move = body.indexOf("require('./homeroom-bot-activity').cardUnderPlan(pool, {");
+  const tray = body.indexOf("require('./homeroom-bot-tray').noteWorkChanged(user.id, deps)");
+  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "You chose Build it", before the tray re-reads');
+  assert.match(body, /if \(app && requester && Number\(requester\.userId\) === Number\(user\.id\) && bot\) \{/,
+    'only for the person the plan was for');
+  assert.match(body, /runId: Number\(card\.run_id\), planMessageId: Number\(action\.message_id\),/);
+  assert.match(body.slice(move - 400, move), /try \{/, 'never a reason the tap fails');
+  const change = source.slice(source.indexOf('async function changePlan('), source.indexOf('async function waitingPlan('));
+  assert.doesNotMatch(change, /cardUnderPlan/, 'a plan being changed is not a build: its card keeps following the request');
+});
+
+test('B6: a card going says how long its step usually takes, beside how long so far', () => {
+  const row = { message_id: 31, created_at: '2026-10-04T10:03:00Z', slug: 'flat-4b-chores', issue_number: 1 };
+  const entry = {
+    project: 'flat-4b-chores', number: 1, firstVersion: true, stage: 'building', step: 4, of: 7, stepName: 'Build it',
+    doing: 'building it', since: '2026-10-04T10:06:00.000Z', typicalMinutes: { from: 10, to: 25 },
+  };
+  assert.deepEqual(activity.cardOf(row, entry).typicalMinutes, { from: 10, to: 25 }, 'progress.typicalMinutes, as the bot answers "how long?"');
+  assert.equal('typicalMinutes' in activity.cardOf(row, { ...entry, typicalMinutes: undefined }), false, 'a step that waits on somebody has none');
+  assert.equal('typicalMinutes' in activity.cardOf(row, { ...entry, typicalMinutes: { from: 'x', to: 3 } }), false);
+  assert.deepEqual(activity.demoState({ working: 41 }).cards[0].typicalMinutes, { from: 10, to: 25 }, 'the staging demo shows it too');
+
+  const { normalizeBotActivity } = loadTsx(API);
+  const [kept, odd, done] = normalizeBotActivity({
+    cards: [
+      { messageId: 31, state: 'working', step: 4, of: 7, typicalMinutes: { from: 10, to: 25 }, links: {} },
+      { messageId: 32, state: 'working', typicalMinutes: { from: 30, to: 5 }, links: {} },
+      { messageId: 33, state: 'done', outcome: 'proposed', typicalMinutes: { from: 10, to: 25 }, links: {} },
+    ],
+  });
+  assert.deepEqual(kept.typicalMinutes, { from: 10, to: 25 });
+  assert.equal('typicalMinutes' in odd, false, 'whole minutes, the shorter first');
+  assert.equal('typicalMinutes' in done, false, 'only while it is going');
+
+  const { typicalText } = loadTsx(CARD);
+  assert.equal(typicalText({ from: 10, to: 25 }), 'usually 10 to 25 minutes');
+  assert.equal(typicalText({ from: 3, to: 3 }), 'usually about 3 minutes');
+  assert.equal(typicalText(null), null);
+  const html = draw({
+    meta: { ...META, issueNumber: 1, issueTitle: null, firstVersion: true, appName: 'Flat 4B Chores' },
+    card: working({ step: 4, of: 7, stepName: 'Build it', typicalMinutes: { from: 10, to: 25 }, startedAt: minutesAgo(11) }),
+  });
+  assert.match(html, /data-bot-activity-eyebrow="">Step 4 of 7 · Build it</);
+  assert.match(html, /<span role="status">Building it<\/span><span> · usually 10 to 25 minutes<\/span><span> · 11m so far<\/span>/);
+  assert.match(html, />Open request<\/a>/);
+  assert.doesNotMatch(draw({ card: working() }), /usually/, 'nothing said without a range');
+});
+
+test('B6: the transcript leaves out a card Build it moved under its plan, and the client keeps where it went', () => {
+  const { isMovedActivity } = loadTsx(CARD);
+  const message = (meta, extra = {}) => ({
+    id: 800, sender: { id: 1, username: 'homeroom_bot', bot: true }, content: 'words', metadata: { homeroomBot: { ...META, ...meta } }, ...extra,
+  });
+  assert.equal(isMovedActivity(message({ movedTo: 950 })), true);
+  assert.equal(isMovedActivity(message({})), false, 'a card that follows its request is drawn');
+  assert.equal(isMovedActivity(message({ kind: 'plan', movedTo: 950 })), false, 'only an activity card moves');
+  assert.equal(isMovedActivity(message({ movedTo: 950 }, { sender: { id: 2, username: 'ada' } })), false);
+  const { normalizeBotMeta } = loadTsx(API);
+  assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 950 } }).homeroomBot.movedTo, 950);
+  assert.equal('movedTo' in normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 'x' } }).homeroomBot, false);
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*const day = dayKey\(message\);/,
+    'skipped before its day and its name are counted, so the row after it is drawn as it would be');
+  assert.match(screen, /import \{ BotActivitySync, isMovedActivity \} from '\.\/bot-activity';/);
+});

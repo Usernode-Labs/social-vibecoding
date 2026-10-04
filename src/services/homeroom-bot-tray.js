@@ -34,7 +34,11 @@
 //
 // Every entry carries the request's other runs as `earlier`, so a request
 // the bot came back to five times is one entry with four earlier runs, not
-// five rows that look alike.
+// five rows that look alike. A first version's plan that a newer plan
+// replaced before Build it (Change something, a new look) is not one of
+// them (planOnly): to its creator it was the plan being updated, and the
+// tray used to show a newcomer's two plans as "2 earlier runs" beside the
+// build (first session, 4 October).
 //
 // ONE VOCABULARY. What a run came to is said in the activity cards' words
 // (homeroom-bot-activity.js OUTCOMES): a build held back by a cap is
@@ -235,6 +239,14 @@ function hrefOf(row) {
   return row.issue_number ? issueHref(row.slug, row.issue_number) : projectHref(row.slug);
 }
 
+/**
+ * Pure: whether a run was only a first version's plan, replaced before Build
+ * it was tapped (pastRuns' `plan_only`). Not an earlier run of its own.
+ */
+function planOnly(row) {
+  return row.plan_only === true;
+}
+
 /** Pure: a run as one of an entry's earlier runs. A build still going reads as one that stopped. */
 function runOf(row) {
   const outcome = outcomeOf(row) || 'stopped';
@@ -321,7 +333,7 @@ function entryOfRuns(runs) {
     ...(proposalRow ? { proposalId: Number(proposalRow.proposal_session_id) } : {}),
     href: links.proposal || links.request || links.project,
     links,
-    earlier: runs.filter((row) => row !== lead && row !== going).slice(0, EARLIER_LIMIT).map(runOf),
+    earlier: runs.filter((row) => row !== lead && row !== going && !planOnly(row)).slice(0, EARLIER_LIMIT).map(runOf),
   };
 }
 
@@ -331,7 +343,7 @@ function entryOfRuns(runs) {
  * showing, not an earlier run.
  */
 function earlierOf(runs = []) {
-  return runs.filter((row) => outcomeOf(row)).slice(0, EARLIER_LIMIT).map(runOf);
+  return runs.filter((row) => outcomeOf(row) && !planOnly(row)).slice(0, EARLIER_LIMIT).map(runOf);
 }
 
 /**
@@ -352,7 +364,7 @@ function needsYouOfProgress(item, runs = []) {
     at: iso(item.since) || (asked ? iso(asked.created_at) : null),
     href: links.proposal || links.request || links.project,
     links,
-    earlier: runs.filter((row) => row !== asked).slice(0, EARLIER_LIMIT).map(runOf),
+    earlier: runs.filter((row) => row !== asked && !planOnly(row)).slice(0, EARLIER_LIMIT).map(runOf),
   };
 }
 
@@ -413,11 +425,17 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
   return arrange(await progressEntries(pool, { userId, settings, deps }), []).now;
 }
 
-/** The bot's live runs on this person's requests, newest first. */
+/**
+ * The bot's live runs on this person's requests, newest first. `plan_only`:
+ * a first version's plan (awaitGo wrote it) that never went ahead (goAhead
+ * records what was chosen) and stopped waiting unbuilt.
+ */
 async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
             r.proposal_session_id, r.created_at,
+            (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
+              AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
             cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
             a.slug, a.name, q.issue_title, q.first_version
        FROM homeroom_bot_requesters q
@@ -542,6 +560,6 @@ function demoWork(now = Date.now()) {
 
 module.exports = {
   workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork,
-  jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf,
+  jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
 };

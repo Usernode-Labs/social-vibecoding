@@ -10,7 +10,9 @@
 // which is decided once, from the chat or the App tab. Change something is a
 // reply to the card, kept private and read by the next look. A newer plan,
 // a new look at the request and a week with no tap each close the card. A
-// request the read has two questions about asks both at once.
+// request the read has two questions about asks both at once. Build it moves
+// the request's activity card under the plan, so the build's progress shows
+// where it was tapped.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-plan.test.js
 
@@ -402,6 +404,54 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), false);
     assert.equal((await runRow(lone)).awaiting_go_at, null);
     await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  });
+
+  // First session, 4 October: Build it collapsed the plan and nothing
+  // appeared under it; the build's progress was in a card above the plans.
+  await t.test('Build it moves the request\'s card under the plan, silently, and the card above stops being the request\'s', async () => {
+    const activity = require('../src/services/homeroom-bot-activity');
+    const requester = await dm.requesterOf(pool, app.id, 1);
+    // Its card, from when it was queued (or the one an earlier Build it moved).
+    await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
+    const run = await readyRun();
+    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    const plan = await planMessage(run);
+    const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
+    assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
+
+    const tapped = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    assert.equal(tapped.ok, true);
+    const under = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
+    assert.ok(under.messageId > Number(plan.id), 'it follows the build from under the plan');
+    const message = async (id) => (await pool.query(
+      `SELECT content, metadata->'homeroomBot' AS meta FROM conversation_messages WHERE id = $1`, [id],
+    )).rows[0];
+    const card = await message(under.messageId);
+    assert.equal(card.meta.kind, 'activity');
+    assert.equal(card.meta.lookAt, (await runRow(run)).created_at.toISOString(), 'read from the run the plan came from');
+    assert.equal(card.meta.startedAt, undefined, 'its time counts from the tap');
+    assert.match(card.content, /\n\nBuilding the first version now\. This card updates as I go\.$/);
+    const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
+    assert.equal(rang.length, 0, 'a progress card rings nothing');
+    assert.equal(Number((await message(above.messageId)).meta.movedTo), under.messageId, 'the card above says where it went');
+    const { rows: record } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1', [above.messageId]);
+    assert.equal(record.length, 0, 'and is not the request\'s card any more');
+    // Her project, as creating it makes her (cards are read for projects she can view).
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [app.id, maya.id],
+    );
+    const { cards } = await activity.cardsFor(pool, {
+      user: { id: maya.id, username: maya.username, isAdmin: false }, settings: await bot.readSettings(pool),
+    });
+    assert.equal(cards.find((c) => c.messageId === under.messageId)?.state, 'working', 'its build, waiting its turn');
+    assert.ok(!cards.some((c) => c.messageId === above.messageId), 'and the card above is not read as one');
+
+    const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    assert.equal(again.status, 409);
+    assert.equal((await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 })).messageId, under.messageId,
+      'a second tap moves nothing');
   });
 });
 

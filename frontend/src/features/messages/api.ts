@@ -204,6 +204,8 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(strictId(pick(bot, 'sessionId')) ? { sessionId: strictId(pick(bot, 'sessionId'))! } : {}),
       ...(Number.isInteger(pick(bot, 'epoch')) ? { epoch: Number(pick(bot, 'epoch')) } : {}),
       ...(pick(bot, 'updated') === true ? { updated: true } : {}),
+      // B6: a card Build it moved under its plan.
+      ...(strictId(pick(bot, 'movedTo')) ? { movedTo: strictId(pick(bot, 'movedTo'))! } : {}),
     },
   };
 }
@@ -875,6 +877,9 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
     const whole = !!step && !!of && step <= of && of <= 12;
     const working = text(pick(row, 'state')) === 'working';
     const outcome = text(pick(row, 'outcome')) as HomeroomBotActivityOutcome;
+    const typical = record(pick(row, 'typicalMinutes'));
+    const from = strictId(pick(typical, 'from'));
+    const to = strictId(pick(typical, 'to'));
     return {
       messageId,
       state: working ? 'working' : 'done',
@@ -886,6 +891,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       doing: working ? text(pick(row, 'doing')) || null : null,
       outcome: working ? null : (ACTIVITY_OUTCOMES.has(outcome) ? outcome : 'stopped'),
       endedAt: working ? null : text(pick(row, 'endedAt')) || null,
+      // Whole minutes, the shorter first, and under two hours.
+      ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
     };
   }).filter((card): card is HomeroomBotActivity => !!card);
 }

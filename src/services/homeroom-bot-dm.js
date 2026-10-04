@@ -1364,6 +1364,21 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   await setQuestionState(pool, Number(action.message_id), {
     status: 'answered', chosen: 'build', answer: BUILD_IT, choices: went.chosen.map((c) => c.answer),
   }, { ws: deps.ws || null, conversationId: card.conversation_id, userId: user.id }).catch(() => {});
+  // The build's progress shows under the plan, where they tapped: the
+  // request's card moves here (homeroom-bot-activity.js cardUnderPlan).
+  try {
+    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [went.appId]);
+    const requester = await requesterOf(pool, went.appId, went.issueNumber);
+    const bot = deps.bot || await botAccount(pool);
+    if (app && requester && Number(requester.userId) === Number(user.id) && bot) {
+      await require('./homeroom-bot-activity').cardUnderPlan(pool, {
+        app, issueNumber: went.issueNumber, runId: Number(card.run_id), planMessageId: Number(action.message_id),
+        requester, bot, deps: { ws: deps.ws || null },
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not move the card under the plan', { runId: Number(card.run_id), err: err.message });
+  }
   try { require('./homeroom-bot-tray').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
   return { ok: true, choice: 'build', label: BUILD_IT };
 }

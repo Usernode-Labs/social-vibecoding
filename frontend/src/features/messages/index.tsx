@@ -22,7 +22,7 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
-import { BotActivitySync } from './bot-activity';
+import { BotActivitySync, isMovedActivity } from './bot-activity';
 import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -1708,6 +1708,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
+    // B6: a card Build it moved under its plan is drawn there, not here.
+    if (isMovedActivity(message)) continue;
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
