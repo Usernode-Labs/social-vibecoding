@@ -38,6 +38,16 @@
  * markup; the shipped markup has no `value` attribute, and a credential field
  * has no reason to re-render the screen per keystroke.
  *
+ * ── Return walks each step's fields (#3907) ───────────────────────────
+ *
+ * The iOS app no longer shows the keyboard's up/down chevrons, so Return is
+ * the way from one field to the next: each form and step carries
+ * `returnKeyHandler` (lib/return-to-next.ts) on its container and an
+ * `enterKeyHint` on every field ("next" until the last, which says what it
+ * does). The password form and the reset view are real forms and submit
+ * themselves from their last field; the code steps and the recovery views
+ * are not, and their last field runs the step's own button.
+ *
  * ── One documented behaviour difference ───────────────────────────────
  *
  * The wallet block's visibility is derived (`view === 'base' && walletUi`)
@@ -58,6 +68,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
@@ -1488,6 +1499,7 @@ export function LoginScreen() {
             id="login-form"
             className={hiddenLast(!base, 'mt-2.5 flex flex-col gap-4')}
             onSubmit={onLoginSubmit}
+            onKeyDown={returnKeyHandler()}
           >
             <div
               id="login-reset-success"
@@ -1524,6 +1536,7 @@ export function LoginScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                enterKeyHint="next"
                 {...HANDLE_FIELD}
                 {...AUTHFIELD}
               />
@@ -1541,6 +1554,7 @@ export function LoginScreen() {
                 name="password"
                 required={true}
                 autoComplete="current-password"
+                enterKeyHint="go"
                 {...AUTHFIELD}
               />
             </div>
@@ -1615,7 +1629,11 @@ export function LoginScreen() {
                 nothing saying which it belonged to. A plain column, with each
                 seam carrying its own board figure, is what says it.
             */}
-            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}>
+            <div
+              id="otp-step-email"
+              className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}
+              onKeyDown={returnKeyHandler({ submit: () => { if (!cooldownLeft) void otpRequestCode(); } })}
+            >
               <p className={STEP_P}>
                 We'll email you a 6-digit code to sign in. New here? You'll get
                 an account and a place on the waitlist.
@@ -1638,6 +1656,7 @@ export function LoginScreen() {
                     id="otp-email"
                     type="email"
                     autoComplete="email"
+                    enterKeyHint="send"
                     {...AUTHFIELD}
                     placeholder="you@example.com"
                   />
@@ -1660,7 +1679,11 @@ export function LoginScreen() {
                 {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
-            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}>
+            <div
+              id="otp-step-code"
+              className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onOtpVerify(); } })}
+            >
               <p className={STEP_P}>
                 {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
@@ -1687,6 +1710,7 @@ export function LoginScreen() {
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}
+                    enterKeyHint="go"
                     {...AUTHFIELD}
                     className={CODE_FIELD}
                     placeholder="123456"
@@ -1724,7 +1748,11 @@ export function LoginScreen() {
                 </button>
               </div>
             </div>
-            <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
+            <div
+              id="otp-step-password"
+              className={hiddenFirst(otpStep !== 'password', 'space-y-3')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onOtpSetPassword(); } })}
+            >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {otpSignup?.created
                   ? OTP_PASSWORD_INTRO_NEW
@@ -1760,6 +1788,7 @@ export function LoginScreen() {
                     type="text"
                     autoComplete="username"
                     maxLength={32}
+                    enterKeyHint="next"
                     {...HANDLE_FIELD}
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
@@ -1783,6 +1812,7 @@ export function LoginScreen() {
                   ref={otpNewPassword}
                   id="otp-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -1795,6 +1825,7 @@ export function LoginScreen() {
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter password"
                 />
@@ -1857,6 +1888,7 @@ export function LoginScreen() {
             <div
               id="recovery-wallet"
               className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'wallet'), 'space-y-3')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onWalletReset(); } })}
             >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 Your wallet is linked to this account. Approve a signature request, then choose a new password.
@@ -1869,6 +1901,7 @@ export function LoginScreen() {
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -1881,6 +1914,7 @@ export function LoginScreen() {
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter new password"
                 />
@@ -1904,6 +1938,7 @@ export function LoginScreen() {
               <div
                 id="recovery-email"
                 className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'space-y-3')}
+                onKeyDown={returnKeyHandler({ submit: () => { if (busy !== 'btn-email-reset') void onEmailReset(); } })}
               >
                 {/*
                     The instruction line steps aside while the sent
@@ -1921,6 +1956,7 @@ export function LoginScreen() {
                     id="recovery-email-input"
                     type="email"
                     autoComplete="email"
+                    enterKeyHint="send"
                     {...FIELD}
                     placeholder="you@example.com"
                   />
@@ -2014,6 +2050,7 @@ export function LoginScreen() {
                 e.preventDefault();
                 void onResetConfirm();
               }}
+              onKeyDown={returnKeyHandler()}
             >
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
@@ -2022,6 +2059,7 @@ export function LoginScreen() {
                   ref={resetNewPassword}
                   id="reset-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -2032,6 +2070,7 @@ export function LoginScreen() {
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter new password"
                 />

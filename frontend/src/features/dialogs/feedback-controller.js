@@ -1852,9 +1852,10 @@ export function init() {
         submitFeedback();
       }
     });
-    // #556: same shortcut in the optional title input. Plain Enter is
-    // NOT intercepted — the natural next step from the title is writing
-    // the description, and there's no <form> for Enter to submit.
+    // #556: same shortcut in the optional title input. Plain Enter goes on
+    // to the description, the natural next step (#3907): feedback.tsx's
+    // `returnKeyHandler` on #feedback-form does that, and leaves a modified
+    // Enter to this listener.
     feedbackTitle.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
