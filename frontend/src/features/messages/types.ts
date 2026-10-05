@@ -88,6 +88,14 @@ export interface HomeroomBotReady {
   waitingOn: string[];
   more: number;
   /**
+   * How many more approvals it needed when the card was sent (0 when it had
+   * them), and how many it needs in all (homeroom-bot-dm.js approvalState).
+   * With fewer needed than the people listed, the card says how many and
+   * that any of them will do (./approval-words.ts). Absent on older cards.
+   */
+  missing?: number;
+  needed?: number;
+  /**
    * What does not work yet: the declared changes its before & after shots
    * showed failing, after the bot's own fix round (homeroom-bot-dm.js
    * noteChangeReady). The card then says so instead of "ready to try".

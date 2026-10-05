@@ -1151,13 +1151,18 @@ async function relayIssuePost({
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
-    // one person's project (the title), who else it waits on, their words.
+    // one person's project (the title), who else it waits on and how many of
+    // them it needs, their words.
     ...(kind === 'proposal' && dm.card ? {
       ready: {
         group: !!context.group,
         last: !!dm.card.last,
         waitingOn: Array.isArray(dm.card.waitingOn) ? dm.card.waitingOn : [],
         ...(dm.card.more ? { more: Number(dm.card.more) } : {}),
+        // How many more approvals it needs, and in all: with fewer than the
+        // people listed, the card says how many and that any of them will do.
+        ...(Number.isInteger(dm.card.missing) ? { missing: Number(dm.card.missing) } : {}),
+        ...(Number.isInteger(dm.card.needed) ? { needed: Number(dm.card.needed) } : {}),
         // What its shots show not working (noteChangeReady), said on the card.
         ...(brokenWords(dm.card.broken).length ? { broken: brokenWords(dm.card.broken) } : {}),
       },
@@ -1616,6 +1621,9 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
           // Nobody else is asked on a project of one; and never a long list.
           waitingOn: waiting.slice(0, 3),
           more: Math.max(waiting.length - 3, 0),
+          // How many of them it needs (Page Turners, 5 October: two of
+          // three, not all three), so the card can say any of them will do.
+          ...(approval ? { missing: approval.missing, needed: approval.needed } : {}),
           // What its shots show not working, said on the card.
           ...(broken.length ? { broken } : {}),
         },
@@ -1687,11 +1695,13 @@ async function sweepHeldReady(pool, deps = {}) {
 /**
  * B7: where approval of one change stands, for whoever asked for it
  * (`userId`): whose Yes counts on its project (governance.js: the approvers
- * a project names, else everybody), how many it needs and has, and whether
- * this person's Yes counts, is in already, and would be the last one
- * needed. `gate` is the merge gate as it stands (governance.governedGate,
- * with the change's own explicit-approval flag, so no clock is promised to
- * a change that has none). Null for no such change.
+ * a project names, else everybody), how many it needs and has, how many
+ * more it needs (`missing`: 0 once it has them, the count behind the change
+ * page's "1/2"), and whether this person's Yes counts, is in already, and
+ * would be the last one needed. `gate` is the merge gate as it stands
+ * (governance.governedGate, with the change's own explicit-approval flag,
+ * so no clock is promised to a change that has none). Null for no such
+ * change.
  */
 async function approvalState(pool, { sessionId, userId = null }) {
   const id = Number(sessionId);
@@ -1726,8 +1736,9 @@ async function approvalState(pool, { sessionId, userId = null }) {
   const already = !!who && yesIds.has(who);
   const needed = Math.max(Number(gate.required ?? gate.approvalsRequired ?? 1) || 1, 1);
   const have = Math.max(Number(gate.qualifiedYes) || 0, 0);
+  const missing = gate.thresholdMet ? 0 : Math.max(needed - have, 1);
   return {
-    session, gov, electorate, gate, yesIds, needed, have,
+    session, gov, electorate, gate, yesIds, needed, have, missing,
     counts, already,
     last: counts && !already && have + 1 >= needed,
     audience: session.audience,

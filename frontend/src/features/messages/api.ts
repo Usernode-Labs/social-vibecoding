@@ -23,6 +23,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { countOf } from './approval-words';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
 
@@ -190,11 +191,16 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const broken = readyRow && typeof readyRow === 'object'
     ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
     : [];
+  // How many more approvals it needed, and in all, when it was sent: absent on older cards.
+  const missing = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'missing')) : null;
+  const needed = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'needed')) : null;
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
+    ...(missing !== null ? { missing } : {}),
+    ...(needed !== null ? { needed } : {}),
     ...(broken.length ? { broken } : {}),
   } : null;
   const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));

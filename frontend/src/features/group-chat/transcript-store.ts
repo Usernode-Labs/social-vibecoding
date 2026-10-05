@@ -110,7 +110,10 @@ export interface BotRequestChip {
 /**
  * Where a card's request (or fix) stands now, read from the platform's
  * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
- * `waitingOn` and `youApprove` say who still has to approve a built change.
+ * `waitingOn` and `youApprove` say who still has to approve a built change,
+ * `missing` how many more approvals it needs (0 once it has them) and
+ * `needed` how many in all, so a change that needs fewer than the people
+ * named says so.
  */
 export interface BotRequestState {
   stage: 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved' | 'live'
@@ -119,6 +122,8 @@ export interface BotRequestState {
   youApprove?: boolean;
   waitingOn?: string[];
   more?: number;
+  missing?: number;
+  needed?: number;
 }
 
 /**

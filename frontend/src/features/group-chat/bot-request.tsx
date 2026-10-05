@@ -1,3 +1,4 @@
+import { waitingWords } from '../messages/approval-words';
 import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
 
 /*
@@ -74,21 +75,19 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
 /** WP-C: under somebody's first request on a project. */
 export const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
 
-/** Pure: "a", "a and b", "a, b and c". */
-function listWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
-
 /**
- * Pure: who a built change still waits on, as the DM's ready card says it
- * (../messages/bot-ready.tsx waitingLine): "Waiting for approval from you
- * and @jordan."
+ * Pure: who a built change still waits on, in the DM's ready card's words
+ * (../messages/approval-words.ts, as ../messages/bot-ready.tsx waitingLine
+ * says it): "Waiting for approval from you and @jordan." when it needs every
+ * one of them, "Needs one more approval from @priya or @mo." when any of
+ * them will do, and nobody named once it has the approvals it needs.
  */
 export function approvalWords(state?: BotRequestState): string {
-  const who = [...(state?.youApprove ? ['you'] : []), ...(state?.waitingOn || []).map((name) => `@${name}`)];
-  if (state?.more) who.push(`${state.more} more`);
-  return who.length ? `Waiting for approval from ${listWords(who)}.` : 'Waiting for approval.';
+  if (state?.missing === 0) return 'It has the approvals it needs.';
+  const words = waitingWords({
+    you: !!state?.youApprove, names: state?.waitingOn || [], more: state?.more, missing: state?.missing, needed: state?.needed,
+  });
+  return words ? `${words}.` : 'Waiting for approval.';
 }
 
 /** Pure: a request the bot builds, where it stands. */
