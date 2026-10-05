@@ -1,0 +1,3398 @@
+{
+  "admin_c1c224b0": {
+    "text": "Адміністрація",
+    "source": "c1c224b03cd9bc7b6a86d77f5dace40191766c485cd55dc48caf9ac873335d6f"
+  },
+  "admin_moderation_a89dfdf8": {
+    "text": "Адміністрація та модерація",
+    "source": "a89dfdf81e371949454a94701026bd3d66841a0017f1e2e2194b12956149cc56"
+  },
+  "wallet_and_node_c64502e6": {
+    "text": "Портфель і нод",
+    "source": "c64502e63a4b8edaa2f421cc2159e2ef9bca9a0aafa57105e57e890032cb2b2f"
+  },
+  "wallet_node_130fe869": {
+    "text": "Створення Wallet & Node",
+    "source": "130fe869926efcc9ad04721a8722c64ee681d0c1cb7c322ce0249f6fce72a837"
+  },
+  "delete_e2d0a549": {
+    "text": "Видалити",
+    "source": "e2d0a54968ead24efc0dffa6ac78fc606dceec34a0f586177a74a54cc2272cf8"
+  },
+  "loading_ba3bbbe1": {
+    "text": "Завантаження…",
+    "source": "ba3bbbe10d8bef66441c88536ce7b8e724e2829b59a3da658654f4961cd61ae5"
+  },
+  "failed_to_load_your_agent_files_09624deb": {
+    "text": "Не вдалося завантажити файли агента.",
+    "source": "09624deb20f7162ad6673156d89662de26262804a6770b67b265528a068e2202"
+  },
+  "re_enable_63de4217": {
+    "text": "Реабілітація",
+    "source": "63de421725fe824d9997872b1130d48e684b08da4b2784054049002f95684303"
+  },
+  "revoke_87e6d00b": {
+    "text": "відкликання",
+    "source": "87e6d00bbf53ec5ae251de23ace84d5cf01c69deae04cfff08a5fe353a9853bb"
+  },
+  "could_not_load_app_permissions_65968b17": {
+    "text": "Не можна завантажувати дозволи на додаток.",
+    "source": "65968b172dd7e70bdf1ceb70d8cdd1c67be40361d6805b21e87c02c82031aa45"
+  },
+  "no_app_has_asked_for_your_camera_microphone_loca_b84a618b": {
+    "text": "На даний момент жодна програма не запитувала про вашу камеру, мікрофон, місцезнаходження або пристрої.",
+    "source": "b84a618b131011069e54805af73a350861895121c6ce1a5fb9858a012256eba8"
+  },
+  "set_up_a_local_coding_agent_524891f6": {
+    "text": "Створення локального агента для кодування",
+    "source": "524891f6bf3f55c9f07f8a67191e9cbb58dd031a4bec2efa2290a4f7acfd9bf7"
+  },
+  "start_codex_or_claude_code_from_a_local_checkout_6f0b72af": {
+    "text": "Запустіть Codex або Claude Code з місцевої перевірки і попросіть її створити пропозицію.",
+    "source": "6f0b72afac4711bc910a0fe45abe2519aa9626920a18f71d06b1c9742d816b41"
+  },
+  "clone_the_repository_0fce6e04": {
+    "text": "Клонуйте репозиторій",
+    "source": "0fce6e04ffaeaa07ae7480fb155fb78e4de97fd3c301bb3d295b5bc7b4f09d55"
+  },
+  "clone_homeroom_and_enter_the_checkout_830d38a3": {
+    "text": "Клонуйте Homeroom і введіть перерахунок.",
+    "source": "830d38a33c85edff362c13f32eee253735a51ad6faf17215c5253bc19e3b84c6"
+  },
+  "repository_setup_commands_3f2f7e3c": {
+    "text": "Репозиторні налаштування команд",
+    "source": "3f2f7e3c5d7fd79dcf453cbaa00977ac0306c4da1541633733857fd130edc4ce"
+  },
+  "start_your_coding_agent_c21d5754": {
+    "text": "Запустіть свій агент кодування",
+    "source": "c21d5754cb1a2bc351af18e5936fc47f554c2c9e7427f92043eb85e688049366"
+  },
+  "run_either_codex_or_claude_code_from_the_reposit_7310f470": {
+    "text": "Виконайте або Codex або Claude Code з каталогу репозиторії.",
+    "source": "7310f4704876d0c6af094679e99b8509037500ea781e996f8dd758a7579f08dc"
+  },
+  "codex_616efbe9": {
+    "text": "Codex",
+    "source": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c"
+  },
+  "codex_command_1bab5da7": {
+    "text": "Codex Замовлення",
+    "source": "1bab5da7ad7d820dbc64aee8290acf94e23d5cb5c636e724a04206b58710da08"
+  },
+  "claude_code_246ef8c1": {
+    "text": "Claude Code",
+    "source": "246ef8c1130d56f5d9df740a4b26c033a8b9c064daba9bb0a052d18993e87373"
+  },
+  "claude_code_command_5af7af69": {
+    "text": "Claude Code Замовлення",
+    "source": "5af7af69f26f4a45c8240e99ef76449c4ee96c1e5db3d6d942824f5f7b42645c"
+  },
+  "ask_it_to_create_a_proposal_1f6f6432": {
+    "text": "Запрошуємо Вас створити пропозицію",
+    "source": "1f6f6432529fd5f88e2ca0d03a0fe50cf25add8caa673cd67777431b2d72b9d1"
+  },
+  "example_proposal_prompt_a09ecbf5": {
+    "text": "Приклад пропозиції швидко",
+    "source": "a09ecbf5d971953d11da684f7fb9c884f384ddcd77c6a86b222f2564f335975f"
+  },
+  "follow_the_agent_s_instructions_it_will_ask_you__f8013ce9": {
+    "text": "Він попросить вас дозволити доступ на веб-сторінці Homeroom; переглянути і затвердити запит там, а потім повернутися до вашого терміналу.",
+    "source": "f8013ce9d462e45307acf0c285dbdf6234adff0bdfe27db3d5c373aacc968157"
+  },
+  "loading_credentials_f95763a4": {
+    "text": "Завантажити акредитації...",
+    "source": "f95763a4d76c6868f642f508f06eb630dc38fc3293cc50bec91db44c6b33c4ba"
+  },
+  "no_cli_credentials_2575a681": {
+    "text": "Загальна кількість осіб CLI осіб.",
+    "source": "2575a681ebf753e2ebaebbf491120b09b7e6580422f89d9529f0be248d512b1c"
+  },
+  "open_connector_settings_b334fccc": {
+    "text": "Відкриті налаштування конектора.",
+    "source": "b334fccc29ef7eb9b7d0b1bfffb2923cd52942e5587c3cc3e61edf49c9f7a31e"
+  },
+  "start_a_custom_connector_99c6955d": {
+    "text": "Запустіть спеціальний конектор.",
+    "source": "99c6955dc6a1ed28615d4ddca964ed5ba2edff3063b97225d411eb090162f308"
+  },
+  "paste_your_mcp_server_url_99cf1764": {
+    "text": "Завантажити URL сервера MCP.",
+    "source": "99cf1764133a7404de0d310a0f754f5a0e64ed6005374c8bd0ad098f24c60bc9"
+  },
+  "add_oauth_credentials_if_needed_a0e89f67": {
+    "text": "Додайте сертифікати OAuth, якщо це необхідно.",
+    "source": "a0e89f677852936414015ccdd8d511b7a51609bcee84e08c74ebdbb07f359706"
+  },
+  "if_a_server_requires_oauth_open_advanced_setting_6f6fdf73": {
+    "text": "Якщо сервер вимагає OAuth, відкрийте «Прогресивні налаштування» і введіть свій OAuth Client ID і Client Secret. Скачати це для Homeroom: він використовує динамічну реєстрацію клієнта, тому немає нічого ввести.",
+    "source": "6f6fdf738ed2312f6615dbc431cdbc6cbddf8ba002e71ea85d884a82c1a9987d"
+  },
+  "save_and_authenticate_25e1b137": {
+    "text": "Зберегти і аутентифікувати.",
+    "source": "25e1b1376c1aee1d5ea15a26c036293b65512dcb484dd5c0a66cbf5d705431d8"
+  },
+  "click_add_to_finish_configuring_then_click_conne_6b8cf6fa": {
+    "text": "Натисніть «Додати», щоб завершити конфігурацію, а потім натисніть «Зв'яжіться» біля конектора. Ви будете перенаправлено через потік OAuth; переглянути стовпи, які він просить, перш ніж затвердити.",
+    "source": "6b8cf6fa7d12352bc06e1de5b105644d60c2dca689eb28851bee9411231700b3"
+  },
+  "enable_it_in_a_conversation_2824bdbd": {
+    "text": "Це дозволяється в розмові.",
+    "source": "2824bdbddab8945c23f6be3dc3e800b16788aad4f6b8a577456940606e38386b"
+  },
+  "use_chatgpt_on_the_web_64173a4f": {
+    "text": "Використовуйте ChatGPT на сайті.",
+    "source": "64173a4f004728cc6c073c71e1fa047abae0f4e18d2833ed014e1fff2264d140"
+  },
+  "open_chatgpt_in_your_browser_custom_mcp_setup_is_7bdf8b45": {
+    "text": "Відкрийте ChatGPT у вашому браузері. Налаштування MCP в даний час є веб-функцією.",
+    "source": "7bdf8b45a6c2dffc018a6602db0c397118535d3b10498111a65f323f90e3eca9"
+  },
+  "turn_on_developer_mode_3c71c2d5": {
+    "text": "Перейти до режиму розробника.",
+    "source": "3c71c2d587502e9741a961fe09f733f09d448ce4de000af444811090e24df31c"
+  },
+  "open_the_chatgpt_plugins_page_1aefddc5": {
+    "text": "Відкрийте сторінку ChatGPT Plugins.",
+    "source": "1aefddc5ec3b81190dcdf015e59b5b6acbedb024c7f7f3ebca3698f389d38966"
+  },
+  "after_developer_mode_is_enabled_open_1dacb350": {
+    "text": "Після включення режиму розробника, відкрито",
+    "source": "1dacb350f070aaee5a613d1b9ebd91f3bd585658b9040d796aa2316450764e28"
+  },
+  "chatgpt_plugins_4b78aac7": {
+    "text": "Створення Plugins",
+    "source": "4b78aac773af769048926cf9aa10aaeec8be0f97ad7c2d665d1a2196d3031b4e"
+  },
+  "click_the_button_3e4873d7": {
+    "text": "Натисніть на кнопку +.",
+    "source": "3e4873d76663fb94f1a9cf311e2c1912a1861c17cc647503b535854406073340"
+  },
+  "enter_your_mcp_server_details_ee2fdbc4": {
+    "text": "Введіть деталі сервера MCP.",
+    "source": "ee2fdbc49611e896910e50cda02166d388c539c241bc326363d0fd704df99b07"
+  },
+  "create_the_app_863f4ba3": {
+    "text": "Створіть додаток.",
+    "source": "863f4ba3b89d11c00dc35ddaede5429b0887e75257c8cd7be16024179b27344d"
+  },
+  "chatgpt_connects_to_the_mcp_server_and_discovers_79236277": {
+    "text": "ChatGPT підключається до сервера MCP і виявляє інструменти, які він виставляє.",
+    "source": "7923627761f04347bfeb59796ec8b97a0cfad44b774c9d24f6aff25b6e1a1fcd"
+  },
+  "use_the_mcp_server_in_a_chat_be834331": {
+    "text": "Використовуйте сервер MCP в чаті.",
+    "source": "be83433159ed91707e468afab249a00f92682cf7bae6fea398ebd7bac04d0929"
+  },
+  "loading_connections_8aa3f435": {
+    "text": "Завантаження зв’язків...",
+    "source": "8aa3f4352701fb52dc7ea69beef11172aaedbab6f324b005014092d17590c40a"
+  },
+  "no_chat_products_connected_yet_a0378105": {
+    "text": "Продуктів чату досі не підключено.",
+    "source": "a0378105a1540502e03d62d2b01b7926721928278e2c5416d78395dd8135fe2a"
+  },
+  "disconnect_acfc5be7": {
+    "text": "Відключення",
+    "source": "acfc5be785a9bb3da11c9f05adb69bd5633096f09002aa44813a1b3207e912ad"
+  },
+  "delete_account_619e3be2": {
+    "text": "Завантажити обліковий запис...",
+    "source": "619e3be216f367adf3a4514e7c14db9bad5f28e32e8cd85374e1f373b1d67bde"
+  },
+  "delete_account_a2e20a33": {
+    "text": "Звільнення рахунку",
+    "source": "a2e20a33570001ae083b4667b54c433a7246897eba226b258a680cf46089c0b0"
+  },
+  "your_account_is_anonymised_not_erased_your_name__c42108fe": {
+    "text": "Ваш обліковий запис анонімний, не видалений: ваше ім'я, електронна пошта, профіль, доступ до реєстрації та приватні дані облікового запису видалені, і ви будете видалені на всіх пристроях.",
+    "source": "c42108fe17e344061e175eeecd97fb8718d86f0c7044704dd41488c9c445633c"
+  },
+  "messages_votes_shared_attachments_and_public_con_7be3ec0d": {
+    "text": "Повідомлення, голоси, спільні прикріплення та публічні внески залишаються доступними іншим учасникам під анонімним іменем «вилучений користувач».",
+    "source": "7be3ec0d913a541fcb842dc91fd7d0ac23b7102427c200b45b57720f80a1a95e"
+  },
+  "necessary_financial_and_moderation_records_are_r_d903f070": {
+    "text": "Необхідні фінансові та умірні записи зберігаються без посилання на ваш обліковий запис. Зовнішнє очищення може зайняти більше часу. Копії в резервних копіях, інших додатках, GitHub або блокчейн дотримуються своїх правил зберігання.",
+    "source": "d903f070a54a80c6be055a5b8edd7df746981922ac160a243c7ae7ee99c51c56"
+  },
+  "try_again_d8b8392e": {
+    "text": "Попробуйте знову",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "loading_account_details_135a022f": {
+    "text": "Детальніше про обліковий запис...",
+    "source": "135a022f2da6710c381dc1aa6855cb63093b2c3be6457d78a5f2a7b1fd5525f0"
+  },
+  "current_password_72ed2bd7": {
+    "text": "Теперішній пароль",
+    "source": "72ed2bd767cef62711f4293e17fef76dfe2858fe169db0a6b5c757193d45aa0c"
+  },
+  "for_security_sign_out_and_sign_in_again_if_you_s_210573d4": {
+    "text": "Забезпечити безпеку, вийти і знову зареєструватися, якщо ви підписали більше 10 хвилин тому.",
+    "source": "210573d4869779bcfdcb0ddf1862649ca4bdee7a41939ba7b73281d4cd0cb7c8"
+  },
+  "type_delete_to_confirm_d4856f41": {
+    "text": "Тип вишиванки для підтвердження",
+    "source": "d4856f418bf376c4f7efd9344d188f4ff29a3d1127948c03540912cc86d2049f"
+  },
+  "cancel_19766ed6": {
+    "text": "Скасувати",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "finish_signing_out_dad9ac67": {
+    "text": "Завершити підписання",
+    "source": "dad9ac67f3f0869ac46751cc23cdf9854b631daff3619cc9292d496c7c42850c"
+  },
+  "cap_65f13504": {
+    "text": "Кап $",
+    "source": "65f13504f1788453d383782f0c87ed3a2a9b8f725427a3312f09d2adeb7c3bae"
+  },
+  "use_my_own_key_past_the_daily_budget_4e44fe70": {
+    "text": "Використовуйте свій власний ключ за рахунок щоденного бюджету",
+    "source": "4e44fe70255b6486de20d7c39dbcc8f89d10052087a28df5aede1b5c73cc50b5"
+  },
+  "failed_to_load_app_permissions_5eb6af55": {
+    "text": "Не вдалося завантажити дозволи на додаток.",
+    "source": "5eb6af55d4350f494a7b80397699b9ea1116f85e4deef1941ff75d450ff7a6d9"
+  },
+  "no_apps_have_asked_to_use_ai_yet_b11b6069": {
+    "text": "На даний момент жодних додатків не запропоновано використовувати AI.",
+    "source": "b11b6069db8df47662ca9fd410474cb3c0ff620383b43e62621c63e06337dfa0"
+  },
+  "log_out_49616145": {
+    "text": "Зареєструйтесь",
+    "source": "49616145514e9abf1fc47d631fccccff2ed974cc260d38848181a07e0fa9972f"
+  },
+  "settings_could_not_be_loaded_check_your_connecti_19779122": {
+    "text": "Налаштування не можуть бути завантажені. перевірте зв'язок і спробуйте знову.",
+    "source": "1977912215d331200b5e83537ff38c1de9a6267ab068e7359298f217d956d3db"
+  },
+  "detach_74bc1174": {
+    "text": "Детач",
+    "source": "74bc117435434cc1708fda8004336cf159021c5fa8f991b444c4fa4b1e7c0b6f"
+  },
+  "could_not_load_notification_settings_9b7eaff0": {
+    "text": "Не можна завантажувати налаштування повідомлення.",
+    "source": "9b7eaff0315856f59f255dbcb7c7cc8c67091b7a59800c6a719cb50636731fb5"
+  },
+  "apps_set_differently_f8de2a66": {
+    "text": "Приклади встановлюються по-різному",
+    "source": "f8de2a665ea92ffc41e8b3460f3eb2e5208777866f13863ae2546e95e82992c8"
+  },
+  "use_my_defaults_1b232808": {
+    "text": "Використовуйте дефолти",
+    "source": "1b232808fbf471c4c362636af95c949f530253ff04a27ef1a20b9ac7cf295d0d"
+  },
+  "no_app_is_set_differently_change_one_from_its_no_0ae74d77": {
+    "text": "Ніяка програма не встановлюється по-іншому. змінюйте одну з її входу Повідомлень в меню додатків.",
+    "source": "0ae74d774fe6a591dda51c4a635802fa8cf57b6a516a308c5f55f7b69516030f"
+  },
+  "app_version_80a7db3b": {
+    "text": "App версії",
+    "source": "80a7db3b236f581269594eb3b04938db79c003f03104cd04fa57ee1f69d8b8e1"
+  },
+  "platform_version_87a77f7b": {
+    "text": "Платформа версії",
+    "source": "87a77f7b207934b3aaba52b6643b8e42372995c3653d44c1281cc33f593ca2ae"
+  },
+  "about_4efca0d1": {
+    "text": "Про",
+    "source": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
+  },
+  "which_build_of_each_part_of_the_platform_you_are_271079cc": {
+    "text": "Які будівлі з кожної частини платформи, яку ви працюєте.",
+    "source": "271079cc8691c46a080745057999ad36f3d47e7a55fb3f2c22a88b0b6e9aa9e8"
+  },
+  "admin_preview_a702a4e3": {
+    "text": "Адміністративний прогноз",
+    "source": "a702a4e31bd03d35c641ca5af59492fff364395d8d00694fff2458aa098171e9"
+  },
+  "hide_admin_only_ui_so_the_app_looks_the_way_it_d_446e57c8": {
+    "text": "Приховати адміністративний тільки інтерфейс, так що додаток виглядає так, як це робить для регулярного користувача. Корисно для виявлення проблем UX, які впливають тільки на неадміністраторів.",
+    "source": "446e57c8bf88c10a8addfcc2d2a56f99c7074470cd564289555f95ef9fb72ee6"
+  },
+  "view_as_non_admin_970e2f82": {
+    "text": "Переглянути як не-адміністр",
+    "source": "970e2f82bb23512903deed9e908d51ab4a2c3686182a7f15d9eec44eecb57261"
+  },
+  "purely_a_client_side_display_toggle_so_your_serv_be71b26e": {
+    "text": "Чистий клієнт-сторінний дисплей затягується, так що привілеї адміністратора сервера-сторінки не впливають. сторінка буде перезавантажуватися так, що решта інтерфейсу піднімає зміну.",
+    "source": "be71b26ead92aeafd7ab635568161e5ce741b940088f803e267c68eb6b2be00b"
+  },
+  "agent_instructions_skills_7c5c7975": {
+    "text": "Агентські інструкції та навички",
+    "source": "7c5c797501a2f24ebef712d1c00661d32cc0cdfe593764d603e218cdf1af65c4"
+  },
+  "personal_files_the_coding_agent_follows_on_every_0ac8544a": {
+    "text": "Персональні файли агент кодування слідує на кожному будівництві або спектрі запуску, який ви запускаєте, в будь-якій програмі. маркування або прямий текст тільки, до 10 з кожного типу, 48 КБ на файл.",
+    "source": "0ac8544ad8e77ac2684d2a8adedce802ac077276e0c6f6797368e544e6ff060d"
+  },
+  "instructions_934652dc": {
+    "text": "Інструкція",
+    "source": "934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac"
+  },
+  "upload_865e89de": {
+    "text": "Завантажити",
+    "source": "865e89de78d94c747184d6a7e6f5244b453d8062343c07e014ae698cfb0260e8"
+  },
+  "skills_66d0f523": {
+    "text": "навички",
+    "source": "66d0f523a379b2de6f8d5fba3a817ebc395f7bcaa54cc132ca9dfa665d1e9378"
+  },
+  "name_dcd1d522": {
+    "text": "Назва",
+    "source": "dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50"
+  },
+  "description_526e0087": {
+    "text": "Опис",
+    "source": "526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba"
+  },
+  "one_line_what_this_skill_does_5e8fbb47": {
+    "text": "Оригінальна назва: What this skill does",
+    "source": "5e8fbb47abada358ebd0be46439c084e375f8afefddd881bc7370ab828732c6b"
+  },
+  "save_1509f561": {
+    "text": "Зберегти",
+    "source": "1509f561f2416598629b886ad7d3c05a7e221e4e0675c84bbff4ee6d9e03913d"
+  },
+  "agent_session_sound_alerts_a3b208e8": {
+    "text": "Агентська сесія звуку та попередження",
+    "source": "a3b208e8f3048cca2ccd81e9be817c062d0ea465af1431e0ae2f42064d5377c2"
+  },
+  "get_a_heads_up_when_an_agent_session_finishes_an_4bbe7c09": {
+    "text": "Отримайте заголовки, коли закінчується сесія агента і чекає на вашу відповідь.",
+    "source": "4bbe7c095151e5cdfe09c970a7ec24017d154f117ef8b8c484bc10a9044518b5"
+  },
+  "play_a_sound_and_notify_me_when_the_app_is_in_th_cdbb5cda": {
+    "text": "Грати звук, і повідомити мене, коли додаток знаходиться на фоні",
+    "source": "cdbb5cda3a58e96115e2ee2ba87e22b8a6b6817591522c940f68ee940af3d7ca"
+  },
+  "when_you_re_in_the_app_a_soft_chime_plays_a_brow_c11cd6df": {
+    "text": "Коли ви знаходитесь в додатку, м'який хіме грає. браузер може показати повідомлення, поки його картка залишається відкритою. Щоб отримати повідомлення про поштовх з мобільною програмою, закріпленою або закритою, ввімкніть повідомлення про діяльність на вашому телефоні та сеансах агента нижче. Тест проводить поштовх телефону з 10-секундним затримкою, щоб ви могли відключити.",
+    "source": "c11cd6dff182bc73a64315604423fabd0fc364153216ca450190f5092e071761"
+  },
+  "send_a_test_alert_38875c4c": {
+    "text": "Надіслати тест-аларм",
+    "source": "38875c4ca7f00bd25da87570ba85bffa0699b975e6adf7901b4dff4f0c1de8b8"
+  },
+  "mobile_push_categories_5299ed95": {
+    "text": "Мобільний push категорії",
+    "source": "5299ed9533b4ef42d490d07f8a59d81274759fd0a8a483af80b0278e36b87039"
+  },
+  "choose_which_social_activity_can_send_a_phone_no_a89f2a23": {
+    "text": "Виберіть, яка соціальна діяльність може надіслати телефонне повідомлення. перемикач повідомлення про діяльність вашого телефону залишається головним контролем для цього пристрою.",
+    "source": "a89f2a23181c4d73a657b576a64be0775f6a676e2e47c55f721a110a735443b8"
+  },
+  "loading_mobile_push_preferences_21318fa1": {
+    "text": "Завантажити мобільний push переваги ...",
+    "source": "21318fa1e6fb90a3d4b8d08d3e52f9bdc97a261b6386ec91964520a7805aa097"
+  },
+  "what_apps_tell_you_about_0cb37f87": {
+    "text": "Про що розповідають додатки",
+    "source": "0cb37f87029183f6b206cd7d30523454378aa67c5224142d431000014b36983a"
+  },
+  "your_default_for_every_app_and_the_apps_you_have_6b763540": {
+    "text": "Ваш стандартний для кожної програми, і програми, які ви встановили по-різному. Кожен з них охоплює дзвінок тут і повідомлення на вашому телефоні, разом. Змінити одну програму з її Повідомлення вхід в меню програми.",
+    "source": "6b763540dfc196f849bf6bc424e517d4c30d29085ac8f782f51167854324f8ce"
+  },
+  "anthropic_api_key_97d1086e": {
+    "text": "Anthropic API ключ",
+    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
+  },
+  "bring_your_own_anthropic_api_key_to_keep_working_5b0792bc": {
+    "text": "Принесіть свій Anthropic API Ваш платформовий тижневий дохід використовується в першу чергу; як тільки він виходить, ваш ключ автоматично переходить, навіть в середині вихідного обертання, і використовують рахунки безпосередньо до вашого Anthropic Світовий рахунок .",
+    "source": "5b0792bc208a2c15d311cd18b29c5aabb8d6bb4c085f13c01991ffe2eaad28ba"
+  },
+  "key_99a52df3": {
+    "text": "Ключові",
+    "source": "99a52df3ff3d499488e2fa28150c4106a2cb5e928891a830a9aa3922b2d32160"
+  },
+  "sk_ant_6c52ace5": {
+    "text": "Ск-ант...",
+    "source": "6c52ace57ade262707c97d3a5fbe15ad67054e144371c0d27817e41cd40c80b4"
+  },
+  "sk_ant_dda59792": {
+    "text": "Ск-ант...",
+    "source": "dda59792fb6824cc0ee170a9202eb02bd83dacac5ccfa96ba0e8954c5b9246a6"
+  },
+  "remove_c3812fc4": {
+    "text": "Зняти",
+    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
+  },
+  "set_tight_spend_limits_9faa0b10": {
+    "text": "Визначення строгих обмежень витрат",
+    "source": "9faa0b105d730fc25510632fd5db7299deb6be07cb97ad98b082fb8fe2b7b433"
+  },
+  "on_the_key_itself_for_defense_in_depth_39b04ecd": {
+    "text": "На самому ключі для оборони в глибині.",
+    "source": "39b04ecd97a4588a1b13cda7ea6b0bb090c8229e0421187f3a32406f9e492ce9"
+  },
+  "app_ai_permissions_8be55dd9": {
+    "text": "Appi дозволи",
+    "source": "8be55dd90e374de98322dd13ce0a20b481c4996e85cdd0730f97d48a0be67360"
+  },
+  "apps_you_ve_allowed_to_use_ai_on_your_behalf_the_f61e6dba": {
+    "text": "Їх витрати розраховуються на ваш звичайний щоденний бюджет, а також на прикладний кап, який ви встановили. Відкликання діє негайно, і відкликаний додаток можна знову активувати тут з його попереднім капом.",
+    "source": "f61e6dbad08e7083295d2e6b8a2141fece86a532ac2e5d6adbbd9d1994642746"
+  },
+  "app_device_permissions_bad62fc7": {
+    "text": "Дозвіл на пристрій",
+    "source": "bad62fc7e4a90fc30d7fe53e407cd68e14bf9787b838314525a9530e033fd2d6"
+  },
+  "apps_you_ve_allowed_to_use_your_location_microph_eeb288be": {
+    "text": "Приклади, які ви дозволили використовувати своє місце розташування, мікрофон, камера, екран або підключені пристрої. Кожна програма запитується окремо, і тільки додаток, який ви надали, отримує її. Відкликання зупиняє додаток наступного разу, коли він відкривається, тому що запущена програма зберігає те, що було надано до того часу.",
+    "source": "eeb288bedcb4e59f3f68e8f6c56bca5703b90c6420937ace4141bebf921aa87e"
+  },
+  "loading_blocked_apps_2268173d": {
+    "text": "Завантажити блоковані додатки",
+    "source": "2268173d3a0f47c36a72ce301b2577fab81befbcb53d40d93040d145372ec9d1"
+  },
+  "you_haven_t_blocked_any_apps_6bf9fcd0": {
+    "text": "Ви не заблокували жодних додатків.",
+    "source": "6bf9fcd0f2f25859096515178829013d67216e8d74e8b251bc6c4e9142fa12d0"
+  },
+  "retry_942087cc": {
+    "text": "Повторити",
+    "source": "942087cc2d41e01304b7195558d093d10c72af8e838c7556d6a02d471ee71852"
+  },
+  "blocked_apps_adfc2938": {
+    "text": "Заблоковані додатки",
+    "source": "adfc2938bb4bd50b3e53274304411071a4b7e2134037fa833fbffec96289296b"
+  },
+  "blocked_apps_are_hidden_from_your_app_lists_and__f9d2eb46": {
+    "text": "Заблоковані додатки приховуються від списків і відкриттів додатків, не можуть бути відкриті в Homeroom, і не надсилають вам повідомлення.",
+    "source": "f9d2eb467e3345b202ddb0898707bd612b6a36c83ba920ad35e51249620a5169"
+  },
+  "cli_coding_agent_access_f5b96ef5": {
+    "text": "CLI & кодування-агент доступу",
+    "source": "f5b96ef5a6c0adacf4f8c79fe12f2b7efe9dee7c0d23ce7c7efa0a883cf336a3"
+  },
+  "credentials_approved_for_the_homeroom_cli_codex__d72becb6": {
+    "text": "Сертифікати, затверджені для Homeroom CLI, Codex, Claude Code, або OpenCode. Відкликання активного сертифікату діє негайно.",
+    "source": "d72becb6da15ecf7c5cfaaada8e6926cb73c9720f0a0bdd14e840b7b48d9a3e2"
+  },
+  "load_more_ac8991ef": {
+    "text": "Завантажити більше",
+    "source": "ac8991ef01019cf55a2426194a05959e0cb886333f1a332ff4f442320d165400"
+  },
+  "or_follow_the_steps_8cef3762": {
+    "text": "або слідкуйте за кроками",
+    "source": "8cef3762d8130be9c7eec5bcf57513ef1d051fa991b5a60a52dba108e43a9c4f"
+  },
+  "connectors_c3d2e79e": {
+    "text": "Коннекторів",
+    "source": "c3d2e79ebdd046c6b7363de7b69dc9fb5b38235f0d328fdff0b2f9ccf2854b07"
+  },
+  "work_on_your_apps_from_a_claude_or_chatgpt_chat__33b9393e": {
+    "text": "Працюйте на своїх додатках з чату Claude або ChatGPT, не використовуючи ваші щоденні кредити.",
+    "source": "33b9393e75ac99d19cf6f9dac33eb67f342e3ae26baeb7461788ea52fc2be330"
+  },
+  "mcp_server_url_4f5aff03": {
+    "text": "MCP сервер URL",
+    "source": "4f5aff033a99aafc3fd8ada21494659861d67bf9ae5f7a448c679fef2c222999"
+  },
+  "copy_the_mcp_server_url_c3c7a36a": {
+    "text": "Копіюйте URL сервера MCP",
+    "source": "c3c7a36ace51bdf0ab08277021eaee33fb88333ddc52b04c9d10ede516f138c1"
+  },
+  "copy_e21f935f": {
+    "text": "Копія",
+    "source": "e21f935f11d7e966dbbae78da9daa378fe8142a14e7c0cd7434183005faa6c5c"
+  },
+  "how_it_works_9c870aa6": {
+    "text": "Як це працює",
+    "source": "9c870aa6e5e93270170d5a81277ad3e623afe8d4efd186d3e28f3d2b646d52e6"
+  },
+  "this_is_homeroom_s_address_for_ai_apps_mcp_is_th_2abcc49c": {
+    "text": "Це адреса Homeroom для додатків AI. MCP - це стандарт, який вони використовують для підключення.",
+    "source": "2abcc49cd6963dab0348b4f272560a4c579806cfdc3880c00c1cba7ecb88ed9a"
+  },
+  "paste_it_into_claude_chatgpt_or_another_app_that_22e7a490": {
+    "text": "Прикладіть його в Claude, ChatGPT або іншу програму, яка підтримує MCP. Ця програма може потім побачити ваші Homeroom додатки, запити на файли та відкриті пропозиції для вас.",
+    "source": "22e7a490994d139844d2006703479dd4cca69e04d12b4efba5a12eb4b8cc9e01"
+  },
+  "you_need_no_password_or_key_the_app_opens_a_home_cf820b9c": {
+    "text": "Вам не потрібен пароль або ключ.Аппликація відкриває сторінку Homeroom, і ви затверджуєте її там.",
+    "source": "cf820b9cdc4ce81a8055e8054902b0932d8835b89ce5e1d581963431ab29a75b"
+  },
+  "choose_your_app_fc4d005d": {
+    "text": "Виберіть свою App",
+    "source": "fc4d005d0baf87f46de0dacca42c2d3799272151a680e5736d3058af9afb7c41"
+  },
+  "claude_ai_bb601f44": {
+    "text": "Claude.Ай",
+    "source": "bb601f44e963c80622b7df3ef902e8fbdcc67eb709ea22cf9a7845c662594417"
+  },
+  "if_you_use_claude_code_6c26af2f": {
+    "text": "Якщо ви використовуєте Claude Code",
+    "source": "6c26af2f44a4c59b294f1f83ad1528561b1de9ab6a7328303055a0eb2df1a1ff"
+  },
+  "name_it_homeroom_42ff8871": {
+    "text": "Названий на честь Homeroom",
+    "source": "42ff8871aa8cf55c9f49d02ad2dba9b404a2df9b2fab945a96dbb651a57e9ac6"
+  },
+  "stop_the_permission_prompts_19971518": {
+    "text": "Забороняється видавати дозвіл",
+    "source": "199715186c61369d48cac7305f6b748cfe9cec9b4f4175e52015b117b91ffd13"
+  },
+  "homeroom_cannot_switch_this_on_for_you_permissio_d1f0171e": {
+    "text": "Homeroom не може перетворити це для вас. правила дозволу живуть у файлі на вашому комп'ютері або в репо вашої програми, і конектор не має жодного способу написання, що також є те, що зупиняє будь-який інший конектор ви додаєте від надання себе дозволів. Копіювати один з блоків нижче є цілий корекція, і це одноразова річ.",
+    "source": "d1f0171e974d5a32f2f4f682dfa12febfa724c5ce6bf20d757bef8bb36e71dc4"
+  },
+  "claude_code_on_your_own_machine_2a8f58a3": {
+    "text": "Claude Code на власному пристрої",
+    "source": "2a8f58a3109d7d46b8f183464f4675d95beba6e1486a8427383eb970e9b183f7"
+  },
+  "claude_settings_json_048ae0e8": {
+    "text": "• Клауде / Settings.json",
+    "source": "048ae0e839a625fe37021cb5f2e81d14bd375f12b400388daa174059871af359"
+  },
+  "copy_the_allow_rules_for_your_personal_settings__fd51b3f9": {
+    "text": "Копіюйте правила дозволу для файлу персональних налаштувань",
+    "source": "fd51b3f90ec61a53c1af344d8b81656d361694cca0fab877689c96c93136daf0"
+  },
+  "claude_code_on_the_web_d6d69420": {
+    "text": "Claude Code на сайті",
+    "source": "d6d694206e1d2de6701e369f45c5730fe9bce14aad89b77b94694e6e467d2d7f"
+  },
+  "claude_settings_json_f27ac6f3": {
+    "text": "Завантажити .claude/settings.json",
+    "source": "f27ac6f39d89fe021c56900069198aa7d9968f2cd6645c00b11ffd1b78fcf546"
+  },
+  "copy_the_allow_rules_to_commit_in_your_app_repo_afed5d7b": {
+    "text": "Копіюйте правила, які дозволяють дотримуватися у вашій програмі repo",
+    "source": "afed5d7bd493f9e663c1b7103357b74b9b953d52818863f19264b4d03210946b"
+  },
+  "claude_code_may_still_ask_you_to_trust_the_works_8e702718": {
+    "text": "Claude Code може все ще просити вас довіряти робочому простору один раз на контейнер, перш ніж файл репо-на рівні діє. Чи цей діалог з'являється в кожній сесії веб не вирішено. Якщо ви все ще закликані після виконання файлу, то саме тому, і вищезазначений випадок є поправка, яка не залежить від нього.",
+    "source": "8e702718fd0da571d00653ab1959f2d35a32ca89e454159d68271f5dcce9e159"
+  },
+  "claude_ai_chat_chatgpt_and_codex_ee498996": {
+    "text": "Claude.ai чат, ChatGPT і Codex",
+    "source": "ee49899676d0b615ffdaee64d8f5d1d467e00f2f90ec3943ee4bbce6ffbed661"
+  },
+  "nothing_to_do_you_approve_the_connector_once_whe_0224c499": {
+    "text": "Ви затверджуєте конектор один раз, коли ви підключите його і він не запитує знову за дзвінком. Дві блоки вище є формат файлу Claude Code і не мають ефекту в цих продуктах.",
+    "source": "0224c49951c772ab1e5d6b82a73b1fd2cffc819c58662e31fd14f5a5c93615dd"
+  },
+  "reads_only_anything_that_acts_on_your_behalf_fil_110d7bca": {
+    "text": "Все, що діє від вашого імені (задача запиту, відкриття або подання пропозиції) все ще запитує кожен раз, з метою.",
+    "source": "110d7bca0b82a658fe2427ee064480f830556082a31b10368c45ba2459a4db61"
+  },
+  "connector_registered_under_a_different_name_e9f4b7d3": {
+    "text": "Конектор зареєстрований під іншим ім'ям?",
+    "source": "e9f4b7d320ee72426199e197c54d9fbe37fc593293972efc3ecdf54316575dcd"
+  },
+  "check_what_your_tools_are_called_in_your_session_cf71ed97": {
+    "text": "Перевірте, які ваші інструменти називаються у вашій сесії, середня частина",
+    "source": "cf71ed97e1998e01d1e4b81358636abda54dc2acc6d4f4f583eee26da5f97503"
+  },
+  "if_it_is_not_9ae48f5c": {
+    "text": "Якщо це не",
+    "source": "9ae48f5c516236b9b6de519fd2ca720d40f36ef192b5a5bf3484489c68117fd7"
+  },
+  "or_7175517a": {
+    "text": "або",
+    "source": "7175517a370b5cd2e664e3fd29c4ea9db5ce17058eb9772fe090a5485e49dad6"
+  },
+  "type_it_here_and_both_blocks_above_are_rewritten_0ef764f1": {
+    "text": ", введіть його тут, і для цього переписуються обидва блоки вище.",
+    "source": "0ef764f13a5f259e16738412a359aebd278337ee61c333a43b71094545560631"
+  },
+  "homeroom_fc537467": {
+    "text": "Гомером",
+    "source": "fc53746715cfd01aed1826a0b604bbb93dcefe29c93007407dda1f6dbffa336e"
+  },
+  "chatgpt_50a41229": {
+    "text": "ЧатГПТ",
+    "source": "50a4122943273ad2f00ea92bff9c7cb6235e199f745321cb4272aa1857840463"
+  },
+  "add_the_server_29c1bdc4": {
+    "text": "Додайте сервер",
+    "source": "29c1bdc439c02d7c02337dc09a1f146cf31ea94c6724462bb65693e77b1a2b29"
+  },
+  "sign_in_6c52846f": {
+    "text": "Зареєструйтесь",
+    "source": "6c52846f7720c9b1b120dbd210c70e79c027815257610c4e32bdabb246d9c53d"
+  },
+  "know_the_limit_today_49a3a62c": {
+    "text": "Знайомтеся з сьогоднішнім кордоном.",
+    "source": "49a3a62ca7633dbc21ee124af4f158af5bd62ac738461a86fff02c15f93d83e9"
+  },
+  "terminal_4e686af7": {
+    "text": "Термінал",
+    "source": "4e686af7bdcc5ae005a247624fd8c7283257c2514f6b3ad2ff5d4cb6d95196e6"
+  },
+  "copy_the_codex_command_that_adds_the_homeroom_se_601d0cd4": {
+    "text": "Копіюйте команду Codex, яка додає сервер Homeroom",
+    "source": "601d0cd469170621dee88802686bf8b484b919e71321718c94ffc97f16942469"
+  },
+  "codex_config_toml_d49eedb3": {
+    "text": "• Кодекс / Config.toml",
+    "source": "d49eedb37f0af75f813efe6350381965f41c8919b2fd745bea1762825a0f717b"
+  },
+  "copy_the_codex_config_toml_entry_for_the_homeroo_69d9490c": {
+    "text": "Копіюйте вхід Codex config.toml для сервера Homeroom",
+    "source": "69d9490c5efdc4c1d917571c118824d783b7131b1bee0a54f35208754fa442e3"
+  },
+  "another_agent_aa212b60": {
+    "text": "Інший агент",
+    "source": "aa212b604098286f38ad759dded84b23eb9cfabf87a6f9dff3eb634e3dab18bf"
+  },
+  "give_it_the_connector_url_as_a_streamable_http_s_e92952d7": {
+    "text": "Введіть URL-адресу підключника як Streamable HTTP server.",
+    "source": "e92952d7bc0145eb7dc2ceec9d5070c4e718de9a87cc76023794add0961dcc3a"
+  },
+  "let_it_discover_oauth_5c8bd160": {
+    "text": "Про це йдеться у повідомленні OAuth.",
+    "source": "5c8bd160ceeee36b1839e401ccdc07ba629ea30c4f4911887106fd3023086716"
+  },
+  "check_where_its_callback_goes_f4cd31ec": {
+    "text": "Перевірте, куди йде його зворотний зв'язок.",
+    "source": "f4cd31ec415089b79050a9c968880725c343c202411f123bdceccc326573e089"
+  },
+  "homeroom_registers_a_client_only_if_its_oauth_ca_14795c48": {
+    "text": "Homeroom реєструє клієнта тільки тоді, коли його OAuth зворотний дзвінок",
+    "source": "14795c48823f72b8cff2769a5b04afd76ac7fa8bd650379fb889fc9e1ffd0e60"
+  },
+  "or_a_host_the_deployment_s_operator_has_added_a__11f5153a": {
+    "text": "(або хостинг, який додала оператор розгортання). зворотний дзвінок на localhost, який використовують клієнти командної лінії, приймається тільки Homeroom, що працює в режимі локального розвитку.",
+    "source": "11f5153a2c0cd30e8cebe48f27e754ad5e186e542d9eead430ce4d73bb6705fe"
+  },
+  "and_that_is_a_limit_on_the_platform_side_rather__629e883f": {
+    "text": ", і це обмеження на стороні платформи, а не щось, що потрібно виправити в клієнті.",
+    "source": "629e883f7539c38e30ab9c6deae081068cdcbf8b3b2878f494df9bbad7ad37db"
+  },
+  "name_it_homeroom_and_read_your_tool_list_3508e77e": {
+    "text": "Назвіть його Homeroom і прочитайте свій список інструментів.",
+    "source": "3508e77ee66cc2f167fc13160f578cbae415557a69a2c09703dde5b8ca35d98e"
+  },
+  "whichever_you_use_approve_the_connection_in_the__c45d7d44": {
+    "text": "Кожен, кого ви використовуєте, затверджує зв'язок на сторінці браузера, яка відкривається.",
+    "source": "c45d7d4411a17bb94b79b443e13f94ea1e2a9bcd2d4ff598929c6ac3efaba9d9"
+  },
+  "connected_22965568": {
+    "text": "Зв'язані",
+    "source": "22965568d22a14ee17af055d2870b50afcfe9fd94a83eec3196e266932297bb2"
+  },
+  "linked_accounts_feda46a4": {
+    "text": "Зв'язані рахунки",
+    "source": "feda46a46abb0f718aac6234e607aa0c188882669b38b5e3d3dffd981cde0bdb"
+  },
+  "we_pay_for_these_credits_so_a_connected_account__7c75a067": {
+    "text": "Ми платямо за ці кредити, тому підключений рахунок допомагає нам зупинити одну людину робити багато.",
+    "source": "7c75a0678c3bf55fb4d5e518c302802798df1d56673a28de595ac072f948f8d0"
+  },
+  "where_changes_get_built_1664c33e": {
+    "text": "Де відбуваються зміни",
+    "source": "1664c33e99a82339086e11ee678f258336165f395252069089807cec63159ac3"
+  },
+  "choose_where_homeroom_builds_your_changes_or_let_5a4dd746": {
+    "text": "Виберіть, де Homeroom побудує ваші зміни, або дозвольте йому запитати кожен раз.",
+    "source": "5a4dd746eacaeb5584dc0c866fc74b89025baec9154062db3ea2e9f7c621191f"
+  },
+  "ask_me_every_time_9a391560": {
+    "text": "Запитайте кожного разу",
+    "source": "9a391560d777bca857ea68b14743ba3f081bc0d3d0d10643663018ece7d263ff"
+  },
+  "build_on_homeroom_20450952": {
+    "text": "Створено на Homeroom",
+    "source": "20450952e4f15b788849323db66921ae3c18404d18d95740e75ba3b564686d4e"
+  },
+  "claude_code_claude_ai_code_591748ed": {
+    "text": "Claude Code (claude.ai / код)",
+    "source": "591748ed6566e7db4cb8c959e3fd5c464242ce70c301a781921450a14cb782cc"
+  },
+  "codex_chatgpt_com_codex_b4e103a2": {
+    "text": "Codex (chatgpt.com / кодx)",
+    "source": "b4e103a2a36844a7b96aa76d96eb0e7fb0a7d3ec38d80d76845834aa8043c313"
+  },
+  "anonymise_your_account_and_remove_your_sign_in_a_7f60f499": {
+    "text": "Анонімізуйте свій обліковий запис і видаліть свій вхід. Поділені повідомлення та внески залишаються під анонімним іменем «вилучений користувач».",
+    "source": "7f60f499b5a8771aa25fb40281ec28739e6a570e5dd2b6ba046ff2cd3b27d562"
+  },
+  "developer_console_2ef15ac2": {
+    "text": "Консолі розробника",
+    "source": "2ef15ac2866f955969bde655eb39df64da0e817fea9297c29e2022c9e32b6de0"
+  },
+  "the_bug_icon_in_the_header_opens_a_slide_up_log__3b19f54f": {
+    "text": "Іконка помилок в заголовку відкриває слайд-ап-лог виходу консолі та помилок, переданих з запущеної програми.",
+    "source": "3b19f54f543905990de396241b9cc74ac1c5e101e0a8cf80b65ba15ab1050351"
+  },
+  "always_show_the_icon_40f29927": {
+    "text": "Показати завжди ікону",
+    "source": "40f2992775263dd2c1bff5333be5c74d2bcd66ff8cd5e0e804458f387b4ab3fb"
+  },
+  "when_unchecked_the_default_the_icon_only_appears_55e66c8b": {
+    "text": "Коли не перевірено (за замовчуванням), ікона з'являється тільки після того, як поточна програма зареєструвала щонайменше одну помилку.",
+    "source": "55e66c8b804429aa2fa7c042e8a9abe3bef6046826afb27d07263521cd67f8d6"
+  },
+  "email_recovery_4ee4c511": {
+    "text": "Електронна пошта та відновлення",
+    "source": "4ee4c51181215dd5cfd768f9f9a7dfa2a899fa7c972aa850b9715c38d4ee8880"
+  },
+  "link_a_private_email_address_to_help_you_get_bac_cbd3f673": {
+    "text": "Зв'яжіть приватну адресу електронної пошти, щоб допомогти вам повернутися до вашого облікового запису.",
+    "source": "cbd3f673d71b25ff4f1a035b22daa8b8b3136e586e94694ee8f49380d5a4d2d0"
+  },
+  "loading_account_email_fe67ad09": {
+    "text": "Завантажити обліковий запис електронної пошти...",
+    "source": "fe67ad09b5e18bc040b35c63470ad214f7af89bd58e0958b1c26a5033dd23691"
+  },
+  "verification_code_3ee75029": {
+    "text": "Кодекс перевірки",
+    "source": "3ee75029c70e284c46b5af29eb87592f923e747f460353b02059a645f332b990"
+  },
+  "email_address_f2488fd4": {
+    "text": "Електронна адреса",
+    "source": "f2488fd4ef4adbc6ac61300083f2c33980e48bb4bbf3c540ad760d61fc36f420"
+  },
+  "change_email_or_request_another_code_5dfc237e": {
+    "text": "Змінити електронну пошту або попросити інший код",
+    "source": "5dfc237e6224768b254d292369f8d9ecf556346eca76809178f69fa87f86f2f0"
+  },
+  "experimental_3dc9f569": {
+    "text": "Експериментальний",
+    "source": "3dc9f569422dcfdadcb2c33f3eb2ee6fcebc8ba679bd63e690f9ddd0ff7c24be"
+  },
+  "early_features_we_re_still_testing_they_may_chan_18b10e0c": {
+    "text": "Ранні функції, які ми все ще тестуємо, можуть змінюватися або зникати.",
+    "source": "18b10e0c90e42ba4507868d4659f759c77b4dcf216b2553847b762f5247d188a"
+  },
+  "ai_progress_estimate_84af6dff": {
+    "text": "Прогрес оцінюється",
+    "source": "84af6dff632097de226153424720c09feb5cfa871f85400e8c08c7317eaf6a61"
+  },
+  "while_the_coding_agent_works_a_small_ai_model_sk_c1f62fff": {
+    "text": "У той час як агент кодування працює, невелика модель АІ записує свій прогрес приблизно один раз на хвилину і припускає, наскільки далеко він і приблизно скільки часу залишається. вона калібрована проти того, скільки довгих реальних рейсів насправді займає, але все ще є припущенням і може бути помилковим. додає невелику вартість на проїзд (виплачується на свій власний ключ API, якщо ви врятували один вище).",
+    "source": "c1f62fff4a572c4018e74b5785f02dbe206eadd3c2bb5a781145e6514c605562"
+  },
+  "session_bridge_run_this_chat_on_your_computer_a7de0058": {
+    "text": "Мост сесії (проводить цей чат на вашому комп'ютері)",
+    "source": "a7de0058b64e2182c8ef7fe6094e0fc78e932853d777942b58e8101f56bc3c4f"
+  },
+  "homeroom_bot_build_with_it_in_messages_09675ab3": {
+    "text": "Homeroom bot (будований з ним в Посланнях)",
+    "source": "09675ab38d9eb0de729ae02882902210dcc86dc5cf436e4146a8b704325c07f5"
+  },
+  "create_a_project_and_describe_what_it_should_do__c7e403c1": {
+    "text": "Створіть проект і опишіть, що він повинен робити, і Homeroom бот побудує першу версію. На проектах, на яких він працює, він задає вам свої запитання про ваші запити в Посланнях, з відповідями, які ви можете натиснути, і розповідає вам, коли щось будується, готовий голосувати, і живий. Ваші відповіді все ще розміщуються на запиті, де кожен може побачити їх. Ви також можете написати до нього, щоб запитати, на що він працює. Платформа платить за свою роботу для вас, до тижневого ліміту.",
+    "source": "c7e403c167ca34fd0f9ee88dfcd23f1b0b5f13b445d6a2470550195e7d51ead7"
+  },
+  "local_coding_agent_c95fa225": {
+    "text": "Місцевий агент кодування",
+    "source": "c95fa2257a953a1b13dbb49d8a8019540a22d8eab3142ef4280192fc5e43d8e7"
+  },
+  "fast_low_cost_ai_for_navigating_and_using_homero_6284220e": {
+    "text": "Швидка, низька вартість АІ для навігації та використання Homeroom. робота з розробки зберігає свій власний модель і об'єкт роздумів.",
+    "source": "6284220efb06b83941dda036e13bb1b5fca8e9aecbe8381c449d155d4b77ee50"
+  },
+  "enable_experimental_global_chat_f6baece4": {
+    "text": "Дозволяється експериментальний глобальний чат",
+    "source": "f6baece434d8d5a0eb441c4851ad7d25929b8aed1d45259bc89560558d610ac8"
+  },
+  "show_your_global_chat_conversations_in_messages__147d8909": {
+    "text": "Показати ваші глобальні чати розмови в Повідомленнях. Класичний залишається стандартним досвідом.",
+    "source": "147d8909e53ff1b2c061c2e83f04a358967822965bfe49e262ace271904fe417"
+  },
+  "add_or_claim_an_openrouter_key_before_choosing_a_f9534947": {
+    "text": "Додати або претендувати на ключ OpenRouter перед вибором моделі Global Chat.",
+    "source": "f95349478723c1311ff3e9c230c01d6d36b656689066c8508df7ca607900e4a1"
+  },
+  "open_openrouter_settings_43a49afc": {
+    "text": "Налаштування OpenRouter",
+    "source": "43a49afc3547fbf162ce73fb5092dfe6d54491d6c3fd10e3996d6c988edfec13"
+  },
+  "global_chat_model_0f65a60c": {
+    "text": "Глобальна модель чату",
+    "source": "0f65a60c5747693afacf2aa069914f251b1a6ec18d132b72682ac909eb7b25bb"
+  },
+  "refresh_0e916101": {
+    "text": "відновлення",
+    "source": "0e91610117029a62a478b7fa7df0b8598bebe3ab1e192d4b1882e310719c9671"
+  },
+  "reasoning_effort_3236aeec": {
+    "text": "Розумні зусилля",
+    "source": "3236aeec43e563ca9ea03a7d0c077021021a3e36b4a0648ea5539d07d9e0f379"
+  },
+  "low_recommended_for_glm_flash_0ff85ed6": {
+    "text": "Низький · рекомендується для GLM Flash",
+    "source": "0ff85ed61f6308f34d856b5ef768209133d52d33facac0d6c2fd35d02f2aa292"
+  },
+  "minimal_only_for_supported_models_a81c4df1": {
+    "text": "Мінімальна · тільки для підтримуваних моделей",
+    "source": "a81c4df1b139470d5e8fc57864ad75aa5a8b8ac9fb080a9e32f764700496731c"
+  },
+  "medium_8e588cd1": {
+    "text": "Середній",
+    "source": "8e588cd187741f1cd76f5fab77b7208782a8c21d764ce7d7a4cf3ac4e0968873"
+  },
+  "high_c4ebc6d4": {
+    "text": "Високий",
+    "source": "c4ebc6d4a5832cd9415f906ad03661110c705a72381c8b8b145761d02e2dd23a"
+  },
+  "extra_high_70eb321d": {
+    "text": "надзвичайно високий",
+    "source": "70eb321d8c393f2c586a249c8d6be866a37121ef46a8313e98a9952ff5e964fc"
+  },
+  "monthly_chat_cap_in_usd_optional_9b91ea19": {
+    "text": "Місячний чат кап в USD · факультативний",
+    "source": "9b91ea1979a91bfe1c45af0b20172a6184e9359f680962253f0105b90c3babd3"
+  },
+  "no_separate_cap_7f5111c6": {
+    "text": "Немає окремих капель",
+    "source": "7f5111c6b1afaf0db6e95d1acce55712f37531b3ab019a2bfb74eaf7f9692a0b"
+  },
+  "global_chat_this_month_1fe52400": {
+    "text": "Глобальний чат цього місяця",
+    "source": "1fe5240043650878d5c82531f9ae0c57e439295bba69b99bed9b69197e7e321d"
+  },
+  "overall_openrouter_remaining_11be62ab": {
+    "text": "Залишився OpenRouter",
+    "source": "11be62abd3d3d8866abde178e63eee0f741a1f1bca0dcdcb2259943b6f82cf27"
+  },
+  "development_ai_settings_f0ae8065": {
+    "text": "Розробка налаштувань",
+    "source": "f0ae8065330894efbf3c11325b335034a2fa92495dc4905e0c91e851c423cf7b"
+  },
+  "classic_is_always_the_startup_mode_this_profile__221f905c": {
+    "text": "Цей профіль контролює тільки Global Chat; сеанси розробки зберігають свої окремі дефолти.",
+    "source": "221f905cc84e5ade6ce877d72f56f6d51c7f04f1fc5910e2aacb317286146585"
+  },
+  "openrouter_eb70c3bc": {
+    "text": "OpenRouter",
+    "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
+  },
+  "use_any_compatible_model_for_all_chat_and_coding_227eef10": {
+    "text": "Використовуйте будь-яку сумісну модель для всіх чатів і кодування в OpenRouter Сеанси не використовують вашу платформу Claude Ваш аккаунт приходить з включеним OpenRouter Ключ – так OpenRouter Це дефолт і GLM. 5.3 Флеш вибирається, коли він доступний, в той час як повний список ключово-видимих моделей залишається доступним. Claude Code У списку моделей, що працюють в Claude CodeКлючі зашифровані в спокій і вводяться тільки для кожного повороту.",
+    "source": "227eef10170b9b0dc7009a9f48d95a0859acd84a1c5e2755f9c5415cf73d6c01"
+  },
+  "included_openrouter_key_f33fea5d": {
+    "text": "Включений ключ OpenRouter",
+    "source": "f33fea5d48604219c052f6d69cf33d2515bb36b95244850cfda3a909bba33095"
+  },
+  "sk_or_8939d26e": {
+    "text": "Ск- або ...",
+    "source": "8939d26eea1e50ec897759385c15042badfac743b6908da03dba4562eebfc828"
+  },
+  "or_use_your_personal_openrouter_api_key_95b84abf": {
+    "text": "або використовуйте свій особистий ключ OpenRouter API",
+    "source": "95b84abf0b457a3383153e5363e15781f84c9cb92b41b521d10d8ddf4e35d6fc"
+  },
+  "sk_or_51efae34": {
+    "text": "Ск- або ...",
+    "source": "51efae34cc35ebb820a088bda8029a00c551d393faafa4288d47502926a197e5"
+  },
+  "test_save_634dbaab": {
+    "text": "Тест і збереження",
+    "source": "634dbaabb7bfa2e961b2bff68e7e4fe6dcb6d40181773206fcbfd6957d18d35e"
+  },
+  "openrouter_model_dd24ac61": {
+    "text": "Модель OpenRouter",
+    "source": "dd24ac61242a5891d7634c9f3d47a395aa8fa3c69f05146ade6dbd79f1e89918"
+  },
+  "filter_by_model_or_provider_19c5643b": {
+    "text": "Фільтр за моделлю або постачальником.",
+    "source": "19c5643bbd1f98db6b8a44e44ea4e41206c8bef78a76be7f69725fbec2ddf643"
+  },
+  "filter_openrouter_models_75d3b31c": {
+    "text": "Фільтр OpenRouter",
+    "source": "75d3b31cdd6e14244e88ca0e21fb9ba54c7d4e1654c15de08e936bd39fc14201"
+  },
+  "favorites_c2a2f40a": {
+    "text": "☆ улюблений",
+    "source": "c2a2f40a25908cbf45d00937d3105b55913e6e0be8606c2f72629c170c6f268d"
+  },
+  "add_selected_model_to_favorites_a079bd1c": {
+    "text": "Додати вибрані моделі до улюблених",
+    "source": "a079bd1c365635918e2f92e449c44166440dc6089751ae28a3ccb34328dd7902"
+  },
+  "platform_recommendations_start_starred_your_chan_b9be668d": {
+    "text": "Ваші зміни перевершують ці дефекти на кожному пристрої. OpenRouter фільтрує цей каталог для ваших ключових та облікових політики.",
+    "source": "b9be668d6b486880d00c6b2600cc9dad1d48157f99dc299f31c9024c83ecedc0"
+  },
+  "default_21b111cb": {
+    "text": "дефолт",
+    "source": "21b111cbfe6e8fca2d181c43f53ad548b22e38aca955b9824706a504b0a07a2d"
+  },
+  "minimal_057b5de4": {
+    "text": "мінімальна",
+    "source": "057b5de48d7b90f123ec28d7e15f65d99b508d6b7cc2958c39472070f0f0f6bb"
+  },
+  "low_f793de20": {
+    "text": "Низький",
+    "source": "f793de205ead5ac302c4a1627829dea41f176b1068b993a32373fc869918374b"
+  },
+  "save_as_my_default_coding_agent_37aaed49": {
+    "text": "Зберегти як мій стандартний агент кодування",
+    "source": "37aaed4932ec8f90f8f8f8bb091ca3548428ce7613ebb82a8d26fba353d170da"
+  },
+  "use_claude_code_as_my_default_instead_24738538": {
+    "text": "Використовуйте Claude Code як дефолт замість",
+    "source": "247385385ccd48b6d5a20573b9ed88f3cb93dc8d65053ac211f993f21ae0ad9c"
+  },
+  "change_password_3f9c991f": {
+    "text": "Змінити пароль",
+    "source": "3f9c991f63a9a376bb02fee8db355879a987ce640654bc66d20b4c6ff2e999be"
+  },
+  "set_a_new_password_for_web_login_if_an_admin_gav_58cc01f8": {
+    "text": "Якщо адміністратор дав вам тимчасовий пароль, введіть його як свій поточний пароль тут.",
+    "source": "58cc01f8d9abe43d1d131819b327f91b31b9af81aa2e305e543e47e994051986"
+  },
+  "new_password_at_least_8_characters_b4ae3c2a": {
+    "text": "Новий пароль (принаймні 8 символів)",
+    "source": "b4ae3c2a46f9eae8a0b4145ffce243118b18171452f0e118ed6ec45d77a03243"
+  },
+  "confirm_new_password_bf000421": {
+    "text": "Перевірка нового пароля",
+    "source": "bf000421aeb39493cf8044ec73846d7da8ca97b7166208c0d1172a17ba23a388"
+  },
+  "sign_change_password_a94ed048": {
+    "text": "Підписання та зміна пароля",
+    "source": "a94ed0483afad231866585a85419b7d4a8a8dca1d4ee4b027063bdac107e5db4"
+  },
+  "don_t_have_a_password_create_one_d4a22819": {
+    "text": "У вас немає пароля? створити один",
+    "source": "d4a22819d483e94a8e2c69ee78753c6176f0d99dcf46e24fe283e37f9d675693"
+  },
+  "use_current_password_instead_c852abcb": {
+    "text": "Використовуйте теперішній пароль",
+    "source": "c852abcbfd99601048c6235bb17da6ecf8f0dfdc1a183926696ba16cadffab7a"
+  },
+  "profile_d696a35b": {
+    "text": "Профіль",
+    "source": "d696a35bdd1883da07a8d6c41bb7a3153381b23aa197629ee273479a6eaa5a9c"
+  },
+  "your_name_photo_and_bio_and_whether_your_public__a271f044": {
+    "text": "Ваше ім'я, фото і біо, і чи є ваша публічна сторінка на.",
+    "source": "a271f0449c7181f39403a8b531eb364fc7ba5595d1a43c9ab6661d52241caf6c"
+  },
+  "edit_profile_15c4aa13": {
+    "text": "Профіль Edit",
+    "source": "15c4aa13037eaf52733882a470415c0f5a4afa8490b49dc1712b1f96fc3b1de0"
+  },
+  "theme_efb52e71": {
+    "text": "Тема",
+    "source": "efb52e7172b77731d996ff4f51cd7b3dcfd55fc6f07392994619418d58d170dd"
+  },
+  "keep_sidebar_open_in_apps_2706db12": {
+    "text": "Залишайте сторінку відкритою в додатках",
+    "source": "2706db127a5a91fd0e60dfcd5021df0683f1573152a1492b301e75f38c7d4ccf"
+  },
+  "off_an_app_you_open_takes_the_whole_window_and_t_636cdcbe": {
+    "text": "Вимкніть, програма, яку ви відкриваєте, бере весь вікно, а бокова смуга повертається, коли ви вказуєте на лівий край.",
+    "source": "636cdcbec82ae421472e549c8e08def1df05b5acd90f38a68def75a73ebc3662"
+  },
+  "light_dark_or_follow_your_device_applies_everywh_8ded12ce": {
+    "text": "Світло, темно, або слідкуйте за вашим пристроєм. застосовується всюди в цьому браузері.",
+    "source": "8ded12ce9f66fde3990387653db857cbd2fe58ad24bc826a4b50f68af3093995"
+  },
+  "welcome_tour_5155b987": {
+    "text": "Вітання з турне",
+    "source": "5155b98763c0fef9af78ae62741da215496c6dfeecb258e4c3c141b9a9ddd632"
+  },
+  "a_one_minute_walk_through_your_apps_and_the_home_d8be7f27": {
+    "text": "За одну хвилину прогулянки через ваші програми та меню Homeroom.",
+    "source": "d8be7f27758b86f26077b683d233751e01fc481ebc0221be9cc6a5f098dc6f42"
+  },
+  "replay_the_tour_dc494df1": {
+    "text": "Перезавантажити тур",
+    "source": "dc494df1b50a21c549d23f6381fd6f0535d873008c33b1980d581b8b4cbaa59d"
+  },
+  "it_starts_again_on_your_home_screen_1036e65e": {
+    "text": "Вона починається знову на домашньому екрані.",
+    "source": "1036e65e88675e84b6d56b75806f456a0e0ef9ba695ecc58f258b21bfe681541"
+  },
+  "usage_8d59829c": {
+    "text": "Використання",
+    "source": "8d59829c1e15afe1a7fae93e8e5e32d8511bec5fd598a09f4fea6033b31e8a66"
+  },
+  "how_much_of_your_ai_allowance_is_left_and_once_y_a9cad60a": {
+    "text": "Скільки вашої допомоги від ІТ залишилося і, як тільки ви додаєте свій власний ключ, що він витратив на цей тиждень.",
+    "source": "a9cad60aaaa6de667ee141cf2ddedf2df2831c7a5d2913b0e32253ad3f52648e"
+  },
+  "this_week_s_spend_921b881f": {
+    "text": "Витрати цього тижня",
+    "source": "921b881fcea8e7eeb4830bf2d3fd2256178f9b2af17b22d3511bd106d686bcc0"
+  },
+  "platform_weekly_limit_a83f14f0": {
+    "text": "Платформа тижневого обмеження",
+    "source": "a83f14f098bfc1d72b6bbadcd7cdba7c74384ae8d55c946e6ecc937bb3c52c74"
+  },
+  "your_key_10d7b222": {
+    "text": "Ваш ключ",
+    "source": "10d7b222c4b9c18867e21dca6feb15924c3d57b491eeff7efc274ae2d7fd118b"
+  },
+  "resets_monday_00_00_utc_8260c594": {
+    "text": "Понеділок о 00:00 UTC.",
+    "source": "8260c59430618de198b46e83610e7a2945840b03ccd8174e1d52020606f50498"
+  },
+  "username_e3b89e9d": {
+    "text": "Користувач",
+    "source": "e3b89e9d33f88e523083d8b4436adcc3726c89e97fd3179a2e102d765d1b16ed"
+  },
+  "your_handle_is_how_you_sign_in_and_the_address_o_72596fbe": {
+    "text": "Ваш @handle - це те, як ви підписуєтесь і адреса вашої публічної сторінки будівельника.",
+    "source": "72596fbeacf2de766c4ee9457bc6eae79b8a75f4f98baa8f7955cdab57d5fadb"
+  },
+  "current_e0d1b682": {
+    "text": "Теперішній",
+    "source": "e0d1b68224bf0b31ef16b206c65b5f8f6b89d18161f4a7cdcb8d0ac8d952549a"
+  },
+  "new_username_0e2b4ad7": {
+    "text": "Нове ім'я користувача",
+    "source": "0e2b4ad75a90f6f58bdcab37b1297b99e76c4aca6896f6dae6a04b9a1e8549d7"
+  },
+  "change_username_5912b563": {
+    "text": "Зміна імені користувача",
+    "source": "5912b5638f7783e34edb180ddfae070ca1899c7938462d16719a5123594ec178"
+  },
+  "letters_numbers_and_underscores_3_32_characters__1534a76f": {
+    "text": "Листи, цифри і підкази, 3–32 символи, так що люди все ще можуть @mention вас. Ваш старий рукопис зберігається зарезервований для вас, а не випущений, так що посилання і згадки, які використовували його, продовжують вказувати на вас і ніхто інший не може взяти його. Ви можете змінити своє ім'я користувача знову після 30 днів.",
+    "source": "1534a76f937407e5d5bb505222328fbd4fc110a2b02030a1e3bb5519610eeb9d"
+  },
+  "homeroom_app_connection_c357b0c7": {
+    "text": "Оригінальна назва: Homeroom app",
+    "source": "c357b0c786720cb31eedf06cd65771cff4d50e018ec0e203217af86e757daf8d"
+  },
+  "what_this_screen_can_reach_in_the_app_and_what_t_57ae84f7": {
+    "text": "Що цей екран може досягти в додатку, і що робити, коли він не може.",
+    "source": "57ae84f75cc57d40e6c6ac7ddf81c55eb07822f4a1d364fa05e28d5a02461178"
+  },
+  "no_new_mobile_wallet_is_available_for_this_accou_ed9a4b53": {
+    "text": "Новий мобільний портфель не доступний для цього облікового запису, тому безпечний пристрій вхід не закінчився. якщо ви раніше приєдналися з електронною поштою, ви можете підключити портфель цього облікового запису замість цього.",
+    "source": "ed9a4b53d2394688e14cd6afebe266f15614abcf257eab09e99b2ea1e8d34945"
+  },
+  "loading_homeroom_app_settings_ed4ab34f": {
+    "text": "Завантажити Homeroom App налаштування...",
+    "source": "ed4ab34f8fa5510ee29bd4bf3f10266def6c720765243d054da7f65dc0f028a8"
+  },
+  "could_not_load_homeroom_app_settings_6ee3adf9": {
+    "text": "Не можна завантажувати налаштування Homeroom App.",
+    "source": "6ee3adf9b9ae64cf273867d59dc1851baec25b992729e33a92a7a0ae91f4c858"
+  },
+  "homeroom_app_activity_notifications_fba10fe5": {
+    "text": "Homeroom App: Повідомлення про діяльність",
+    "source": "fba10fe5db9b110095d1ffd93d071b8a2a1f8b92540c5eb9081ed337996d6d65"
+  },
+  "get_a_device_notification_when_an_agent_session__c0dbd22f": {
+    "text": "Отримайте повідомлення про пристрій, коли закінчується сесія агента або несподівана експлуатація. вміст повідомлення завантажується тільки після того, як ви відкриєте соціальний.",
+    "source": "c0dbd22fe700304ec39a13b0b4b03f46fdb812b0fe4cb7e6b3ba8e90ec1729ce"
+  },
+  "homeroom_app_block_production_7ea23d77": {
+    "text": "Homeroom App: блокова виробництво",
+    "source": "7ea23d77f6d357466484e738bee4162b446a95a67daeac9eb9530546b070b1a8"
+  },
+  "producing_blocks_earns_points_access_is_released_2ea7e4f9": {
+    "text": "Доступ випускається вручну, тому запитайте нижче, а адміністратор випустить ваші ключі в батах.",
+    "source": "2ea7e4f9fd18d4501c88bf18948287fb71925156f1ffba6abefa0f8647fca7ce"
+  },
+  "homeroom_app_widget_icons_346d1bf0": {
+    "text": "Homeroom приклад: ікони widget",
+    "source": "346d1bf0fb0dd9de26f27d4ab6e832ccc7aa64131619c9fc855efd5770e36c1b"
+  },
+  "what_the_homescreen_widget_was_told_to_show_and__9f735388": {
+    "text": "Що показати було сказано на домашньому екрані, і що він повідомляє назад.",
+    "source": "9f7353883d6d7b4cae10e69ca1b7c8ae4368143588cf4f7ce45a1eb4c950df1f"
+  },
+  "homeroom_app_privacy_identity_ca2e0596": {
+    "text": "Homeroom App: конфіденційність та ідентичність",
+    "source": "ca2e059674bb1fcaa6542abc2d45885d5d6be5b43b269834fbd904d4251b65e8"
+  },
+  "controls_for_the_zk_passport_identity_flow_47ad3148": {
+    "text": "Контроль потоку ідентичності паспорта ЗК.",
+    "source": "47ad3148919cb3eeae449665970c11c32372d226c7f3eaf6b9833b1ef2ba7349"
+  },
+  "homeroom_app_diagnostics_842cdb62": {
+    "text": "Докладніше: Homeroom app: діагностика",
+    "source": "842cdb6223af39a747d84217e8c2d21f27b65626ac44a66f1f73fc4bc27b93c9"
+  },
+  "debugging_tools_for_the_app_and_its_embedded_nod_946251c5": {
+    "text": "Дебютні інструменти для додатку та його вбудованих вузлів.",
+    "source": "946251c5181f44134f64e100c8ad2de70124c2709eeac90d0ff2eb10ed464678"
+  },
+  "homeroom_app_about_legal_2d6d2182": {
+    "text": "Докладніше: Homeroom app: about & legal",
+    "source": "2d6d2182dfd3f31f530d64a908da1aeeb1fe27a87b99da925d7b7a0a6fcfb04d"
+  },
+  "homeroom_app_account_a397f7be": {
+    "text": "Докладніше: Homeroom App: Account",
+    "source": "a397f7bef1eca17f92d3395d2e67f78f15a3846685c80f31ad68d607ee7fe4ed"
+  },
+  "the_app_signs_in_automatically_with_your_platfor_87ffde5d": {
+    "text": "Якщо ця повідомлення триває, спробуйте закрити і знову відкрити додаток.",
+    "source": "87ffde5dda139a52382bcc025580de329be8a8e16ad963c1f8cabce7914a97dc"
+  },
+  "help_info_59a661da": {
+    "text": "Допомога & Інформація",
+    "source": "59a661da0dd379589acd876434e5c9c792284b118f6d0743f191f5f366bb4de5"
+  },
+  "homeroom_wallet_6e5f658a": {
+    "text": "Homeroom портфель",
+    "source": "6e5f658a2e1a4ba0bc4706d148631db941b521a296aa2a4abcd51c5ded8432cc"
+  },
+  "link_your_on_chain_identity_scan_the_qr_code_wit_3d798ec2": {
+    "text": "Зв'яжіть вашу ідентичність в ланцюзі. скануйте QR-код за допомогою мобільного додатку Homeroom.",
+    "source": "3d798ec2fd20f8d9e6aa7734e9e12fc7cc707fedaa6d60a9d7c809bf12e7e59b"
+  },
+  "link_homeroom_wallet_ad511b14": {
+    "text": "Створення Homeroom Wallet",
+    "source": "ad511b146971eed8f742ca5b8da754dc00292f62c350af3b4ab67784bf99bc0b"
+  },
+  "find_a_setting_556e1493": {
+    "text": "Знайдіть розташування",
+    "source": "556e14934a4a4550aa43766e0f576030549cd26062f8817fd77da448fd5a7df9"
+  },
+  "settings_sections_e26d51d3": {
+    "text": "Розділи налаштування",
+    "source": "e26d51d36781ba171c5eba3f73a03d53120e8479d5275f0768ec49a40b3b0386"
+  },
+  "review_or_revoke_this_authorization_at_07c03ecd": {
+    "text": "Переглянути або відкликати цю дозвіл на",
+    "source": "07c03ecdc21e1a91dc24f7e3c02a8696bd3be39ea0f3f729b0e053d09733f764"
+  },
+  "callback_uri_ae2d8e2d": {
+    "text": "Завантажити Callback URI:",
+    "source": "ae2d8e2d9a55402e9e24f6a852e5d25e4d6dced6736d552d7ea117efb34d4f89"
+  },
+  "run_configuration_check_13d45a0d": {
+    "text": "Перевірка конфігурації",
+    "source": "13d45a0dd0e1db073f7a09ca27cc2d1cb9b1ecb29e57fa1dd93437070be4d315"
+  },
+  "show_on_public_profile_b8e29525": {
+    "text": "Показати на публічному профілі",
+    "source": "b8e295255965ddd4f8c4782ad2de9fb859f8e33f53d9f43645b57bef08dabad0"
+  },
+  "replace_95e15439": {
+    "text": "Замінити",
+    "source": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc"
+  },
+  "the_new_account_is_verified_nothing_changes_unti_e4912395": {
+    "text": "Новий обліковий запис перевірено. нічого не змінюється, поки ви не підтвердите.",
+    "source": "e4912395ed9be00739318c84bbc30d4438049e55938e29c838cfd3be5ef8fcaf"
+  },
+  "verified_replacement_10fc1a46": {
+    "text": "Перевірка заміни",
+    "source": "10fc1a46fc4ee70bacd0d10c1278e4e5fa343ccf1d21390eac8281b55daa97d7"
+  },
+  "show_the_replacement_on_my_public_profile_ef2d740b": {
+    "text": "Показати заміну на моєму публічному профілі",
+    "source": "ef2d740b269deedcb6c5f61166126a90053d966e11c53d3dfa94d911d9b6716d"
+  },
+  "daily_credits_a6f0c7d1": {
+    "text": "Щоденні кредити",
+    "source": "a6f0c7d1399c884b02a42633eb60eba5d5fa07ab230e60eb1fa76f69480821c9"
+  },
+  "value1_kb_75f92af0": {
+    "text": "{{value1}} КБ",
+    "source": "75f92af07bbc9708fd27fe52687fb40191d4bc61c533a5d2d45a7b8f1fa74f51"
+  },
+  "hide_ac20a57b": {
+    "text": "Сховати",
+    "source": "ac20a57bfde0bbc40bfe70895eb1cfacc944aaff06ca784053623c569b3e1b3d"
+  },
+  "view_dcc839a4": {
+    "text": "Погляд",
+    "source": "dcc839a4015c4b7dd9db959a8f757833b8adb92462a751b973386e453c6d58a3"
+  },
+  "delete_value1_264fa406": {
+    "text": "Зняти {{value1}}",
+    "source": "264fa40661cb1fb07bd4100635867dc3caf001c372ec623481aba57f4be24936"
+  },
+  "copy_value1_9776bafb": {
+    "text": "Копіювати {{value1}}",
+    "source": "9776bafbaa83d7bfc8f4fee11be73556454b1e07c8c5548362e0e3c5603ffa90"
+  },
+  "couldn_t_copy_select_the_text_and_copy_it_manual_9181be57": {
+    "text": "Виберіть текст і копіюйте його вручну",
+    "source": "9181be576b49cb2ddc08670fe5e6858dd852534505be0751160f918b90f5abe8"
+  },
+  "check_your_connection_and_try_again_481859b6": {
+    "text": "Перевірте зв'язок і спробуйте знову.",
+    "source": "481859b689b0d0d9de1e27b3a0a25004f32d7624f412f8f80e0188cb3e3d54f2"
+  },
+  "account_deleted_5d670c14": {
+    "text": "Аккаунт видалений",
+    "source": "5d670c14e5b1964725e22f1130c5bf15611d41d5668e7da420e421837e4eafed"
+  },
+  "permanently_delete_your_account_79594f2e": {
+    "text": "Постійно видаляти свій обліковий запис.",
+    "source": "79594f2e2cfbf70ffc8d4e8ad5136835e8d9a5dce35dcaf71ff8c8a73a552ec7"
+  },
+  "deleting_43b5894c": {
+    "text": "Усунення...",
+    "source": "43b5894c3e4e2b24f13c935f4fae0a0a8fbe7d7792750a09b88c2097fd9a32b8"
+  },
+  "delete_my_account_permanently_e65fb685": {
+    "text": "Постійно видаляти свій обліковий запис",
+    "source": "e65fb685d8ada175704517ed367c752c874543db77394a9be126a8676df02c45"
+  },
+  "re_enabling_restores_its_value1_daily_cap_655ec6cb": {
+    "text": "Реабілітація відновлює свій ${{value1}} щоденний капіт.",
+    "source": "655ec6cb1476ef3705d30a3c2a383648931fb5c756f3bd3fcd0025b73b592bf8"
+  },
+  "value1_value2_today_807fc2e9": {
+    "text": "${{value1}} / ${{value2}} сьогодні",
+    "source": "807fc2e9148aeec145886fe94139bd4956a17b4e09ae8374241bdf6c230b0049"
+  },
+  "value1_last_seen_f563e42d": {
+    "text": "{{value1}} · Останнє бачення",
+    "source": "f563e42d852c9424512291e7ffa413952399793d387f52bdef333bc4241363cb"
+  },
+  "unknown_b23a6a84": {
+    "text": "Невідомий",
+    "source": "b23a6a8439c0dde5515893e7c90c1e3233b8616e634470f20dc4928bcf3609bc"
+  },
+  "deploying_9664572e": {
+    "text": "Розподіл...",
+    "source": "9664572e6e067431fe401363144ee80698d7c7224e270b9e61e0868ce4dec55a"
+  },
+  "unblocking_b9c165b3": {
+    "text": "Відключення...",
+    "source": "b9c165b383c7488c6dc82603a16c506b976f56b49b3e8aa96095a0e435c46851"
+  },
+  "unblock_712da631": {
+    "text": "Відключення",
+    "source": "712da63171e0c9de0e1523438c5a0240ce765b722769f1df0df6975339263025"
+  },
+  "ask_value1_to_guide_you_b132d0a2": {
+    "text": "Запитайте {{value1}} для того, щоб направляти вас",
+    "source": "b132d0a244330a83872f6bf09b50393a15beb7bce1b6bcb2d1dd9a6e7a14c027"
+  },
+  "opens_a_new_value1_chat_with_your_connector_deta_a2cee7e2": {
+    "text": "Відкрийте новий {{value1}} чат з деталями підключення, які вже заповнені.",
+    "source": "a2cee7e2bfab8dee8914d2f57db6179de1e006a934ba4d7f5977b1fb38abe05f"
+  },
+  "email_verified_and_linked_to_your_account_e1921e83": {
+    "text": "Електронна пошта перевірена і пов'язана з вашим обліковим записом.",
+    "source": "e1921e832861abdbbf213bab3fafd0d08dfdbda411d516af3abbeaf9e740d86f"
+  },
+  "check_your_inbox_for_a_six_digit_code_it_expires_d6f40d8c": {
+    "text": "Перевірте вхідний ящик для шестицифрового коду, який закінчується за 10 хвилин.",
+    "source": "d6f40d8cf962539114c892bb23cb25c4d8887a0a9e060ce90e92ffd78b1721a5"
+  },
+  "no_email_linked_754cc606": {
+    "text": "Не пов'язані електронні листи",
+    "source": "754cc606f2c59a67ea75ecf0a227309758bb10a7a996889b9fc067597cf70878"
+  },
+  "verified_4f783840": {
+    "text": "Перевірка",
+    "source": "4f7838402f37674e8ebedb6cf048c0aea66bacdb25607aa3eee4b53093d83f5c"
+  },
+  "not_verified_verify_it_below_ab2039f4": {
+    "text": "Не перевірено, перевірте його нижче.",
+    "source": "ab2039f434ad3c2d3d66197c75610c93ca2327836957e779dc300243d6eb22e6"
+  },
+  "once_verified_use_this_email_to_sign_in_or_choos_6de309a2": {
+    "text": "Після того, як це підтверджено, використовуйте цю електронну пошту, щоб зареєструватися або вибрати «Забути пароль?» на екрані реєстрації.",
+    "source": "6de309a2fd469ae6d33a9c17dce9fe5437e86e6f216e91e11011a726bfead5e1"
+  },
+  "admin_accounts_cannot_use_email_sign_in_or_email_dc4b9774": {
+    "text": "Адміністративні облікові записи не можуть використовувати реєстрацію електронної пошти або відновлення пароля електронної пошти.",
+    "source": "dc4b9774291463d69098de7f09e19d2f15d8970dcd2f4b5029eaf1182a4c2dc6"
+  },
+  "please_wait_4660a983": {
+    "text": "Будь ласка, чекайте...",
+    "source": "4660a983366f710126b2dbf35dd89c7ea89eb7efdbe55b68dede11aa6aef705b"
+  },
+  "verify_email_e89a77e7": {
+    "text": "Перевірка електронної пошти",
+    "source": "e89a77e7fe58a6d14ffde89db2a9d370d605da0cad4b8df1fa7eec63fb2fac2b"
+  },
+  "send_verification_code_19e86d2b": {
+    "text": "Надіслати код перевірки",
+    "source": "19e86d2b7055340c491f0b37f762a8d1a86969ae1d67ce085f56045f48b55f53"
+  },
+  "global_chat_settings_could_not_be_loaded_b1ed417a": {
+    "text": "Глобальні налаштування чату не можуть бути завантажені.",
+    "source": "b1ed417acf0ea3aa2bbe4dc83754125bf7f59437edb256d84b809a1c33204789"
+  },
+  "compatible_models_could_not_be_loaded_e7d3d9ee": {
+    "text": "Сумісні моделі не можуть бути завантажені.",
+    "source": "e7d3d9ee7b6c979b9ba9a14f55a9064cc15d59e6e172f0d9cf71ea8e965173d1"
+  },
+  "choose_a_compatible_model_first_83918e8c": {
+    "text": "Перш за все, виберіть компактну модель.",
+    "source": "83918e8cc6bf3d1c2685d1aeeadee3eca77c220f29feed3f910a13dc2562b2a8"
+  },
+  "saving_23e39291": {
+    "text": "Зберегти...",
+    "source": "23e39291d6135814ed7c936e278974544b0df5fbf0eb0427b6700979b7472a93"
+  },
+  "global_chat_settings_saved_3fb24140": {
+    "text": "Всесвітній чат налаштування врятовані.",
+    "source": "3fb241407a472de6e974192e4e7b1a28ed2fb37d6683b8b5e2e3faf68bf80444"
+  },
+  "global_chat_settings_could_not_be_saved_269bb313": {
+    "text": "Глобальні налаштування чату не могли бути збережені.",
+    "source": "269bb313a4b7a441b91b2027787f3e551fb86558c296e3cdd54b9589235ae142"
+  },
+  "experimental_global_chat_enabled_48d8e666": {
+    "text": "Експериментальний глобальний чат включений.",
+    "source": "48d8e666284ebb18e5fac86519617d0b90e2fcac282fecfdecc442b3406123de"
+  },
+  "experimental_global_chat_disabled_f7df9614": {
+    "text": "Експериментальний глобальний чат дефіцит.",
+    "source": "f7df9614276d9fc289dd6babf1f4e78b52338e3c9f1ffbb3d61d2607bad72c31"
+  },
+  "global_chat_could_not_be_updated_b4b1a660": {
+    "text": "Глобальний чат не може бути оновлений.",
+    "source": "b4b1a660bbbd82953b6b64f2e38bf4c1642fbe48e096fb49ae5d17587706ce91"
+  },
+  "recommended_a71fecca": {
+    "text": "· Рекомендовані",
+    "source": "a71fecca70332015fcade5732727824d9468bfb1d3b680029de2a594373f7e51"
+  },
+  "unavailable_ca184496": {
+    "text": "недоступні",
+    "source": "ca184496974204a0bd3fd4925e0540bc4b0df6fcc232994d29754272b7183812"
+  },
+  "save_global_chat_settings_604bc432": {
+    "text": "Зберегти глобальні налаштування чату",
+    "source": "604bc43266773fe4868a0f04ac6102ff75b71fcece78c096b87bdd921f872725"
+  },
+  "what_is_block_production_f3cd476e": {
+    "text": "Що таке блок-продукція?",
+    "source": "f3cd476ee9fa0c5c5ce885ea93805cae046fd6b56c480a50212f1f16649ff65d"
+  },
+  "understanding_vrf_slots_9336e3ea": {
+    "text": "Розуміння VRF & Slots",
+    "source": "9336e3ea31d3574c0accf7fe297006fca75ca7036cff795456c72f2130726ed6"
+  },
+  "platform_reliability_01eb3d81": {
+    "text": "Платформа та надійність",
+    "source": "01eb3d81d09cc879597b7e609f71c4c37f1ef8d0a7ab539f9420e7fd9877a4d6"
+  },
+  "staging_demo_sample_data_4d544e0a": {
+    "text": "Завантажити демо: зразкові дані",
+    "source": "4d544e0addb08c3fde8ed7297e17a4451d5750d85a109eddf397e17e5cb36d56"
+  },
+  "copy_diagnostics_46fa69e5": {
+    "text": "Копія діагностики",
+    "source": "46fa69e51b74768a08cd5de30f84e6d540d54f7d03efe78a386cc81a3543370e"
+  },
+  "open_notification_settings_c6885c8e": {
+    "text": "Відкриті номінації",
+    "source": "c6885c8ebcb22d112322a0c0f644efc40dc07a6207068b69ed25503ca45b092f"
+  },
+  "checking_status_c8e79f30": {
+    "text": "Перевірка статусу...",
+    "source": "c8e79f30e9296bbb1d443fff041bc342ca863726d47952bf530dbe5097a3d5fc"
+  },
+  "activity_notifications_5d01c890": {
+    "text": "Повідомлення про діяльність",
+    "source": "5d01c890ff5988e9c82c7d1e87f3c4ec22e34d301dacea3c4d05ecd3a973de71"
+  },
+  "ask_to_produce_blocks_f152c128": {
+    "text": "Запрошуємо до створення блоків",
+    "source": "f152c1287f889b4cd557606160da22f166735a6fb2bca0c6bf049bdcfe7d46d8"
+  },
+  "re_check_icons_3725c28c": {
+    "text": "Перевірка ікон",
+    "source": "3725c28ce1c23eb6ad301e273269b7aa46de97c785c6d2734612c48206139ed9"
+  },
+  "no_settings_match_value1_74eb5005": {
+    "text": "Ніяких налаштувань не відповідає «{{value1}}».",
+    "source": "74eb5005feb72710102e193c00a1a4f2a4b65d5544aea7cdbd9d2758c09e3946"
+  },
+  "password_e7cf3ef4": {
+    "text": "пароль",
+    "source": "e7cf3ef4f17c3999a94f2c6f612e8a888e5b1026878e4e19398b23bd38ec221a"
+  },
+  "global_chat_experimental_1dfd6900": {
+    "text": "Глобальний чат (експериментальний)",
+    "source": "1dfd6900d8677c63cece52755670a07abc961cce8b62592344646d7d29a8c31e"
+  },
+  "language_a4fe6526": {
+    "text": "Мова",
+    "source": "a4fe65264ef7dbb38d104b1e81eb3350f3142f3d16f32bdec39b1d9b42c1b8d1"
+  },
+  "notifications_78801183": {
+    "text": "Сповіщення",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "homeroom_app_92077421": {
+    "text": "Апп Homeroom",
+    "source": "92077421b998d809e8172aa58ba95c88c04d89adb51f5e9d73bb1a7c3bd070a0"
+  },
+  "queueing_test_alert_682578be": {
+    "text": "Проведення тестування попередження...",
+    "source": "682578bea33cf41e6a75b5e67a79a54eef889e4cced91d53b56ca2ebc68d31d3"
+  },
+  "alert_in_value1_s_value2_stay_here_for_the_chime_4d1f636f": {
+    "text": "Повідомлення в {{value1}}s. {{value2}} Залишайтеся тут для хіме, якщо звук включений.",
+    "source": "4d1f636f34e292fe6eaf7b8d696c1711502bb36bf099cd4465e41fc22518ca26"
+  },
+  "the_test_push_is_queued_for_delivery_check_your__ce2787f1": {
+    "text": "Перевірте свій телефон; доставка може зайняти ще кілька секунд.",
+    "source": "ce2787f1bf439214a7daf33c8d9cf0bdd8b87d6428693a740eb1d79b96fdf054"
+  },
+  "could_not_queue_the_test_push_please_try_again_237ab0ed": {
+    "text": "Я не можу відмовитися від тестування, будь ласка, спробуйте знову.",
+    "source": "237ab0ed948edc6de837474252d502289d6a908ba75bb51f4d26c12b1cb6b35a"
+  },
+  "demo_data_changes_are_not_saved_364f1930": {
+    "text": "Демо дані: зміни не зберігаються.",
+    "source": "364f1930bad3ae0563a1bcc398a4829fcda32b7271761f1bff5e08a09c1c8597"
+  },
+  "unnamed_machine_06081018": {
+    "text": "Невідома машина",
+    "source": "060810189c6f9f2f5a1f223cee2dc03e17530dd2914929fd128cd0df645af0f5"
+  },
+  "detach_value1_its_session_s_coding_turns_go_back_17c8e49c": {
+    "text": "Детач {{value1}}? кодування її сесії повертається назад, щоб працювати на Homeroom. Все, що вона вже зробила, залишається на галузі.",
+    "source": "17c8e49c60f8557f1bdce4bdd7402e27d179ab429474de861937d779e4cc5d1d"
+  },
+  "could_not_detach_that_machine_6034c97c": {
+    "text": "Я не можу відключити цю машину.",
+    "source": "6034c97cbb4108eb225500cfe0ccd085ea6a524b3ed8611ea98195596fd02194"
+  },
+  "copied_8d525e5f": {
+    "text": "Копіювати",
+    "source": "8d525e5f158b9afe05f3122af363ac67763bdc4e1395b46597b320c289766ce3"
+  },
+  "copy_failed_5b50e7a6": {
+    "text": "Копія провалилася",
+    "source": "5b50e7a693fee952b9ed0e7c240bf4cba69b1dbf02af718145b297e4110591f3"
+  },
+  "could_not_load_your_connections_18fb599b": {
+    "text": "Не можна завантажувати свої зв'язки.",
+    "source": "18fb599bae166a7e0bc6a61f240520827c0f702d889dc0f420ea6266cdceae29"
+  },
+  "connected_client_0dd50071": {
+    "text": "Підключений клієнт",
+    "source": "0dd5007103bd5fa53c4dd55fc4d2d3c8074fa6b692d399c32538f465b34b9bb4"
+  },
+  "disconnected_7fcdbd4a": {
+    "text": "Відключений",
+    "source": "7fcdbd4a0ca24d27e5a77bd0c4e6de424a4be6a97f3749e5dca265ddf0614298"
+  },
+  "could_not_disconnect_975d7bac": {
+    "text": "Не можна відключити.",
+    "source": "975d7bac40e599ad332420d81e3ba2d70965a92ec2180f916795615e297fd51c"
+  },
+  "could_not_load_social_accounts_try_again_shortly_8c11d8b6": {
+    "text": "Не можна завантажувати соціальні рахунки. спробуйте ще раз коротко.",
+    "source": "8c11d8b683d66976a867c52183a482caa9894c4ca6791c5ad50089ae194199b0"
+  },
+  "daily_credits_unavailable_34d88d0b": {
+    "text": "Щоденні кредити недоступні",
+    "source": "34d88d0bfb9d454aaca7fab09820eaf5c00c4f797b166b3837f609775e7e7a7e"
+  },
+  "your_credits_0422797b": {
+    "text": "Ваші кредити",
+    "source": "0422797bd9cae085d522cc35ee19c3de723c938d901cddf5146e41a43c34476f"
+  },
+  "signed_in_ca566c89": {
+    "text": "Підписано в",
+    "source": "ca566c8968e7e881d55617e7caaf0c126924ab1cb64ca80edb2f37ef386492d8"
+  },
+  "linked_for_github_attribution_reconnect_once_to__1be5335f": {
+    "text": "Зв'яжіться з присвоєнням GitHub. Зв'яжіться один раз, щоб розраховувати на щоденні кредити.",
+    "source": "1be5335fcb9e11198e84c76ec9ce3b2d8403a4f1d2529b554d8635a5056a4abe"
+  },
+  "no_extra_credits_51ae57ea": {
+    "text": "Немає додаткових кредитів",
+    "source": "51ae57ea66b3ab5903b1587d7fcf30fe0e983910c902319e523fb1ac2f32d11f"
+  },
+  "not_set_up_on_this_server_c4806ac0": {
+    "text": "Не встановлюється на цьому сервері.",
+    "source": "c4806ac0c78434251b5878170e854797e82511e88fc67051f36b32e273e9f718"
+  },
+  "not_connected_3b3d2796": {
+    "text": "Не пов'язаний",
+    "source": "3b3d2796168bf3881009c9b9084e9652f2becd5094d7cff30b1757957f5f8efb"
+  },
+  "reconnect_needed_2b0211b3": {
+    "text": "Повторне підключення необхідно",
+    "source": "2b0211b3421a16ae6704fe8910762c6d3e6ad8c925f210ef544036866a888c00"
+  },
+  "reconnect_bf8a9eab": {
+    "text": "Відновлення",
+    "source": "bf8a9eab9e7e141bfb81f0ca9244a5f68f476ed0b57f03538410417298169d18"
+  },
+  "connect_1a2303ed": {
+    "text": "Зв'язок",
+    "source": "1a2303ede07493acc7caaa7c737f3c52bcc9cf04372be19ed1b0af6b9f2c791e"
+  },
+  "refresh_handle_d0bc66fe": {
+    "text": "Відновлення рук",
+    "source": "d0bc66fe8d640c47aa136f589206eba65be9c545f0e18a9f7ee51df009e1c734"
+  },
+  "change_account_26639e78": {
+    "text": "Зміни рахунку",
+    "source": "26639e78325224c94978566fed0864fe451d64b06f4af5d5f89325b47e8fbf7c"
+  },
+  "value1_could_not_be_connected_try_again_bf3932e0": {
+    "text": "{{value1}} не може бути підключений. спробуйте знову.",
+    "source": "bf3932e02ce9fd3d3b89d00c7dab9b99f91ed4c6d649c76fbd8adc133a079227"
+  },
+  "disconnect_value1_bfaedb4d": {
+    "text": "Відключити {{value1}}?",
+    "source": "bfaedb4d4b21b35db5107c9eddcf400059f2b8c8099eba648df4475dc23cff4b"
+  },
+  "this_removes_value1_from_your_public_profile_and_7cd20b65": {
+    "text": "Це видаляє {{value1}} з вашого публічного профілю і може змінити вашу щоденну кредитність.",
+    "source": "7cd20b65c49f1b06488f7d508ccbff2da113a2d9fb1fad6d6738b02ebf003158"
+  },
+  "could_not_disconnect_this_account_a968c528": {
+    "text": "Не можна відключити цей обліковий запис.",
+    "source": "a968c528af580c58e4c1337bf30e3bec0141161674de14628e7b239febb78897"
+  },
+  "could_not_load_cli_credentials_b21cbedc": {
+    "text": "Я не можу завантажувати сертифікати CLI.",
+    "source": "b21cbedcd25c47cd1e82508c09fab9d221cc9590cbbeb5e3a9570078253942b8"
+  },
+  "cli_credential_fed39a0d": {
+    "text": "CLI Свідоцтво",
+    "source": "fed39a0da3cff8387398b00fc970b8c5f2073e68774074ef9b41576b8a45b086"
+  },
+  "credential_revoked_fa8d9935": {
+    "text": "Свідоцтво було скасовано.",
+    "source": "fa8d99359669223757844e387f2c18bbbfa429221dbe40099098b23d9e771f5a"
+  },
+  "could_not_revoke_the_credential_6d3c955f": {
+    "text": "Не можна було відкликати довідку.",
+    "source": "6d3c955f6af5d8d8864fdfedaec159082d717a30a015e00f6a48ce0b268f4096"
+  },
+  "saved_45edcc20": {
+    "text": "Збережений",
+    "source": "45edcc201b730f55b185fb07d06dd4aeadbacb41643537912152499d38a3e26f"
+  },
+  "saved_to_your_account_de0e217a": {
+    "text": "Збережений на свій рахунок.",
+    "source": "de0e217a0b85d1b21bfbb4f8f51040eaa0a03d3262f6517a1365bd5f8731dbef"
+  },
+  "could_not_save_mobile_push_preferences_7c9cc454": {
+    "text": "Не можна зберегти переваги мобільного поштовху",
+    "source": "7c9cc454c737e22211eec5f1755a2a9f649e051365bf74886355d84ea0e96ff7"
+  },
+  "paste_a_new_key_to_replace_8a347fdf": {
+    "text": "Замінити новий ключ",
+    "source": "8a347fdf5687f98be7defa6bc00ee1346e79f50c7ecaa801b91a57f74907d1ca"
+  },
+  "resets_value1_21e183c2": {
+    "text": "Реєстрація {{value1}}.",
+    "source": "21e183c22e8a4c53a147a21221d70a4732bdda5b36212530c340e46db2f32618"
+  },
+  "favorites_68b313bd": {
+    "text": "★ улюблений",
+    "source": "68b313bd3a864047563e76252b892a4da35af65842a1f24602356ca6b4d3b752"
+  },
+  "value1_of_value2_models_value3_097ae2d7": {
+    "text": "{{value1}} з {{value2}} моделей{{value3}}",
+    "source": "097ae2d77d0b28e58932514107c6f40a03f434eacac1439571ed5d0ee1157b0c"
+  },
+  "no_models_match_clear_the_search_or_show_all_mod_0a6c4f43": {
+    "text": "Відкрийте пошук або покажіть всі моделі{{value1}}",
+    "source": "0a6c4f43c418a1d5786dd74ce414ef74528e5345122c59fb739e301dadbfce72"
+  },
+  "default_value1_03afaf7e": {
+    "text": "За замовчуванням ({{value1}})",
+    "source": "03afaf7e19bb03c12f5ed525bbe267c3fde547e4aa611cf8a601d1c061d29b01"
+  },
+  "models_are_sorted_by_average_input_output_price__8ea7846a": {
+    "text": "Моделі класифікуються за середньою ціною входу/виходу. фактичні витрати залежать від використання токену.",
+    "source": "8ea7846a5d50c231aff738f9e097a60f4a974005f09b8f4455cfe2d6eb5f7b6f"
+  },
+  "this_model_does_not_expose_reasoning_effort_cont_ee224d3d": {
+    "text": "Цей модель не піддає виявленню контролів роздумів-насиль.",
+    "source": "ee224d3d38b4244d64843830346000931a0f402f5b7eff0a58e8e92e2c83921a"
+  },
+  "how_long_this_model_thinks_before_it_answers_def_b8271769": {
+    "text": "Як довго ця модель думає, перш ніж вона відповість. дефолт - це рівень, на якому працює платформа; ваш вибір перевершує її.",
+    "source": "b8271769d47c5f2e7e395ff573565678edc9e315aab6fbd91f523bfb5feb2c0b"
+  },
+  "active_value1_it_value2_and_you_may_choose_any_a_c17c84ca": {
+    "text": "Active{{value1}}. це {{value2}}, і ви можете вибрати будь-який доступний модель.",
+    "source": "c17c84cadfd1eff78e519bb2ebb487edb67a18825809d44bc6758b54599a7c99"
+  },
+  "an_admin_has_blocked_this_included_key_contact_t_45ec7fb3": {
+    "text": "Адміністратор заблокував цей включений ключ. зв'яжіться з адміністраторами платформи, якщо він повинен бути включений знову.",
+    "source": "45ec7fb306d753894e4b58a310fcd8f17b512ff1190533381b622666ebd65f76"
+  },
+  "your_included_key_was_deleted_by_an_admin_includ_a443323b": {
+    "text": "Ваш включений ключ був видалений адміністратором. включені ключі видаються один раз, але ви можете додати особистий ключ нижче.",
+    "source": "a443323b38437d5374b6c752d25d28de9333224d49cc726c04d9fadcd101ee4c"
+  },
+  "this_key_needs_admin_review_homeroom_did_not_ret_923657ec": {
+    "text": "Homeroom не відкликав прохання провайдера, що запобігає випадковій подвійні ключі.",
+    "source": "923657eccccecc1f8f125160c285e3191becb84ac6ff2a8fd26ab6aa4c92bc46"
+  },
+  "included_keys_are_not_configured_by_the_platform_932b735f": {
+    "text": "Включені ключі ще не встановлені адміністратором платформи.",
+    "source": "932b735f7ec04945bcdee7643d28e51a2027e475a262a17587170be3cd54bf71"
+  },
+  "your_account_has_no_included_weekly_allowance_ri_f5756fb1": {
+    "text": "Ваш обліковий запис на даний момент не включає щотижневу допомогу, тому немає включеного ключа. Ви можете додати особистий ключ OpenRouter нижче.",
+    "source": "f5756fb17708cc577b16b796fbb63c1b2179917f8bbf27c86e36a30512e25ced"
+  },
+  "you_are_using_your_own_openrouter_key_remove_it__3a795bfd": {
+    "text": "Ви використовуєте свій власний ключ OpenRouter. видалити його, щоб повернутися до включеного.",
+    "source": "3a795bfdac4182e69eb631d5308379e415293fb93f7bfd1c2a860a463a77412d"
+  },
+  "your_included_key_is_being_set_up_it_carries_the_a66b83cc": {
+    "text": "Він несе платформу ${{value1}} {{value2}}; знову відкрити цей екран за хвилину.",
+    "source": "a66b83cc16c36cafbe124ce0eca2d8147e114fda7f3ac26549152f73bef85d37"
+  },
+  "value1_value2_value3_remaining_value4_a5e43513": {
+    "text": "{{value1}} · {{value2}}: {{value3}} · Залишився: {{value4}}",
+    "source": "a5e435134e3c39fd30d155e58ffc793b5549add3d4591e6674db3c782d38e09d"
+  },
+  "refreshing_1c0def7b": {
+    "text": "Відновлення...",
+    "source": "1c0def7be0607b966b89e4974da38090472d8ada625f5b4c89f25b09d39683bd"
+  },
+  "could_not_sign_out_check_your_connection_and_try_0632a485": {
+    "text": "Перевірте зв'язок і спробуйте знову.",
+    "source": "0632a4853c68c1e1f46564d9df9aaabb335f62459c2b38543b87107e9fd0a158"
+  },
+  "remove_your_api_key_1ee469e4": {
+    "text": "Зняти ключ API?",
+    "source": "1ee469e473451824b7c32a8088b0d3f61de81c496df0a7d9b557b8a0ec15c301"
+  },
+  "future_chats_will_fall_back_to_the_shared_daily__cafee8d0": {
+    "text": "Майбутній чат повернеться до спільного щоденного бюджету.",
+    "source": "cafee8d0d055378667b569721fd4f68f2a918d395544fe9006708cfab489b51e"
+  },
+  "revoke_ai_access_for_value1_086f60a2": {
+    "text": "Відмовитися від доступу до «{{value1}}»?",
+    "source": "086f60a20cc27b2d2110ddf878e4b58c3a843822d4ac4095127d4b3e9f6de7f8"
+  },
+  "its_next_ai_call_will_fail_immediately_the_app_c_920d8141": {
+    "text": "Його наступний дзвінок з інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною інтелектуальною.",
+    "source": "920d81411145be5e1b592316bfbd7e4e51d52aea7d3e720dfe408d5810606532"
+  },
+  "revoke_this_permission_421e06bf": {
+    "text": "Відмовитися від цього дозволу?",
+    "source": "421e06bfbe3df9e1605fbae63d5db91147add6aa6408cae7961784e1c977ac14"
+  },
+  "the_app_loses_it_the_next_time_it_opens_it_can_a_7c569ed0": {
+    "text": "Пристрій втрачає його наступного разу, коли він відкривається. він може запитати вас знову пізніше.",
+    "source": "7c569ed0914eea4e8b239e326273851b7f2bb23ab7467b1191763413853e26f1"
+  },
+  "new_skill_from_value1_a7666cbe": {
+    "text": "Нові навички від \"{{value1}}\"",
+    "source": "a7666cbe0eb88b014df34766243a66ab484a67d4928e181fdceb8a27131d472b"
+  },
+  "new_instruction_file_from_value1_07a97668": {
+    "text": "Новий інструкційний файл з \"{{value1}}\"",
+    "source": "07a976685d67a252653df110eb09167b1a221f167b43abad02b9cf7e6ed404b4"
+  },
+  "delete_value1_6c7e0193": {
+    "text": "Зняти «{{value1}}»?",
+    "source": "6c7e0193c51b0905a8822029072a718d172e67d28c270bb8152b6bfb10d2dba8"
+  },
+  "the_coding_agent_stops_using_it_from_your_next_r_7f67889a": {
+    "text": "Агент кодування перестає використовувати його з наступного ранку.",
+    "source": "7f67889a17d6d6a1b3d217ce49622a7b4a14df5f9b41277ab76bd6768243e012"
+  },
+  "unlink_your_homeroom_wallet_dc7c8139": {
+    "text": "Використовуйте свій портфель Homeroom?",
+    "source": "dc7c8139a8b6b44fdd425ac689bb22626d9c22e353d034379c7173c1762830e6"
+  },
+  "unlink_b90108da": {
+    "text": "Незв'язок",
+    "source": "b90108da0bd2b120cc5ed1ba1eb5859a0364c78e56819a427abd176aaff2af5b"
+  },
+  "staging_demo_privileged_bridge_is_unavailable_fo_4214b616": {
+    "text": "Демо стажування: привілейований міст недоступний для цієї основної рамки",
+    "source": "4214b616f909186cd906ac261900efc36bb30ed80077fee012b9c708e361f984"
+  },
+  "staging_demo_no_seeded_wallet_is_available_for_t_4fd5641e": {
+    "text": "Демонстрація стажування: для цього облікового запису немає семенного кошти",
+    "source": "4fd5641e1b310ac3ad2a865f1f35dbfbc268d049170f4ff38cd649616ecc332b"
+  },
+  "staging_demo_the_capability_probe_did_not_answer_c4831317": {
+    "text": "Демонстрація стажування: звіт про здатність не відповів",
+    "source": "c483131763ec8640ce5780dca0c93ce33cd3bfa54166811fc28948f2030866d0"
+  },
+  "opening_the_permission_prompt_64c1477f": {
+    "text": "Відкриття дозволу негайно...",
+    "source": "64c1477f3509795da1f7de010cc0f862777eb178e6075e9c61de767ed12d1782"
+  },
+  "opening_the_notification_prompt_729279cc": {
+    "text": "Відкриття повідомлення швидко...",
+    "source": "729279cc5d9df6b09ac57e8176fe70dd83d5db2b277a2ecf3fb058a4b7b0ae2d"
+  },
+  "notifications_are_already_allowed_for_homeroom_59a91e71": {
+    "text": "Повідомлення вже дозволені для Homeroom.",
+    "source": "59a91e71b5f3321415296525e0966b831f9d0f0ac4a7801d6c790a880d6c315f"
+  },
+  "permission_granted_63895f3e": {
+    "text": "Дозвіл на отримання.",
+    "source": "63895f3e9bc16c0ae570abe6cf082208d2852cd8f01104482273583a40f60aff"
+  },
+  "notifications_are_now_allowed_for_homeroom_29f715c7": {
+    "text": "В даний час дозволяється подати повідомлення на Homeroom.",
+    "source": "29f715c70031e5bf97e618a5bf69f9542b914c2993893146993ad3ae2f73e9b9"
+  },
+  "no_terms_to_review_right_now_836ccd73": {
+    "text": "Немає умов для перегляду зараз",
+    "source": "836ccd73b0e6a48eaaa34f7662cbcbccdbf7962ea273620bdd85b64ceac42a89"
+  },
+  "could_not_load_the_terms_d7d4499d": {
+    "text": "Не можна завантажувати терміни",
+    "source": "d7d4499d91346f6d3929f14870bed283268adcedd68dd363d1c6743ed6af7fd3"
+  },
+  "could_not_record_your_consent_dd2f3591": {
+    "text": "Ви не зможете записати свою згоду",
+    "source": "dd2f35910e9f661defd4300951f07595fbc5c3207d879c5a53668f77181dfb3d"
+  },
+  "terms_accepted_af982c8c": {
+    "text": "Терміни прийняті",
+    "source": "af982c8cecc983342a025406a91461ae84036cb97b92de8c8c832e410d783879"
+  },
+  "you_can_accept_the_terms_later_from_your_profile_8757d0f9": {
+    "text": "Ви можете прийняти умови пізніше з вашого профілю",
+    "source": "8757d0f985fc7e34d9bedd20ecc044472bc660cce0704f70ba39e1c4b7b32560"
+  },
+  "strict_facematch_db9e96be": {
+    "text": "Строгий фашизм",
+    "source": "db9e96be50a5fa7969cb4efe17c583eb69f35d8091beb11edbbdca4798f1cf93"
+  },
+  "open_zk_identity_fb902228": {
+    "text": "Відкрита ідентичність ZK",
+    "source": "fb90222891cc1a7c5290b146886141f24eba8ee93b8af8db975191561345a675"
+  },
+  "restart_zk_challenge_8444b0af": {
+    "text": "Відновлення виклику ЗК",
+    "source": "8444b0af8fa991877e37c5d1b0bed5e3b056a248bdc70c0c030c64855bce3e60"
+  },
+  "debug_mode_166f2195": {
+    "text": "Дебютний режим",
+    "source": "166f21953904ae988849ff2ddd3945eea2c931a050682aa3468c5d7884e4be9c"
+  },
+  "device_benchmark_706d2708": {
+    "text": "Механічний бенчмарк",
+    "source": "706d270858be872719e3709555136b624a8569792481021e7e90dd4aa5ba855d"
+  },
+  "http_debug_logs_2f45ced2": {
+    "text": "Завантажити HTTP Debug Logs",
+    "source": "2f45ced28b956e152d33c22a79e2bfc2caff0714b85e25838bc4437dedc6961f"
+  },
+  "review_terms_not_yet_accepted_cb5d7293": {
+    "text": "Переглянуті умови (досі не прийняті)",
+    "source": "cb5d729382d69c60804bf5b03b8b70e5e8b4241336bd5dee1f5b5a670189dbc2"
+  },
+  "terms_ede54899": {
+    "text": "Терміни",
+    "source": "ede5489964834a514b61c7a4a8370be2452dd4a7d807180f14991ccc11ad2430"
+  },
+  "secure_app_connection_2feb90ba": {
+    "text": "Забезпечення безпеки пристроїв",
+    "source": "2feb90ba4887107dba6926355a6c6aa6e4e76e35c97febb5a2f1b873c0068c44"
+  },
+  "connect_existing_wallet_0b6aca1e": {
+    "text": "Зв'яжіть існуючий портфель",
+    "source": "0b6aca1e4afecbbecaf7a510f0b756d3710b872ea8a2d3da8397a8d094bdffe5"
+  },
+  "homeroom_app_device_permissions_68127650": {
+    "text": "Homeroom App: дозволи на пристрої",
+    "source": "6812765047c424f1d2d03aff5b105cc2bbbcfd0d75b8fe7f69e9a4d56a453932"
+  },
+  "block_production_needs_the_app_to_wake_your_devi_fae4d315": {
+    "text": "Блок-виробництво потребує додатку, щоб прокинути пристрій в точні часи розриву.",
+    "source": "fae4d31501c74e7a5321f175fc8b4313cdd2c87748a81942e93b1916c2455a4d"
+  },
+  "notifications_let_homeroom_alert_you_about_node__8e24f2de": {
+    "text": "Повідомлення дозволяють Homeroom попереджати вас про активність вузлів і облікового запису.",
+    "source": "8e24f2dead070515d0059cf449502d4bdd2155664b12905b35352d54c61593e5"
+  },
+  "exact_alarms_b39f0e41": {
+    "text": "Точні аларми",
+    "source": "b39f0e4186c82efbde64084d006a87e3aa040a4a3cd641d220dc203031eac9f4"
+  },
+  "granted_62026a42": {
+    "text": "Грантовані",
+    "source": "62026a42b2390a87bf21a984cabce8067c2bddf5031a519a11397f38a0ee828c"
+  },
+  "not_granted_352a5b4c": {
+    "text": "Не надано",
+    "source": "352a5b4c1246d1bf84a4bc5902b808a29e50b008bb7f2f26ba2881289deb9adb"
+  },
+  "request_permissions_52480b6c": {
+    "text": "Заява про дозвіл",
+    "source": "52480b6cf35572fbf41a9ff27ec2994fc0be702e59f14ce8b33050ad0d448c38"
+  },
+  "allow_notifications_8637f38c": {
+    "text": "Дозволити повідомлення",
+    "source": "8637f38c0afb1d7648036eb7ba5be9e02af6c337e820ffd7066b692a9dbe56ca"
+  },
+  "request_permissions_db910d2c": {
+    "text": "Вимоги до дозволу",
+    "source": "db910d2c50636828c6629734bb9385fd85cc2d6f5e45c01d0b52e5b30671b939"
+  },
+  "allow_notifications_001559c8": {
+    "text": "Дозволити повідомлення",
+    "source": "001559c8913cdf3d6f835cbbe86da612c0affb5c7e8602221053fcd292db52d6"
+  },
+  "battery_optimization_e2c2b8ef": {
+    "text": "Оптимізація батареї",
+    "source": "e2c2b8efa9f25025dd12a329574dce5a0cc28cd886d841099d804b9d3c244c2b"
+  },
+  "unrestricted_ea72a231": {
+    "text": "Без обмежень",
+    "source": "ea72a231d1b8a76fc80be167eb0c7c4702e27cee873551579096b2fcccb3aa60"
+  },
+  "restricted_a00571bc": {
+    "text": "обмежені",
+    "source": "a00571bcb257e86300664e627eb41fdab70d591ec10f43dba357b0bd4ce3a420"
+  },
+  "open_battery_settings_3163b5dd": {
+    "text": "Відкриті батареї",
+    "source": "3163b5ddd02cd4358f691773b33474693e871028dc8be96e522a47babe61bfca"
+  },
+  "could_not_check_block_production_status_right_no_e64e7832": {
+    "text": "На даний момент не можна було перевірити стан блокового виробництва.",
+    "source": "e64e7832f8f68224912da88fc2f840d83efc714ebf5bb19741108dbade4f41b1"
+  },
+  "released_your_node_produces_blocks_when_it_wins__adf35d7a": {
+    "text": "Ваш вузол виробляє блоки, коли він виграє слоти.",
+    "source": "adf35d7ac68c5a49872711a9e7c24e1bb3edd5497853ade62c81d678e40dfa95"
+  },
+  "request_pending_you_ll_start_producing_automatic_077e16d0": {
+    "text": "Ви почнете автоматично виробляти, як тільки адміністратор випустить ваші ключі.",
+    "source": "077e16d0082dc09aaf1d94d1e3d2aa09aa4e41e39d0a69332de1b97098cf2083"
+  },
+  "available_once_your_account_has_platform_access_03256d37": {
+    "text": "Доступно після того, як ваш обліковий запис має доступ до платформи.",
+    "source": "03256d37821babe5eb4a154cf97af09e0d17571526276068815074e5924eb09b"
+  },
+  "verdict_bound_to_app_version_value1_a893cb05": {
+    "text": "Вирок пов'язаний з версією додатку: {{value1}}",
+    "source": "a893cb050fa4441b6826de5471c52e0c2556d38a0e0d9ff224f3e04fdc5b6525"
+  },
+  "widget_shortcuts_5f28cf1a": {
+    "text": "Уіджети короткострокові",
+    "source": "5f28cf1abbf8bb2a488484779c6df903e78b472d6693f80b00ad275fb47551a3"
+  },
+  "available_e6744473": {
+    "text": "Доступні",
+    "source": "e674447337e83c1346f6122ed69f35bf5526e2a11842b2f2b788f3fb67d714ca"
+  },
+  "not_this_device_value1_9ef5a054": {
+    "text": "Не це пристрій ({{value1}})",
+    "source": "9ef5a054e895f9ac2057b242c27995bceff58192cd3e3208d7fdd593ac63cad6"
+  },
+  "not_available_67a926f7": {
+    "text": "Не доступні",
+    "source": "67a926f7008e2b0e7f2b3f7a4b37597834830110be1d51138f425d6f3449bc09"
+  },
+  "pinned_registry_c9ea4eb5": {
+    "text": "Піннізований реєстр",
+    "source": "c9ea4eb50e17e193f34f2558e7a82f786f4a3a0e906c7a921bf350ccb60f0c77"
+  },
+  "loaded_value1_pinned_b1b35924": {
+    "text": "Завантажено: {{value1}} завантажено",
+    "source": "b1b359243c0ca6ebf6d2c07a26d44b1d96e29e2fbf8504ec7f9b24c1e6f86a3a"
+  },
+  "could_not_be_read_51a02791": {
+    "text": "Не можна читати",
+    "source": "51a02791dcb61eb8846a00d3f0263a9da516b30b6a92a3b08e34d65af4cef259"
+  },
+  "dark_icon_capability_a688ec86": {
+    "text": "Темна ікона здатність",
+    "source": "a688ec86f82b3dd3763052074ea9281ea578f14e3f83f70bbae163393ad3764d"
+  },
+  "advertised_by_the_app_ea028841": {
+    "text": "Реклама з пристрою",
+    "source": "ea028841ba86ecedbc7863bd5d03c88fc17dd436d5df844e6f9951e7bb75af43"
+  },
+  "not_advertised_bbcd905d": {
+    "text": "Не рекламується",
+    "source": "bbcd905d77f7611cc883e6b5380db154a04af70dd6f979cdadfa30a454a1f1dc"
+  },
+  "the_app_couldn_t_say_2b23bea4": {
+    "text": "Пристрій не міг сказати",
+    "source": "2b23bea4da092445c29a3dd997f47ae831b269788d9567983f2dd904af52f97c"
+  },
+  "confirmed_by_the_widget_f36e9669": {
+    "text": "Зареєстровано в widget",
+    "source": "f36e9669d9f2c8f1cbcfebfab2e8460e2f48e55721a560851d8914d7e14aaa0b"
+  },
+  "stores_both_faces_ef5d1b3d": {
+    "text": "Магазини обох обличчя",
+    "source": "ef5d1b3dcd3140b4eac01dabe7c83d1f5a6883cf8c3019bae4e032da757d4507"
+  },
+  "single_face_only_fe4f3ad5": {
+    "text": "Одиноке обличчя",
+    "source": "fe4f3ad53f7110872d3b2eee34c5e7f49aebecd7badc1c14245e93f72c99c0d7"
+  },
+  "not_confirmed_yet_96584d78": {
+    "text": "Досі не підтверджено",
+    "source": "96584d78f43835f6b63ba47efbc40d533d016d3e057e09812da86a6150fe9bf1"
+  },
+  "sending_e595f17f": {
+    "text": "відправлення",
+    "source": "e595f17fac1d8384c7287aa20ab48ec05476a9a557a524091c03727732582e76"
+  },
+  "diagnostics_copied_2c8618c0": {
+    "text": "Диагностика копіюється",
+    "source": "2c8618c0ca2a8c80249586c6afc554f1a13ac6f51778f44a027463b82beead8a"
+  },
+  "could_not_copy_d5cb934f": {
+    "text": "Копіювати не можна",
+    "source": "d5cb934f8035e733ae4ce309fe314887ded6b2045c52b635248eb4d1c3a1bf6d"
+  },
+  "restart_the_zk_challenge_0e089820": {
+    "text": "Відновлення виклику ЗК?",
+    "source": "0e089820cf39d7ba9b93555371d02f8372bdedfc371ec543e7b0448d86708af6"
+  },
+  "your_in_progress_identity_registration_will_be_d_4da2517c": {
+    "text": "Ваша прогресивна ідентифікаційна реєстрація буде скасована.",
+    "source": "4da2517c273d1548caf223a1b212c822241d8de5a8a8a62d7acc6ace830cda82"
+  },
+  "restart_6b983a81": {
+    "text": "Відновлення",
+    "source": "6b983a81e5e8099e4e23a368e72636e31f029f2e691e5be714106b8cf59d70a7"
+  },
+  "challenge_state_reset_a73eb1a1": {
+    "text": "Державний виклик відновлення",
+    "source": "a73eb1a125dd611610cd4ea4763476f8749c0004f5c87c99877e020fc49dc702"
+  },
+  "request_sent_an_admin_will_release_your_keys_ac5d16ce": {
+    "text": "Адміністратор звільнить ваші ключі",
+    "source": "ac5d16ce13d3a3387a70ef320f4ed1e04fd1427694f7f1418bb519e321db6bd8"
+  },
+  "request_failed_cfce761b": {
+    "text": "Прохання провалилося",
+    "source": "cfce761befa84073c2ea0d29bc3f3d647c985faa02d80854eada5312a7cc24a1"
+  },
+  "checking_ec963ffc": {
+    "text": "Перевірка...",
+    "source": "ec963ffc911b840134fc738b41a8bb0493489c402a4a761efd36c16dea7d984b"
+  },
+  "couldn_t_reach_value1_to_verify_the_credentials__166daa37": {
+    "text": "Я не міг дістатися до {{value1}} для перевірки акредитацій. спробуйте знову коротко.",
+    "source": "166daa37bafede24248971d0dcc5be9c9f810fea194f8a16818eae143204bed7"
+  },
+  "the_configuration_check_failed_to_run_try_again__b10496d3": {
+    "text": "Перевірка конфігурації не пройшла. спробуйте знову коротко.",
+    "source": "b10496d32eafb5588a2aeac75638f2dafdbfd5f30b83e077b6182a86e8caf86f"
+  },
+  "confirm_value1_account_replacement_3fc74830": {
+    "text": "Підтвердити {{value1}} обмін рахунком",
+    "source": "3fc748300ec6c4c7b3e5469a3dff38db8c4b95be5cea5d686916eb8a84b51b8b"
+  },
+  "replacing_44207eb2": {
+    "text": "Замінити...",
+    "source": "44207eb29645f6ab24953642c4b4155a4aa2497f181ff6141de0e5fe3643badb"
+  },
+  "replace_account_53ac9b29": {
+    "text": "Замінити рахунок",
+    "source": "53ac9b29deaef3db23538b247a2040c2333929a1dbd9c365f4f3967bcada6034"
+  },
+  "value1_setup_admins_only_6a80b133": {
+    "text": "{{value1}} встановити · встановити тільки",
+    "source": "6a80b133f777f2f5a506ec7b1e5ead9385a6579aa74e6a65ae7f5bd185676a45"
+  },
+  "we_updated_our_terms_by_continuing_to_use_homero_30f761d3": {
+    "text": "Ми оновлювали наші умови. продовжуючи використовувати Homeroom, ви з ними погоджуєтеся.",
+    "source": "30f761d3112a5c29963254dd8959a9f3642712daebe99f26cfc65a9b6f8d3997"
+  },
+  "sentence_8edd2303b5cb": {
+    "text": "Перейти до <0>Налаштувати → Зв'язки</0> в Claude (<1></1>).",
+    "source": "8edd2303b5cb835fa7872d364f7657b2e2936d1a75d67c03284124e6e17478ff"
+  },
+  "sentence_749f372c8ade": {
+    "text": "Натисніть на кнопку <0></0>, а потім виберіть «Додайте персоналізований підключник». У діалозі, введіть <1></1> в поле Назва, саме те, що записує: Claude Code побудує свої правила дозволу з того, що ви введіть тут, і читання-один дозволу списку Homeroom кораблів в кожному додатку репо відповідає тільки імена, які він знає.",
+    "source": "749f372c8ade266e9ccf1bd4b515d959cf5b2b266ca14c51bcce8cc353333e77"
+  },
+  "sentence_2f30cf620635": {
+    "text": "Для Homeroom, що є URL-адресом сервера MCP вище, публічна кінцева точка HTTPS закінчується в <0></0>. Налаштований сервер повинен бути доступним з хмари Anthropic, а не тільки з вашої машини.",
+    "source": "2f30cf6206359b3b61d51615de602c9cf242cb7b05639a9c3dfba8157ca40392"
+  },
+  "sentence_2886bdc0f8cd": {
+    "text": "У чаті використовуйте кнопку <0></0> в нижній лівій частині, потім «Кон'єктори» і перейдіть на конектор.",
+    "source": "2886bdc0f8cd5c4a751564e95cabfaac2af21a6895221ac2528906d97d9db11f"
+  },
+  "sentence_76a8ea6c17eb": {
+    "text": "У ChatGPT перейдіть до <0>Профіль → Налаштування → Безпека і вхід → Розробник режим</0> і перейдіть до Розробник режим.",
+    "source": "76a8ea6c17eb64e37a4934df434d7e090df94992a8e07cdfbb12997a1ade94f0"
+  },
+  "sentence_adb32bd5ff48": {
+    "text": "Кнопка <0></0> дозволяє додати власну програму, підтримувану MCP.",
+    "source": "adb32bd5ff48a411751dbb2e769d0990e7f80334f833113fff3b50d6fe6fe0f0"
+  },
+  "sentence_6988314532c0": {
+    "text": "Введіть URL віддаленого сервера MCP (для Homeroom, URL сервера MCP вище) і налаштуйте аутентифікацію, якщо це необхідно. сервер повинен бути доступним ChatGPT; один, що працює тільки на <0></0> не буде працювати безпосередньо.",
+    "source": "6988314532c09cc3e6182b3faf03168adce2b63b28204c6619243fcd649e082e"
+  },
+  "sentence_c1ffcd628670": {
+    "text": "Запустіть <0>new ChatGPT conversation</0> і відкрийте меню <1></1> / інструменти біля пошти повідомлення. Виберіть режим розробника, а потім виберіть MCP додаток, який ви тільки що створили. Тепер попросіть ChatGPT виконувати щось, що використовує один з інструментів, наприклад: <2>\"Використовуйте мій MCP сервер для переліку відкритих квитків підтримки.\"</2> При необхідності, ChatGPT буде викликати інструменти ваш MCP сервер експозиції і використовувати їх результати в розмові.",
+    "source": "c1ffcd628670bcf6f85712c57f0625707a3cfe672e1932e91e87cbcc61e8b3f4"
+  },
+  "sentence_7233037f21f2": {
+    "text": "<0>Кратко: </0> Налаштування → Безпека і вхід → Розробник режим ON → ChatGPT Plugins → <1></1> → Введіть URL сервера MCP → Створіть → Новий чат → <2></2> → Розробник режим → Виберіть програму MCP → Запросити ChatGPT використовувати її.",
+    "source": "7233037f21f2c84d0cf192a149165509a8f39f15d9a6cfa93c05b75dc3783b57"
+  },
+  "sentence_52d17a625c2c": {
+    "text": "<0>{{value1}}</0><1>Проголошено </1>",
+    "source": "52d17a625c2c900ad3dd54f6cec069a06e2eae68011feaddfdcec8e11f3dd802"
+  },
+  "sentence_cee7cee2e70d": {
+    "text": "<0>Послання</0><1>Контактні запрошення, повідомлення, згадки, відповіді та реакції.</1>",
+    "source": "cee7cee2e70dd9e9e3bff7d09a8f2664e503b057ed6cef0d9860d5784d9c8a16"
+  },
+  "sentence_318137c2d2fc": {
+    "text": "<0>Your builds</0><1>Коли щось, що ви запитали Homeroom бот за, готова спробувати, потрібен ваш відповідь, зупиняється або йде живим.</1>",
+    "source": "318137c2d2fc82b84e402376f1022fa13a25a09caa60c4157d98a1ecdb194bff"
+  },
+  "sentence_4b9375085eb6": {
+    "text": "<0>Ваш запрошення</0><1>Коли хтось відкриває ваш запрошення посилання, приєднується через нього, або каже привітання вперше.</1>",
+    "source": "4b9375085eb6279f484fffff0127c4fcbf44340475192d982411f76cffc9c259"
+  },
+  "sentence_b1e2be0620ff": {
+    "text": "<0>Прямі взаємодії</0><1>Мені та відповіді на ваші повідомлення.</1>",
+    "source": "b1e2be0620ff14a3a27bf6c57fa42065f73741a6e685ae160e6335bba409582a"
+  },
+  "sentence_ad87684c8fd3": {
+    "text": "<0>Запрошення</0><1>Співробітництво та затвердження запрошень, в тому числі, коли ваші приймаються.</1>",
+    "source": "ad87684c8fd38b95fe833ef63ea495936ff27d61701f4b371ecc42f36da4f8d3"
+  },
+  "sentence_5b72a4fbb55d": {
+    "text": "<0>Поділена робота</0><1>Спеки, що хтось приватно ділиться з вами.</1>",
+    "source": "5b72a4fbb55dd2c6973cd8529ff128112f47c2b126e7911da022163ec0c2cbca"
+  },
+  "sentence_5ecb51f101c3": {
+    "text": "<0>Агентські сеанси</0><1>Агентські сеанси і несподівані пробіги, які закінчуються, коли ви далеко.</1>",
+    "source": "5ecb51f101c34f38f9f4ad912d6141481dd8ac2a7a2cdd257af185ee62585264"
+  },
+  "sentence_b4450459876a": {
+    "text": "<0>Зміни попередження</0><1>Зміни, які потребують уваги, недійсні прогнози, нові зміни, що чекають на затвердження, і голоси на вашій або вашій йдуть живі.</1>",
+    "source": "b4450459876a88a810206ed80fe78c37fe5212d3a1c0a84757b803582cb96fe7"
+  },
+  "sentence_662aefb2eb67": {
+    "text": "<0>Приклади попереджають </0><1>Нові проблеми з'явилися на ваших додатках, і додатки, які перестають працювати.</1>",
+    "source": "662aefb2eb67e15cc0c2e269abd68bffebf12e503a490549ba98a3d7eb155d04"
+  },
+  "sentence_9d130e5f7ab3": {
+    "text": "<0>Активність легкої ваги</0><1>Реакції та кудоси на вашу роботу.</1>",
+    "source": "9d130e5f7ab39f200952ff03fd75241495a906c3d8fbd5e4f8633e5ae0e4d412"
+  },
+  "sentence_cdbc93e8132c": {
+    "text": "Ім'я саме <0></0>. Claude Code побудує свої правила дозволу з того імені. Інша графік все ще працює, але читача-один дозволу список Homeroom кораблів в кожному репо додатку не буде відповідати, і ви будете продовжувати бути просять, щоб затвердити кожен дзвінок. дозволу список охоплює <1></1> також, так що капіталізована форма є безпечною. Він також все ще охоплює <2></2> і <3></3>, імена цього з'єднання пройшло заздалегідь, так що з'єднання, яке ви додали раніше, продовжує працювати і немає нічого, щоб підготуватися.",
+    "source": "cdbc93e8132c41c6aaa7529cd0db0c19c9afc4479761ab00b11402cf080d517e"
+  },
+  "sentence_76da5837840c": {
+    "text": "Claude Code просить вас затвердити <0>every</0> конекторний дзвінок за замовчуванням, включаючи такі, як <1></1> і <2></2>.",
+    "source": "76da5837840c6beedcbd711017b137a1723e366f5c39c8fa5514c44a7273fa3e"
+  },
+  "sentence_e77ef7973c26": {
+    "text": "Додайте це до свого <0></0>.Це єдиний з трьох, що охоплює <1>every</1> репо одночасно, в тому числі репо Homeroom ніколи не зроблено.",
+    "source": "e77ef7973c26b2af29f67ca4496871721372bff6d6d4c5dd025d0d324252dfab"
+  },
+  "sentence_216d4918b72b": {
+    "text": "Веб-сесія отримує свіжий контейнер кожен раз, так що файл налаштувань на власному комп'ютері не в ньому і затвердження останньої сесії проходять. те, що контейнер несе, - це репо, яке він перевіряє, тому робіть той же блок, як <0></0> в репо додатку. Homeroom пише цей файл в кожну репо додатку, яку він створює, імпортує або форкує; репо, яке вже існувало до того, як було відправлено, не має одного, і додавання його є звичайним робіть.",
+    "source": "216d4918b72b6f7ca6afcb0d3430c76213d165489577bd58f531c946bdc65198"
+  },
+  "sentence_8cf5dfc4330f": {
+    "text": "З терміналу, де встановлюється Codex, виконайте команду нижче, або додайте вхід конфігуру під ним до <0></0> вручну, що є все команду робить. Зберігайте ім'я <1></1>: Codex заздалегідь визначає інструменти з назвою сервера, який ви даєте, і це ім'я, що залишається на цій сторінці.",
+    "source": "8cf5dfc4330fc2762c40bc8547044b17583ecbdfac90774878d1eda4815a6590"
+  },
+  "sentence_4c3aa9a74dc8": {
+    "text": "Run <0></0>. Codex відкриває ваш браузер на сторінці згоди Homeroom; затверджує його там і Codex зберігає сам токен. немає ідентифікатора клієнта або таємниці для введення. <1></1> потім показує сервер, і інструменти там у вашій наступній сесії Codex.",
+    "source": "4c3aa9a74dc809b9a1a0eb437cbe78cb90613f7b0a9abb3cc9d783db77a01ff2"
+  },
+  "sentence_24154f1b4aca": {
+    "text": "Codex приймає це затвердження на <0></0> зворотний дзвінок, а хостирований Homeroom контейнер приймає зворотні дзвінки тільки на власних хостях Claude і ChatGPT, тому на хостированій платформі зворотний дзвінок відмовляється з <1></1>. Він працює проти Homeroom ви запускаєте себе в місцевому режимі розвитку. Сесія Codex без контейнера все ще може побудувати робочий порядок Homeroom: він підштовхує галузь, а чат ChatGPT, що тримає контейнер, передає його.",
+    "source": "24154f1b4acaf7d7f5c19e1a0776314f1f103834191413d24fa1eb870d1794d8"
+  },
+  "sentence_66c2186340e3": {
+    "text": "Це URL у вищезазначеному полі: публічна кінцева точка HTTPS, що закінчується в <0></0>, що займає JSON-RPC через POST. немає SSE або stdio варіанту, і нічого не можна запустити на власному комп'ютері.",
+    "source": "66c2186340e3f41cfee988a6f6854fcff8b77aab2c1968db9fe1645af300abd1"
+  },
+  "sentence_0c8a1a9348db": {
+    "text": "Аут є OAuth 2.1 з PKCE і динамічною клієнтською реєстрацією. клієнт знаходить сервер з дозволу через <0></0> на тому ж походження, зареєструється як публічний клієнт (не клієнт-ІД або таємниця для входу), і запитує про об'єкти <1></1> і <2></2>Ви погоджуєтесь з ними один раз. HomeroomСторінка згоди.",
+    "source": "0c8a1a9348dbb1283a7f992b52a3d50e22470056cf95d0657b3ad3d53010a3cf"
+  },
+  "sentence_9f46e2b2566b": {
+    "text": "Інструменти приходять як <0></0> У більшості випадків, або як <1></1> де клієнт називає простір за продуктом. частина між першою і останньою <2></2> або назва сервера, для якого написані правила дозволу; якщо це не одна з переглядів, які вони охоплюють, введіть її в поле нижче Claude.ai → “Зупиніть дозволу”. Знайдіть агент дзвінка <3></3> По-перше, він повертає повну операційну хартію конектора.",
+    "source": "9f46e2b2566b9954e0256d7914dfdfbf16d62c285a70cdd4c28d766c2c3ba150"
+  },
+  "sentence_6873935fe23d": {
+    "text": "Homeroom просить <0> не отримувати доступ до ваших репозиторій </0> і не зберігає токен провайдера. підключення підтверджує, що ви контролюєте обліковий запис.",
+    "source": "6873935fe23db5f20e55345a112fa96673773dca9e19244e8e8c6dba32f384ac"
+  },
+  "sentence_de5d574f70d3": {
+    "text": "Перевірте {{value1}}.Ваш поточний електронний лист залишається пов'язаним до тих пір, поки це не вдасться.",
+    "source": "de5d574f70d3dfcf0f606d10608b75345278a0f564031c77b8241549f42bba16"
+  },
+  "sentence_8e3af0c1eee6": {
+    "text": "Додатки <0>Ваш комп'ютер · Homeroom сесія</0> Ви тримаєте платформу чату саме так, як вона є, з тим самим транскриптом, філією і пропозицією, але її обертання проходять через Homeroom CLI на власному машині, на власному Claude План – він потребує CLI встановлено і прикріплено, так що він залишається вимкненим до тих пір, поки ви його не просите.",
+    "source": "8e3af0c1eee69f920bc02d4624267865c7c46323eb3d86aa7809d596e9d405fc"
+  },
+  "sentence_f3e68128c7f5": {
+    "text": "Машини, що працюють <0>Соціал-вібекодійний агент Run</0>У той час як один прикріплений, спектр і кодування цієї сесії перетворюються там на власний Claude Підписання замість HomeroomКожен поворот запитує у вашому терміналі, перш ніж він починається; спектр поворотів читаються тільки, і після кодування повороту Homeroom все ще відкриває запит на витяг, побудує перегляд і виконує перевірки. детекція відправляє наступний поворот назад до Homeroom.",
+    "source": "f3e68128c7f5040ab9c719311b93f324356d4bab3b5edb62b8c632175d22dc3f"
+  },
+  "sentence_abba10de894a": {
+    "text": "Глобальний чат <0>(експериментальний)</0>",
+    "source": "abba10de894a6763d08875c127ca41afb5b9d5ffd9919566bcb0b29ddefa98b0"
+  },
+  "sentence_ed5c7062bb31": {
+    "text": "Замінити обліковий запис {{value1}}?",
+    "source": "ed5c7062bb319237d54631c1b846e02acc317aac26aea3c89811467c748f2a60"
+  },
+  "sentence_b11841ce5a48": {
+    "text": "Звільнення зберігає @{{value1}} пов'язаний з його нинішньою видимістю.",
+    "source": "b11841ce5a48fdaeb04820f4d4d8da53f19d986b6a4c0e60419acc2393f5ddda"
+  },
+  "fetch_failed_e2c73a8f": {
+    "text": "Фетч провалився",
+    "source": "e2c73a8fd237575c7c6136742e8bd90cbeffb2ef724fd3e1b49aadc6b3d2c766"
+  },
+  "failed_to_load_78b4d5ba": {
+    "text": "Не вдалося завантажити:",
+    "source": "78b4d5baf802a270f89653ef454fb888b0162f5e3b259dd52b360dfe9b7a912d"
+  },
+  "replace_the_placeholders_with_the_app_and_change_2e751b16": {
+    "text": "Замінити власників місць додатком і змінити, що ви маєте на увазі, а потім надіслати поштовх.",
+    "source": "2e751b16f7f53a5b6122f093dde581f487000ff7ae7ab25f82d60e49ff6c16cb"
+  },
+  "could_not_load_account_details_26b8969f": {
+    "text": "Деталі облікового запису не можна завантажити.",
+    "source": "26b8969f6133869d5d7e3d48a8a3da8ff2c7b8897872c352e9761155a8022c35"
+  },
+  "your_account_is_deleted_retry_signing_out_to_cle_a68357ed": {
+    "text": "Ваш обліковий запис видаляється. відкликати підпис, щоб видалити цей пристрій.",
+    "source": "a68357ed68bcd3fb715fbf07ab4137358940e6c77c515d84b33b7ea2af4b7c57"
+  },
+  "account_deletion_failed_4ab5c712": {
+    "text": "Звільнення рахунків не вдалося.",
+    "source": "4ab5c712b023d5ee4e370e5c460d003bf5aa2dc14252b2a41e5b2693f40d493e"
+  },
+  "your_account_could_not_be_identified_reopen_sett_e3cdf105": {
+    "text": "Ваш обліковий запис не може бути ідентифікований. знову відкрити Налаштування і спробувати знову.",
+    "source": "e3cdf105be6e91b3f5a7790d93bd1e405941923ec6a91c04c6f34f326dbe397b"
+  },
+  "update_the_homeroom_app_to_open_account_connecti_bd710b81": {
+    "text": "Оновлюйте додаток Homeroom, щоб відкрити підключення до облікового запису у вашому браузері.",
+    "source": "bd710b814b5f1e2cc967ad8dc4e27bb53943ff91dffc25695703e35a83089797"
+  },
+  "could_not_open_your_browser_tap_connect_to_try_a_e647128b": {
+    "text": "Ви не можете відкрити свій браузер. натисніть підключення, щоб спробувати знову.",
+    "source": "e647128b6ba9b8540900e55726a09aa4c3f3d3b063f05f1ceb6babccbe74c726"
+  },
+  "encrypted_at_rest_verified_against_anthropic_bef_a5748651": {
+    "text": "Зашифрований на спокій, перевірений проти Anthropic перед збереженням, ніколи не відображається в повному після збереження. сервер дешифрує його в пам'яті, щоб зателефонувати Anthropic від вашого імені, так що не вкладайте ключі в послуги, які ви не довіряєте з цим рівнем доступу.",
+    "source": "a57486510e0d81aa96808bae5a844e9910ab8813a3cdaa54cfa5124c63e5e3db"
+  },
+  "could_not_load_blocked_apps_53f0be5f": {
+    "text": "Не можна завантажувати блоковані додатки.",
+    "source": "53f0be5fd325d0ac94d455d2398457c0ce721ae1e152da47e1e5eb095d420a90"
+  },
+  "could_not_unblock_this_app_7ffb7448": {
+    "text": "Я не можу розблокувати цю програму.",
+    "source": "7ffb7448bc8f8601edef74dcf4da89beb5c5e6ab8c4829f1ddd8abdf8d72a87f"
+  },
+  "could_not_update_account_email_0b0c8b9e": {
+    "text": "Не можна оновлювати електронну пошту.",
+    "source": "0b0c8b9e7b8bccdbcbbecdc9b4aa394e880470ddbc799726e65152263a88584d"
+  },
+  "uses_android_s_exact_alarm_system_alarmmanager_t_70d4cead": {
+    "text": "Використовує точну систему аларму Android (AlarmManager) для пробудження вашого пристрою саме тоді, коли це необхідно для блокування виробництва.",
+    "source": "70d4ceadb4470ffa68443d4930792ebff6b18c95e1c743f7c4722aea7d0d1637"
+  },
+  "uses_a_combination_of_background_tasks_and_keep__f14325b4": {
+    "text": "Використовуйте комбінацію завдань фону та режиму збереження життя, щоб прокинути пристрій для блокування виробництва.",
+    "source": "f14325b4839f5b2aff7b09b694ea68e051097690abdf15301877dcc04b46cd8f"
+  },
+  "reliability_by_mode_keep_alive_mode_99_app_stays_bc702c39": {
+    "text": "Достовірність за режимом: Keep-Alive Mode 99%, додаток залишається спокійним в передній зоні, вимагає зарядки. Background Тільки 40-60%, iOS контролює виконання, не гарантовано.",
+    "source": "bc702c39f20c815830fa05fd9ef9d5906a62c45a545799bd2891bf403eb32ed0"
+  },
+  "action_failed_6e1704d8": {
+    "text": "Дія провалилася",
+    "source": "6e1704d8eca96bd7170a983e6370041cd4a75617570d9a83145517d7576b2a8d"
+  },
+  "could_not_save_the_setting_de85eeb0": {
+    "text": "Не можна було врятувати обстановку",
+    "source": "de85eeb0faa433d0c6b1a612ef52fbc3fac32440f9613ecbc004e444705f0817"
+  },
+  "signed_out_close_and_reopen_the_app_to_finish_sh_31055a5a": {
+    "text": "Закрийте і знову відкрийте додаток, щоб завершити закриття Homeroom.",
+    "source": "31055a5a15c0888022ee7dcaaed962e4e97f0ea7d6b36470da22ecf44ce7b71f"
+  },
+  "ai_usage_models_429f837f": {
+    "text": "Використання і моделі",
+    "source": "429f837fc94cd7842fed13ffd137bc9c214c884a4ef58c7a3f66795fe0849607"
+  },
+  "app_permissions_7e07c5e7": {
+    "text": "Дозвіл App",
+    "source": "7e07c5e75c261908e4f0dc4714f665fb4559356ca804bd154c1dd363ed160645"
+  },
+  "handle_rename_at_946d3398": {
+    "text": "Ренесанс на",
+    "source": "946d3398d0aa94b78018bf3e47f005e2b49e2a523cdd4137d682eed71c004620"
+  },
+  "address_verify_verification_recovery_a5502b4d": {
+    "text": "Реабілітація адресної перевірки",
+    "source": "a5502b4de746c974e69fe108252917e35bf140abec84616b2b6896098296ce3a"
+  },
+  "sign_in_login_security_40de7fa2": {
+    "text": "Зареєструйтесь в Login Security",
+    "source": "40de7fa22e5ebaf4ca04420991ac06c2bc6a0accc82d219012e58f6316b98347"
+  },
+  "close_remove_deactivate_anonymise_anonymize_cb07cd2e": {
+    "text": "відключити анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний анонімний ано",
+    "source": "cb07cd2ef68821fcc910ca4fbe76ce128f05e8fa09c16a95b6ec0a98e7e7aafc"
+  },
+  "github_x_twitter_social_verified_daily_credits_c_258ff933": {
+    "text": "github x twitter соціальні перевірені щоденні кредити підключити",
+    "source": "258ff933efd6bb8d59109fda7baf305c81582e43fa540ba44a3adbaab7d12c54"
+  },
+  "crypto_link_qr_4c692491": {
+    "text": "криптовалютний зв'язок qr",
+    "source": "4c6924918e86dd666cc3632ef04b36469c54615d1bf8a56dde85052cbabb07db"
+  },
+  "allowance_limit_credits_budget_spend_remaining_w_0adb04f2": {
+    "text": "Розрахунок кредитів, що виплачуються щотижня",
+    "source": "0adb04f257b23954eed88565204036d296f01d22c8f8910de60d1ec37715c568"
+  },
+  "model_glm_deepseek_reasoning_default_coding_agen_0f8e1093": {
+    "text": "Model glm deepseek reasoning default coding агент ключ",
+    "source": "0f8e1093e081306ecbe4c1aa85821093a83e20c738e14f41b4052e48aea54223"
+  },
+  "model_cap_chat_e2314f06": {
+    "text": "Створення Cap Chat",
+    "source": "e2314f06cef7a37e56fa984edbe339d410e72f26c284b0c9d1064c1258bb1a51"
+  },
+  "beta_labs_progress_estimate_session_bridge_local_219943a6": {
+    "text": "beta labs прогрес оцінює сеанс мост місцевий агент хомером бот dm повідомлення",
+    "source": "219943a6121e1d433bbf3105e17698359bee0de7c3cda7ff3bcb57ba9cb541ca"
+  },
+  "dark_light_mode_appearance_sidebar_f7de49fc": {
+    "text": "Темний світловий режим зовнішнього вигляду бокова смуга",
+    "source": "f7de49fc80faa8d41240bd0113ec02db496e6a98aae4858e7a349c5b7da08c51"
+  },
+  "bug_icon_logs_errors_debug_developer_ba4aca35": {
+    "text": "bug icon logs errors дебютний розробник",
+    "source": "ba4aca35c00709621e28c8cb97c45ab32535f5d7f61ab73c1eacde3dc8eb6c95"
+  },
+  "locale_translate_fc923f36": {
+    "text": "Місцеві переклади",
+    "source": "fc923f36585493fa841241ecb94c8864fefb9ea7a3426f6709ef0dddb59abe67"
+  },
+  "notifications_sound_push_phone_mute_bell_chime_0df389bd": {
+    "text": "Телефонний зв'язок Mute Bell Chime",
+    "source": "0df389bdd546be4b8b9df4aa19f4970238e87e57433e04ebb7588ff0f9ceba1f"
+  },
+  "camera_microphone_location_screen_device_3b79e8e8": {
+    "text": "Камера мікрофон розташування екранний пристрій",
+    "source": "3b79e8e85463d60cd334cba5f94907fc8b021ef51f26233ddad125d4d09337ab"
+  },
+  "ai_spending_cap_grants_budget_857b9506": {
+    "text": "Витрати на капелюх надають бюджет",
+    "source": "857b95067a896e75da85df7313f16b7fc0188256dfe35017803d0d6f9d11ed34"
+  },
+  "block_hide_unblock_4ee95163": {
+    "text": "Завантажити блоки Unblock",
+    "source": "4ee951634d0670ecb791ac26827bc9e0b92d2c42a9b17bad9a0562173ce7e94e"
+  },
+  "walkthrough_help_onboarding_0a330344": {
+    "text": "Прогулянка допоможе на борту",
+    "source": "0a330344657a70155796010ecb4fd7e8dd8446ab82239fa7342d6895d18039c3"
+  },
+  "mobile_phone_native_diagnostics_block_production_b303cf2b": {
+    "text": "Мобільні телефони Індивідуальна діагностика блокування виробництва",
+    "source": "b303cf2b849ac90ab33314450c2e3ba1597cd42cf7467d01a9a47bbf6b77b464"
+  },
+  "version_build_terms_d83db505": {
+    "text": "Версія буває термінів",
+    "source": "d83db505157b5d33f6e10e9d4e7825ee193dd5c3b90be4649ea42d6923488dff"
+  },
+  "mcp_server_url_copied_149289b1": {
+    "text": "MCP сервер URL копіюється",
+    "source": "149289b1f365e95c3ad3bea6838f10edc69324fb82fc10a050ca70b14c38f7c2"
+  },
+  "could_not_copy_the_mcp_server_url_6d0a55e7": {
+    "text": "Не можна копіювати URL-адресу сервера MCP",
+    "source": "6d0a55e7df41f17bddc207ace21276f13e353e9fda76159cb0d87d606f686c44"
+  },
+  "could_not_copy_the_allow_rules_51bb60c2": {
+    "text": "Не можна копіювати правила дозволу",
+    "source": "51bb60c2f79f6a9a3bf635798ffe3be645ece38727553a3ba84407279427aeda"
+  },
+  "phone_push_queued_background_or_close_the_mobile_1a41bc7e": {
+    "text": "Завантажити або закрити мобільний додаток для перевірки повідомлення.",
+    "source": "1a41bc7efefa42fb68b6b57fe0347b8ab1ad8d58eb295046b44a01397e88cc0b"
+  },
+  "phone_push_was_not_queued_enable_agent_sessions__a84eea9d": {
+    "text": "Увімкніть сеанси агента під категоріями Mobile push і спробуйте знову.",
+    "source": "a84eea9dfc1951afc6b30150ad00ea3b98d9d0bbd744ce025e18d759fcc59a97"
+  },
+  "phone_push_was_not_queued_sign_in_on_your_phone__08615bef": {
+    "text": "Підписуйтесь на свій телефон і увімкніть повідомлення про діяльність та дозвіл на повідомлення. Пошукова доставка також повинна бути доступна на сервері.",
+    "source": "08615bef8f43ad77b35cd10c3cd00129e2ca951a9bde93505fa8995d6383b2cf"
+  },
+  "an_app_66e93a7c": {
+    "text": "Апп",
+    "source": "66e93a7c5a2576c34833f10761ca00fadbd40b36eff79f1e0969652f607b0b43"
+  },
+  "this_machine_e223809d": {
+    "text": "Ця машина",
+    "source": "e223809dba24571909e423afdde88d4fbad202eda47f139c98cfc5936a514e3a"
+  },
+  "and_it_uses_dynamic_client_registration_so_there_1f22ccd8": {
+    "text": "і він використовує динамічну реєстрацію клієнта, тому немає клієнтського ідентифікатора або таємниці для входу.",
+    "source": "1f22ccd8e35b402b92dadbb76aab111507e2ac5153f3d7389c757f8041a833fb"
+  },
+  "name_it_exactly_homeroom_walk_me_through_it_one__dff902bc": {
+    "text": "Назвіть його точно «гомером». Прогуляйте через нього один крок за часом і скажіть мені, що натиснути.",
+    "source": "dff902bce0a52ee7ee28fa34ed61d7742f81bc56a838acba7ae87e9dfd084d0c"
+  },
+  "the_connections_response_was_invalid_972f96a2": {
+    "text": "Відповідь на зв'язок була недійсною.",
+    "source": "972f96a227697619ad03c8459c6d4105ac57bb2f966016baa02980bfc19feff7"
+  },
+  "homeroom_has_not_sent_you_this_tip_in_chat_yet_i_7d929cc0": {
+    "text": "Homeroom не відправив вам цю пораду в чаті ще. Він їздить попереду на першому читанні він відповідає в новому чаті.",
+    "source": "7d929cc0230345a4718625498bcb12f17cc2ac9e87a9a53070babba57be3b997"
+  },
+  "open_a_new_conversation_to_see_it_again_2a2c7f84": {
+    "text": "Відкрийте нову розмову, щоб побачити її знову.",
+    "source": "2a2c7f846db21e5cb044b7dca1f7360353cb6a24ace7c69368598a914b37ee99"
+  },
+  "unknown_date_bced143d": {
+    "text": "Невідома дата",
+    "source": "bced143dde661c38e5714ad3be7ab7e1f988cf9cc30954cb68a4a40a01af8520"
+  },
+  "never_used_8a0057fc": {
+    "text": "· ніколи не використовується",
+    "source": "8a0057fcf897c2b99a27a840e8b472edcf3726c47811ba45876f74e94976f7c0"
+  },
+  "could_not_disconnect_try_again_5662fa4b": {
+    "text": "Не можна відключити, спробуйте знову.",
+    "source": "5662fa4bf54ecbb48e7a457e0b5de73a68eec20ee4b0ef65b2df93ab03586dfd"
+  },
+  "invalid_social_identity_response_b1dcbc60": {
+    "text": "Інвалідність соціальної ідентичності",
+    "source": "b1dcbc60e7d26b595fe18a194a14daf72fbb4c9f6a9b1c720ee884dc7d8a83a4"
+  },
+  "we_could_not_check_your_credits_so_calls_we_pay__7d883cca": {
+    "text": "Ми не могли перевірити ваші кредити, так що дзвінки, за які ми платямо, припиняються. Ваш власний ключ API все ще працює.",
+    "source": "7d883cca8fb589f5b3468f9f6bede4ab2625ae8df1303cc4cc6d9700e05e182c"
+  },
+  "your_credits_do_not_depend_on_a_connected_accoun_5fffe4b6": {
+    "text": "Ваші кредити не залежать від підключеного рахунку ще.",
+    "source": "5fffe4b641af2e795885b7570a6f148a06c0fb9fbe916b4fa370963670dbdf38"
+  },
+  "an_administrator_set_this_amount_a_connected_acc_ed2bf45d": {
+    "text": "Адміністратор встановлює цю суму. підключений обліковий запис не змінює її.",
+    "source": "ed2bf45d6403fda57a297a480281e2c0ddce2067c55670939bcd516493d53c35"
+  },
+  "either_one_is_enough_connecting_both_does_not_ad_56c6a818": {
+    "text": "Або одне достатньо.Зв'язок обох не додає більше.",
+    "source": "56c6a818647bf6b9a28200e3b3579f056175a1c98c06be9925b559da65cec19c"
+  },
+  "homeroom_holds_no_github_access_token_for_your_a_4aa9ad7d": {
+    "text": "Homeroom не володіє токеном доступу GitHub для вашого облікового запису.",
+    "source": "4aa9ad7dcaa6ef264c5cfdccc56e7a1d983030a2577855c2db9e947327da0427"
+  },
+  "homeroom_stores_no_x_access_token_for_your_accou_36b721ef": {
+    "text": "Homeroom зберігає без X-доступу токен для вашого облікового запису.",
+    "source": "36b721ef0f39d6359d27724a7e8779e424feb03918037493ec9667cd747abfdb"
+  },
+  "this_browser_is_signed_into_a_different_homeroom_0e49f5f5": {
+    "text": "Цей браузер підписується на інший обліковий запис Homeroom, ніж додаток. підписуйтесь тут, потім натисніть підключення знову в додаток і підписуйтесь з одним і тим же обліковим записом.",
+    "source": "0e49f5f56c15037c1849150d6e84dc68ce385d4286f35180b67a1c8309af4e44"
+  },
+  "the_credential_list_response_was_invalid_291ebc36": {
+    "text": "Відповідь на реєстраційний список була недійсною.",
+    "source": "291ebc36b3d4eaeea2e8d7a458a47d6771f92b7008ad9f4ba4659a27af751299"
+  },
+  "failed_to_save_55ac3cfb": {
+    "text": "Не вдалося врятувати.",
+    "source": "55ac3cfb190ed5e43ea0ad4bcc3812318c3f671ef9ae9ca64b256e74eb01c679"
+  },
+  "invalid_preferences_response_6de55751": {
+    "text": "Заборонені переваги відповіді.",
+    "source": "6de557513c34acab7af9ab153abb29e6f547b33834fba6a1a482288d2c17ea91"
+  },
+  "incomplete_preferences_response_0886bd4d": {
+    "text": "Недостатня відповідь на переваги.",
+    "source": "0886bd4d184a7661e498979fc3054fca7d42443815ae2f8410ed6242e5cd260c"
+  },
+  "paste_an_api_key_first_448710dc": {
+    "text": "Перш за все, нанесіть ключ API.",
+    "source": "448710dc61de72d49cedf6c73808a66355e18e7fe52e4eb20f52886ec200bcf8"
+  },
+  "verifying_with_anthropic_cabd4656": {
+    "text": "Про це йдеться в повідомленні Anthropic...",
+    "source": "cabd4656e84b52428a35326940ab951d522f9ada12f2b0c94a1ffea7c24d6c31"
+  },
+  "failed_to_save_key_2ca6410d": {
+    "text": "Не вдалося врятувати ключ.",
+    "source": "2ca6410dbed10cffc6c57ada961d1493471bb3565ec122ef9f331d08a1eac4ca"
+  },
+  "saved_your_chats_now_bill_to_your_anthropic_acco_94373a53": {
+    "text": "Ваші чати зараз рахують на ваш обліковий запис Anthropic .",
+    "source": "94373a53a9d8cd2639fa1a6a89cd48aa9d9759d80621802dc1949f64570f0cac"
+  },
+  "low_cost_607264ad": {
+    "text": "Низькі витрати",
+    "source": "607264add7ce608189f0d38e2c1bb2a38e66eb6a636dea16f9570d496593556a"
+  },
+  "medium_cost_7c196404": {
+    "text": "Середні витрати",
+    "source": "7c1964044ca88a216d84091d2c1c939625999e722668749fa1f88b4b75afb631"
+  },
+  "high_cost_d6d2e413": {
+    "text": "Високі витрати",
+    "source": "d6d2e413efd65cf2942bbe6f5b2db477997b1a5b7cc0b1f3ded3ed8624933761"
+  },
+  "price_unavailable_6a9e657b": {
+    "text": "Ціна недоступна",
+    "source": "6a9e657bba78dd439a0e1f0e291bb9d67eb56ebda13cc9b29a90c9d64d4fdb6d"
+  },
+  "unknown_model_38951853": {
+    "text": "Невідома модель",
+    "source": "3895185372e6aa76e3ef386f0b061ebae58fd4fe51d7d741fa326169eeac7577"
+  },
+  "updated_just_now_c5cb2e53": {
+    "text": "Оновлено тільки зараз",
+    "source": "c5cb2e53029125397d2f1a208a7c477aeba686ca6b77cad41bed79d678327d20"
+  },
+  "remove_selected_model_from_favorites_af86f296": {
+    "text": "Видалення вибраної моделі з улюблених",
+    "source": "af86f2966d9ada3aedad426c2e5cd86d36f3e1be437c6f39006cf43f4dddeff4"
+  },
+  "not_yet_verified_for_repository_coding_58297943": {
+    "text": "Досі не перевірено для кодування складів.",
+    "source": "58297943c669f5207c9fae72a8f19b97cb9253365805686ddbce202d1d05311f"
+  },
+  "verified_for_repository_coding_3e7a6d2a": {
+    "text": "Проверено для кодування репозиторії.",
+    "source": "3e7a6d2ad80813a7dadb75729ba4b64df330174eeae9f64f2589ad92453138c3"
+  },
+  "this_model_may_lack_repository_tools_or_enough_c_7726660c": {
+    "text": "У цьому моделі можуть не вистачати репозиторних інструментів або достатньо контексту, тому обертання OpenRouter може провалитися.",
+    "source": "7726660c5c4006dfcd743c5e757d753500a0050dbf553804d82ab3fafd618811"
+  },
+  "personal_key_e0ec7d23": {
+    "text": "Особистий ключ",
+    "source": "e0ec7d23d8ae24dea98b603e7ca99814195156f7065cf8946058fd851091e076"
+  },
+  "could_not_load_openrouter_models_50eb99bd": {
+    "text": "Можна не завантажувати моделі OpenRouter.",
+    "source": "50eb99bd96ae98c6da37b0ec63ccf9908621046a4fca138376eabb2f226b6905"
+  },
+  "could_not_refresh_openrouter_models_ad5f3aee": {
+    "text": "Не можна оновити моделі OpenRouter.",
+    "source": "ad5f3aeeeee6205787c2eec78441e1112ca01389997c37cbefb1eacb7a6360f1"
+  },
+  "could_not_update_that_favorite_288b961b": {
+    "text": "Я не можу оновити цей улюблений.",
+    "source": "288b961bc1df1bb49781b6238be6b0422c0280335081dd3274ce5302ecfb61ff"
+  },
+  "paste_an_openrouter_api_key_first_9ccff907": {
+    "text": "Перш за все, введіть ключ OpenRouter API.",
+    "source": "9ccff907e5553d78c957a5556f854b77c7bfd1a322d9c10ee36b3ce269ecdb8a"
+  },
+  "verifying_with_openrouter_df6febc8": {
+    "text": "Перевірка за допомогою OpenRouter",
+    "source": "df6febc87959e86d11824328e6a84fb69ae119a14f8861c2cc6e860d8a085d4e"
+  },
+  "saved_encrypted_and_selected_as_your_default_cod_9358f750": {
+    "text": "Збережено, зашифровано і вибрано як ваш стандартний агент кодування.",
+    "source": "9358f750d87bbf7821e18403bff211c8bf5967f5970dbd9c976cc7e09212fc8c"
+  },
+  "failed_to_remove_key_4b33ea92": {
+    "text": "Не вдалося видалити ключ.",
+    "source": "4b33ea92e4c7da9f490f106fded6a4b5033ce752e74e3eb11c5e89b3eb6c87e7"
+  },
+  "key_removed_your_default_agent_was_reset_to_clau_a5679221": {
+    "text": "Ключ видалений; ваш стандартний агент був відновлений на Claude Code.",
+    "source": "a5679221ddcccb0b6a3681ce19afed103fbcf83556dcae3c1ac4fac38f232ca7"
+  },
+  "key_removed_e1d3cae0": {
+    "text": "Ключ вилучено",
+    "source": "e1d3cae0be73c7d2694cb62abc0796163dd6f055c5a7c67d40ed6a552a459ef5"
+  },
+  "choose_an_openrouter_model_first_eb5ba7eb": {
+    "text": "Перш за все, виберіть модель OpenRouter.",
+    "source": "eb5ba7eba33e7551c83e4a6135a3fabd48ab7fc13754e526bcfdeafe27ea7ef8"
+  },
+  "openrouter_saved_as_your_default_session_ai_cfa500b1": {
+    "text": "OpenRouter збереглися в якості вашої стандартної сесії AI.",
+    "source": "cfa500b1714a271a936fef3fbb7cc6a0ff8d9764a046f4d3ed662b2e8446f0ef"
+  },
+  "network_error_1bd8a2e6": {
+    "text": "Помилка в мережі.",
+    "source": "1bd8a2e6222008e610495d1d13117a41ac07fa3b96df609fc7d59a0fdfc94ae0"
+  },
+  "claude_code_is_now_your_default_coding_agent_9eab2f92": {
+    "text": "Claude Code тепер є вашим стандартним агентом кодування.",
+    "source": "9eab2f9230edeb34874c0d07adfb870817d92464e11fe29c6288ef213a49e9d7"
+  },
+  "new_password_must_be_at_least_8_characters_46d36027": {
+    "text": "Новий пароль повинен мати не менше 8 символів.",
+    "source": "46d36027482ba10c1ab461cbfbc8369e1c33d360fdd6f72b68e9873322f8b0ef"
+  },
+  "new_passwords_do_not_match_653fbc41": {
+    "text": "Нові паролі не збігаються.",
+    "source": "653fbc4155186e5a28a4c5a1765cad99313e1aa4a5f1640864c379603d158acc"
+  },
+  "wallet_signing_is_only_available_in_the_homeroom_7a847aa1": {
+    "text": "Підписання портфеля доступне тільки в програмі Homeroom.",
+    "source": "7a847aa1e4ea48428a280975680fbbe0f6f475e4be892671be17c7f4cf3f7058"
+  },
+  "verifying_identity_258749e2": {
+    "text": "Перевірка ідентичності...",
+    "source": "258749e2777d4dd71aea1a3dfe020a76679bc1b4a6e4e9bd1a62dfad3fef8c55"
+  },
+  "could_not_read_your_wallet_address_d3e2e848": {
+    "text": "Я не можу прочитати адресу вашого портфеля.",
+    "source": "d3e2e848bf632bdbf5f35d09b00860d7548f7567a6de9faddec53281f13437ec"
+  },
+  "could_not_get_a_challenge_from_the_server_5cff7bdd": {
+    "text": "Я не можу отримати виклик з сервера.",
+    "source": "5cff7bddf8c119b66f5bd67a5d6847e319335872ed294e2cdc1f3d4c8f651800"
+  },
+  "failed_to_change_password_bfaea7c8": {
+    "text": "Не змінюється пароль.",
+    "source": "bfaea7c85615a0bba21d299df41e55a37606429a80eb71ba96ef452ea06afa45"
+  },
+  "password_changed_a768c77b": {
+    "text": "Пароль змінився.",
+    "source": "a768c77be9ddf3bd735a9225995ae0cf9b31829159613083e2bc44164b2ba280"
+  },
+  "signature_request_was_denied_1431f4c6": {
+    "text": "Заява про підписання була відхилена.",
+    "source": "1431f4c6c22d308d5da9b09b0f8c0a6ac29a6348eae3b11ff87226d93c7b91d1"
+  },
+  "enter_a_new_username_355c82f8": {
+    "text": "Введіть нове ім'я користувача.",
+    "source": "355c82f89730dd5aa3d821f4ad27f25d44cb09184147a35188640d6024554b37"
+  },
+  "enter_your_current_password_cf4d205e": {
+    "text": "Введіть свій поточний пароль.",
+    "source": "cf4d205e451da03cea764504155e4eba992477f6b70c012502d636c9a7898dac"
+  },
+  "failed_to_change_username_073750be": {
+    "text": "Не змінюється ім'я користувача.",
+    "source": "073750be527e5e7d82f1281e1ada66204d95a2edf1515e749ff0a5f154bd7b93"
+  },
+  "that_is_already_your_username_b33a96a4": {
+    "text": "Це вже ваше ім'я користувача.",
+    "source": "b33a96a452ac57e14225a11ad048281be6bee3a0fea7d89864cdc314dedc190d"
+  },
+  "enter_a_valid_cap_at_least_0_01_5eac2deb": {
+    "text": "Введіть діючу картку (принаймні $0.01).",
+    "source": "5eac2deb4ff1f25a1a0b9bdcf46451a7879503351bfd0fc3022a2c10191cd81d"
+  },
+  "failed_to_update_cap_7839e655": {
+    "text": "Не вдалося оновити кап.",
+    "source": "7839e655d9ea328de1d141f6d71a31a46d3292c94926a9e96d63e7b027a3e0c7"
+  },
+  "cap_updated_43414f3c": {
+    "text": "Кап оновлено",
+    "source": "43414f3c4b4263651d48572da4c3bfd41e6fc56e285fa4ff7fa447fe878a1876"
+  },
+  "network_error_c16d4022": {
+    "text": "Помилка в мережі:",
+    "source": "c16d4022387c445742ddcaab513d32c4ba212bbd59ebb963828058e633747734"
+  },
+  "failed_to_update_9eac1d3f": {
+    "text": "Не вдалося оновити.",
+    "source": "9eac1d3f9df1e7ef4f913262f9c0fb7fb06f73c46d72e9edb36d49bc1d22b021"
+  },
+  "spillover_enabled_88ee2719": {
+    "text": "Спілкування дозволено.",
+    "source": "88ee271921b5cf1b5abf63375d61cd99215d8957f9b913a4123d65a614eb859e"
+  },
+  "spillover_disabled_2195cfc4": {
+    "text": "Співачка з інвалідністю.",
+    "source": "2195cfc46d63729730edaef62f4649570dcbd6f104ee69f1730c052c9427868b"
+  },
+  "failed_to_revoke_1f13652b": {
+    "text": "Не вдалося відкликати.",
+    "source": "1f13652b3517320dbbc1855ee3cdbe92499bc436818d76a2797f13a1dd138f86"
+  },
+  "this_app_could_not_be_identified_48efbb97": {
+    "text": "Ця програма не може бути ідентифікована.",
+    "source": "48efbb9706c3b8759c3969029c9b7cc3f9c7454016285e2bacf54aa369c03090"
+  },
+  "failed_to_reset_534cc8a2": {
+    "text": "Не вдалося відновити.",
+    "source": "534cc8a201a2738c223c574e8463fc208a8ac87676c936cfd820464998fdba23"
+  },
+  "following_your_defaults_again_79e4dcaa": {
+    "text": "Зверніть увагу на ваші дефекти знову.",
+    "source": "79e4dcaac085bbe9b0bb5578f757ac3187e2a93240aaa03dc8eabf1d05d2b305"
+  },
+  "revoked_it_stops_the_next_time_the_app_opens_6720ad68": {
+    "text": "Він зупиняється наступного разу, коли відкривається додаток.",
+    "source": "6720ad68c0edcd29aa6fdd0d496e83d87475e6c71587445e2a02a0738442bae1"
+  },
+  "this_app_no_longer_asks_for_that_permission_1670cd76": {
+    "text": "Ця програма більше не вимагає такого дозволу.",
+    "source": "1670cd7604ad909f9224ef1b03f0c12c0c40a365bbc1a453b5a921e724408a5f"
+  },
+  "could_not_read_that_file_66cc390c": {
+    "text": "Я не можу прочитати цей файл.",
+    "source": "66cc390c1bcfec65a1117d89ff88065832e498d435df8667f72d469b5e4b33b8"
+  },
+  "give_the_file_a_name_3febfed6": {
+    "text": "Дайте файлу назву.",
+    "source": "3febfed6fc176af1a35c54e098cc734fbe1270a075fa6c7121ebbe255f254907"
+  },
+  "failed_to_save_the_file_65aa9a34": {
+    "text": "Не вдалося зберегти файл.",
+    "source": "65aa9a344eac37ab013bc180a2fd28d45b5c3b8601e9f2945abbe2ea0f2a6506"
+  },
+  "failed_to_delete_7e2e87f1": {
+    "text": "Не вдалося видалити.",
+    "source": "7e2e87f15e1acfd77091272e596e93abdc2142f01a1688c6ea72c07d735d0ab1"
+  },
+  "failed_to_start_linking_455b3330": {
+    "text": "Не вдалося почати зв'язуватися.",
+    "source": "455b3330f8dae7f88ed13b969496d81d8a78ec102b98eed75e0e40ba933cce30"
+  },
+  "wallet_linked_d90e1dc4": {
+    "text": "Портфель пов'язаний",
+    "source": "d90e1dc460804a9cea89595a189dff63e4230f73042115a2827f4e2d5ee0fbfb"
+  },
+  "qr_code_expired_try_again_603d556d": {
+    "text": "QR код закінчився, спробуйте ще раз.",
+    "source": "603d556dcefc649c423f9cf1c10214c0cac5f5432d9cc00b6a7722e067e409ba"
+  },
+  "expires_in_0ba8cea3": {
+    "text": "вичерпується в",
+    "source": "0ba8cea3483781cd4db402d77ed8339a0f372856abc636414657f74b9591466c"
+  },
+  "failed_to_unlink_df68c822": {
+    "text": "Не вдалося відключити зв'язок",
+    "source": "df68c8229552bb550935e7b90f5b122112a39c1d70427c97b09a721b2f87b5eb"
+  },
+  "wallet_unlinked_9c955cd9": {
+    "text": "Портфель не пов'язаний",
+    "source": "9c955cd913a11c322c0cd96af385091fcf04e00ef07efe22f7d6597c702fca70"
+  },
+  "the_homeroom_app_didn_t_respond_in_time_it_may_s_831a2fb6": {
+    "text": "Пристрій Homeroom не реагував вчасно, ймовірно, він все ще починається.",
+    "source": "831a2fb6617f9384cf58468c2e43feb57aecc87c897eebca521746e1b1bf5147"
+  },
+  "the_homeroom_app_reported_an_error_1d0b7e72": {
+    "text": "Пристрій Homeroom повідомив про помилку.",
+    "source": "1d0b7e7236e5e03141e34aa148f2c0b969ea1c40584c34a527eddf87211d1ac0"
+  },
+  "the_homeroom_app_hasn_t_re_established_its_secur_cbad4624": {
+    "text": "Пристрій Homeroom не перезавантажив безпечне підключення до налаштувань. Відкриття додатку зазвичай виправляє це.",
+    "source": "cbad46244ec4e77f9938ff2df9f4e7e0e1c888005607e604e0576c3e92ec15a6"
+  },
+  "this_screen_can_t_reach_the_homeroom_app_from_he_6c093b9d": {
+    "text": "Цей екран не може дістатися до програми Homeroom звідси.",
+    "source": "6c093b9d67b4e59203cf081c500c16830b3473d1a9326ac113737a2ca020936a"
+  },
+  "the_request_was_cancelled_because_this_page_chan_b80faf3f": {
+    "text": "Заявка була скасована, оскільки ця сторінка змінилася.",
+    "source": "b80faf3fc3fcb499835b4b938e47079e7c1af0d4dd1aa1b17fbbdbc0e18c7cff"
+  },
+  "the_homeroom_app_refused_this_screen_s_secure_co_25aa701e": {
+    "text": "Пристрій Homeroom відмовився від безпечного підключення на цьому екрані. переглянути «Пристрій Homeroom: підключення» нижче.",
+    "source": "25aa701e185ac90e212148f60f7a823e8a99b03b075df004a631ba9b6a409bfa"
+  },
+  "the_homeroom_app_returned_no_settings_37784f6a": {
+    "text": "Пристрій Homeroom не повернув жодних налаштувань.",
+    "source": "37784f6a730bd90a70119d154fb1aef06287ecfe91a420bb4f051c7b0051b174"
+  },
+  "not_in_this_app_build_c05d68ab": {
+    "text": "Не в цьому пристрої",
+    "source": "c05d68abe445c0962023df597ad7ff017fe2920b3810faf828b0e5b1f1a2fc53"
+  },
+  "no_answer_7e49c68d": {
+    "text": "Немає відповіді",
+    "source": "7e49c68db30e39dc72d346ee51ddc7e9a283ce3ad6ece4fa786612919313d8ab"
+  },
+  "not_needed_yet_f3ad7cf4": {
+    "text": "Досі не потрібні",
+    "source": "f3ad7cf45438cb3a4c87e86cb88e79fe609d5faaa5d9e01e73436a4f83b4758e"
+  },
+  "this_screen_can_manage_the_app_s_settings_805d49b7": {
+    "text": "Цей екран може керувати налаштуваннями програми.",
+    "source": "805d49b781ba37e2db3f2b889e47fe694aa6509c271362991821d932e0b80f09"
+  },
+  "the_app_is_refusing_this_screen_s_secure_connect_9e92a4bf": {
+    "text": "Пристрій відмовляється від безпечного підключення цього екрану, так що налаштування додатків і підписки додатків не можуть бути змінені звідси. примусово закрити додаток і знову відкрити його, що зазвичай перезавантажує його. якщо він продовжує відбуватися, перезавантаження додатку очищає застряглий стан.",
+    "source": "9e92a4bf9976b3a473701ee8afad8eba4d02e455f8548bd09fbee134f9c0f001"
+  },
+  "this_app_build_predates_the_secure_connection_th_89697727": {
+    "text": "Цей додаток побудує перехоплює безпечне підключення, яке використовує цей екран. Оновлюйте додаток Homeroom для управління його налаштуваннями тут.",
+    "source": "89697727ab94c0fb34a2cd9db9853307b4fc4f79515d9a95a10f530b66498091"
+  },
+  "the_app_hasn_t_answered_yet_so_we_can_t_tell_whe_a66334fb": {
+    "text": "Пристрій ще не відповів, тому ми не можемо сказати, чи є безпечне підключення.",
+    "source": "a66334fbae7e742083e5e76f604e0e1881514b0a8d3e74d51d464e75253602fd"
+  },
+  "the_app_never_answered_this_screen_s_secure_conn_df1e0013": {
+    "text": "Пристрій ніколи не відповідав на прохання про безпечне підключення на цьому екрані. примусово закрити додаток і знову відкрити його; якщо це не допомагає, перезавантаження додатку очищає застряглий стан.",
+    "source": "df1e001385560fe5277d457204d79a990dda2d850e029a4578150bf403e9e816"
+  },
+  "this_screen_hasn_t_needed_the_app_s_secure_conne_612de212": {
+    "text": "Цей екран ще не потребує безпечного підключення до програми.",
+    "source": "612de212244474a9a0223370eb2206051eb821ce308fecce8cf78e30bee5fbed"
+  },
+  "homeroom_bridge_diagnostics_c4463115": {
+    "text": "Homeroom Діагностика мосту",
+    "source": "c44631159d4d0b7de53d6ff3235148c21cdba037e3b0009700e53e32c8380231"
+  },
+  "last_read_errors_7fbdaa26": {
+    "text": "Останні помилки читання:",
+    "source": "7fbdaa26763ad7884ee4dabbc8c1b57176d6df9a0b6f59a869f2b535c9a47f78"
+  },
+  "last_read_errors_none_f90ea298": {
+    "text": "Останні помилки в читаннях: немає",
+    "source": "f90ea2984e8c7dbd61373983252d28bb5e1473b248c797904e85b23ec5e3fb49"
+  },
+  "no_message_20bb545a": {
+    "text": "Повідомлення немає",
+    "source": "20bb545a5e591308d36f41734257e8be5f47167576cc57b0269a6c576a70b734"
+  },
+  "the_homeroom_app_isn_t_accepting_changes_from_th_2b7bf898": {
+    "text": "Пристрій Homeroom не приймає зміни з цього екрану. примусово закрити і знову відкрити додаток, а потім спробувати знову.",
+    "source": "2b7bf898284cae25a3226931e6fb4a72abaac29df8d881867bfc99ca8b0dc902"
+  },
+  "this_is_a_preview_of_the_in_app_row_the_notifica_13054966": {
+    "text": "Це попередній перегляд строку в додатку. сама дозвіл на повідомлення живе в додатку Homeroom.",
+    "source": "1305496610d71fc65450a3631f807d2da90e3cc5a2c2289890a9c3d37545e583"
+  },
+  "notification_permission_is_only_available_inside_e7162b45": {
+    "text": "Дозвіл на повідомлення доступний тільки в рамках програми Homeroom.",
+    "source": "e7162b450d52843cc9597027a35516df288fb52d208e6e7b01c0c6a9af416e9d"
+  },
+  "the_homeroom_app_didn_t_respond_to_the_permissio_c14ed244": {
+    "text": "Пристрій Homeroom не відповів на прохання про дозвіл. примусово закрити і знову відкрити додаток, а потім спробувати знову.",
+    "source": "c14ed244df55d110245268697912f218f01d08cac51eeb316b0644ebda0e4bda"
+  },
+  "the_permission_request_could_not_be_started_7251d65f": {
+    "text": "Заява про дозвіл не може бути розпочата.",
+    "source": "7251d65fc769f6f93ee82885745527b4ec89eec735f26f581fc983f9c1e9e5c9"
+  },
+  "the_homeroom_app_did_not_answer_in_time_920d792b": {
+    "text": "Апликація Homeroom не відповіла вчасно",
+    "source": "920d792bef8ddddc1fc8a799a07771debcfec1e629655510a6432b51c99219c9"
+  },
+  "this_version_of_the_homeroom_app_can_t_open_the__d8939172": {
+    "text": "Ця версія програми Homeroom не може відкрити повідомлення відразу. оновлення програми з App Store.",
+    "source": "d893917265e5302c8ec27c98faddb6da3b55c6cbf92e3a10c8ae3533590060a4"
+  },
+  "permission_was_denied_allow_notifications_in_the_6bececd1": {
+    "text": "Дозволення було відхилено. Дозволити повідомлення в системних налаштуваннях для Homeroom.",
+    "source": "6bececd1d2ca6beabbc4d12259f7e7d16ffc240856e929bf559c80807baec99d"
+  },
+  "notifications_are_turned_off_for_homeroom_ios_on_561ae5ff": {
+    "text": "Повідомлення вимкнені для Homeroom. iOS показує його швидкість тільки один раз, тому це потрібно змінити в Налаштуваннях › Повідомленнях › Homeroom.",
+    "source": "561ae5ff3364ebc965724bab72dfab7426edf2110c9ba9abdafb87ee701b5785"
+  },
+  "permission_was_not_granted_ea5e3780": {
+    "text": "Дозвіл не було надано.",
+    "source": "ea5e378049b40e488372f8ac53d3122e47c10f2a50bf973a193b6b44670a7541"
+  },
+  "the_homeroom_app_closed_without_showing_the_noti_975826ec": {
+    "text": "Пристрій Homeroom закрився, не показуючи повідомлення швидко. знову відкрити пристрій і спробувати знову, або дозволити повідомлення в Налаштуваннях › Повідомлення › Homeroom.",
+    "source": "975826ec04e561e84e182cdbb0de90c12e7b6004288030902632b9e3ddf3cfe2"
+  },
+  "the_notification_prompt_could_not_be_opened_36ea1087": {
+    "text": "Повідомлення не можна було відразу відкрити.",
+    "source": "36ea1087645820ec97ca85357f6a53fbaf10a17c55da684207dba6e317298cca"
+  },
+  "no_reason_recorded_e79ca98b": {
+    "text": "(Ніякої причини не зафіксовано)",
+    "source": "e79ca98b49cfcf66b4609c2641501ecf7b401ad4d98191c8a8f40502bb4adbeb"
+  },
+  "reviewing_the_terms_is_part_of_joining_the_platf_2fc352b8": {
+    "text": "Перегляд умов є частиною приєднання до платформи. будь ласка, прочитайте повні умови, а потім виберіть, чи приймати.",
+    "source": "2fc352b8ed5f2c95610a9b7dd2fbb0e2ee70da90d549310023030acf235ee8d1"
+  },
+  "read_the_full_terms_05e37a9b": {
+    "text": "Читати повні терміни",
+    "source": "05e37a9b3499499944e130c81729efdf00ac5ccf78a9f0d20c11ebeae1b1b8e1"
+  },
+  "noopener_noreferrer_ec0f84cc": {
+    "text": "НОПЕНЕР НОПЕНЕР",
+    "source": "ec0f84cc9ffe5f58447c767cb2058a27f0154af7825f7e03bbd0807912d286f4"
+  },
+  "you_accepted_this_version_aff9403e": {
+    "text": "Ви прийняли цю версію",
+    "source": "aff9403e1aaffb71d043efc8c7500f994989ec61225143f44ee5ca5bb85b10bb"
+  },
+  "you_have_not_accepted_this_version_yet_737bfca8": {
+    "text": "Ви ще не прийняли цю версію.",
+    "source": "737bfca88a5fc7dcfbc234298661501deaaaceae01812372ce555462f4745f16"
+  },
+  "accept_the_terms_04ef5261": {
+    "text": "Прийняття умов",
+    "source": "04ef526187fbb9b19f5faeca7e7565a5a0f63d0eb56856f733ec0980643aa55c"
+  },
+  "staging_demo_there_is_no_session_to_recover_here_de2726f2": {
+    "text": "Завантажити демо: тут немає сесії для відновлення.",
+    "source": "de2726f2eadf6f6665f1b31fec6b1954285e68177fa1c1eca5ec919d2c0eabf0"
+  },
+  "wallet_recovery_is_not_available_on_this_screen_a93ea447": {
+    "text": "Відновлення портфеля не доступно на цьому екрані.",
+    "source": "a93ea44776c56878616cc68caa7d4c3c05f223a1766e4e379d48e14288a60041"
+  },
+  "sign_in_before_connecting_a_wallet_7959bdda": {
+    "text": "Зареєструйтесь, перш ніж підключити портфель.",
+    "source": "7959bdda9eec25a88b431c616cf4babfe7bf254a9945bf76de07c7382f82ba90"
+  },
+  "the_homeroom_app_isn_t_accepting_this_screen_s_s_9b74ef87": {
+    "text": "Пристрій Homeroom не приймає безпечне підключення цього екрану, тому повідомлення не можуть бути встановлені. переглянути «Пристрій Homeroom: підключення» вище.",
+    "source": "9b74ef87bababfd1cd92e9bb8a27e2a42fb3fa067da7625918a824a270050d68"
+  },
+  "notification_settings_are_temporarily_unavailabl_92460ef6": {
+    "text": "Налаштування повідомлення тимчасово недоступні.",
+    "source": "92460ef6a02d3a8c39f790444bf75fd0d4734f12fdbf6e48882c3d1713bf2603"
+  },
+  "off_on_this_device_78e679b9": {
+    "text": "Вимкніть цей пристрій.",
+    "source": "78e679b98577b9a5d2723cfeb5583a63c78fdaad4ca572c1a6be578a6550a3fe"
+  },
+  "on_this_device_is_registered_for_activity_notifi_4555ec03": {
+    "text": "Цей пристрій зареєстрований для повідомлень про діяльність.",
+    "source": "4555ec032600e196d9ba1053e1d2a922f0c8d7e0a02ff42740fb4fa2f2dbfcf5"
+  },
+  "notification_permission_is_denied_in_the_device__7c0a8c1e": {
+    "text": "Дозвіл на повідомлення відмовляється в налаштуваннях пристрою.",
+    "source": "7c0a8c1e5f6d939f15c1a573de6893175008b2c2158e0819176ba9efc1edc288"
+  },
+  "enabling_notifications_24721556": {
+    "text": "Отримання повідомлень...",
+    "source": "24721556b0e48c1e1583df58aed17b325f5da8ed5da5ee0a945b54c2288ea052"
+  },
+  "enabled_but_delivery_is_not_active_yet_6ad33231": {
+    "text": "Використовується, але доставка ще не активна.",
+    "source": "6ad332318486f0cefd695aaa56442f98503a24630675982b8e9889022813a202"
+  },
+  "light_dark_pair_fc06e4cb": {
+    "text": "Світло + темна пара",
+    "source": "fc06e4cb4798feb3cc6886f5817ceb2a78fe325339bb0fc4b4a55d2f9761425e"
+  },
+  "undecided_single_face_for_now_2e8ab8ee": {
+    "text": "Неоцінений, одне обличчя на теперішній час",
+    "source": "2e8ab8eea0dde9b8862452f16d327ad4dff268999a6db00a962448d0b765283e"
+  },
+  "no_shortcuts_are_pinned_to_the_widget_30503d43": {
+    "text": "Ніяких короткострокових пристроїв не додається до відгету.",
+    "source": "30503d43e7c80f21a9d42843b9067d0818e83716afbbb793cdf9fdb88eb02bf9"
+  },
+  "pinned_by_another_app_d419f6db": {
+    "text": "Завантажити інший додаток",
+    "source": "d419f6db33ee85677ef0eea1610a6c5cac5a7decc92f20f32ccff3428813a8c8"
+  },
+  "app_not_loaded_304cae45": {
+    "text": "Пристрій не завантажений",
+    "source": "304cae45faa3b4ea3bbd66d6ebbd334bece69278750fce5c82a1f23e53c0b786"
+  },
+  "could_not_open_zk_identity_23e1f16a": {
+    "text": "Не можна відкрити ідентичність ЗК",
+    "source": "23e1f16af4566a591812755ea4bcd90ff05f3094515d224263101a6020a2dff8"
+  },
+  "could_not_open_the_benchmark_4c4308fa": {
+    "text": "Не можна було відкрити референтну",
+    "source": "4c4308fa29cdb341618a9225ea56abe4d3ffc57d3a23f1f8c2e5e10372c301a8"
+  },
+  "could_not_open_the_logs_e8ec5a4c": {
+    "text": "Я не можу відкрити логіки",
+    "source": "e8ec5a4c82f3a84cf1a3e5e5a4edefad34312dcd2b3240816504f227b18bf955"
+  },
+  "the_configured_credential_pair_is_wrong_474d44ba": {
+    "text": "Конфігурирована парова довіри помиляється.",
+    "source": "474d44ba596b34179345ca4633f63430ef8e59fced5616698b67ae5ed2f4a1f9"
+  },
+  "opening_your_browser_fe059f40": {
+    "text": "Відкрийте свій браузер...",
+    "source": "fe059f4026c37b38cbe3a8a93b6d9a42d0a3af563e5292c9cb70fa97e0ce8ad5"
+  },
+  "then_return_to_the_app_sign_in_with_the_same_hom_c9bd3fc4": {
+    "text": "Потім поверніться в додаток. підписуйтесь з тим самим аккаунтом Homeroom за запитом.",
+    "source": "c9bd3fc487bbe2d6e4a75c9f89c0af05704765fe909609d747e2230177ecef0a"
+  },
+  "saving_profile_visibility_5ba20300": {
+    "text": "Збереження профільної видимості.",
+    "source": "5ba20300118dac602de86821c0ac13ab4ad7bfc07d73e41e99754a30d8fc723f"
+  },
+  "could_not_change_profile_visibility_07759818": {
+    "text": "Профільна видимість не змінюється.",
+    "source": "077598185c41713e6d4bfb48762d67f2f9e0d1f4952c84e1f8cc230e0c5feb11"
+  },
+  "shown_on_your_public_profile_f221e7cd": {
+    "text": "Опубліковано на Вашому публічному профілі.",
+    "source": "f221e7cdd785b08e6bd8d7dc65e9823d73936a4318daa76374ac5677b573a128"
+  },
+  "hidden_from_your_public_profile_f27c2de3": {
+    "text": "Схована від вашого публічного профілю.",
+    "source": "f27c2de33407ca811176e3dc03d7c4833dd2861f1cd5ea81c202f7b3b220bb05"
+  },
+  "replacing_account_2c0a642e": {
+    "text": "Заміна рахунків...",
+    "source": "2c0a642e063823b764012d1fcff6dff20ba1d471e0a3caee60594dd740163e90"
+  },
+  "could_not_replace_this_account_bd9e7baf": {
+    "text": "Цей рахунок не може бути замінений.",
+    "source": "bd9e7baf48ccfbd9952ea00a7d01fdb9bcb1be613f159f85ca19cd1729a26081"
+  },
+  "could_not_cancel_this_replacement_1634fdcf": {
+    "text": "Ця заміна не може бути скасована.",
+    "source": "1634fdcf34b199114fce4a9f63d537a67d82f05e9b9b3906ea257843429e9284"
+  },
+  "your_device_is_part_of_a_new_network_it_verifies_b8d3b822": {
+    "text": "Ваш пристрій є частиною нової мережі. він перевіряє, виконує і сприяє обчислюванню безпосередньо до мережі, пасивно в фоні - без центральних серверів, без прихованого інфра. Поки користувачі тримають додаток в експлуатації, мережа буде продовжувати працювати, одноразово, без зовнішніх залежності.",
+    "source": "b8d3b822a8c49915139dc8b87db6841b8c9dbe39ea0d59c051a16bb70aeca504"
+  },
+  "we_re_doing_this_to_enable_networks_that_can_be__2b47c4a3": {
+    "text": "Ми робимо це для того, щоб дозволити мережам, які можуть бути хостингом в кінцевому підсумку їхніми спільнотами - як для децентралізації, так і для того, щоб дозволити природний пункт координації навколо участі, де користувачі, які допомагають працювати і сприяють системам, безпосередньо усвідомлюють переваги від нього.",
+    "source": "2b47c4a3d987acf42b3a913b79478665cbbdb9e97187a9242b9c8ea863359a15"
+  },
+  "right_now_we_are_in_testnet_as_we_validate_the_c_2441305b": {
+    "text": "В даний час ми знаходимося в тестовій мережі, коли ми підтверджуємо ключовий шар: блок-виробництво, консенсус поведінки, і надійність мережі. Як ці стабілізують, ми будуємося на унікальних особливостях платформи - її децентралізації, нульових доказів знань, і сибільно-резистентної ідентичності - для впровадження нових заходів, координаційних механізмів, і інструментів для самогосторонніх, сибільно-резистентних спільнот.",
+    "source": "2441305beefcfdf974b26a6360fb4b58d55b4fca0700e454719f85c1a1ff0f78"
+  },
+  "thanks_for_helping_test_at_this_early_stage_the__61912025": {
+    "text": "Пристрій зараз простий, але як ми продемонструємо основну функціональність, ми сподіваємося зробити можливим новий вид мережі, що належить до спільноти, де користувачі можуть безпосередньо працювати і користуватися мережами, які вони використовують.",
+    "source": "619120254b5386f8ea700a65307c3f457de90624cac09c82ed4d04c84a548cae"
+  },
+  "this_feature_automatically_wakes_your_device_to__b0370683": {
+    "text": "Ця функція автоматично прокидає ваш пристрій, щоб виробляти блокчейн-блоки, коли ваш нід виграє слот.",
+    "source": "b037068372682933d085e768e1173024f375255493601c0d52bf8fd0ed4fb5df"
+  },
+  "vrf_verifiable_random_function_is_how_the_networ_bbd1f44f": {
+    "text": "VRF (Verifiable Random Function) - це те, як мережа справедливо вибирає блок-продюсери.На початку кожної епохи мережа виконує розрахунки VRF, щоб визначити, які валідатори будуть виробляти блоки в майбутніх слотах.",
+    "source": "bbd1f44f743ef7c6dfc33d97458a7309c3365a79aa0a1b5ad8b40e90ac501328"
+  },
+  "status_meanings_pending_waiting_for_epoch_transi_64334c4a": {
+    "text": "Статус значення. Продовження: чекати на епоху переходу, щоб почати розрахунки. Розрахунок: оцінка VRF в прогресі (забирає кілька годин). Повний: слот завдання завершено і заплановано.",
+    "source": "64334c4ad73b477bb3ad4a2260e4ed55068cf310dbd713c6269293401c8cca11"
+  },
+  "when_vrf_selects_your_node_to_produce_a_block_at_df71f91f": {
+    "text": "Коли VRF вибирає ваш вузол, щоб виробляти блок в певний час, ви \"виграли\" цей слот. Ваша відповідальність полягає в тому, щоб ваш пристрій прокинувся і підключений, щоб блок міг бути створений.",
+    "source": "df71f91f1d6a601717d10b0acd105f564968676b7755546f5ffc13c0c2e405a3"
+  },
+  "why_timing_matters_each_slot_has_a_5_seconds_win_9c4572e5": {
+    "text": "Чому час важливий: кожен слот має ~5Якщо ваш пристрій не прокидається в часі або втрачає мережеву підключність, слот пропускається і розраховується як «недійсний».",
+    "source": "9c4572e5502bb1cfef5ee8d0e30f4fefbb1e465e63c874f54c384c37cb4e476f"
+  },
+  "device_value1_2f4b7f85": {
+    "text": "Завантажити: {{value1}}",
+    "source": "2f4b7f8582994b7b8796e9aa6564a1e84e65ca35310c29f4a020afde1b7ccbbf"
+  },
+  "value1_times_6140f307": {
+    "text": "{{value1}} разів",
+    "source": "6140f30711c9d679e79877e52dcdd16f785f8566be11a3bf0dcf15cd2b97c2ce"
+  },
+  "homeroom_sent_you_this_tip_in_chat_value1_in_the_70ec27b5": {
+    "text": "Homeroom відправив вам цю пораду в чаті {{value1}} за останні {{value2}} днів, найновіші {{value3}}.",
+    "source": "70ec27b50ae939c72d00f7284692768b78f30fcfa9b0948453483b0d447d722c"
+  },
+  "that_is_the_limit_of_value1_per_connection_per_v_c06cb72f": {
+    "text": "Це ліміт {{value1}} за підключення протягом {{value2}} днів; він повернеться, як тільки вікно пройде.",
+    "source": "c06cb72f99f6d72c5d2d70d895b26489516c17e11276336d959fd2a67f34e5fc"
+  },
+  "today_at_value1_9a17d547": {
+    "text": "На сьогоднішній день {{value1}}",
+    "source": "9a17d5478c502f0f77f6de212a18a3d255fd6fab041fda91afb024387f8b960c"
+  },
+  "it_stays_quiet_for_value1_minutes_after_each_one_af1305d4": {
+    "text": "Він залишається спокійним протягом {{value1}} хвилин після кожного, так що розмова відкрита до",
+    "source": "af1305d4a4e05e7a201c5d61779b5c8b0732da74825dc2729745015c6776a66b"
+  },
+  "value1_will_not_carry_it_one_opened_after_that_w_7db50018": {
+    "text": "{{value1}} не буде його нести. один відкритий після цього буде.",
+    "source": "7db500187aebc4865d236a48a12c14f8b96f5ba13f00fcf6e96948dd61f5e482"
+  },
+  "last_used_value1_8867dad3": {
+    "text": "· Останнє використання {{value1}}",
+    "source": "8867dad3d7f64367c99492738d6162d2930308a3456f76fff25804121459e359"
+  },
+  "connected_value1_value2_10041a30": {
+    "text": "підключений {{value1}}{{value2}}",
+    "source": "10041a305a6aae65b6fa6336a9989493ef99497a6a69aef4ab81b16b92759aac"
+  },
+  "social_identity_request_failed_value1_77815ad7": {
+    "text": "Заява про соціальну ідентичність провалилася ({{value1}})",
+    "source": "77815ad725f08eeb2ca0cbc53a80a76d24b33ad705410856d6562965bb77f873"
+  },
+  "value1_day_e8b9a7c0": {
+    "text": "${{value1}} / день",
+    "source": "e8b9a7c0bf3a646b93542975cc6a8cd3aeec79c668f13315b3c78e0208390b0c"
+  },
+  "linked_value1_dac9750f": {
+    "text": "Створення {{value1}}",
+    "source": "dac9750f81b7fb159d1fbac0b717066ac3729de7afd3da5f1cc58b69889b9e3f"
+  },
+  "your_last_value1_connection_attempt_didn_t_compl_d01aaec3": {
+    "text": "Ваш останній спроба підключення {{value1}} не завершилася.",
+    "source": "d01aaec36c808141f4fcae91bf3fe2d099faf7b79d4f6437a8aa92d17ce0c229"
+  },
+  "if_value1_reports_a_callback_or_redirect_address_e9aa09e2": {
+    "text": "Якщо {{value1}} повідомляє про помилку зворотного зв'язку або перенаправлення адреси, зверніться до адміністратора, щоб перевірити його налаштування OAuth.",
+    "source": "e9aa09e2a3e8220ba423797b1d38d92650a18619cb726ef2fee89de8a45c8753"
+  },
+  "reusing_the_waitlist_value1_app_s_credentials_09bcf31a": {
+    "text": "Використовуйте аутентифікацію програми {{value1}} в списку очікувань.",
+    "source": "09bcf31a2d6bc6009a077ae513ab1eeebf340b1cbc75b2d1bdb899f8d66b05da"
+  },
+  "dedicated_value1_credentials_same_app_as_the_wai_d425372a": {
+    "text": "Присвячені {{value1}} акредитації, однакова програма, як і пара списку очікувань.",
+    "source": "d425372a08b4d3c4c1071aa28036003aa9903d3bc85d9bedb7deba591a660cb0"
+  },
+  "dedicated_value1_app_credentials_474da8b3": {
+    "text": "Загальна кількість прикладів {{value1}}",
+    "source": "474da8b3960b4f07d8111971e5ec7cad66d6ac8f6df311a0811497b98ea30a06"
+  },
+  "no_complete_value1_credential_pair_is_configured_07d36e09": {
+    "text": "Повний {{value1}} не встановлюється.",
+    "source": "07d36e09ac4d434e3ac2cef844a764f24681231a99c0a4b0c0ed801d2bcbdea2"
+  },
+  "if_this_address_isn_t_registered_as_a_callback_u_ee244571": {
+    "text": "Якщо ця адреса не зареєстрована в якості зворотного URI на програмі розробника {{value1}},",
+    "source": "ee24457133466818399644f2aa749c02caf58cf7ca5c6bff80f149afa50488ad"
+  },
+  "value1_connected_9504f2e5": {
+    "text": "{{value1}} Зв'язаний",
+    "source": "9504f2e5e8d22287ca8ed0f9edd8aacdd7e6a3a4637dc328a6a4f35a0cec65a9"
+  },
+  "value1_handle_refreshed_e25229f0": {
+    "text": "{{value1}} опрацьована ручка.",
+    "source": "e25229f0643c0cf102459c119f3602262c1dff8f19272c4fef68560c4087b2d9"
+  },
+  "another_value1_account_was_verified_review_the_r_2828ef50": {
+    "text": "Інший аккаунт {{value1}} був перевірений. переглянути заміну нижче, перш ніж будь-які зміни.",
+    "source": "2828ef50a4e3863be23fe927b3df9722dd8a1e9c581c31f5a42cf879e8037286"
+  },
+  "that_value1_account_is_already_linked_to_another_9d60ce22": {
+    "text": "Цей обліковий запис {{value1}} вже пов'язаний з іншим обліковим записом Homeroom.",
+    "source": "9d60ce22bb160c7a2f8b7ee4478a6a98eaa54849aaa7d65e7511d6fd3cd5abba"
+  },
+  "that_is_a_different_value1_account_use_change_ac_2e848c19": {
+    "text": "Це інша {{value1}} Замість цього використовуйте зміну облікового запису; ваш поточний зв'язок не змінюється.",
+    "source": "2e848c19e16e3847e017f613186ec4e3670967f14602b3262acb1c46ad1e14a0"
+  },
+  "that_value1_account_could_not_be_used_your_curre_485a4d20": {
+    "text": "Цей обліковий запис {{value1}} не може бути використаний. ваша поточна зв'язок не змінюється.",
+    "source": "485a4d2089c477a97fbdb135fd88524c56a78bda0937f050148511e440eeb960"
+  },
+  "value1_connection_was_cancelled_f1fce5eb": {
+    "text": "{{value1}} зв'язок був скасований.",
+    "source": "f1fce5eb3c0e93ad4d89eb78fb5fe3b06f58aa86d960e62b6a8115a038558f97"
+  },
+  "value1_did_not_accept_homeroom_s_callback_addres_f896bec8": {
+    "text": "{{value1}} не прийняв адресу зворотного зв'язку Homeroom, тому нічого не змінилося.",
+    "source": "f896bec80b6e865eeab645b4ce92bf1f89eceba135383ace63103adbabbf138e"
+  },
+  "ask_an_administrator_to_register_this_site_s_cal_ecfa5a84": {
+    "text": "Запросити адміністратора зареєструвати URL зворотного зв'язку цього сайту ({{value1}}) на додатку {{value2}} OAuth.",
+    "source": "ecfa5a8428659d966a39979b44f966020d0128e43f70b31d03d1ddd76b15e77e"
+  },
+  "could_not_disconnect_value1_d1a40299": {
+    "text": "Не можна відключити {{value1}}.",
+    "source": "d1a402995d01a5c8f499dc45028d9425ab2cd304c562bf395d187c45cd0ae6dd"
+  },
+  "value1_created_value2_value3_ba6d7069": {
+    "text": "{{value1}} · створено {{value2}}{{value3}}",
+    "source": "ba6d7069fafac969d88462e7a024e9b439dbfc6bf22ea58518186fe011b345be"
+  },
+  "network_error_value1_28b4e24a": {
+    "text": "Помилка в мережі: {{value1}}",
+    "source": "28b4e24ad9855bb3f260163b1f3375d620d2e2229bbab1aa0d701b01acfef350"
+  },
+  "could_not_load_mobile_push_preferences_value1_eb4a3dbc": {
+    "text": "Можна не завантажувати переваги мобільного поштовху: {{value1}}",
+    "source": "eb4a3dbc2bbf2930d3e29b82fe259d1b2edb063bd45521e08cd29253baefc21f"
+  },
+  "could_not_save_value1_fbc8fcc2": {
+    "text": "Не можна зберегти: {{value1}}",
+    "source": "fbc8fcc2a524e58d000a9ff3761e65f144f653f2789cb34e8641b33e2a804fcc"
+  },
+  "value1_value2_m_input_value3_m_output_13d31257": {
+    "text": "{{value1}} · {{value2}} /M вхід · {{value3}} /M вихід",
+    "source": "13d31257947fb1ce825ac87e879f7ddc23e18fa6858ffd9063567fc79944462c"
+  },
+  "updated_value1_m_ago_2da5a691": {
+    "text": "Опубліковано {{value1}} років тому",
+    "source": "2da5a691a714d7547101a65bd5622ff675b664174a86a3ef4c8790d1d15a23b3"
+  },
+  "updated_value1_h_ago_fdacad77": {
+    "text": "Опубліковано {{value1}} годин тому",
+    "source": "fdacad7735593a9492a74475732d93b4f629547eb7a315d03fe547bc65c8298a"
+  },
+  "value1_value2_actual_spend_depends_on_token_usag_ed219726": {
+    "text": "{{value1}}.{{value2}} Реальні витрати залежить від використання токенів.",
+    "source": "ed21972636f423bbc12ab042e095f018ad055f042938388ee51af7ef8c67ff50"
+  },
+  "carries_the_platform_s_value1_weekly_allowance_727b8587": {
+    "text": "Допомога на платформі {{value1}} на тиждень",
+    "source": "727b858738b69788c685866373a8e73cc8d327eb9f2c058fbd4c356004467f4c"
+  },
+  "carries_a_value1_value2_until_it_is_moved_to_the_3c26ce82": {
+    "text": "носить {{value1}} {{value2}} до тих пір, поки він не перейде до тижневої субсидії платформи",
+    "source": "3c26ce82bf84a4edc71af593306f57ed0b7f2efab6e2edaaa50668d19baec033"
+  },
+  "loaded_value1_current_openrouter_models_f7631c47": {
+    "text": "Завантажено {{value1}} поточних OpenRouter моделей.",
+    "source": "f7631c47fbbc4e17f6d855e1c631d18cca6c2b246619c68215e095ea670162a1"
+  },
+  "value1_added_to_favorites_01c10b67": {
+    "text": "{{value1}} додано до улюблених.",
+    "source": "01c10b67395ef9ebee75306a69006d81a0fc9b82504c54381c1f82b9dddb7557"
+  },
+  "value1_removed_from_favorites_3b784639": {
+    "text": "{{value1}} видалено з улюблених.",
+    "source": "3b7846396441bf8309a1c7e7314fc9611ec37797216b06bb9107a8468021e43d"
+  },
+  "wallet_change_failed_value1_6d5fe570": {
+    "text": "Зміни портфелів провалилися: {{value1}}",
+    "source": "6d5fe57031d6defe7aecc69c6d41dd0e8b1bae8d02b19e30c4f2294b646a6613"
+  },
+  "you_are_now_value1_46b169bc": {
+    "text": "Ви зараз @{{value1}}.",
+    "source": "46b169bc5757e279cba85018c85403597827b0c0ea906bed37d9bafc4054b43b"
+  },
+  "value1_is_too_large_the_limit_is_48_kb_per_file_018a27ba": {
+    "text": "\"{{value1}}\" занадто велика. ліміт становить 48 КБ на файл.",
+    "source": "018a27ba8e049fead4185edfa2587eb17c17610fcfcb0e9bb1eb80f9f86689f5"
+  },
+  "saved_value1_it_applies_from_your_next_run_5b58abdd": {
+    "text": "Збережено «{{value1}}». це стосується з наступного раунду.",
+    "source": "5b58abdd4b757aee8925f09092933d16c05296684d6142968d44da823a02d286"
+  },
+  "deleted_value1_49d5a596": {
+    "text": "Завантажити «{{value1}}»",
+    "source": "49d5a596747161d70bb21033947027270c36ac562d86ad8e4e239f4ac361c833"
+  },
+  "collected_value1_37428f18": {
+    "text": "Загальна кількість: {{value1}}",
+    "source": "37428f1883241177a67a7ec080234aa09bcb0689d62bbeec2a87e40ebb19f5ca"
+  },
+  "origin_value1_39955c32": {
+    "text": "Джерело: {{value1}}",
+    "source": "39955c329fd874b8bb081b8326d04c6525e08fb25be8c47935b868190461a0b2"
+  },
+  "native_value1_topframe_value2_f85dc2f0": {
+    "text": "Оригінальна назва: {{value1}} topFrame: {{value2}}",
+    "source": "f85dc2f0cd7b11f23b16b0a5d6eff5f9dcaff451b163fe4d1a9e22e1abc9ea0a"
+  },
+  "relay_value1_channel_value2_4f36343b": {
+    "text": "Завантажити: {{value1}} канал: {{value2}}",
+    "source": "4f36343b3638b4f03c6b2d8a1f767d6421b31fc4fdda9139429adf22614207ff"
+  },
+  "bridge_version_value1_e006514f": {
+    "text": "Мост версії: {{value1}}",
+    "source": "e006514fd4c094398d88d87adb97a2029d2ee5dfaad5a7e56bea81026a7e0424"
+  },
+  "app_value1_value2_3d4577fb": {
+    "text": "Завантажити: {{value1}} ({{value2}})",
+    "source": "3d4577fb1e0a7afe53ddf7d6bd214724080f4eff4782276cbe20288ee06653a3"
+  },
+  "capabilities_value1_c46d70d9": {
+    "text": "Кількість місць: {{value1}}",
+    "source": "c46d70d954051cf7f5940119735f7e6fe2531bd81f308621840da47fbf310c64"
+  },
+  "privileged_state_value1_2c912d7a": {
+    "text": "Привілейована держава: {{value1}}",
+    "source": "2c912d7a9ee378baaa5d61ed540b7318dc7c65f4dfe35f42c254ccfc169ef0d0"
+  },
+  "code_value1_f9d508fd": {
+    "text": "Код: {{value1}}",
+    "source": "f9d508fd8cbcd96d1c66a9e841c3a9fb1a82342a580ed119c2e85e70d9ccb0d0"
+  },
+  "kind_value1_531b9156": {
+    "text": "Кількість: {{value1}}",
+    "source": "531b91560d2b6257ab25e1414e1c72dfe42343ba6d39592387f7727cc2c6a4bc"
+  },
+  "privileged_attempts_value1_136a81ea": {
+    "text": "Привілейовані спроби: {{value1}}",
+    "source": "136a81ea667e124754a06f0f4aa810c9eff0817f0d6c72e0580b51bf3e5a59b3"
+  },
+  "last_value1_62fb2447": {
+    "text": "Загальна кількість: {{value1}}",
+    "source": "62fb244702b6bfeef729739b7f6f36a39f8b4a8413c5aedbb4d0aed2f90e8e84"
+  },
+  "privileged_message_value1_865bee77": {
+    "text": "Загальна кількість записів: {{value1}}",
+    "source": "865bee77ffde011df4ffb8d1c011dd6de872a1ede49e34cd6b497a7c4fd7303d"
+  },
+  "push_readiness_ready_value1_a9a86df3": {
+    "text": "Підготовка до поштовху: готовий = {{value1}}",
+    "source": "a9a86df37a4524ef83bb34d3578243b8b480e27ace37396f63763e7984b8fa95"
+  },
+  "attempts_value1_exhausted_value2_3e9ad721": {
+    "text": "Пошуки = {{value1}} виснажені = {{value2}}",
+    "source": "3e9ad721649dc369b02bcd7cd4e34bb0a609d101f2f0c7e00d2ae21937b49240"
+  },
+  "last_value1_b8001577": {
+    "text": "Останній = {{value1}}",
+    "source": "b8001577c81882d195cd0096ef39935477014cf2eb7ec1b66a63d229ea0e0a06"
+  },
+  "last_session_failure_value1_d013ca79": {
+    "text": "Загальна кількість учасників: {{value1}};",
+    "source": "d013ca790b8bc57086829220d132b3750e4b6795060adea4c979e3a81eec8b00"
+  },
+  "version_value1_d0f3aa75": {
+    "text": "Створення {{value1}}",
+    "source": "d0f3aa750b348afa96bc5a1fe9ac4bb77e0200612da4169391a49470eb28faa0"
+  },
+  "app_value1_3d48d7d8": {
+    "text": "Створення {{value1}}",
+    "source": "3d48d7d8dff181deb78bfe95a903924ec491b6e41f7737d217475ce87e992aa0"
+  },
+  "node_value1_bc3904a6": {
+    "text": "Створення {{value1}}",
+    "source": "bc3904a678d980fbd1ec58d1a85b1ef2472088335663502212d13f270db4b90d"
+  },
+  "bridge_v_value1_e110c6fa": {
+    "text": "Мост V{{value1}}",
+    "source": "e110c6faf96b05c722c98cee2cb84d03bc73c0bc9f8560886e9c8f31982c47d1"
+  },
+  "single_face_value1_01e5c9b7": {
+    "text": "Одиноке обличчя ({{value1}})",
+    "source": "01e5c9b728ca2e2ceb43f813ff8606ee55320e5afc5315770545906f03d018a4"
+  },
+  "last_icon_check_value1_919fc939": {
+    "text": "Останній перевірка ікони: {{value1}}",
+    "source": "919fc939920f8b24fada33a978ec1f0fd59066e020d2bf668d887f290abb078b"
+  },
+  "icon_value1_dark_value2_0a4d2c56": {
+    "text": "ікона {{value1}} · темний {{value2}} ·",
+    "source": "0a4d2c5613f792976a149f40f45244bbee46897344ddd29a23ed1092fa08436d"
+  },
+  "sent_value1_f03445f4": {
+    "text": "Завантажити {{value1}}",
+    "source": "f03445f443c2a07193ea2c5249679897d8aab73225e6ca01688604c4051d2423"
+  },
+  "check_failed_value1_0654d358": {
+    "text": "Перевірка провалилася ({{value1}})",
+    "source": "0654d358ba4eb0961ed4fff27bdfb742fa27bfc6305eb75bf9ebf40fd63d01b4"
+  },
+  "value1_accepted_the_platform_s_client_credential_d0bf5c37": {
+    "text": "{{value1}} прийняв акредитації клієнтів платформи.",
+    "source": "d0bf5c37423c8550d7ffb7f9d8d07b3bd443d6af6449afcbd043025fcba25035"
+  },
+  "if_connecting_still_fails_on_value1_s_own_page_t_c60fea59": {
+    "text": "Якщо підключення все ще провалиться на власному сторінці {{value1}} , адреса зворотного зв'язку вище",
+    "source": "c60fea59367182ed89550e1eb63183202491ed77f250512d8cb4bd2e01758e6e"
+  },
+  "is_not_registered_on_the_value1_app_05cac2c8": {
+    "text": "Зареєструватися не можна в {{value1}} додатку.",
+    "source": "05cac2c8698cc7aab203ac15f2643e5bc88f33405209458e1ef9a1273d8579f3"
+  },
+  "value1_rejected_the_platform_s_client_id_or_secr_d8c2d2c1": {
+    "text": "{{value1}} відкинув ідентифікатор клієнта або таємницю платформи.",
+    "source": "d8c2d2c1b5a0670983c9ac170d775566e0af156ea61b7f46335f35e7265bde0e"
+  },
+  "finish_value1_in_your_browser_fb697fc0": {
+    "text": "Завершити {{value1}} у вашому браузері,",
+    "source": "fb697fc0f6f55df3f2ce34dfa8b6a4ebd005a49259836d35d03ea7f8651991bf"
+  },
+  "value1_account_replaced_f87c67dc": {
+    "text": "Замінено {{value1}} облікового запису.",
+    "source": "f87c67dc066944182716c331552165380eda3e3be5b387a864d1a03b75419aa2"
+  },
+  "no_changes_made_value1_is_still_connected_fe2b5c1e": {
+    "text": "Зміни не зроблено. @{{value1}} все ще підключений.",
+    "source": "fe2b5c1e391cb365e1577273fdc0d93326ac1e2a8bf90c522119b973caa0b259"
+  },
+  "light_dbcd5e7b": {
+    "text": "світло",
+    "source": "dbcd5e7bb7a0f538810de44c3efbd813037ee3fa358747bb71fa58e157af45f7"
+  },
+  "dark_60acc53f": {
+    "text": "Темний",
+    "source": "60acc53f13a5d1bf115878c4a785e9a43e8286c4139a8402a6ac7d23966f9153"
+  },
+  "system_6725e7bb": {
+    "text": "Система",
+    "source": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a"
+  },
+  "account_7e1b0d56": {
+    "text": "рахунок",
+    "source": "7e1b0d5641f2640ce9a953ec231eea2c27a2a7633f7d3c273e5735e2b30c10b7"
+  },
+  "preferences_66962f72": {
+    "text": "Переваги",
+    "source": "66962f72a08883733c35df6f82a049b929f9579f19c4bc083ac99bead602eab3"
+  },
+  "appearance_3907fa7f": {
+    "text": "Поява",
+    "source": "3907fa7f80722a6fc58cd8c1bd30abf7638095d6774f183b6e831b7093957d1b"
+  },
+  "other_f97e9da0": {
+    "text": "Інші",
+    "source": "f97e9da0e3b879f0a9df979ae260a5f7e1371edb127c1862d4f861981166cdc1"
+  },
+  "settings_74a883a0": {
+    "text": "Налаштування",
+    "source": "74a883a037bc227f91891ab654a753d3a99f31ab06ae5b5d2b6e594a692b41f8"
+  },
+  "free_f411a1fb": {
+    "text": "вільний",
+    "source": "f411a1fb62758b4c54690d0a702b4955b54dd22115416fa7b1ce51b4a084818d"
+  },
+  "recommended_d70604e8": {
+    "text": "Рекомендовані",
+    "source": "d70604e8430461372849bbd123d85771e11423870a507e8fa4650a7e9a5a50ef"
+  },
+  "new_18fdd549": {
+    "text": "Новий",
+    "source": "18fdd549b2ed367ac0c74cbec1214644728515b30edbcb78e7d322757a7c8359"
+  },
+  "refused_66b87354": {
+    "text": "відмовляється",
+    "source": "66b873543aebf01b33f9a69013d6ba1291d31dafbdcd29051e9dd94fe90b7245"
+  },
+  "unconfirmed_3229d16c": {
+    "text": "Не підтверджено",
+    "source": "3229d16ca643cb8615493e849ef042cc687c7a94ac44b9b9131668cab75422d5"
+  },
+  "decline_a2d285b3": {
+    "text": "Декорація",
+    "source": "a2d285b352873457207a34a015267524bb4613c3e8c961c8998da4e08e0d5745"
+  },
+  "close_7d9eb7ac": {
+    "text": "Закрити",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  },
+  "1_vrf_selection_each_epoch_the_network_randomly__2fd9c56c": {
+    "text": "1. VRF Вибір: кожен епоха, мережа випадково вибирає, які валідатори будуть виробляти блоки за допомогою Verifiable Random Function (VRF).",
+    "source": "2fd9c56c64d8669dd0f1692e99d591c9dc9d0f42ee9aa19786e1a3d88f22dd12"
+  },
+  "2_slot_scheduling_when_you_win_slots_the_app_sch_578d8de2": {
+    "text": "2. Графік слотів: коли ви виграєте слоти, графік додатку попереджає про те, що ваш пристрій прокидається ~1 хвилину до кожного слоту.",
+    "source": "578d8de2dd260433dfb47964a0187831ec77722d34537ef35d51c0e52fd2104d"
+  },
+  "3_block_production_at_slot_time_the_app_monitors_41d069d1": {
+    "text": "3. Блок-виробництво: в час розриву додаток стежить за вашим вузлом і забезпечує, що блок виробляється.",
+    "source": "41d069d1c741f9fb42504b44535a1c974dab18365c940c8cb88986f80a9f15b5"
+  },
+  "4_success_tracking_results_are_recorded_to_track_4eb22c2b": {
+    "text": "4Слідкуйте за успіхом: результати записуються для відстеження вашої надійності з часом.",
+    "source": "4eb22c2bcc1b3dd04cafcfbe0caab3e40acc346bedbc40e8e438aca4cbbcb934"
+  },
+  "message_b23a6a8439c0": {
+    "text": "Невідомий",
+    "source": "b23a6a8439c0dde5515893e7c90c1e3233b8616e634470f20dc4928bcf3609bc"
+  },
+  "message_140bedbf9c3f": {
+    "text": "жодного",
+    "source": "140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe"
+  },
+  "message_97b0560280ed": {
+    "text": "Тепер",
+    "source": "97b0560280ed60a5a1eaa1bc45492543c8a986ad5a25b468c427eb83c3e88191"
+  },
+  "message_a03f2386ae06": {
+    "text": "Сталі",
+    "source": "a03f2386ae06b21109577020844df367857b72c2fcce384c1896fed98a89c82b"
+  },
+  "message_3d6df245178e": {
+    "text": "Зв'язок",
+    "source": "3d6df245178e60766e3478a821dd81b9702e3e4d4e1319d5484b0351f29c0149"
+  },
+  "message_4183b7793fd2": {
+    "text": "Перевірка",
+    "source": "4183b7793fd28ba47ea9e79e7697f2915da218567e6657a158b51bd14bce91cd"
+  }
+}

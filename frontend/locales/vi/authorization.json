@@ -1,0 +1,102 @@
+{
+  "authorize_homeroom_cli_2639a575": {
+    "text": "Giới thiệu Homeroom CLI",
+    "source": "2639a57552e57c230ca1a9ecfd38715fc1bf7f4a8811e987c0d1b2013b2db64e"
+  },
+  "authorize_cli_access_1cc51f5c": {
+    "text": "Khả năng truy cập CLI",
+    "source": "1cc51f5c4e04803424062f5aa73d05d95c05b55363ed6e3d76932f634fd451a3"
+  },
+  "start_an_authorization_request_from_the_social_v_25b3adfb": {
+    "text": "Bắt đầu yêu cầu cấp phép từ Social Vibecoding CLI, Codex, Claude Code, hoặc OpenCode.",
+    "source": "25b3adfb0382c54a262738704b7c940941bc1d1a753a28ace459c2b42056e6ec"
+  },
+  "homeroom_cli_is_requesting_access_to_your_accoun_96ebee52": {
+    "text": "Homeroom CLI đang yêu cầu truy cập vào tài khoản của bạn.",
+    "source": "96ebee529dec5c6e2f74e7043e1e25cfe013397dec81e8480d9ef22b84fc0195"
+  },
+  "code_340f4630": {
+    "text": "Mã",
+    "source": "340f463033e0fd5ddeabb922df4d4f1b5747494d0f5ed9894f13b6e13ca831f5"
+  },
+  "client_0c77fe09": {
+    "text": "Khách hàng",
+    "source": "0c77fe09ab336a3e57cc2b6804a9bac65e19a27782b5a9c815d585e894c3b7f2"
+  },
+  "access_ec5ba0ab": {
+    "text": "Truy cập",
+    "source": "ec5ba0abb717da87aab2655bd4b4a40f93f2a591a0ade63611c42925c49c17e9"
+  },
+  "expires_f6725f3a": {
+    "text": "trôi qua",
+    "source": "f6725f3af08a06a2804bf70e4493e6c78dd37ef533eebf9b419fc48b520ec753"
+  },
+  "approve_only_if_this_code_matches_the_homeroom_c_c04c7d77": {
+    "text": "Chỉ phê duyệt nếu mã này khớp với phiên Homeroom CLI hoặc tác nhân lập trình mà bạn đã khởi động.",
+    "source": "c04c7d77b446a9b0a67eed9a9e83d5478ac2cdb353f0f9718642af1e617ad1f3"
+  },
+  "authorize_b6741b4c": {
+    "text": "Ủy quyền",
+    "source": "b6741b4ccf6d675a6e40b2457eb905960ff926a48ba5a9b0f8f7813b9d0f9a33"
+  },
+  "cancel_19766ed6": {
+    "text": "Hủy",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "start_a_new_request_f80d20dc": {
+    "text": "Bắt đầu một yêu cầu mới",
+    "source": "f80d20dc672cd39aab56afa252d738bbbc55d3e697c1fa9a33396c88e38ded93"
+  },
+  "connect_homeroom_91812306": {
+    "text": "Kết nối Homeroom",
+    "source": "9181230682e5046431cc247763223f31691be779f6f4dd595848d872a1f63521"
+  },
+  "start_the_connection_from_claude_or_chatgpt_and__b5786bc6": {
+    "text": "Bắt đầu kết nối từ Claude hoặc ChatGPT và chi tiết phê duyệt sẽ tự động mở ở đây.",
+    "source": "b5786bc688f65f04c869cdc162cf72b0a69fa87ba392adc89bc1e1eaf4b7bf67"
+  },
+  "requested_by_9199a054": {
+    "text": "Yêu cầu bởi",
+    "source": "9199a054972b1489b649ee223010fc35e7c76d9cec4ab8c1d311be37a6a29f27"
+  },
+  "sends_you_back_to_0efcdc17": {
+    "text": "Gửi bạn trở lại",
+    "source": "0efcdc17e1e46e936fc644d0791b2f95a29c4cf24d9442ac518c61c203ddf4d0"
+  },
+  "your_account_dbb5f637": {
+    "text": "Tài khoản của bạn",
+    "source": "dbb5f6371b6a2a677f09c24d17fdc581132a41881a818469a92b58588e8764bc"
+  },
+  "this_will_be_allowed_to_bbac413e": {
+    "text": "Điều này sẽ được cho phép",
+    "source": "bbac413ef5fcfd9d7c17f7f4dc905f89afa8a74800242bcf1996f988752f9307"
+  },
+  "approve_only_if_you_just_started_this_connection_d70a27aa": {
+    "text": "Chỉ phê duyệt nếu bạn vừa tự bắt đầu kết nối này từ Claude hoặc ChatGPT và nhận ra địa chỉ ở trên.",
+    "source": "d70a27aa465ee4882d8bd0e2e6386c1d3242c977bbe53ca4d956725d17bff236"
+  },
+  "allow_e213c161": {
+    "text": "Cho phép",
+    "source": "e213c161d5cefa520c8dd4155c9569076d9a40406111465136a6f1b207045761"
+  },
+  "client_asks_to_connect": {
+    "text": "{{client}} được yêu cầu đăng nhập vào tài khoản Homeroom của bạn.",
+    "source": "8343d6bd2af5d9957c4b9a7d6277d50542409499ac5316b183fa53251c0dbe53"
+  },
+  "scope_read_label": {
+    "text": "Xem ứng dụng của bạn",
+    "source": "a49dfc73d4a9eb40a89bcb1a09edc7cb8c3d881991e6c7707912b1bdd3b77188"
+  },
+  "scope_write_label": {
+    "text": "đề xuất thay đổi",
+    "source": "73eeb5083986085662918c3fb9d944d86cc0f0706cbd6f0070a3a85721947ab1"
+  },
+  "scope_read_detail": {
+    "text": "Các ứng dụng mà bạn đã có thể xây dựng, các yêu cầu mở của họ, và các đề xuất của bạn.",
+    "source": "ac5f2b68e0ff55c511d1cf0c037c336bef08538801e112993c6596758bc5ac46"
+  },
+  "scope_write_detail": {
+    "text": "Tạo yêu cầu, chuẩn bị công việc cho tác nhân lập trình và chuyển công việc đã hoàn thành thành đề xuất để nhóm bỏ phiếu.",
+    "source": "ff43cd2a5fff75735c7b49dfbee9211dcc1a55596852434e0c3b00e8b5343ae5"
+  }
+}

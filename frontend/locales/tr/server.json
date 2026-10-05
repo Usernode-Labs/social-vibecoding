@@ -1,0 +1,2282 @@
+{
+  "error_0030034b583e4c49": {
+    "text": "Şimdiden kurtaramıyorum. tekrar deneyin.",
+    "source": "0030034b583e4c4998bfc3ce7cbf3de2ad1dfefa8c915c015de0c8cf36634d68"
+  },
+  "error_00d168962029db5d": {
+    "text": "Bu PR'ye geri çekilecek bir şey yok",
+    "source": "00d168962029db5dcac11da84227e731a307d6d56f8a5c98cac79f5791a380c4"
+  },
+  "error_0135238efdc4b937": {
+    "text": "Staging varsayılan ≤ {{value1}} karakter olmalıdır.",
+    "source": "0135238efdc4b937558c0d8d29891b08b2e5f15cd9d7693ba4a7cf0380982d47"
+  },
+  "error_015706b08ec43a2b": {
+    "text": "DailyCapCents mevcut uygulama sınırınızı (${{value1}}) aşamaz.",
+    "source": "015706b08ec43a2b2d0d1d68c1265d603670fb117a217965e3203f3a5e807963"
+  },
+  "error_01aa341de6450879": {
+    "text": "Sadece uygulama oluşturucusu veya bir yönetici görünürlük değişikliği önerebilir",
+    "source": "01aa341de6450879a267da7028dfff1fefa9f231610e20b33ae2ae3b8dc21f28"
+  },
+  "error_01d2c83f38c699c2": {
+    "text": "Teklif bulunamadı",
+    "source": "01d2c83f38c699c2868d258822ebfe98a4b36c73841d849fa18935ce12ed4ded"
+  },
+  "error_01f07951b332aee6": {
+    "text": "İhtiyacımız olan pubkey",
+    "source": "01f07951b332aee68d6f00a5ed2bb22bf3a812bc8b2f71c32d4031bb2c20aa47"
+  },
+  "error_028e42b4d1d760db": {
+    "text": "1 MB'ın altındaki bir PNG, JPEG veya WebP'yi, setten bir kart rengi ve geçerli bir görüntü çerçevesi seçin.",
+    "source": "028e42b4d1d760dbfc265dd7076d820e9de29bd7653ba8df8a0e8050264d8d8f"
+  },
+  "error_02e010014f8103aa": {
+    "text": "Toplantı bulunamadı ya da durmadı",
+    "source": "02e010014f8103aad447180ae3fbc716d2655ad9b29200920f83fdf9456604b2"
+  },
+  "error_032d33c52ddafd97": {
+    "text": "Açıklama gereklidir",
+    "source": "032d33c52ddafd973251285ddd17855fed71ac86cc94286f414d02ca5aa37e8b"
+  },
+  "error_0338db02463052c1": {
+    "text": "Hesap silinmesi tamamlanamaz. lütfen tekrar deneyin.",
+    "source": "0338db02463052c11e0f318faea1d43f0dd994e64c3c5f4c4b485c37950fe6b0"
+  },
+  "error_039484a5615b8b02": {
+    "text": "E-posta adresinizden altı rakamlı kodu girin.",
+    "source": "039484a5615b8b02e47e67ed4cee64ba62322afa7bab55b8ee4af2839cdc44fc"
+  },
+  "error_044d4b7587d48623": {
+    "text": "Renames platformda yapılandırılmış GitHub gerektirir (GITHUB_BOT_TOKEN).",
+    "source": "044d4b7587d48623725429660f8ec78757adfbaa823cd116d06d033dcbb14ad1"
+  },
+  "error_046963532c298e61": {
+    "text": "Bu teklif, incelemeyi bıraktığında reddedilen gizli bir değer tutar. yerine durdurmak istiyorsanız geri çekilir.",
+    "source": "046963532c298e616c43744b024bb9491607017346d1e184fa759f5cb31f8999"
+  },
+  "error_046c9a81aeb595d8": {
+    "text": "Bu uygulama henüz bir depolama alanı yok. platform geribildirim yerine deneyin",
+    "source": "046c9a81aeb595d8da34b6360110983f22a6ec3c6c10db120648e82a79f8505d"
+  },
+  "error_04772f59ffca53d3": {
+    "text": "Kampanya bulamadı",
+    "source": "04772f59ffca53d3b0706037903515eaf037bb0e529f88cfa4ac9629dea80cf6"
+  },
+  "error_048b4ed877c5ef92": {
+    "text": "Explorer tepkisi çok büyük",
+    "source": "048b4ed877c5ef921c7a4bc1b9b51993400edf7f3ad60ac51be80b040c4ad289"
+  },
+  "error_05592b8875d4c472": {
+    "text": "Partner hala bu uygulamada öneriler var. demo modunu önce yeniden ayarlayın, sonra devre dışı bırakın.",
+    "source": "05592b8875d4c472e55d377cca45d8c91320c0d125da38819ab64c86699f8fe4"
+  },
+  "error_056cbbfdefa37cb3": {
+    "text": "şu an cevabını veremezdim",
+    "source": "056cbbfdefa37cb3e595873118e6642ed685628567baefd4c3fd4f8dc97e2df4"
+  },
+  "error_066adc0186e29072": {
+    "text": "İhtiyacınız olan geçerli model id",
+    "source": "066adc0186e29072b9ffb5278bfd7a5c1ec9c1f10395d639fcc0588a9768cfb4"
+  },
+  "error_067d963132a0c36a": {
+    "text": "Bu uygulama zaten kullanılmakta olan en fazla {{value1}} kategoriye sahiptir. kartlarını başka bir yere taşınarak birini çıkarın.",
+    "source": "067d963132a0c36a2101c7a77a52ed45d6fa00fc446a1255981af3bb0be7a620"
+  },
+  "error_06bd457ab92e63e1": {
+    "text": "Önce hafif bir görüntü yüklenir.",
+    "source": "06bd457ab92e63e1d6e1dac7c089b247f959d754b17fdad5e899aa654bd90266"
+  },
+  "error_06d60e0eb60802d2": {
+    "text": "Platform zaten maksimum {{value1}} değişken ilan ediyor.",
+    "source": "06d60e0eb60802d2b4e83c8fe6a52f6a1d9427fa40a4504d92da7b24c742e56d"
+  },
+  "error_06ecbb36c0adac3a": {
+    "text": "Ekran görüntüsü PNG veya JPEG görüntü olmalıdır.",
+    "source": "06ecbb36c0adac3ac1f40055e072a3c6134ad48d121ca1a40148739f9226ded6"
+  },
+  "error_06f014f70cd235da": {
+    "text": "GitHub'te başlık güncellenemez. bir an için tekrar deneyin.",
+    "source": "06f014f70cd235da648664d43c91b03a164b7eacc28763be51323a5fc96ba407"
+  },
+  "error_0730901201a0194e": {
+    "text": "En fazla {{value1}} görüntüye ekleyebilirsiniz",
+    "source": "0730901201a0194e13869eba9ad54748e9b116958142e376fb3dae5158b658d9"
+  },
+  "error_07ccafbe90fa24bc": {
+    "text": "Hesabınızı silmeden önce tarayıcınıza giriş yapın.",
+    "source": "07ccafbe90fa24bc6ff8725abcff07874be9106d3393a2261925c69f0a1b8212"
+  },
+  "error_08086257d7b167bd": {
+    "text": "Kullanıcı Adı Gerekli",
+    "source": "08086257d7b167bdfe3b485ae5a7c4f3dc4b37a0f8aba5f6124402a4852caa05"
+  },
+  "error_087c53b64e3f86e3": {
+    "text": "{{value1}} platform tarafından kaydedilmiştir",
+    "source": "087c53b64e3f86e3413e3e933fae08008600b73636dbb054bf7c5e99de9aa811"
+  },
+  "error_0969eab862733d78": {
+    "text": "Toplantı bulunamadı",
+    "source": "0969eab862733d78d9e3c1f0eafa36d401bdb8505ca7463fce9e6c83f0fa0ce0"
+  },
+  "error_09d343e6b695580e": {
+    "text": "Bu uygulamayı çalışan bir değişiklik zaten onayını bekliyor",
+    "source": "09d343e6b695580e038720b3065e4547a2fc7bf6394d6f860073097d020069eb"
+  },
+  "error_0a285d7c62c40339": {
+    "text": "Detaylar bir çizgi olmalıdır",
+    "source": "0a285d7c62c403390548a584c3c0b142aa86b08d88e56cd17a20cab0c1d08b5e"
+  },
+  "error_0a36bebedf24b6cd": {
+    "text": "İhtiyacınız olan teklif, teklif ve imza",
+    "source": "0a36bebedf24b6cd0accfde2ab19957504e2bcf4c22db86c28dcc0c900a1c987"
+  },
+  "error_0a43fe5cf574f791": {
+    "text": "Demo teklifi yapılmıyor. öncelikle tutarak teklif edin.",
+    "source": "0a43fe5cf574f791c7e697f42f514c1be3461eeabe9c6d2bf003f05af10e61ed"
+  },
+  "error_0b50a066c5ef4608": {
+    "text": "GitHub veya X'i bağlayın ve platform tarafından finanse edilen AI'yi uygulamalar için açın.",
+    "source": "0b50a066c5ef460817abb87e48663a64eb6aa02dfe95a72ff438422d37d57a25"
+  },
+  "error_0b8e28c427439593": {
+    "text": "Daha fazla öneriyi yüklemeyeceğim.",
+    "source": "0b8e28c4274395931a557bee8ab961243a424d911e77f68b41829ff1086c37ea"
+  },
+  "error_0b9ac6136a2ce256": {
+    "text": "Bu uygulama demo modunda değil. ilk olarak değiştirin (POST /api/apps/:slug/demo-mode).",
+    "source": "0b9ac6136a2ce256504c0ecd701b7c462a687e613cada6dbc548633ba1ef2e86"
+  },
+  "error_0bf238d147de3759": {
+    "text": "Sadece etkinleştirme, model, gerekçelendirmeEffort, ya da harcamakCapUsd.",
+    "source": "0bf238d147de3759fb7cb9daae2905dec4f15233c01fc62842e3e5d5ae489049"
+  },
+  "error_0bf469430d2ba36d": {
+    "text": "Yürüyen iş değişti. durdurmadan önce durumunu yenilemek.",
+    "source": "0bf469430d2ba36df99f4dc581f9ea278602047ca4e69845c12646a9160d773e"
+  },
+  "error_0c8be765d5ead8d5": {
+    "text": "Hiçbir onay",
+    "source": "0c8be765d5ead8d5c810f76f9f0ce7f86d62acc44720ee4f12e570317db25740"
+  },
+  "error_0d502f75321f07ca": {
+    "text": "Raporları yüklemeyi başaramadım",
+    "source": "0d502f75321f07ca49fd560743a7972feb3b0f8080ae09998e0d8269e2098e07"
+  },
+  "error_0e039f1aa78c79e1": {
+    "text": "Bu teklif zaten birleşiyor, bu yüzden artık Underway'e geri aktarılamaz.",
+    "source": "0e039f1aa78c79e1cca7e99bf3118c6b50db4f452b07f5a281f1a8f3dac5f126"
+  },
+  "error_0ea9fd26cb5def6d": {
+    "text": "Bu değişiklik GitHub'te kapatıldı, bu yüzden onay talep edemez.",
+    "source": "0ea9fd26cb5def6d186e94b3a386d31d7b3a03fe285445a29decdda4c6ae4e50"
+  },
+  "error_0efafdb70355bee8": {
+    "text": "Konuşma eklenti depolama tamamlanmıştır",
+    "source": "0efafdb70355bee855d82e6cff6a9dc302c6db81f99f02730fdfd122b3062ca6"
+  },
+  "error_0fcfb12dfad07ba0": {
+    "text": "Gerekli doğrulama",
+    "source": "0fcfb12dfad07ba0b1ab80f7cd6c6c3c5aaea0804be09faee6ca0819e3769659"
+  },
+  "error_10110c952f045859": {
+    "text": "Başlık güncelleyemeyeceğim",
+    "source": "10110c952f045859c0e006720243e5bdd4218db7450c0c07085bac34f0fa631d"
+  },
+  "error_1020d5472169b9ff": {
+    "text": "aktif oturum bulunamadı",
+    "source": "1020d5472169b9ffb024ff6f2641be1a560bf38637d640548cb2141618ddae9c"
+  },
+  "error_10349b8c7473f80d": {
+    "text": "Sadece uygulama yaratıcısı veya bir yönetici bir yönetim değişikliği önerebilir",
+    "source": "10349b8c7473f80d5898fcf4cfabe552763a22cf56a1c3baea3a7cf2c85fcb8c"
+  },
+  "error_10ade93202cc3968": {
+    "text": "Aktifleştirme kodu, kullanıcı adı ve şifre gerekli",
+    "source": "10ade93202cc3968c60aeb4916118bf6e688bec4852418b803f608943dac6f0b"
+  },
+  "error_10ca083fbafb508e": {
+    "text": "Öncelikle istediğiniz değişikliği açıklayın: iş siparişi ajanınıza teslim etmek için bir şey gerektirir.",
+    "source": "10ca083fbafb508eaa8a086c0c25c60800ad107f1fe08a8d0c8347f356be9fb2"
+  },
+  "error_111d0b4c090aeab2": {
+    "text": "{{value1}} bir çizgi veya sıfır olmalıdır",
+    "source": "111d0b4c090aeab296389e1bcfe5ca0d02876fedac9b9ca3090323b778841584"
+  },
+  "error_1186b9b6c47aafe7": {
+    "text": "{{value1}} en fazla {{value2}} karakter olmalıdır.",
+    "source": "1186b9b6c47aafe75cb23abc965ecb2e819a97f68a608c2a08df8e7fc0dba3da"
+  },
+  "error_11bb0d7a400e6796": {
+    "text": "Bu anahtar platform tarafından kaydedilir.",
+    "source": "11bb0d7a400e6796f1abe296b01cb9685cd39e2a9651942a2d0651bcc6c133f7"
+  },
+  "error_11ed991710a5ea18": {
+    "text": "Konuşma geçersizliği id",
+    "source": "11ed991710a5ea18bf9fee730f3ea3c7c4eb51b0592b09b6f7b6d6f7ee0110a9"
+  },
+  "error_11f9716d5d9be525": {
+    "text": "Bu sunucu uygulama sınırında ({{value1}}). bir uygulama kaldırmak veya sınırı yükseltmek için bir yönetici isteyin.",
+    "source": "11f9716d5d9be5257c72b871dd0846c89d7e32883ace3d7afda435027f781f4c"
+  },
+  "error_12589959fe0f0add": {
+    "text": "Bu davet bağlantısı aktif değildir.",
+    "source": "12589959fe0f0addcc9ae7c6c357b4ab4590324fca879189a4fe4e771cc78122"
+  },
+  "error_12f8e24454007b82": {
+    "text": "Ürünler Overlap",
+    "source": "12f8e24454007b82a1029cbd91d1fed44eb8b101ed1188d19e7ba40e41ab2417"
+  },
+  "error_130101f11d7b2a57": {
+    "text": "Belediye başkanı bu konuşmada cevap veriyor.",
+    "source": "130101f11d7b2a572b1f503aa4eacfcbdca07f556caf9758b10bfd937e687b19"
+  },
+  "error_1311a340aeacb616": {
+    "text": "Toplantının PR numarası yok",
+    "source": "1311a340aeacb616ba6ee33be9573ed8d5e8be6b91f343e7457fc06e480f762c"
+  },
+  "error_13287c4f3b6efc98": {
+    "text": "Global Chat çubuğunu yüklemeyi başaramadım.",
+    "source": "13287c4f3b6efc988f7ce3924de99c5258c99f3d32842c3e7317aab15b4026c6"
+  },
+  "error_1386d0703fc8162a": {
+    "text": "Kullanıcı Adı Alındı",
+    "source": "1386d0703fc8162a2e8020a3c18741e8aef8a64c653b21bc50b6961da408e662"
+  },
+  "error_140e40fa28043e1c": {
+    "text": "İlk olarak Ayarlar'da OpenRouter API anahtarını ekleyin.",
+    "source": "140e40fa28043e1cf010e8818fbce2d9846d5abbf7fb414ec80849488cc0f1b9"
+  },
+  "error_14433d2746ed13f8": {
+    "text": "Hiçbir repo_url",
+    "source": "14433d2746ed13f84ec68e87893515d334d8b5693f18abdb420abaa1df570f99"
+  },
+  "error_14a03f900dacdf6f": {
+    "text": "{{value1}} Sadece bir platform yöneticisi o oy olmadan birleştirebilir.",
+    "source": "14a03f900dacdf6f6aed30ea48fe6c56f15ab438c9519265e839ca21ab0ddf01"
+  },
+  "error_15aadac0d7269b07": {
+    "text": "Vücut bir nesne olmalıdır.",
+    "source": "15aadac0d7269b075b28bda2455f9fca366c67f8c04461e95e74e9d3808ec0a8"
+  },
+  "error_15ab99ac42169a6a": {
+    "text": "Kapı Adı: CapUsd Gerekli",
+    "source": "15ab99ac42169a6a88e2f16119a12716fde4918e9a16f57d233f15c1cbc2c57a"
+  },
+  "error_164c8c3d1870d1a7": {
+    "text": "${{value1}}'in üzerinde bir kapı doğrulamaya ihtiyaç duyarLargeCap",
+    "source": "164c8c3d1870d1a725b3e4d3698d9142073873aaef27cbe2b418a9d9479bb5ac"
+  },
+  "error_16c2fb55654d1e5a": {
+    "text": "Yapılamamış GitHub soru: {{value1}}",
+    "source": "16c2fb55654d1e5a8a7267447591b498ef159c61eda731cc483a09d13a8cf7ed"
+  },
+  "error_16fc87e828ae011f": {
+    "text": "GitHub ulaşılamayan",
+    "source": "16fc87e828ae011f587612365ec30364b8a8ced54fb8111054b8f24475d22ee5"
+  },
+  "error_17aa14a6e638cda7": {
+    "text": "Bloklanmış uygulamaları yönetmek için giriş yapın",
+    "source": "17aa14a6e638cda7d96033c11b4f898c351f9e0c9ff150fa3aefb8d061d69e67"
+  },
+  "error_17df8bc5035996f3": {
+    "text": "raporu paylaşamadı",
+    "source": "17df8bc5035996f31256d260a5792005d86ead11d4df817c7846f3dd6f316e6b"
+  },
+  "error_187e9c164bcc639a": {
+    "text": "@{{value1}} zaten onaylanmıştır",
+    "source": "187e9c164bcc639a9e46487f57d83f0eafb9e04430c9e163eccefd883905652a"
+  },
+  "error_190679a320865b6c": {
+    "text": "Diagnostik atışlar bulunamadı",
+    "source": "190679a320865b6cd3e6aaddeccac4ef1c3dc99b607c304e92256786b1970969"
+  },
+  "error_1922d469d7cf806c": {
+    "text": "Bu proje artık incelenmiyor.",
+    "source": "1922d469d7cf806c7e746a082109aeb686cd6a29283f18df5fb8b718bff8a753"
+  },
+  "error_192c4a58e1eeb398": {
+    "text": "Kayıp veya bozulmuş reset link",
+    "source": "192c4a58e1eeb398b7d0c18fa9f0392a3b868779f53c0a3e48e2d7b9c6b8769f"
+  },
+  "error_195e056ce1c3e715": {
+    "text": "Şubesi, uygulamanın depolarında bir şubesi belirlemelidir.",
+    "source": "195e056ce1c3e7154459543e276dcb47cb2286f6d4a821c7aa84ad2558927182"
+  },
+  "error_197a98993398e1a5": {
+    "text": "LLM yapılandırılmamıştır",
+    "source": "197a98993398e1a521f9e8c4c4d63f613577fe0607ba4881f98be6b4c83244be"
+  },
+  "error_19fc4aa9100f0986": {
+    "text": "Önceki / Sonraki / Sonraki / Sonraki",
+    "source": "19fc4aa9100f09860caad5834ffdc0ea9e13519368593351b0ee83462998bae2"
+  },
+  "error_1adc6dda80061f09": {
+    "text": "Hangi konu ile ilgili thread?",
+    "source": "1adc6dda80061f09664f805ea382ec485200f373e02477cd6af8c205b4b743f9"
+  },
+  "error_1ae53816a5ac5905": {
+    "text": "@{{value1}} zaten bekleyen bir onay davetine sahip",
+    "source": "1ae53816a5ac590527b8c659a08681e268842ad6efab97d3003ee96572444ebe"
+  },
+  "error_1b324b50dfad5644": {
+    "text": "Bu OpenRouter anahtarı Homeroom tarafından yönetilir.Bu anahtarı engellemek veya kaldırmak için bir yönetici isteyin.",
+    "source": "1b324b50dfad56442ceb3c8a03159d0c46e9427a38584d7cc0a232fa2e1fb535"
+  },
+  "error_1c0645b667645291": {
+    "text": "Bu PR'ye KUDOS verdim",
+    "source": "1c0645b6676452914f13f73d8eee9473d1382593f9cb827f85625ba6c5f87f8d"
+  },
+  "error_1e6e855b1a2393a2": {
+    "text": "OpenRouter anahtarın bağışını bildirmedi.",
+    "source": "1e6e855b1a2393a2c5979c2d4b3365e19b13d4562ab497db5bf544b06e57085e"
+  },
+  "error_1ec4cf6702c0d278": {
+    "text": "Şu anda en sevdiğim güncelleme yapamıyorum.",
+    "source": "1ec4cf6702c0d2780f91dab8c1439e6270dbb6d57d1746d5a6ea57f5952d3024"
+  },
+  "error_1fac669fefc81b0f": {
+    "text": "Detaylar kontrol karakterleri olmadan en fazla 500 karakterde olmalıdır",
+    "source": "1fac669fefc81b0f0753d0b969026daae29e9399f00637a43a7cbd8f1cc7ce7f"
+  },
+  "error_1fb49856a7220346": {
+    "text": "Repo URL gibi görünmelidir https://github.com/Yorumlar > Yorumlar > Yorumlar",
+    "source": "1fb49856a722034691cfbead191133315ab2160681b2bb24899907e3bd54f627"
+  },
+  "error_1fc1b720128998d2": {
+    "text": "aralıktan çıkın",
+    "source": "1fc1b720128998d24c40d70d2e98b8ebfcbf0b8c6cbe1d71d3517ff08cf143dd"
+  },
+  "error_1fdc4cd2b7ff5f93": {
+    "text": "Kullanıcı Adı ve Şifre Gerekli",
+    "source": "1fdc4cd2b7ff5f9343eb40b29e90049a197a1b61844515768fcd5179d57579c8"
+  },
+  "error_205e60180d90718f": {
+    "text": "Kötü eklentiler (max {{value1}} mesaj başına)",
+    "source": "205e60180d90718f42d0763addba58f22934ca2c40fad38d2a69349a503b5c4f"
+  },
+  "error_20c2947ad694a4b6": {
+    "text": "Sonuçları kontrol edemezsiniz",
+    "source": "20c2947ad694a4b61a40953246a1d30b25985195583ec40a5b69412ecb0b0ccb"
+  },
+  "error_21645ef6229d02e4": {
+    "text": "zaten çözülmüş",
+    "source": "21645ef6229d02e481083acb2f14883bfa9a8b7cfc1ba63b6dcb985aa7bd6536"
+  },
+  "error_226d62454cbf0561": {
+    "text": "Yolsuzluk emri",
+    "source": "226d62454cbf05615d0132efa0eddb6599806758b4f416ad2dd9fb5693edd16b"
+  },
+  "error_22c398596238572b": {
+    "text": "Ürünler bir array olmalıdır",
+    "source": "22c398596238572b94bb6bf4b1743e014aa5dc9738738d8bebc3c41ec65a4b67"
+  },
+  "error_22d3bd4b1b848c5b": {
+    "text": "Bu uygulama için hiçbir AI kredisi mevcut değildir.",
+    "source": "22d3bd4b1b848c5bdc4c381324fcbae3ee4851adaffcfe0e662a5e150ac4a4f0"
+  },
+  "error_237ab0ed948edc6d": {
+    "text": "Sınav basıncını durduramıyorum lütfen tekrar deneyin.",
+    "source": "237ab0ed948edc6de837474252d502289d6a908ba75bb51f4d26c12b1cb6b35a"
+  },
+  "error_244747f8e9e4e668": {
+    "text": "En sevdiğiniz şey doğru ya da yanlış olmalıdır.",
+    "source": "244747f8e9e4e668f5128ee88c11b4d858c203ef49be7bc73deec336173df8d4"
+  },
+  "error_247c283ae28cb47b": {
+    "text": "GitHub bu uygulama için ayarlanmamıştır",
+    "source": "247c283ae28cb47b035b6144d23a451864a571bd9ba080e29e1e2fbe001fda26"
+  },
+  "error_24ff0e06842d9f1e": {
+    "text": "Bu konuşmanın eklenti depolama alanı tam ({{value1}} MB max)",
+    "source": "24ff0e06842d9f1e57fcf613a00f2c3b0522e2f31078b07f40302ea36624fdf6"
+  },
+  "error_2510955e5f1ab9ef": {
+    "text": "Çok fazla öğe",
+    "source": "2510955e5f1ab9ef69daee0a8807a676702b6565cb3979796698fa272432c72f"
+  },
+  "error_25e1f36b563e7457": {
+    "text": "Bir demo teklifi zaten açıktır. yeniden önermeden önce reset.",
+    "source": "25e1f36b563e7457e742a08c2dd619b24c12caf66ace8325dbecb07223fe9d3c"
+  },
+  "error_27421d70ff7e5e52": {
+    "text": "Pass şubesi (applikasyonun depolama alanında zaten bir şubesi) veya patch (git diff veya git format-patch çıkışı olarak değişen).",
+    "source": "27421d70ff7e5e52fbc28fe68035336ca929a80f1a4798faeba5a8a37e70ccf1"
+  },
+  "error_288b61df0bde568f": {
+    "text": "Sen zaten işbirliği yapıyorsun",
+    "source": "288b61df0bde568ffbb109b6e84fd99a8c5652cce5736381f781e21de1cddc56"
+  },
+  "error_28fcb967416a6324": {
+    "text": "Öneriler açılmıyor",
+    "source": "28fcb967416a632466b97525e619ac435210c7a4f485a48f0da3f50e19f1bc4a"
+  },
+  "error_2a06ef427a1340c9": {
+    "text": "payload.action “set” veya “delete” olmalıdır.",
+    "source": "2a06ef427a1340c9a4f6762e0c60d744d322a0db657e46ec5817e3d0bef26087"
+  },
+  "error_2a47f7e48741071f": {
+    "text": "Profil görüntüsü PNG, JPEG veya WebP görüntüsü olmalıdır.",
+    "source": "2a47f7e48741071f87c9725def7e0cfde427315557fe4457067475c2f962b7c6"
+  },
+  "error_2a9eb9f71ce4356a": {
+    "text": "Uygulamanın yöneticileri için bir değişiklik zaten onayını bekliyor",
+    "source": "2a9eb9f71ce4356ad647c9318f0e487af61ed2c850b3dd6e485db7989c9ada8c"
+  },
+  "error_2ad0ffbe4ac9ea30": {
+    "text": "Geri dönüş sınırı ulaştı ({{value1}}). soruşturma için bir admin isteyin.",
+    "source": "2ad0ffbe4ac9ea306b2ab844d24b0c066125eb2d9b526eac0e1bee0b7f72b703"
+  },
+  "error_2aed1a61948e998c": {
+    "text": "Okuma Kullanımı Başarısız",
+    "source": "2aed1a61948e998c69a187d22adcc5e72e286340659cf5b198304e3f20169336"
+  },
+  "error_2b3e0d14c090d893": {
+    "text": "Favori bir boolean olmalı",
+    "source": "2b3e0d14c090d893911bd4ddc1c64e73d05c9c5f90f523677cdcf162fdcca4ed"
+  },
+  "error_2b492247218c5a56": {
+    "text": "statüsünü toplamadı",
+    "source": "2b492247218c5a56b667ba512f5ef3e1b48253e5366a1519caa49ad013ccbf4f"
+  },
+  "error_2c027fe7c2f6042d": {
+    "text": "Varsayılan olarak ≤ {{value1}} karakter olmalıdır.",
+    "source": "2c027fe7c2f6042d3bbd4582eaec35861046275c3c683d010efc12ff2c630264"
+  },
+  "error_2c37a53cc715f4c9": {
+    "text": "Invalid oturum id",
+    "source": "2c37a53cc715f4c94bf87b3babe14627a4fe9d9ca092705a34a855891f83d67e"
+  },
+  "error_2c88a50779c3ea76": {
+    "text": "Engelli Görev ID",
+    "source": "2c88a50779c3ea76102e6a4e551efdbe46edc770220f843684bbb579d41d8cea"
+  },
+  "error_2ca29d85f34abd3c": {
+    "text": "Bu değişken bir GitHub gizli yerleştirme tarafından ayarlanır ve burada düzenlenemez.",
+    "source": "2ca29d85f34abd3ca9a8af09bd88938b0ac5f9440ab9b9e57db8fe73d1b68367"
+  },
+  "error_2fd724ce2b198d59": {
+    "text": "Handoff oturumu bulunamadı",
+    "source": "2fd724ce2b198d59b99fc1ec59ca0fb9fdbdf7486c7107e9704c415a225b6f95"
+  },
+  "error_2fed00c350c7be97": {
+    "text": "PR #{{value1}} GitHub'da kapalıdır. yeniden ayarlayın ve tekrar önerin.",
+    "source": "2fed00c350c7be97b94ef50aaff7c30584618b7b3051c52b172f620f29aa9923"
+  },
+  "error_3028daeb823897b4": {
+    "text": "GitHub yapılandırılmamıştır, bu nedenle Core okunamaz",
+    "source": "3028daeb823897b42fa65fa3944fe977e4a9d54314111a85303e6a2ee364b655"
+  },
+  "error_306df498940e0ec6": {
+    "text": "Spec versiyonu bulunamadı",
+    "source": "306df498940e0ec6b5e69f4d9246dd0f64575588c268ab3622b70fa202941abe"
+  },
+  "error_31323cf06559a9e7": {
+    "text": "Başarısız uygulama bulunamadı",
+    "source": "31323cf06559a9e754dc8a941926c3a42d92d6ba04ba6c8ecc11f2c1bbc01fbf"
+  },
+  "error_320ac52a4cbce00f": {
+    "text": "Grup ≤ {{value1}} karakter olmalıdır.",
+    "source": "320ac52a4cbce00f058c753fc7f11431f7aff44015c8cf6bfa5346cda7d13e98"
+  },
+  "error_323c1dd455319549": {
+    "text": "OpenRouter bu dağıtım için kullanılamaz.",
+    "source": "323c1dd4553195499f937d8ccf5d63b432d1a333dc7854af078ebd49d7fad987"
+  },
+  "error_32e35beb2d19c91a": {
+    "text": "raporun özetini oluşturamadı",
+    "source": "32e35beb2d19c91aa3532917aa96c00e38bea1a40d606ab6633393c0a14d32a7"
+  },
+  "error_3472b9364e6403b5": {
+    "text": "Merges bu uygulama için durmuyor",
+    "source": "3472b9364e6403b579b7f41828f476bd213652291ea4d5d9cc1129721d80dd1b"
+  },
+  "error_347fa78b96130a4a": {
+    "text": "Bir akış {{value1}} veya sıfır olmalıdır",
+    "source": "347fa78b96130a4aaf8e79528662b832a2d85c201c44874ef3501b976eeb5948"
+  },
+  "error_34ece74b40a94914": {
+    "text": "Demo teklifi bir oylama için mevcut değildir.",
+    "source": "34ece74b40a9491434b295f83e442be9cf36d540dfeb2d2ceb86fcf8fa11d9c9"
+  },
+  "error_3519e2c7f5ce4723": {
+    "text": "İhtiyacımız olan başlık.",
+    "source": "3519e2c7f5ce4723bd795d12347e7f340a784bd7a5e65a4b04dd2dfb003fa68f"
+  },
+  "error_3521021a2e875fbc": {
+    "text": "Dosya bulunamadı",
+    "source": "3521021a2e875fbc52ae82e2a3fea5024d507bbc919f504ca8521292c3fe14d3"
+  },
+  "error_3548ccab209156b3": {
+    "text": "Bounty bir boolean olmalı",
+    "source": "3548ccab209156b38bce10cae53231e875d06d4c24b2b4673c64e9a5fb2f02a4"
+  },
+  "error_35823487f390e923": {
+    "text": "Dosyayı yüklemeyi başaramadı",
+    "source": "35823487f390e92347c14d39691d95ba53bf44203a7db6e9a34f303180a18f3c"
+  },
+  "error_362dd92d72bdd4de": {
+    "text": "JSON gerektirir.",
+    "source": "362dd92d72bdd4de8cda1a30b37a8136b42d150e0178a2b94526cb58c79d8bf8"
+  },
+  "error_36560375b5e3c682": {
+    "text": "runId veya runId gerekli",
+    "source": "36560375b5e3c682d413428ae3b4620357af2f9eb077461b0ec40d876144276b"
+  },
+  "error_366aa77d29650b1e": {
+    "text": "Otomatik oturum hala üretiliyor. bittiğinde tekrar deneyin.",
+    "source": "366aa77d29650b1e56bb2a8e48a329631019bea52f017b7901bab7a386abd6ef"
+  },
+  "error_36f7a047aece641b": {
+    "text": "Şimdilik bonusu koyamadım",
+    "source": "36f7a047aece641bfc6cfdebfd180ef9e9535a9904e24dcc3e331eb08e0d7880"
+  },
+  "error_371b26886bee5e55": {
+    "text": "Yöntem izin verilmez",
+    "source": "371b26886bee5e559d5016b17b1479cb7a9154865da5a0f11563580ea99ff033"
+  },
+  "error_376fdcd0afe49a7c": {
+    "text": "Bu uygulama artık bu görünürlüğe sahiptir.",
+    "source": "376fdcd0afe49a7c5f3561e44e114e3007237ec8f9ee0cd94cfba3cf037124c8"
+  },
+  "error_37d19a73f399be63": {
+    "text": "Invalid App Adı",
+    "source": "37d19a73f399be63471cef9eb110d2dfb6eb13b5002fb29b69643a916aee942e"
+  },
+  "error_37e8121fd7c3d44a": {
+    "text": "App Creator kaldırılamaz",
+    "source": "37e8121fd7c3d44a9b5991a830c384f5ff3ffcf86f524c95e365fbe8c62ac60e"
+  },
+  "error_383bbdecddfc51ba": {
+    "text": "Çeviri mevcut değil",
+    "source": "383bbdecddfc51bad84a91cbc19a2ca7467a5dfa0206a7e0938e48f2e43ef29e"
+  },
+  "error_3869f8b3b415172e": {
+    "text": "Onaylar 1 ve {{value1}} arasındaki tam bir sayı olmalıdır, ya da uygulamanın kendi kuralını yalnız bırakmak için sıfırdır.",
+    "source": "3869f8b3b415172eafc89e9d8060fe9ee0a7a8434f9dbdccb415bccf1dcaa7c2"
+  },
+  "error_3a7d15d33e993e0f": {
+    "text": "PR ithalatı, görünür değişiklikleri kaydederken başarısız oldu.",
+    "source": "3a7d15d33e993e0f62eeb29ddf9bb5b223c94ab323d441abb811bfa955bd6430"
+  },
+  "error_3aacdbcaf11b760d": {
+    "text": "Bir boolean olmalı",
+    "source": "3aacdbcaf11b760d60e16c0564e9d69c50c7d5372d71b204f9a13d3d78b9394c"
+  },
+  "error_3b855d546e918ef6": {
+    "text": "API anahtar gerektiren",
+    "source": "3b855d546e918ef6af1a98c3fb1524f1614e182442aff02379da02787e1335c5"
+  },
+  "error_3ba80f91942e606c": {
+    "text": "Tam admin erişim gereklidir",
+    "source": "3ba80f91942e606cf165a76ee6eb4db61df1f07b88f9212db60c7bc59d974a75"
+  },
+  "error_3c7a3cfd0e48517b": {
+    "text": "Kullanıcı adı gereklidir (1-255 karakter).",
+    "source": "3c7a3cfd0e48517b1de5c085797cb758259d32235ac7ba1e0c0c9aecaff7fa94"
+  },
+  "error_3cdd55c4e8fca7cc": {
+    "text": "Bu bir OpenRouter API anahtarı gibi görünmüyor ( beklenen sk-or-...).",
+    "source": "3cdd55c4e8fca7cc02be0c0ecca0173ca585dbd31e894c4bc7a827055068d845"
+  },
+  "error_3dbb839b46e8cbc1": {
+    "text": "Haftalık kudos kvota ({{value1}}/ Haftalık) aştı. her Pazartesi 00:00 UTC.",
+    "source": "3dbb839b46e8cbc1697b67f7003790be9393318cc21248cc58c86a0d483a1569"
+  },
+  "error_3e4635fd5472f9d8": {
+    "text": "Bu giriş çok uzun sürdü, ya da başka bir yerde başladı. tekrar deneyin.",
+    "source": "3e4635fd5472f9d8b35146aa15c5e88f8a3a42af96667babc6a85e7ae4df8f24"
+  },
+  "error_3e9a672d64b6dea6": {
+    "text": "Demonizasyon teklifi oylama için hazırlanıyor.",
+    "source": "3e9a672d64b6dea654ffcc0235b962f6f4cfa211ee1a596e4f47e6beaa3def3f"
+  },
+  "error_3eff53bebd9e6eb5": {
+    "text": "Sadece uygulama yöneticileri raporları paylaşabilir",
+    "source": "3eff53bebd9e6eb5e3bf3fdc6578f78a4175e1cd3ade2afef78ca5a0c8a7fb67"
+  },
+  "error_3f56d3af0132cfe2": {
+    "text": "İhtiyacımız olan e-posta",
+    "source": "3f56d3af0132cfe2050cdde66886914dfd909e1a539faeb9e0f4e975e79fb948"
+  },
+  "error_3fdc9f18ca0f53f5": {
+    "text": "Engelli Anahtar Formatı",
+    "source": "3fdc9f18ca0f53f5873554e7dfdcc1dfaad177c08941f1c75c1ee9564a0f2f26"
+  },
+  "error_3fe408e6048c2ecc": {
+    "text": "PR #{{value1}} zaten GitHub'da birleşti.Bu değişiklik yayınlandı, bu yüzden oy vermek için bir şey yok.",
+    "source": "3fe408e6048c2ecca106a9c617d89bf7932d1d1b6edc0de77c66ba82208bba9e"
+  },
+  "error_400647d98e4e6c31": {
+    "text": "GitHub başvuru başvurusunu açmadı. hiçbir şey önerilmedi.",
+    "source": "400647d98e4e6c313fce9e1a01062d7ba73f235e87af7863e577ca2c9ac6ba29"
+  },
+  "error_405f020a3adbba58": {
+    "text": "{{value1}} Sadece bir platform yöneticisi o oy olmadan uygulayabilir.",
+    "source": "405f020a3adbba584bf654c4cd122781f90e33c358cbef10831b0fb64de6ce5f"
+  },
+  "error_408f3a8d6f9c8f4d": {
+    "text": "Kötü ID",
+    "source": "408f3a8d6f9c8f4df27c12e058a8d044de462f6e2467520399211d978724398e"
+  },
+  "error_414fda457f3c4daf": {
+    "text": "Ekran görüntüleri bir array olmalıdır",
+    "source": "414fda457f3c4daf857a5ef4f27c74a84360a2e0aea35c3f7bc4c0698c1db85c"
+  },
+  "error_4177826fc1d12cd5": {
+    "text": "İhracat teklifi bulunamadı",
+    "source": "4177826fc1d12cd5bffd64b24e1548aca7978089b8bb569b87502cc1fc0921c1"
+  },
+  "error_4186ff671de0653b": {
+    "text": "GitHub çekme isteği hazır olarak işaret edemedi ve Homeroom değişimi Underway'e iade edemedi.",
+    "source": "4186ff671de0653b874e9a2e60d187dc6b7a893ddc03ba3fd22e8544b2371755"
+  },
+  "error_41b29ff59d0a49c6": {
+    "text": "İmza doğrulama hizmeti mevcut değil",
+    "source": "41b29ff59d0a49c69b486b988338abca5af950d120aae7901735398bb7e0f943"
+  },
+  "error_4336a07a81f64f32": {
+    "text": "Bu değişiklik henüz şubesi üzerinde komite kodu yok, bu yüzden bir çekme isteği açmak için bir şey yok. oturumda isteğinizi yeniden çalıştırın, böylece bir komite üretir ve bastırır, sonra tekrar önerir.",
+    "source": "4336a07a81f64f32f97889368c0f412fbcdedfcc53a3db1a82d95f419fae1003"
+  },
+  "error_43447c37af3121cc": {
+    "text": "GitHub çekme isteğini doğrulayamadı. kısa sürede tekrar deneyin.",
+    "source": "43447c37af3121cc749ea10c97262d7322b39be171e308c456aaca51325965d8"
+  },
+  "error_4380a3df625d0caf": {
+    "text": "Bu sorunun şu anda açıldığını doğrulayamadım. bir an içinde tekrar deneyin.",
+    "source": "4380a3df625d0caf4dd3fe73bc00f87f472b484f748ceb574c10305abc5f44ae"
+  },
+  "error_43895372bbf1c25c": {
+    "text": "Agent oturumu bulunamadı veya arşivlenmemiştir",
+    "source": "43895372bbf1c25c9eb7dbbbfcc21ce8a4410e13cc799e479cf893803f2e0919"
+  },
+  "error_441454a4ac595a41": {
+    "text": "Homeroom bu oturumun şubesini hazırlayamadı. mesajınızı bir anda tekrar gönderin.",
+    "source": "441454a4ac595a4183bd2edefab66e4477be9fb7fad9cac5d09253ed75d5d58d"
+  },
+  "error_44e0c7abbf4c4cfa": {
+    "text": "Bu pubkey ile bağlantılı hesap yok",
+    "source": "44e0c7abbf4c4cfaa593c3713cb17c031fed85baee0de9f7cbd1cdb376c13f73"
+  },
+  "error_45132f815c60a66a": {
+    "text": "Şimdiki şifre gerekli",
+    "source": "45132f815c60a66a62a942e3c4b8d3407afec12ac59b14fb537fcca3c8714523"
+  },
+  "error_45483ebeb9fbaef8": {
+    "text": "Kötü Görev ID",
+    "source": "45483ebeb9fbaef8c06de5a426a7af2acfe68f1f5d98e9d56767eb02b20b461f"
+  },
+  "error_455438e26de3390c": {
+    "text": "Uygulama ücretini yükleyemezsiniz lütfen tekrar deneyin.",
+    "source": "455438e26de3390c60ffa02db646f262b67ed50805cb8beca33e67f12f795df2"
+  },
+  "error_4577a934a0028953": {
+    "text": "Engelli alan",
+    "source": "4577a934a00289537ad07a6b85577b25ab9b0c4efad872a4e0848bc260ffbb3e"
+  },
+  "error_459987f53d8a40d4": {
+    "text": "Şimdiki Global Chat thread'ı yüklemeyi başaramadım.",
+    "source": "459987f53d8a40d4e18b4593ddf51c89769b9409e421a3c7a1522ae6fd208cac"
+  },
+  "error_45be780a42d71b17": {
+    "text": "Sadece uygulama yöneticileri raporları paylaşamaz",
+    "source": "45be780a42d71b171e7829ed84f708b2e378dd0211850f70cd5b16480528200a"
+  },
+  "error_4706a09482d14c2c": {
+    "text": "{{value1}} zaten bir değer kaydedilmiştir. panelde satırını kullanın.",
+    "source": "4706a09482d14c2cee0039deb919204c29fee10d6d0b2c8a6f7b643f9b9bea74"
+  },
+  "error_4762d712a04cd157": {
+    "text": "@{{value1}} zaten işbirliği yapıyor",
+    "source": "4762d712a04cd157e3d671563926b5332b68771eef38bf06291b108f3178396a"
+  },
+  "error_47d6b0caf25ef50f": {
+    "text": "Fotoğraf çok büyük (max {{value1}} KB). daha küçük bir fotoğraf deneyin",
+    "source": "47d6b0caf25ef50fbc278666fac7b41e3d3d362fd76c61c5ab669ba5c463e208"
+  },
+  "error_48caa510587f4c58": {
+    "text": "Demo modu, aynı zamanda tam bir platform yöneticisi olan bir uygulama yaratıcısı için geçerlidir.",
+    "source": "48caa510587f4c5893b3a9dad200d775b23b9b59a2e331e8e78b7b35cb359ce0"
+  },
+  "error_49214a927c4a19f8": {
+    "text": "Sadece uygulama yaratıcısı veya bir uygulama yöneticisi bir admin değişikliği önerebilir",
+    "source": "49214a927c4a19f819e91a240e282b60a86d68a9eab1aed25eeb63874721def2"
+  },
+  "error_4a1793e9900cd312": {
+    "text": "Kullanıcı bulamadı",
+    "source": "4a1793e9900cd31287a96c8b3f308becaa20fa3e0436a33baecad2be3d0d06d6"
+  },
+  "error_4ab37ec3faf8d8df": {
+    "text": "@{{value1}} zaten bekleyen bir davetiye var",
+    "source": "4ab37ec3faf8d8df712159c65a93afb73d16f0c52a7871439158159361aa220a"
+  },
+  "error_4b8e2c6820e5f919": {
+    "text": "Uygulamaya karşı bir PR açmak için GitHub depolama alanı yok",
+    "source": "4b8e2c6820e5f9193df6b165c892072e252a2d1a04f80913989b06f8610f9fc9"
+  },
+  "error_4c18c3e37c5bca4a": {
+    "text": "Explorer Proxy Hatası",
+    "source": "4c18c3e37c5bca4a14724203cca96e5d147835abe2235b242384d0bb4b6b60b7"
+  },
+  "error_4e0575aa2958c2e2": {
+    "text": "izni kurtaramadı",
+    "source": "4e0575aa2958c2e27588b98d079c3dfe69b1b2734e0e4223bb78dd43d2dbc900"
+  },
+  "error_4e1f92253dd449dd": {
+    "text": "Invalid raporlama başlangıç tarihi",
+    "source": "4e1f92253dd449dd4be86fb788df478f078a8e4c42829808586081c9f347a303"
+  },
+  "error_4f153f1695d01e08": {
+    "text": "Konu raporlama yapılandırılmamıştır",
+    "source": "4f153f1695d01e089fc98ed353fc3773718773b392b768fd90d6e5639718301c"
+  },
+  "error_4fa64dbe61f5816e": {
+    "text": "GitHub çekme isteği revizyonunu doğrulayamadı. kısa sürede tekrar promosyonu deneyin.",
+    "source": "4fa64dbe61f5816e42f700bff021fba4d13418ea19cf6cec652047ded63aada3"
+  },
+  "error_50ab39f12e45721a": {
+    "text": "Bu çalışma emri artık açılmıyor.",
+    "source": "50ab39f12e45721a6a1d78bce6cf775fe7349b0bceb419fbd0a52c0d3fa7e6e5"
+  },
+  "error_50bbb9a4eaa901e1": {
+    "text": "Suite bulunamadı",
+    "source": "50bbb9a4eaa901e1f888dc910775dc990e8905087fc451de5d5453a6a5476182"
+  },
+  "error_52c98d715a518a3e": {
+    "text": "Bu değişiklik için çekme isteği oluşturamazsınız. lütfen geri çekin; eğer başarısız kalırsa, oturumda isteğinizi yeniden çalıştırın.",
+    "source": "52c98d715a518a3e842bf2abb4cf53378c0bc02280c6e3ae5e888263de86cbd1"
+  },
+  "error_53b4591151817b50": {
+    "text": "Engelli faaliyet ücreti",
+    "source": "53b4591151817b50a0635d670156f8a3b84099ab33328676c29840a83c088a44"
+  },
+  "error_542f75514ef3ab3c": {
+    "text": "Kötü Uygulama ID",
+    "source": "542f75514ef3ab3c879cf76dfcd901937486feffc3a233b637ab6d571dd5645b"
+  },
+  "error_5595628bad4c5199": {
+    "text": "Görünürlük değişikliği onayını bekliyor",
+    "source": "5595628bad4c51999c07050c824cfb43c1effe81e3e976513f08732205f45384"
+  },
+  "error_559eb86f2caa10d6": {
+    "text": "Sessiz bir içerik çubuğu gerektirir",
+    "source": "559eb86f2caa10d6741896ade889ff8cc93f233b1149be712404ef398bf89454"
+  },
+  "error_55bd4460e8792ea5": {
+    "text": "Sadece uygulama yöneticileri bu görüntüde bir değişiklik önerebilir.",
+    "source": "55bd4460e8792ea521bbe287d7d3f60ddded014e7654593ad17c2fc812c3c40c"
+  },
+  "error_564f84645846cc81": {
+    "text": "Bu birleşme için bir geri dönüş PR zaten mevcuttur (status: {{value1}})",
+    "source": "564f84645846cc81362c0bf66e7816446f2754a5c60d3bc982f9aa456cc4c98a"
+  },
+  "error_56a538c757f59f66": {
+    "text": "Sonraki YazıSonraki YazıSonraki YazıSonraki 240000ms",
+    "source": "56a538c757f59f662e7fa741ec01603c45c18313a165337144b9763695c9b73d"
+  },
+  "error_57099f0c70948c37": {
+    "text": "Bir dış ajan için hazırlık çalışması bir staging preview'de engellenir.",
+    "source": "57099f0c70948c370cbeb89e71f2d0233789d0030cd6a6cfaee3563055311dc4"
+  },
+  "error_575ec4ae6395ce84": {
+    "text": "raporu paylaşamadı",
+    "source": "575ec4ae6395ce84b970ae66f89e16080838bd9341a54471f343356c95803355"
+  },
+  "error_5831abcbc881374d": {
+    "text": "GitHub'te vücudu güncelleyemeyeceğim. bir anda tekrar deneyin.",
+    "source": "5831abcbc881374d2e550b3b7e9ab6773db97e60949a466f20795f2e6882d335"
+  },
+  "error_58daf2bad3fa67ef": {
+    "text": "Homeroom kullanıcı adı @{{value1}} yoktur.",
+    "source": "58daf2bad3fa67ef4a8206c874f65b3ea81211ef1774f05f10f27d868c1783b6"
+  },
+  "error_5977d6cbd6dbeb15": {
+    "text": "Bu talep tamamlanamazdı",
+    "source": "5977d6cbd6dbeb1505d9ce095209ad0b0fa74b6dd3eed973b0524947f2484ebd"
+  },
+  "error_5a15a5b3ee24289e": {
+    "text": "Global Chat devre dışı bırakılmıştır. öncelikle Ayarlar'da etkinleştirin.",
+    "source": "5a15a5b3ee24289e57113f60649daea5c8c6fc502b661dd01c8465d0c6d4fae0"
+  },
+  "error_5a3d775507ae2a50": {
+    "text": "Bu değişim üzerinde bir yapı çalışıyor. bitirmek için bekleyin, sonra Underway'e geri dönün.",
+    "source": "5a3d775507ae2a502fa1a798291d36ef26eba9d1299a06713c88c593490e4050"
+  },
+  "error_5a493af51d7a41a0": {
+    "text": "Kudos yalnızca promosyon, birleşme veya birleşmiş PR'ler üzerinde verilebilir (bu PR \"{{value1}}\")",
+    "source": "5a493af51d7a41a0ecf5018350320342012df0d8e9e10ddcb547d20f95f53693"
+  },
+  "error_5a66539387b52bc0": {
+    "text": "PR şubesini belirleyemiyordu.",
+    "source": "5a66539387b52bc0c1c95067461379dffdd4d497929aaa5db25d499573cb152a"
+  },
+  "error_5c900fa9e2282f63": {
+    "text": "İzinleri yüklemeyi başaramadı",
+    "source": "5c900fa9e2282f633816e8a2c4a01ccc10c77596bc2f89ca407802fd1c9f50ec"
+  },
+  "error_5d4270cd5e420a7b": {
+    "text": "Kötü niyetli kaldırma.",
+    "source": "5d4270cd5e420a7b05e2908154d1b96ca8e4f4063f988aab7321b30e213bc569"
+  },
+  "error_5e9fb706ba774a4a": {
+    "text": "Sadece uygulama yöneticileri raporları kilitleyebilir",
+    "source": "5e9fb706ba774a4acb575470d2aa5e1e06ca4ec59c33534af50e1596f6268768"
+  },
+  "error_5ec4847c68aedefb": {
+    "text": "Konuşma davetleri çok fazla. daha sonra tekrar deneyin.",
+    "source": "5ec4847c68aedefb909e1916667f86b9305546992de762e07127807b7a6ac773"
+  },
+  "error_5efd9a12cfbd2756": {
+    "text": "\"{{value1}}\" şubesi {{value2}}/{{value3}} sayısında bulunamadı.",
+    "source": "5efd9a12cfbd27565b89fda13908dfc5e253cfa3d0d1c4099508343da356bdb9"
+  },
+  "error_5f5bf673f65f390d": {
+    "text": "değer gereklidir",
+    "source": "5f5bf673f65f390d4585c2e6eec029c2bd6a323f42946a0d5ff2599c7b9c6f01"
+  },
+  "error_5f6dbe7fa2854bd6": {
+    "text": "Engelli tür veya isim",
+    "source": "5f6dbe7fa2854bd6306be684dc3c3dd35f57ac77a2a245063375618c6bb582f4"
+  },
+  "error_5fc3d31699b9769a": {
+    "text": "Bu uygulamanın demo ortağı @{{value1}}. başka bir isim seçmek için demo modunu devre dışı bırakın.",
+    "source": "5fc3d31699b9769afe80be548a7ac52728496c21ce972a90db09fa0d62b8b815"
+  },
+  "error_5fc90d2bf079d25f": {
+    "text": "Sadece yazar başlıklarını düzenleyebilir.",
+    "source": "5fc90d2bf079d25f7adafe4c897354d705e97b07263e7ea575b303e67132e5b1"
+  },
+  "error_60063d0ca1a52a5b": {
+    "text": "payload.key olması gerekir UPPER_SNAKE_CASE",
+    "source": "60063d0ca1a52a5b90a5f04acab59ad06b60fd3a3d016b86284ab4102ea8b38d"
+  },
+  "error_600caa7289555f43": {
+    "text": "Invalid raporu id",
+    "source": "600caa7289555f433481ecf107205ab2a5b053a12e22c49ce72c799127790bea"
+  },
+  "error_610cf07590e16615": {
+    "text": "Engelli Yolu",
+    "source": "610cf07590e16615345a3a6977caa886f656bb36bcf4f49380bf27f43a11d3c1"
+  },
+  "error_62e4973676c1fc18": {
+    "text": "başlangıçApprovers {{value1}} kullanıcı adlarında kaydedilmiştir",
+    "source": "62e4973676c1fc18f8a9c35a71334ee7d947cbd4426f7e75b418c3ebfc331f33"
+  },
+  "error_6357af89dd0f5090": {
+    "text": "PageState çok büyük",
+    "source": "6357af89dd0f50902fe6341d5634b19e3b767875ef823b516ad658ca208f2fda"
+  },
+  "error_6408c07ea34de67d": {
+    "text": "Homeroom platformu GitHub Eylemler aracılığıyla dağıtılır; bu eylem kendi uygulama satırına uygulanmaz.",
+    "source": "6408c07ea34de67d547d27f4578f208074c2ebc68be016f34a1c4461d77a88d7"
+  },
+  "error_641e9d184087f63b": {
+    "text": "Mesajınız durduruldu, mesajınız gönderilmedi.",
+    "source": "641e9d184087f63b9e3cb05537e6ea78f699e69e3c3af0ad903343611eafb77e"
+  },
+  "error_64aac38823829a9e": {
+    "text": "Kampanya uygulaması bulunamadı",
+    "source": "64aac38823829a9e1f67aa1603df5e11112aa27c1a60d46c3c39f64feb1a0e35"
+  },
+  "error_64df551d6add963e": {
+    "text": "Bir veya daha fazla eklenti eksik veya zaten gönderilmiştir.",
+    "source": "64df551d6add963e4a589de7d0397625260b66872e6a3fc90bec921837dab9a7"
+  },
+  "error_64f7528f11736b6a": {
+    "text": "Bu kullanıcı bu uygulamaya erişemez",
+    "source": "64f7528f11736b6a27cd4db8f6ad29bc54c70d5ac1c24d3ca9a4064183bd8db5"
+  },
+  "error_6563e0c9f1424b76": {
+    "text": "Bu uygulama için kendi Anthropic API anahtarına erişmenizi sağlar.",
+    "source": "6563e0c9f1424b76473301f42904f7a7817ea7970fb94a24c2b7c772d612d31f"
+  },
+  "error_659d54f565abd693": {
+    "text": "Tek başvuru sahibi bu öneriyi iptal edebilir.",
+    "source": "659d54f565abd693dcda8d8edd29f9ef4a23ea777bd91a3f91e06d5d77652da2"
+  },
+  "error_66246d12df7184ac": {
+    "text": "GitHub webhook yapılandırılmamıştır",
+    "source": "66246d12df7184ace56e86e1f566ce397c4884e1395adf3e37ee45f812de5074"
+  },
+  "error_67266013f0d1e0fd": {
+    "text": "Sadece uygulama oluşturucusu veya bir yönetici onaylayıcıları davet edebilir",
+    "source": "67266013f0d1e0fde46310777820fd26817be377bb969e6e0f0f2058ad01c126"
+  },
+  "error_672ec224e91e0107": {
+    "text": "Bir uygulama en fazla {{value1}} admins'i açıklayabilir",
+    "source": "672ec224e91e0107c76812520b8a29da9a8d125904d386857f00df5a3804a3d7"
+  },
+  "error_67a926f7008e2b0e": {
+    "text": "mevcut değil",
+    "source": "67a926f7008e2b0e7f2b3f7a4b37597834830110be1d51138f425d6f3449bc09"
+  },
+  "error_67f2c18a32b13671": {
+    "text": "GitHub geçerli bir çekme başvuru komitesi iade etmedi.",
+    "source": "67f2c18a32b136710820f4c3e23e984f023243aaab7c36582e73eaf1dc69725f"
+  },
+  "error_6958aed8d42967d6": {
+    "text": "Şimdiki şifre yanlış",
+    "source": "6958aed8d42967d607c1cbc5c5f80377d281255e83d3e6f61e8081dc8c5776b6"
+  },
+  "error_69b4c77407b87388": {
+    "text": "Şubesi önerildiğinden beri hareket etti. yeniden ayarlayın ve tekrar önerin.",
+    "source": "69b4c77407b87388ed63c68b461a8ab2c0dcd49cd37cb0b48f54cb6409988a8a"
+  },
+  "error_6a3b297ff206ce00": {
+    "text": "Şu anda bu SPC’yi kullanıyorsunuz.",
+    "source": "6a3b297ff206ce00d1bed31d1932be7b14add27235eda28cb84c9d9c17840874"
+  },
+  "error_6a492cfb469aeaf0": {
+    "text": "duplicate uygulama",
+    "source": "6a492cfb469aeaf0e0798b95c17110f9afd3b8ec450f94f5800996ddbba3a7b0"
+  },
+  "error_6a6dd1d7478256bb": {
+    "text": "Açıklamayı yüklemeyeceğim.",
+    "source": "6a6dd1d7478256bba049dfa9a38d6e78a439856fd3144082a3ab648529dede64"
+  },
+  "error_6c131194093a59c6": {
+    "text": "Bu kullanıcı adı alınmıştır.",
+    "source": "6c131194093a59c613384375d1dd20785a6ad7e4df37525511181e15ac8f36bd"
+  },
+  "error_6c2ec9c62442ab8b": {
+    "text": "izinleri iptal edemedi",
+    "source": "6c2ec9c62442ab8b982c5d1f66ba1e61dcca9311408314666c7d6c29a23c144b"
+  },
+  "error_6c6e178ad2a856ca": {
+    "text": "Şifre eşleşmiyor.",
+    "source": "6c6e178ad2a856ca5ef833b947c98dffb8476349703d1720f28dbff9ee503cac"
+  },
+  "error_6d2cbb85a4b67716": {
+    "text": "Zaman geçirmeden önce engelli",
+    "source": "6d2cbb85a4b6771606c9d3a9cc101692e298d21592b4c83e35ff1b30af32e705"
+  },
+  "error_6d867225820bed15": {
+    "text": "İçsel eylemler doğru bir eylem gerektirir.",
+    "source": "6d867225820bed1519ff708ed41987207be73423c24e4fa94446181c289603c2"
+  },
+  "error_6e762a22b88a4db5": {
+    "text": "Açıklama ≤ {{value1}} karakter olmalıdır.",
+    "source": "6e762a22b88a4db50de372e3e604e264082b28c074fb990dee967aee1ffe7c57"
+  },
+  "error_6e9a17ba4d70d3b4": {
+    "text": "Resim yok",
+    "source": "6e9a17ba4d70d3b48828f1d56d879d5b9cdc862edcc4bf8f6a219aa0dd0237ef"
+  },
+  "error_6efc5d27f30b20c1": {
+    "text": "yükleme başarısız",
+    "source": "6efc5d27f30b20c103ca1a855bfc65cdbdf9de98c3f8ac93a3df3f319c3388bd"
+  },
+  "error_70231ca4f825455f": {
+    "text": "Bu bölümde henüz tahmin edilecek değişiklikler yok.",
+    "source": "70231ca4f825455f41bacb1f1fbd2bd2a31dbaa53f84e01b4a9aa1507247f4a3"
+  },
+  "error_7046a07d20154289": {
+    "text": "Homeroom bot zaten mümkün olduğunca çok insanla konuşuyor ({{value1}}). daha sonra tekrar deneyin.",
+    "source": "7046a07d20154289541cf1ad8ab51b84bc743cbbc9b76b8ea440e0dd0e137d2f"
+  },
+  "error_726e5c0359afb6c5": {
+    "text": "Çok uzun vücut (max {{value1}} tank)",
+    "source": "726e5c0359afb6c5d456a50046f9b66a9f8f4b1655c6c44cf313185ea9cf0c00"
+  },
+  "error_72edfe0dfddd89bd": {
+    "text": "Bu geçerli bir Anthropic API anahtarı gibi görünmüyor.",
+    "source": "72edfe0dfddd89bd1cdd7b5b7c02b54828b165060f26c3d1350e892f49cfa37b"
+  },
+  "error_74293b1fdc978a72": {
+    "text": "Dosyayı kaydetmeyi başaramadım",
+    "source": "74293b1fdc978a7270c00c91fadd57b095c4b592f65142caa4913149f63ab63e"
+  },
+  "error_745525edcf56a53e": {
+    "text": "Engelli Sütun",
+    "source": "745525edcf56a53e938e63933d78c0e9f11beea0090f38be552b266dae135cbc"
+  },
+  "error_753033fadfd342e7": {
+    "text": "Böyle bir seçim yok",
+    "source": "753033fadfd342e7d9e958c5663d4e9d306da0a73bf89a79eb0334de59406820"
+  },
+  "error_7584a8c3e09f95ea": {
+    "text": "Platform şu anda kapasitede. birkaç dakika içinde tekrar deneyin.",
+    "source": "7584a8c3e09f95ea5487876c2ee3d5d313486147205d71ce951d3d8062385bcb"
+  },
+  "error_7596cdf3f5569890": {
+    "text": "Görünürlük değişiklikleri platformda yapılandırılmış GitHub gerektirir (GITHUB_BOT_TOKEN).",
+    "source": "7596cdf3f5569890c43b532967c5920415ea7a9e1997ee4ea9dec1a0873a6c19"
+  },
+  "error_75f7e0f3d82ed17b": {
+    "text": "OpenRouter anahtarı mevcut değildir.",
+    "source": "75f7e0f3d82ed17b68d5e2a3dd0e7fc290a6a356f0b37a1a3f7315e281a8bf25"
+  },
+  "error_76106c233be31557": {
+    "text": "Sadece bir yönetici veya yönetici bunu açıklayabilir.",
+    "source": "76106c233be3155761195d8fbd40f75b549e5205eb0ed15d505ac8236aee69f0"
+  },
+  "error_76d1efbeed2dd7b2": {
+    "text": "Doğrulanmamış",
+    "source": "76d1efbeed2dd7b2fbdf5644084a9e7b6ffd536af4c1be2a4b287edc7af80674"
+  },
+  "error_7702244869a23639": {
+    "text": "Bu uygulama GitHub repo tarafından desteklenmiyor",
+    "source": "7702244869a23639809b23beb0f2fde1491df9c3a172fb0a15085fc8241ac4e6"
+  },
+  "error_77080af834ef6f13": {
+    "text": "izinleri güncelleştirmeyi başaramadı",
+    "source": "77080af834ef6f13a5ae45499aec0302b86c09b3b3ed905529a17e5c80dd5f20"
+  },
+  "error_771660e721d05dd5": {
+    "text": "Herkes bu uygulamada işbirliği yapabilir.",
+    "source": "771660e721d05dd54854c6910571f71b8d64bd1757112951e3581a4246e85c7e"
+  },
+  "error_7740231c54f87997": {
+    "text": "Uygulama depolama adresi URL'yi açamazsınız",
+    "source": "7740231c54f8799788a5278fdecbb754559c060ec67665372df7ea80fdb186da"
+  },
+  "error_7742d09b74f07519": {
+    "text": "Bilinmeyen arka plan",
+    "source": "7742d09b74f0751992799995f038deb668ff651caecb38b335face98ce79a046"
+  },
+  "error_781a8f0513ac6eb0": {
+    "text": "Bu teklif gösterildiğinden beri değişti. yenilen, yeni revizyonu inceleyin, sonra tekrar oy verin.",
+    "source": "781a8f0513ac6eb0051699b3dba4f979363b019f43cc2ccb4d62cd0abbe51f5c"
+  },
+  "error_789bf6cb7d73cd86": {
+    "text": "Başlık 1 ile {{value1}} karakter arasında olmalıdır.",
+    "source": "789bf6cb7d73cd868f3ca399c485c9781265af45527a2199e8eac0646d6d0a06"
+  },
+  "error_793c02fad931a049": {
+    "text": "Bu hesap zaten farklı bir cüzdanla bağlantılıdır",
+    "source": "793c02fad931a0499563e927e03f221717435af2519f24c9375cda7a715990df"
+  },
+  "error_7959635b5fa46e25": {
+    "text": "Vücut bir çubuk olmalı",
+    "source": "7959635b5fa46e25e8ded03f996f3d72d4a0fdd5f6f2ad8141fae58b1543f5ae"
+  },
+  "error_79f68881abf3df69": {
+    "text": "Geçerli veya geçici zorluklar",
+    "source": "79f68881abf3df69907b2baf06d5e630f5a9b3e1708fd64772cf234b8cca4ea7"
+  },
+  "error_7a2daee5dc3faccc": {
+    "text": "Kapatmak için çok büyük rapor",
+    "source": "7a2daee5dc3facccce00e6478082dd1828332e429afe04e35564efb737cd081c"
+  },
+  "error_7a900c4eaca2dba6": {
+    "text": "Konu bulamadı",
+    "source": "7a900c4eaca2dba6cc7e7afb468debfc1f13129ca90ab625340b1598295e0f18"
+  },
+  "error_7aec484a12553b2d": {
+    "text": "İhtiyaç Anahtarı",
+    "source": "7aec484a12553b2dbec69823c844d8983abb64184ae49353bc7d49a10717fd1e"
+  },
+  "error_7b78572ff753bf13": {
+    "text": "Kötü ajan oturum id",
+    "source": "7b78572ff753bf13ec19fd97ac04ad7f96ce6e5ea052b002828f94c468c0ba7f"
+  },
+  "error_7b8ea689e9b6f993": {
+    "text": "Anahtar UPPER_SNAKE_CASE olmalıdır (yazılar, sayılar ve altyazılar).",
+    "source": "7b8ea689e9b6f993dc4b2328ee80e0651543c992e9c7f8539d0832d179df817a"
+  },
+  "error_7cd47edc34ef0cff": {
+    "text": "Basınç mutasyonu çeliktir.",
+    "source": "7cd47edc34ef0cffb381ce6f7e44e11dc3d3b884f2b6ca4b96b9cd18bafae531"
+  },
+  "error_7cea3649a52b00cc": {
+    "text": "payload.instrümanlar gereklidir ve ≤ {{value1}} şarj olmalıdır",
+    "source": "7cea3649a52b00cca4266d8cc3b3ffaf2216a564bb61c5afc95cac6940f31537"
+  },
+  "error_7d67cadad65e44ff": {
+    "text": "Patch uygulaması yapılamaz.",
+    "source": "7d67cadad65e44ff26427aaceb72e3e9c0bc2737c37af17c434eb2cb85ba949e"
+  },
+  "error_7da7851d96300463": {
+    "text": "Bilinmeyen veya zaten duyulan bağlantı",
+    "source": "7da7851d96300463e0a02789be812207da03e7fb814bcdb28f60e07408b98d62"
+  },
+  "error_7de7a997d15b57c7": {
+    "text": "Kötü imza",
+    "source": "7de7a997d15b57c73e6bfc6914e0eda7bb7a66f4345ba136117a0a2da4717e9a"
+  },
+  "error_7dea3454da839874": {
+    "text": "payload.reason ≤ {{value1}} şarj olmalıdır",
+    "source": "7dea3454da839874671bfcd04e746450b9a1ee696ca6693cba405670b467c836"
+  },
+  "error_7e295e5f4963cdc2": {
+    "text": "Bir rapor değil",
+    "source": "7e295e5f4963cdc26773e7e693c47e247a9900b2963d6a2ca7b4d2462e978f1c"
+  },
+  "error_7ec371a97f3b2593": {
+    "text": "Kötü belgeler",
+    "source": "7ec371a97f3b25934ed1ced0ead58668c1c8c3f24f7b8b223c26dc2178fa921e"
+  },
+  "error_7ee32a79440057ba": {
+    "text": "Bu platform repo. kendi uygulaması zaten var; bir çocuk olarak ithal etmek bir kardeşlik örneği yaratır.",
+    "source": "7ee32a79440057ba016d4dd427d25c67505f2d1efcc6d79c06c0c475cf7e8b60"
+  },
+  "error_7f42c8214321795d": {
+    "text": "Metin/kod/Markdown/HTML dosyaları 200 KB veya daha küçük olmalıdır",
+    "source": "7f42c8214321795d3a6f0f398b96ea78c2b738b1fad46b70d1a19b59b92e232b"
+  },
+  "error_7f7e71e3acbb785b": {
+    "text": "Sadece uygulama oluşturucusu veya bir yönetici onaylayıcıları kaldırabilir",
+    "source": "7f7e71e3acbb785b9f440f6490ee06cccc53138b068f1bcf84c6d2565b84afc0"
+  },
+  "error_80c566f73667bf20": {
+    "text": "Mesaj çok uzun (max {{value1}} karakter)",
+    "source": "80c566f73667bf203b1d7726276cd7e0dcb467a9b6ae8686f1d05e4c710db0a4"
+  },
+  "error_80d933c305a25c2c": {
+    "text": "Kendi uygulamanızı rapor edemezsiniz",
+    "source": "80d933c305a25c2c5336e6e1e03d70cee53756b48b9cd0ad35e164558c9b6bdf"
+  },
+  "error_80e5f8319a51806e": {
+    "text": "Kötü Tasarım ID",
+    "source": "80e5f8319a51806e1b06c7e0240c0678acfcc3de72abf9d440c8ee63ce1a624d"
+  },
+  "error_810f08469759d58a": {
+    "text": "Bu uygulama bu izin ilan etmemiştir.",
+    "source": "810f08469759d58a1841d7cb8213ac10ae96954362efc708e78da312909171f0"
+  },
+  "error_812fc837108361ba": {
+    "text": "Admin erişim gereklidir",
+    "source": "812fc837108361ba43606606235d2ce67d8d4dca7df4cc21cf90fd96ea583128"
+  },
+  "error_816da7c63d6be718": {
+    "text": "1 MB'ın altındaki PNG, JPEG veya WebP görüntüleri ve geçerli paylaşılan çerçeveyi seçin.",
+    "source": "816da7c63d6be7185e596488a00298954bc3c6fe24c19b583bcfde02bad31108"
+  },
+  "error_8175d29c4c8b189d": {
+    "text": "Bu konuşmayı yüklemeyeceğim",
+    "source": "8175d29c4c8b189d6d87420f054797a1d687047b20ad31a6efbed6b22da09682"
+  },
+  "error_81cc1eefcb785139": {
+    "text": "Platformda yapılandırılmış bir değişken gereksinimi GitHub ilan etmek (GITHUB_BOT_TOKEN).",
+    "source": "81cc1eefcb785139b19fa49e6ae1157199553d62fbe79073c7651293cde09ba2"
+  },
+  "error_81de0088dfeaf4d7": {
+    "text": "Müşteri temsilcisi {{value1}} olmalıdır.",
+    "source": "81de0088dfeaf4d7a76386b0115f36b2e47ae3e590c3214400965fa6cdd8819e"
+  },
+  "error_820ffe030d392226": {
+    "text": "Değiştirme bulamadı ya da artık düzenlenemez.",
+    "source": "820ffe030d3922266e62365fec42633458cf2e1ef024d063b5339f034c5d95ad"
+  },
+  "error_8297f037d19eb611": {
+    "text": "Uygulama zaten bu adminleri açıkladı",
+    "source": "8297f037d19eb611532918434b2fb48cc9679968fe5a3556c987730a84251993"
+  },
+  "error_8335dec0e6f0df2a": {
+    "text": "Bu uygulamayı engellediniz.Bu uygulamayı Settings → Blocked apps bölümünde engelleyin.",
+    "source": "8335dec0e6f0df2aba959e80212a8b690fa64f2ae309ce01f4f54c96ae16c99d"
+  },
+  "error_83527d07c338ac81": {
+    "text": "PageState bir string olmalı",
+    "source": "83527d07c338ac81b588741eb7188331ae27be24520a74a1ab0b2afce3c760b7"
+  },
+  "error_838c655fb5b6c035": {
+    "text": "Invalid Second değerleri",
+    "source": "838c655fb5b6c0359d8aec575852ae9f4925deea393de118bf9aaf44982a3ca3"
+  },
+  "error_83a90a8fc3d2755d": {
+    "text": "Hesabınız henüz platform erişimine sahip değildir.",
+    "source": "83a90a8fc3d2755ddc2f34ba6571fe0a470f9051f81b4c570a081aeadcffbe18"
+  },
+  "error_83dfe1b8e9eb3bf2": {
+    "text": "İmza doğrulama başarısız oldu",
+    "source": "83dfe1b8e9eb3bf21cca91701c3a6961de68c7418b7dd32a6b7aa8fc2ce8aa10"
+  },
+  "error_843b9ed3feb06887": {
+    "text": "GitHub repo bu uygulama için yapılandırılmış",
+    "source": "843b9ed3feb06887e57f54493bd2ab8e3753bc96bb5f016b9670ea8bf248335f"
+  },
+  "error_8440b47bead3dc15": {
+    "text": "GitHub şu anda çekme talepleri oluşturamıyor ({{value1}}). Bu GitHub tarafında bir sorun, bu değişiklik değil: iş şubesinde güvenlidir. Birkaç dakika içinde tekrar önermeye çalışın; talepleri yeniden çalıştırmayın veya ek komutları bastırmayın.",
+    "source": "8440b47bead3dc150b44b6b0a3aef18e24d2bf8bdb8a45572581542657d1ff11"
+  },
+  "error_84575264c1f05d99": {
+    "text": "Geçersiz thread_type/thread_ref",
+    "source": "84575264c1f05d992a7fba710aad6b7edaf1c7d1d776ac3f4c29855c70e11a4e"
+  },
+  "error_84adc40cabc32fe4": {
+    "text": "izin devletini yüklemeyi başaramadı",
+    "source": "84adc40cabc32fe4be27ed17e616d05b5db262b9b488d7e46d2626a4ed3b0a98"
+  },
+  "error_84d46daa124b96ef": {
+    "text": "referans ve etiketler nesneler olmalıdır",
+    "source": "84d46daa124b96efda6a78ee83fb6d135b73b70691395b6fa64a4b5a8621b805"
+  },
+  "error_86401def2ecef2b5": {
+    "text": "Bu uygulamanın PR önizlemeleri, gerekli bir özel sır için bir varsayım olmadan başlatılmayacaktır.",
+    "source": "86401def2ecef2b50c081bb551d74f78e27fa2bc76d1981c22f918e80fac5d85"
+  },
+  "error_86af74836855a453": {
+    "text": "Sadece uygulama oluşturucusu veya bir yönetici işbirlikçileri çıkarabilir",
+    "source": "86af74836855a45314b7dd724b915e06a815d3837b327a98ad8d6b3f9f163478"
+  },
+  "error_871974f1e107217f": {
+    "text": "Bu konuyla ilgili bir otomatik oturum hazırlanıyor.",
+    "source": "871974f1e107217f1c0f209e892124c1cc4ffb6b128521b431470cd9e47f8360"
+  },
+  "error_8727e2ba364c2c46": {
+    "text": "Saldırma başarısız",
+    "source": "8727e2ba364c2c46192df0e1d0318d0cc82b0c1e6f7465e012ac59430254e170"
+  },
+  "error_875b80716628e6e7": {
+    "text": "Kullanıcı adınızı zaten seçtim.",
+    "source": "875b80716628e6e763039b87892c09145573f46d8a9160190a94e9ff412c3a99"
+  },
+  "error_87b7a9ffd1cfabb0": {
+    "text": "Uygulamalar moderatörlüğe bağlı",
+    "source": "87b7a9ffd1cfabb01e26d25ed747b8be67a92a7d11ac90f15c1373341dcdfdd8"
+  },
+  "error_87e7877701033fd8": {
+    "text": "Admin kullanıcı adları {{value1}} karakterle kaplıdır",
+    "source": "87e7877701033fd8097f4c83ea64aea924ae13f26e00d5985e82b8d684fd141d"
+  },
+  "error_8816661d68b64727": {
+    "text": "Bu işe yaramadı.",
+    "source": "8816661d68b647276490dabbbd6f0caf573fb6d179172d8cfb8d62d9fb2879ae"
+  },
+  "error_89c55ed357e52881": {
+    "text": "Rapor özetini yüklemeyi başaramadı",
+    "source": "89c55ed357e5288115d4ed19d3f5021ecbf3c498e5b8503a58121347771b087e"
+  },
+  "error_8b43bbd73b99c636": {
+    "text": "İllüstrasyon çiftini okumadım.",
+    "source": "8b43bbd73b99c636ca3e16245b03bc9f66af4934a21544c6589c0a21237956be"
+  },
+  "error_8b51623985a97493": {
+    "text": "Bu model OpenRouter kataloğunda bulunmuyor.",
+    "source": "8b51623985a9749324b5facaeffaf5c6ee30727d60f40ada3de1d125a5ca9ace"
+  },
+  "error_8b68e2d139b47c8d": {
+    "text": "GitHub yapılandırılmamıştır, böylece kampanyalar çalışamaz",
+    "source": "8b68e2d139b47c8d7fdf69f747a0eee2bd9f9ab045ee5bc0416f5af1e6eea762"
+  },
+  "error_8b6f1cb4e9d3f4f5": {
+    "text": "Bakım kampanyaları yalnızca platform uygulamasında sunulabilir",
+    "source": "8b6f1cb4e9d3f4f587598a0c3c9aab30d9dcc1f4a06cd9fff4ff93db3dabb8ec"
+  },
+  "error_8b7d3515b391a1c2": {
+    "text": "Artifaktı Bulamadı",
+    "source": "8b7d3515b391a1c25725d618ef81a437fddfb1a08493dbb59dea3db74055cccf"
+  },
+  "error_8be0e3b019a6812a": {
+    "text": "PR #{{value1}} üzerinde bulunamadı GitHub",
+    "source": "8be0e3b019a6812ad0768d2be19d1700d8adf730e07ddab449787e6a797d6da6"
+  },
+  "error_8c2ef559f91d5f39": {
+    "text": "koşu bulamadı",
+    "source": "8c2ef559f91d5f3938781c5bbaf13e4dd52d8203db7dfe739cdff014f909bd4f"
+  },
+  "error_8c36ecca93db5020": {
+    "text": "Engelli ekran görüntüleri",
+    "source": "8c36ecca93db5020342b1cbf5393a791199aa6ab2543f7993fe829966c4f1aa8"
+  },
+  "error_8c4481d4b8be14ae": {
+    "text": "Sadece bir boolean olarak yayınlanması bekleniyor",
+    "source": "8c4481d4b8be14aeb10afb7445c95a3ec6d4b2143a28d4384ca5848697d7bce6"
+  },
+  "error_8c71f437c875b60f": {
+    "text": "Yolsuzluk Soru ID",
+    "source": "8c71f437c875b60fc8d438d51f4c0a3c5ad54bbc7061ac4eb61dc8174172078a"
+  },
+  "error_8c99406a40429079": {
+    "text": "Bu değişiklik bir üye oturumuna aittir. devamı orada.",
+    "source": "8c99406a4042907923e0653077437148860f3db128e24fabce607cb1efd6b422"
+  },
+  "error_8ca82c17111b5fb9": {
+    "text": "GitHub bu uygulama için yapılandırılmamıştır; hiçbir sorun oluşturulmamıştır.",
+    "source": "8ca82c17111b5fb9fb65448f3e7e4062452bd0d1e8422074162e6ea971f655ce"
+  },
+  "error_8cc493b09413793f": {
+    "text": "Tedarikçi anahtarını kontrol edin, sonra tekrar onaylayın.",
+    "source": "8cc493b09413793fd7ecf67cdfe3ec524edcbfde8f177ffa83f70bebaa204464"
+  },
+  "error_8de9aa1cd80d99c2": {
+    "text": "Homeroom bot mevcut değil",
+    "source": "8de9aa1cd80d99c27576a709b285703e3703974e6e35f81af1ad33a85c5ae58a"
+  },
+  "error_8df2b999fc61333d": {
+    "text": "Bu teklif GitHub'ten ithal edildi, bu yüzden dev sohbet etmiyor.",
+    "source": "8df2b999fc61333d351153cd66fdedc969ffeecee6036c80cad37e787f912283"
+  },
+  "error_8e8399c9a2621ad6": {
+    "text": "Bir işbirliğici değil",
+    "source": "8e8399c9a2621ad6d9f747c90650f013496542943167c7e7b623bdb7fa4852a2"
+  },
+  "error_8fa290b70be9b718": {
+    "text": "Çok fazla deneme. 15 dakika içinde tekrar deneyin.",
+    "source": "8fa290b70be9b7181a64a0b61b544365cc5cce9221c92ce3138f055edb50ad8a"
+  },
+  "error_8ffc4957f6b77b9c": {
+    "text": "refs en fazla {{value1}} bağlantıların bir listesi olmalıdır",
+    "source": "8ffc4957f6b77b9c18b7e8ac97aa71b049d040ef8ea7ef9fb20257e01535d3fe"
+  },
+  "error_902328e56b355040": {
+    "text": "Bu SVG reddedildi. {{value1}}",
+    "source": "902328e56b355040c4a69e2e44c999c5ef8056354281dc54f01f83c19ab27101"
+  },
+  "error_9037c6c66f347965": {
+    "text": "Bu {{value1}}.İlk olarak geri yükleme.",
+    "source": "9037c6c66f347965265f79f4b0a7909ce1eeaf63919e8bb91741d2510f8d8853"
+  },
+  "error_906b84db81bbcfe7": {
+    "text": "{{value1}} desteklenmemiş kontrol karakterleri içerir",
+    "source": "906b84db81bbcfe7e4d73a3a8e4aea96fda7e05afa94e54538bc63a74330e102"
+  },
+  "error_907256bdadb7282d": {
+    "text": "Toplantı bulamadı",
+    "source": "907256bdadb7282dbeaf7eecfcc98b3cb5366193a93e0843944f382e0d46e825"
+  },
+  "error_91990c6fc5a453f3": {
+    "text": "İhtiyacımız olan teklif ve imza",
+    "source": "91990c6fc5a453f3dcffb90dd02552271c175e7e096fabbfd2af66c60a948f29"
+  },
+  "error_91aa8a1c0db4ec1e": {
+    "text": "Engelli bir boolean olmalı",
+    "source": "91aa8a1c0db4ec1e815421b7fc33fcd144debc366215788028b20452191fb716"
+  },
+  "error_91ff7c6dea1a0a62": {
+    "text": "Bu otomatik oturum klon edilebilir bir durumda değildir.",
+    "source": "91ff7c6dea1a0a62b791d7099796440551781a5e8088e8bd03da9658352a7750"
+  },
+  "error_921c92ae846dad03": {
+    "text": "Bu üye oturumu arşivlenmiştir.",
+    "source": "921c92ae846dad032df640e5476863a3fb661d39c205b01a31728896e8163713"
+  },
+  "error_92285355a122bd88": {
+    "text": "Bilinmeyen kapasite",
+    "source": "92285355a122bd883e2e6f55b20b7bb1454b3e21dd5695ebf31d2657d38916a6"
+  },
+  "error_92718a5aa4f077e0": {
+    "text": "Toplantı kapatıldı",
+    "source": "92718a5aa4f077e00969be6dac9d1f5a52186f107629ca96a1a0cd6d3ca3f1a1"
+  },
+  "error_92fb9664fafdd691": {
+    "text": "Sürdürülebilir repo_url",
+    "source": "92fb9664fafdd6910ebcd63412658eff70594a1f2211f6c463a1da2166481cf4"
+  },
+  "error_932ca386c22257d4": {
+    "text": "Portföy bağlantısı yapılandırılmamıştır",
+    "source": "932ca386c22257d4a9279f405ffdb80b2168797cf9c2da252b9629ce4439dfbf"
+  },
+  "error_93791dd99be5bd15": {
+    "text": "Geçersiz veya zaten kullanılan aktivasyon kodu",
+    "source": "93791dd99be5bd15aa38d3f34e4f8ca5906de4431d8461d6c2739e4698115ffe"
+  },
+  "error_948455d19fbbde3e": {
+    "text": "Bu Global Chat thread mevcut değildir.",
+    "source": "948455d19fbbde3e517e0ce3ff895e94aaaf321f8c2c874b3f6fa5a923d85156"
+  },
+  "error_94cd7aae525f2544": {
+    "text": "Yayınlanan oturum bulunamadı",
+    "source": "94cd7aae525f2544a2f57f0953160ccfc28d136347ee495c5ad895f023a6d5a7"
+  },
+  "error_950baadf50963047": {
+    "text": "Sadece gizli değişim, yakın sorun, bakım kampanyası ve görüntüleme teklifleri uygulanacaktır.",
+    "source": "950baadf5096304721ff510d23a109a506e905a9d99fc0a2c15965d1f753f4b4"
+  },
+  "error_955af3a41f910cf8": {
+    "text": "Yalancı madde",
+    "source": "955af3a41f910cf8a54d04d930772b7f28a98cb137502bbc6ad75fb2f7ae32ae"
+  },
+  "error_95abec5f78245ab8": {
+    "text": "“Öğretmenlik” ya da “yetenek” olmalıdır.",
+    "source": "95abec5f78245ab8cbdc5283d6912a55dab6492d8699de7874a5ada163015132"
+  },
+  "error_96461f41e58c3bf4": {
+    "text": "Invalid Suite ID Hakkında",
+    "source": "96461f41e58c3bf4b7865a84e5fc672f00e76f1d3690c441c41e344b61557aaf"
+  },
+  "error_96cba1ad6a9249d2": {
+    "text": "GitHub sorunu oluşturmayı başaramadım: bu uygulamanın repo'ya kaydolamadım.",
+    "source": "96cba1ad6a9249d2af20911ea3c4c9e94c8ab438cc8362b7a0a5d8d0a54b037e"
+  },
+  "error_96d7f256e557721e": {
+    "text": "appSlug app geri bildirim için gereklidir",
+    "source": "96d7f256e557721e3e2d246a397fae98d345d80717509ece2caa1340aeb40765"
+  },
+  "error_97888ae6a65ee458": {
+    "text": "Agent oturumu bulunamadı ya da zaten arşivlendi",
+    "source": "97888ae6a65ee458e4bdbefdb80b9238060e053541f752e00678e8f439e1d2d5"
+  },
+  "error_981603b5f7486d76": {
+    "text": "İlk olarak (POST /api/apps/:slug/demo/promote), bu oy da atılabilir.",
+    "source": "981603b5f7486d76ec481ec11b822d1ac3c37ec5cfe9c8c6ef0339b4cdd0845d"
+  },
+  "error_982c2c16116105eb": {
+    "text": "Tekrar imzalamadan önce kaydolun.",
+    "source": "982c2c16116105eb39cb841b9992bd152c8c2a2be06e9b9e513396d0c3a1f0d0"
+  },
+  "error_9852087d5a1fe0df": {
+    "text": "Yalnızca genesis ledger katılımcıları cüzdan yoluyla kaydolabilir",
+    "source": "9852087d5a1fe0df4a5aa8d321dc4b4e3f958580254f4eff4a7fd805746bb3b9"
+  },
+  "error_987b221982a2d4a7": {
+    "text": "Yerel bir çizgi veya sıfır olmalıdır.",
+    "source": "987b221982a2d4a7c6e1fd62162d119be9b260e6d16d5af21c0c4660ff1d58ac"
+  },
+  "error_9899de7d9de46956": {
+    "text": "GitHub sorunu reddetti",
+    "source": "9899de7d9de46956cd7e34257d31bbd69c232fbde7f94c3b598b509507907b6d"
+  },
+  "error_9980abfa678f5f51": {
+    "text": "Uygulama geri ödeme durumunda değildir (başarısız / kaybolmuş)",
+    "source": "9980abfa678f5f5134b9093534e10884cd46838c388c5f03586a13c16d3922dc"
+  },
+  "error_999930725d061314": {
+    "text": "Profil bulamadı",
+    "source": "999930725d06131459c68279cb1c7c7903b032a05f43fe6ccdf975b09c773330"
+  },
+  "error_999d0f64e5c784f6": {
+    "text": "Sesi meşgul; mevcut dönemi önce durdurun.",
+    "source": "999d0f64e5c784f60150e90e1cfbab64a325ba0c923163b1ed66db0435a4b5f3"
+  },
+  "error_99bd305c1139d8bb": {
+    "text": "GitHub soru oluşturma başarısız oldu; yerel soru oluşturulmadı.",
+    "source": "99bd305c1139d8bbeceaa802512b66437f4867656fa513d3b5ea0de7248392ab"
+  },
+  "error_9a195d77dbdac675": {
+    "text": "Hiçbir Homeroom kullanıcı adı {{value1}} yok.",
+    "source": "9a195d77dbdac675762cf8c75a5448eacae5c04f926b72641417eb0798cf5fdc"
+  },
+  "error_9ad824ca33cec0d1": {
+    "text": "Toplantı bulunamadı ya da zaten arşivlendi",
+    "source": "9ad824ca33cec0d145b32880c0131c6ac63f22645152d778f2a8171a21cb9f86"
+  },
+  "error_9c220febb6585955": {
+    "text": "Haftalık kudos ücreti ödenir.",
+    "source": "9c220febb6585955be0999fe3a1ebfc47b1f48acf295c4dbc1f90cf44adaad1f"
+  },
+  "error_9c55fdd6aae71291": {
+    "text": "Hesabınız zaten sınırsız uygulama yuvaları vardır.",
+    "source": "9c55fdd6aae71291de442402f951138eb4fc7e1f1d9cfe94c059a0575accb062"
+  },
+  "error_9cbc44930695dda2": {
+    "text": "Bu öneride doğrulamak için geçerli bir GitHub depolama alanı yoktur.",
+    "source": "9cbc44930695dda245e2265618bc231faed50c9dc9d8094e01dca953b194ef83"
+  },
+  "error_9cbee1822129eebd": {
+    "text": "İndirimli Run ID",
+    "source": "9cbee1822129eebd73077c046b8689e3048f8c7ccb45938be4bbfc64e4948ad6"
+  },
+  "error_9f1d29f8a6d81ddd": {
+    "text": "Değer ≤ {{value1}} karakter olmalıdır.",
+    "source": "9f1d29f8a6d81ddd455020b56759ccf7ad2b43250e4f9586582cb496aade8a24"
+  },
+  "error_9f213ca42d4eb94c": {
+    "text": "Verilen veriler geçersizdi.",
+    "source": "9f213ca42d4eb94c7bfd82862ec5acf078397a2c9c6211c4fdbac05eaad32576"
+  },
+  "error_9f9c8b81eac3c347": {
+    "text": "Bir iş siparişi kaldırmak, bir staging preview'de engellenir.",
+    "source": "9f9c8b81eac3c3473079e4cc32927b4da7fc0f65a7f5e8f05c1e35cd636a9757"
+  },
+  "error_9fe063691a85c869": {
+    "text": "Kredi haklılığı doğrulanamaz. kısa sürede tekrar deneyin.",
+    "source": "9fe063691a85c86978f341431d92edad49644a885aa29e6d3ef5d28b08ea13d7"
+  },
+  "error_a072b9965c3545cb": {
+    "text": "Görüntüleme kaldırıldı. resim yeniden yüklenir.",
+    "source": "a072b9965c3545cb2977a1146f77ee5ba41bc7e337fd2cd8a681114d3d28f2ec"
+  },
+  "error_a0e077b0317ec60f": {
+    "text": "Açıklama çok uzun (max 2000 tank)",
+    "source": "a0e077b0317ec60fc91edb3a7ec0f90fe0b8c9a0988a902306d72ea8b96a5095"
+  },
+  "error_a2492a22aba28b09": {
+    "text": "davet bulamadı",
+    "source": "a2492a22aba28b095807ae106fba7f6a8a48922cbff4756fc5531b2456714b62"
+  },
+  "error_a3905eb93e402be9": {
+    "text": "imzalamadım ama.",
+    "source": "a3905eb93e402be9ee6af0582991fb3fc7ed5e0371f5321143456c1e190f10e6"
+  },
+  "error_a544aa7c574bc0a9": {
+    "text": "Bunun nedeni bir çizgi olmalıdır.",
+    "source": "a544aa7c574bc0a91e3af42af953caa4c6d53cd78d9446d8675f3ecb345b138b"
+  },
+  "error_a5812f5c8771ea83": {
+    "text": "Yeni Adı Gerekli",
+    "source": "a5812f5c8771ea83dc401a4af23482e11e4c2ce0d3053a31cb3120238c7062ef"
+  },
+  "error_a6878ea047da5cb8": {
+    "text": "Vücut JSON değil",
+    "source": "a6878ea047da5cb84e475cea38cb4f6af9f1b8f92a6b82cc1b4275efd3f8f42a"
+  },
+  "error_a875eacf1f555209": {
+    "text": "Invalid sütun sayımı",
+    "source": "a875eacf1f5552098b1121dab26bc0626b679c1ebf0a55951b87043b3d3d7345"
+  },
+  "error_a8da24a858f15772": {
+    "text": "Kaldırmayı doğrulamak için uygulamanın tam adını girin.",
+    "source": "a8da24a858f15772319fbfc7d4619c8efb1732b745143adf98fc2adcd5011b8e"
+  },
+  "error_a93fe79cb04438c6": {
+    "text": "Bu değişken için belirlenmiş bir değer yoktur.",
+    "source": "a93fe79cb04438c65f9dfe761b00aba14d2a70c8a3689dd6e3abfbadddfebf31"
+  },
+  "error_a972cfaa0a397141": {
+    "text": "Active Handoff oturum bulunamadı",
+    "source": "a972cfaa0a3971417bd44adb0a68e5822efc71a2680c5db96d53893f5c6f7886"
+  },
+  "error_a9820fff0ff867f7": {
+    "text": "Sadece genesis ledger katılımcıları bir cüzdan bağlayabilir",
+    "source": "a9820fff0ff867f763bc4b14e287d79697475a06517329046e4d7f2c2f4d3dc2"
+  },
+  "error_a9e6fa2e2981557e": {
+    "text": "Engelli türü; {{value1}}'ten biri olmalıdır",
+    "source": "a9e6fa2e2981557e92e7178a670e9c51202992064673997d1d8577a971959de7"
+  },
+  "error_a9f36c4f3d5d3400": {
+    "text": "Agent dosyalarını yüklemeyi başaramadı",
+    "source": "a9f36c4f3d5d3400f56f975425e26c0e7a4ccea577f3af91a67fb9599bbce1b5"
+  },
+  "error_a9fd74e7dcceb685": {
+    "text": "Pozitif bütün mesaj_id gereklidir",
+    "source": "a9fd74e7dcceb68547a60103ba9acaef84fb252a713ada8b32c14c2b45ef6ee2"
+  },
+  "error_a9fe49373f8988e1": {
+    "text": "Bu model şu anda doğrulanamazdı; tekrar deneyin.",
+    "source": "a9fe49373f8988e1ba3a7c5187c5e13dab69cce3a8c4a20fc8c3b5b41c2e3c0e"
+  },
+  "error_ab1663c1b5b265d9": {
+    "text": "App bulamadı",
+    "source": "ab1663c1b5b265d9de2c0c05080034e76bf12518f284888e53fa01753dedf944"
+  },
+  "error_ab21a3129c8b930b": {
+    "text": "Mesaj Bulamadı",
+    "source": "ab21a3129c8b930bf96f2f748fee37f0cd44b25776d082354f423622f5a970cb"
+  },
+  "error_ab69eac2d6ea3f95": {
+    "text": "Bu oturumun ek depolama alanı tamamlanmıştır ({{value1}} MB max)",
+    "source": "ab69eac2d6ea3f95fd76dbbac6b750c40be03d15442f5150fb26f2e7004cb79a"
+  },
+  "error_abed820cc168c9c9": {
+    "text": "Oy “evet” ya da “hayır” olmalıdır.",
+    "source": "abed820cc168c9c9618175ea8a850d9336e1252a9b7e3622640e8cdb2d551943"
+  },
+  "error_ac03f5da8fb80dab": {
+    "text": "E-posta hesabınızı güncelleyemezsiniz lütfen tekrar deneyin.",
+    "source": "ac03f5da8fb80dabf36ef98ef66929a4389f63693348a109f84fd9326f555b04"
+  },
+  "error_ac59161f96df5e8d": {
+    "text": "Başvuru sayısı geçersiz",
+    "source": "ac59161f96df5e8d3aa03ccf97c9b9bd10c671a81258fcfaf5d43ca10e6690f1"
+  },
+  "error_acc66f348c41217a": {
+    "text": "Range'dan çıkış",
+    "source": "acc66f348c41217a1156fda4b21dbd7732e4a17d0f4afaf7cf07aceaede946cf"
+  },
+  "error_acdae8bbc9acca11": {
+    "text": "araba oturumu bulunamadı",
+    "source": "acdae8bbc9acca11e0cf99a250c1d45d1cefad0c6ad458476148f6c0efb489e2"
+  },
+  "error_adc9624ff3f257cb": {
+    "text": "Çok fazla talep, lütfen yavaşlayın",
+    "source": "adc9624ff3f257cb85852f20b7e57e341cfd941f51ee2cfcc703a175c04c2ede"
+  },
+  "error_ae13a2dd339f42e8": {
+    "text": "Global Chat kullanımını yüklemeyi başaramadı.",
+    "source": "ae13a2dd339f42e8f4ff400913948edaeaa30ff22a7341359d1def7f30a90a9e"
+  },
+  "error_aeaea837db1e2ad2": {
+    "text": "Bir tasarıma en fazla {{value1}} karakter verilebilir.",
+    "source": "aeaea837db1e2ad23a91247998d80fed5694ebe7b8170a7b6b61d99c91b3fd80"
+  },
+  "error_af1cf0e4ec4b1102": {
+    "text": "Ekran Görüntüleri Bulamadı",
+    "source": "af1cf0e4ec4b11023f7ae83c8999b96c1db923fa9a4ba4ba2532ce439d2d8028"
+  },
+  "error_af2418f94cb71fd6": {
+    "text": "Sadece tam bir yönetici veya uygulamanın tek katkısı bu uygulamayı silebilir",
+    "source": "af2418f94cb71fd6781513213d6572ccc9831a19006284d6323888dc7e701bcd"
+  },
+  "error_afa3a9b4838e5810": {
+    "text": "Global Chat'i okumadım durumunu çevirdim.",
+    "source": "afa3a9b4838e581013baeaf9690e3309b2987c3c40647a3f8df8055bb821071c"
+  },
+  "error_affd7980153080cc": {
+    "text": "İsteğinizi gönderemezsiniz lütfen tekrar deneyin.",
+    "source": "affd7980153080cc923fcd20cdb70b3a173d91947bf7df497570c3c0ad984013"
+  },
+  "error_b04d677fe784dbf5": {
+    "text": "Bilgilendirme bulunamadı",
+    "source": "b04d677fe784dbf53077f6aa3625c4e5d9516a9c789d5aab7551ecf0d7c2f101"
+  },
+  "error_b08ff141e8374dc3": {
+    "text": "Global Chat’i açmayı başaramadım.",
+    "source": "b08ff141e8374dc30bcffb87187ac7eb64d33f0b9505ff292b1ca7368466679e"
+  },
+  "error_b14fd9350412facb": {
+    "text": "Agent hala çalışıyor. durdurun ya da başka bir mesaj göndermeden önce bekleyin.",
+    "source": "b14fd9350412facb8141d5bb1f7257864950b34d001cc755f81e1e4b77779b35"
+  },
+  "error_b212a503313280c5": {
+    "text": "Platform self-app davetleri kullanmıyor",
+    "source": "b212a503313280c5c413ddd9855a43a048cbcac78d6ef8f3ad6d0dd05512f77d"
+  },
+  "error_b32aab28e5c167f0": {
+    "text": "Kendi Anthropic API anahtarınız bu uygulama için mevcut tek ödemeci. bu izin değiştirmeden önce etkinleştirin.",
+    "source": "b32aab28e5c167f02c791580c51b6bf6d0aaaa46f2c96bbede780996402fc870"
+  },
+  "error_b412f3f7b240ffd4": {
+    "text": "Global Chat thread bulunamadı.",
+    "source": "b412f3f7b240ffd4615f4b539581b3854bf808e1dc27c69368aefd7430b8e5e2"
+  },
+  "error_b4264c903e2d45c0": {
+    "text": "Şirket tarafından finanse edilen anahtarlar yalnızca bir admin tarafından engellenebilir veya kaldırılabilir.",
+    "source": "b4264c903e2d45c0272d2f00fec896f3fe151d16232842f26d5ea764ec870d75"
+  },
+  "error_b4449446901d58c0": {
+    "text": "Kullanıcı adı, şifre ve pubkey gerekli",
+    "source": "b4449446901d58c018a5713b2734a6914cf5daf9d88f2c79bd5f0eb99d1ab378"
+  },
+  "error_b51648611f3b586d": {
+    "text": "Teklif artık oylama için açıktır.",
+    "source": "b51648611f3b586db92f773589af44c11d45566262a66f253752427c654fd8d9"
+  },
+  "error_b51e3a165ac76b8f": {
+    "text": "Engelli Kullanıcı",
+    "source": "b51e3a165ac76b8fc372c73b7ec4538e1ce3e08a849f5d57c10197cd2111f833"
+  },
+  "error_b527edce289730bb": {
+    "text": "Bir profili devre dışı bırakırken gerektiren neden",
+    "source": "b527edce289730bb033091fc45ce5e616cb384de25994a278eb640e99a3f37fc"
+  },
+  "error_b551a7f374eefc33": {
+    "text": "Bloklanmış uygulamaları güncelleyemezsiniz. tekrar deneyin.",
+    "source": "b551a7f374eefc3357627a24258d2e34d2264760334947a3fca7462e25c49fb9"
+  },
+  "error_b5b6f7255b3a948c": {
+    "text": "PR'ye geri dönüş yapamıyorum",
+    "source": "b5b6f7255b3a948c157f1b01fdd4247c4630fa79483eebb7d8ed0b79cf669eb2"
+  },
+  "error_b6179f0c00a079cf": {
+    "text": "Ürünler ağda uyumlu değildir",
+    "source": "b6179f0c00a079cf0ace7fadd060a38c025f92bcc6b2da449d617502411d564e"
+  },
+  "error_b644cfe0653758cd": {
+    "text": "{{value1}} onayını bekliyor",
+    "source": "b644cfe0653758cd73716c1a1a2ebfdcb8dc812ba00bedf07d3dd30a6bf30fd4"
+  },
+  "error_b652e643da15aa0c": {
+    "text": "Sınırsız GitHub URL",
+    "source": "b652e643da15aa0c392b8052ae08c820232ffef27dbd28a9b485a748a50d3a48"
+  },
+  "error_b6e92ca71b5a59ee": {
+    "text": "Geçerli bir oturum gerektirir.",
+    "source": "b6e92ca71b5a59ee8755b0da9f828b609661469aa5a20e81ed839649b405c491"
+  },
+  "error_b8087eb28baa1522": {
+    "text": "{{value1}} zaten mevcuttur. panelde sırasını kullanın.",
+    "source": "b8087eb28baa1522d1a3c5d614d67f83d894554173cb7204847509b2ee2df456"
+  },
+  "error_b818c8e4a26f4db9": {
+    "text": "Yeni şifreniz mevcut şifrenizden farklı olmalıdır.",
+    "source": "b818c8e4a26f4db95c72ec388927c232257cf359d119e9e3dd0189df028ba0bf"
+  },
+  "error_b822b3ab4b1ac505": {
+    "text": "Adının en az 3 karakter olması gerekir.",
+    "source": "b822b3ab4b1ac505a4d7cb241b94b0b4b85aac8c6293827d798469e17ab11ed2"
+  },
+  "error_b851792613cc42dc": {
+    "text": "Dosyayı silmeyi başaramadı",
+    "source": "b851792613cc42dc7f8a3c93e1ceba1c82982623a3f97ba216499aad785e0d58"
+  },
+  "error_b886a1872736c90f": {
+    "text": "Bilinmeyen sağlayıcı",
+    "source": "b886a1872736c90f881a8287de773caa4fdf91a78db818f4aa06a46221f62830"
+  },
+  "error_b954761d8f65f636": {
+    "text": "Ekran görüntüsü çok büyük (max {{value1}} MB)",
+    "source": "b954761d8f65f636c31b4dbffd1e2855ac57253b6d245fad04e4edb4dbf24028"
+  },
+  "error_ba12dc43440d6170": {
+    "text": "Bu id ile beklenen doğrulama yok",
+    "source": "ba12dc43440d6170415d75ffc02a1bb8b8bb8b23ec189cfe4439978f58bbae3c"
+  },
+  "error_ba1a02264d112ba6": {
+    "text": "eklentiler {{value1}} eklentiler kimliklerine kadar olmalıdır",
+    "source": "ba1a02264d112ba66a0a356d5096e6b4f23db6214541ba95eeffd77700f1f1bb"
+  },
+  "error_ba3e97b3da755280": {
+    "text": "Bu uygulamanın sohbet eklentisi depolama tamamlanmıştır ({{value1}} MB max)",
+    "source": "ba3e97b3da75528070b85eb4f913b387a62b5257e0cbf214892c68736e5e62ba"
+  },
+  "error_ba7152b0ab376a36": {
+    "text": "Dış çalışma sunmak, bir staging preview'de engellenir.",
+    "source": "ba7152b0ab376a36c53d9782b53a1fe255fb57cded6eead95e9b89bedc462eac"
+  },
+  "error_bb53873919f46120": {
+    "text": "admin bir dizi kullanıcı adı olmalıdır",
+    "source": "bb53873919f4612038866cd9ac7e61d1fd98f087afa1561ab996cc196212aea0"
+  },
+  "error_bbe3b807dbaa0562": {
+    "text": "Başlık çok uzun (max 200 tank)",
+    "source": "bbe3b807dbaa056240403b698d89aeec1062320578d02031264d0dd3da63cf78"
+  },
+  "error_bc04343badf48e5d": {
+    "text": "Sorun #{{value1}} bu repo üzerinde açık bir konu değildir.",
+    "source": "bc04343badf48e5d300923cdf7c891478b30c609fc6b7c927a801980e874dab1"
+  },
+  "error_bc53dc7402e9ec77": {
+    "text": "Yönetim değişiklikleri platformda yapılandırılmış GitHub gerektirir (GITHUB_BOT_TOKEN).",
+    "source": "bc53dc7402e9ec77a60829aa200dc9964f5cf1f340c5513e03889c1433c16d69"
+  },
+  "error_bc9dcbf85072a660": {
+    "text": "Katılımınız moderatörlükle sınırlıdır. Hesap ayarları ve mevcut veriler mevcut kalır.",
+    "source": "bc9dcbf85072a660c2e57557338647e3fd221df899fcc33b29d23a3d4fe48acc"
+  },
+  "error_bca6834d80b06f45": {
+    "text": "Konu açılmıyor",
+    "source": "bca6834d80b06f45db868450fd45c3527568aaee6cd30e71389e1b387ccb1f5c"
+  },
+  "error_bd3d26996bbd94ae": {
+    "text": "Bu uygulama için hiçbir bağış yok",
+    "source": "bd3d26996bbd94ae0a9ea98497377858a63b5f40f166a212679c00f883fa77b8"
+  },
+  "error_bd4a311a0428d352": {
+    "text": "Her ikisi de patch ya da patch değil.",
+    "source": "bd4a311a0428d352016c0f311fb279f39a0952ac5f8a26b3bed11f3b6a9db4d8"
+  },
+  "error_befe7aac3a65fea3": {
+    "text": "Boş yükleme",
+    "source": "befe7aac3a65fea32543083a0e91562ad56888f76c61b3d8de746be25e2e58fb"
+  },
+  "error_bf2bd274e4c3a9b9": {
+    "text": "Engelli Hedef",
+    "source": "bf2bd274e4c3a9b9a6b9be7158da545dd12645d30d48e0c10878bcfce9e0b5fb"
+  },
+  "error_bf659158c1868083": {
+    "text": "Batch ID yeniden kullanıldı",
+    "source": "bf659158c18680833f717587d1bbcdb187dfbe42569534770fc3791775c3e6ef"
+  },
+  "error_bf9f6cab6c1f66d4": {
+    "text": "Global Chat mesajları yüklemeyi başaramadı.",
+    "source": "bf9f6cab6c1f66d441df88957fae5b42a2a28f5d425f416c491f1e98a0fe65ed"
+  },
+  "error_c0365a03201c59ca": {
+    "text": "Onay için bekleyen {{value1}} değişiklikleri zaten var. canlı gitmek için bir bekleyin, ya da önce bir arşiv.",
+    "source": "c0365a03201c59ca0a467a545c8b5c450c3f25b57c13f16bb0c5ffc1f452bc3f"
+  },
+  "error_c05ec9a2dfaec258": {
+    "text": "GitHub bu uygulama için yapılandırılmamıştır.",
+    "source": "c05ec9a2dfaec25873c193c8110557c333484e2e4118c447845b8e9f4f3aa44b"
+  },
+  "error_c06e02a6f0a5ba17": {
+    "text": "Gerekli bir değişken ya bir değer ya da bir varsayım gerektirir.",
+    "source": "c06e02a6f0a5ba17a74637f72506c5ae0fc6c67d31fa363095489e7f06ac2cf9"
+  },
+  "error_c08754630c8d38ab": {
+    "text": "Kötü oturum id",
+    "source": "c08754630c8d38abb769a2b7c92b6c5b2fbd68e3828d1c0858f3ee542bd87728"
+  },
+  "error_c0cc360fd9617c00": {
+    "text": "Arşivlenmemiş veya arşivlenmemiş",
+    "source": "c0cc360fd9617c00d662e5f4f68ef36b52371a6f34c2fd885a2979e309164429"
+  },
+  "error_c118f2d24177f338": {
+    "text": "Önerilerinizden birinin oylama için hazır olduğu önerilerden birinin kimliği olmalıdır.",
+    "source": "c118f2d24177f338d8f1f2b730352f58d576c255b9f8a97456e88d1be0b682d5"
+  },
+  "error_c12432f62585c572": {
+    "text": "Başlık bir çizgi olmalı",
+    "source": "c12432f62585c57279a5d08bd9f48e37b2cc50ab3d2c16a57f20f6ce29f4c05d"
+  },
+  "error_c15ddf6517b77720": {
+    "text": "Toplantı bulunamadı veya durdurulamadı",
+    "source": "c15ddf6517b77720f4ced58d29975f749784b34ce28bdd5a9c59caed4b3efbb3"
+  },
+  "error_c1913cf6a8944873": {
+    "text": "App Adı Gerekli",
+    "source": "c1913cf6a8944873b8b8514917ffa6de5204e039d4af2c1837059d103788630d"
+  },
+  "error_c1ddc606c74fb77d": {
+    "text": "Engelli Anlayış Çabası",
+    "source": "c1ddc606c74fb77dd9a1a6bc0bba280a7996b382319603d8157900494f2696bf"
+  },
+  "error_c40e30855c500514": {
+    "text": "Geçerli bir e-posta adresi gerektirir.",
+    "source": "c40e30855c500514b4ccae5e4c6310d1facb844a6dd5227e9f2a4d9c177f1afb"
+  },
+  "error_c44717d011ca5ddb": {
+    "text": "Lütfen başka bir test uyarısı göndermeden önce bir dakika bekleyin.",
+    "source": "c44717d011ca5ddbc52610e190ba590ce7798f545db2493539129c800f9adfe1"
+  },
+  "error_c49c1143487ae0fc": {
+    "text": "Çok büyük bir vücut isteği",
+    "source": "c49c1143487ae0fc641001e7e6b8c849594b50077b2426726ec35c3ca036b3c5"
+  },
+  "error_c4a8bd0797bf5e8d": {
+    "text": "Projeyi bir cümle veya iki cümle ile ilk olarak tanımlayın.",
+    "source": "c4a8bd0797bf5e8d9e468ad379d1b1e6f83b7c5d8a67143bcad01931102ed847"
+  },
+  "error_c4d74e08bfb536d5": {
+    "text": "onaylar1 ve {{value1}} arasındaki bir bütün olması gerekir (veya varsayılan strateji için sıfır)",
+    "source": "c4d74e08bfb536d501e6cb828aa4d61cc373a626b37264ec4b6692d819bd241e"
+  },
+  "error_c5970954a9815d7f": {
+    "text": "bu depolama alanı bu platformda bir uygulama değildir",
+    "source": "c5970954a9815d7f4dea454a7c538d9a2900a41c75770272842dc99c02e38ce9"
+  },
+  "error_c6c86db7870fa8a3": {
+    "text": "vücutta gerekli kilitlenmiş (boolean)",
+    "source": "c6c86db7870fa8a3a30aad14d94adac9e347ebbeba199d333d92e80c1978ef70"
+  },
+  "error_c73c43ebeea52ac8": {
+    "text": "Başlık çok uzun (max {{value1}} tank)",
+    "source": "c73c43ebeea52ac8c195ab79a18b2f15564cf0961cdec76ebc00bf0dc6b1df9c"
+  },
+  "error_c89f732fa167866e": {
+    "text": "Bu uygulamanın repo'ya kaydolamazdım. bot üzerinde yüklen olmayabilir",
+    "source": "c89f732fa167866effeb6147309dfd506be23ca3ca7a76603160a6cda67f4a70"
+  },
+  "error_c9a0236cbef6c3f4": {
+    "text": "İhtiyacımız olan başlık",
+    "source": "c9a0236cbef6c3f44fb99c0dad993495af63a6758fc2c71e9a3c43ca98056b84"
+  },
+  "error_c9cbf689f281be52": {
+    "text": "Seti ile geçerli bir görüntü çerçevesi ve bir kart rengi seçin.",
+    "source": "c9cbf689f281be526f454c3107042a937542e55fdb81080974c6a456806ea0e3"
+  },
+  "error_ca279a482918a3bd": {
+    "text": "Bu konu zaten hazır bir otomatik oturum var. yerine bir oturum başlatın.",
+    "source": "ca279a482918a3bd859dd8207d7dd167c753ac379c4362e877953037e9b1cebd"
+  },
+  "error_ca3bedb0bc52b43f": {
+    "text": "Admin değişiklikleri platformda yapılandırılmış GitHub gerektirir (GITHUB_BOT_TOKEN).",
+    "source": "ca3bedb0bc52b43f6234ed207b40bed7f5e5dff90179cab4300abe01721fae06"
+  },
+  "error_caf4b8b55c56317b": {
+    "text": "Homeroom bot artık herkes için çalışıyor, bu yüzden değiştirilecek bir şey yok.",
+    "source": "caf4b8b55c56317b3ba68b553d27e2c29b102fd1bd41df4dcdba23b25d1d1c41"
+  },
+  "error_cb4d4bb214a563aa": {
+    "text": "AppSlug Gerekli",
+    "source": "cb4d4bb214a563aa91673b8b11100f31e2d9d6492734afa1de4ee8b86d76478d"
+  },
+  "error_cc40800fe85e97b4": {
+    "text": "Hangi konu ile ilgili soru?",
+    "source": "cc40800fe85e97b48eba7c26266929184a7791990e75ff7e9bca7297ecbed9f6"
+  },
+  "error_cd0b4a82838f3d47": {
+    "text": "Hiçbir şey yok merge_commit_sha",
+    "source": "cd0b4a82838f3d47b20d384bb8c51bb22c736292ad81988ca08c4f91f1586756"
+  },
+  "error_cd5516e993bd0e97": {
+    "text": "Sonuçları yüklemeyi başaramadı",
+    "source": "cd5516e993bd0e973f0aac1c1e4f1529f58a5537fa0c9baa00e4e17bf46040cd"
+  },
+  "error_cd61fbae0ba99c87": {
+    "text": "Değişim bulunamadı.",
+    "source": "cd61fbae0ba99c87ba3234ade42fa5375a4338d7d67ff1f743bbe48c5b65bc9c"
+  },
+  "error_cd8da4c6ef7c65e9": {
+    "text": "İhtiyacı Mesajı",
+    "source": "cd8da4c6ef7c65e9122ca86d24be32e64a5cf2c09a6891d33d35cf631ff32c6c"
+  },
+  "error_ceb0a8f88abd7048": {
+    "text": "Bulamadı ya da özel",
+    "source": "ceb0a8f88abd704817c822ec4e4e17d32e908faca8a34843b79c7f5beed51eb6"
+  },
+  "error_cf0079dca5956623": {
+    "text": "Gelişmiş rapor bulunamadı",
+    "source": "cf0079dca5956623e6c5f3aed75584047e072633c709ef32b5cc02bc8a999100"
+  },
+  "error_cf68298e2ae23c87": {
+    "text": "İhtiyacınız olan Yazı Tasarımı",
+    "source": "cf68298e2ae23c871a564366401a3f33d393c20c34502b5dd94d02ee4118c9a6"
+  },
+  "error_d062bc4121fdc389": {
+    "text": "Bilinmeyen inşaat alanı",
+    "source": "d062bc4121fdc389fc01a56063da3ee3c0abd25d54f48f0c34dab051e610f7c3"
+  },
+  "error_d07ed0c6ec21ad3a": {
+    "text": "eksik sayısı",
+    "source": "d07ed0c6ec21ad3aa4ae9478046d3c34c94a3190bea9a6f15e1757abf011a9a5"
+  },
+  "error_d089c8a9fc28e4e5": {
+    "text": "yetkisiz",
+    "source": "d089c8a9fc28e4e50223eb38c9409e362521be9380a37341304fbac7a4cd9e5f"
+  },
+  "error_d0d2c6293f2fbb4c": {
+    "text": "Soru #{{value1}} için yakın bir teklif zaten açıktır",
+    "source": "d0d2c6293f2fbb4c3f2ccbc83f1aa83c8247c3cb920ef7d2c2f9ee248a1cf067"
+  },
+  "error_d134fa71f75a68c1": {
+    "text": "PR #{{value1}} zaten ithal edilmiştir.",
+    "source": "d134fa71f75a68c157c2d325b984158078820c35e62d098fb8fb8972a6b0fea4"
+  },
+  "error_d1f980c042470341": {
+    "text": "Bu uygulama zaten adlandırılıyor",
+    "source": "d1f980c042470341a54bdf6ed9f9b1b3d93944396d40f23b9dfe514856e5ee64"
+  },
+  "error_d22808c7705977f5": {
+    "text": "payload.value gereklidir ve ≤ {{value1}} şarj olmalıdır",
+    "source": "d22808c7705977f587f0f77f478a2e2405f305f6408a895f0d55914a8fda6ca7"
+  },
+  "error_d2b7403136aa0d55": {
+    "text": "Anasayfa > Toplum & Sosyal İlişkiler > “Herkes” ya da “Misafir” Olmalı",
+    "source": "d2b7403136aa0d55502f60a34f1d186f4b80f3517762bc82dc3fa869072e4dd9"
+  },
+  "error_d32791277255a554": {
+    "text": "clientMessageId 8 ila 64 harfler, rakamlar, - veya _ olmalıdır",
+    "source": "d32791277255a554a5a60b0d382a46dbb9eb6ed5e4f8eb1b2997679149697925"
+  },
+  "error_d4032644e937c0bf": {
+    "text": "Homeroom platform uygulaması demo modunda yerleştirilemez.",
+    "source": "d4032644e937c0bf74d3d9aed9845fbe3d4a09a43bef73f446e03ed85a9de3cb"
+  },
+  "error_d435f5cb3a941aca": {
+    "text": "Artık bu kopyadan gelen uygulamaya erişemezsiniz.",
+    "source": "d435f5cb3a941acac1ab01acd9637b809e2e5595b4ada28e9a4ae09a59e18483"
+  },
+  "error_d4e010a9252f8b10": {
+    "text": "Adın harfleri veya sayıları içermeleri gerekir (bir \"kod tarzı\" gibi bir alt kasaya dönüşür)",
+    "source": "d4e010a9252f8b100c5b0c65ef402400c51ae768d44f0a6e15f55b913d051bd4"
+  },
+  "error_d50722ca46426dcb": {
+    "text": "Bu Global Chat thread yüklemeyi başaramadım.",
+    "source": "d50722ca46426dcb88642cdf42c5e422b6220307883c0b1ee89949e893c8d23f"
+  },
+  "error_d6de289f42d41170": {
+    "text": "Uyumlu Global Chat modellerini yüklemeyi başaramadı.",
+    "source": "d6de289f42d41170a3f1a0cdd978d139d26f18ecbb21dc0a40531e016b704fde"
+  },
+  "error_d8e4dcef4f3d2039": {
+    "text": "Konuşma bulunamadı",
+    "source": "d8e4dcef4f3d2039d2669d93691069cd2bc1a553c8e860058dfdd764bc5ddfc4"
+  },
+  "error_d962aad98ce65084": {
+    "text": "Kendi PR'niz için kudos veremezsiniz",
+    "source": "d962aad98ce65084919832e8f4465f8c88a11af1696100547d35ddf8019091a8"
+  },
+  "error_da7418de6ab4de1c": {
+    "text": "sipariş en fazla 200 sızıntıların bir dizi olması gerekir",
+    "source": "da7418de6ab4de1c166e6113db43389d5d3cdd11883a8f7cc9df329eba3c1633"
+  },
+  "error_da763b034c650f7f": {
+    "text": "İndirimli App ID",
+    "source": "da763b034c650f7f2820698f5696182c11fe7cc7a2bf3adf4e71c1a53347a11c"
+  },
+  "error_db016dfa088a490d": {
+    "text": "Görüntüleme bulunamadı",
+    "source": "db016dfa088a490d5a0d7664ac6a660ff20003afb6399ea932dc492d10b69927"
+  },
+  "error_db4a5915e801fa10": {
+    "text": "Kendi profilinizi rapor edemezsiniz.",
+    "source": "db4a5915e801fa105f3be0b5592e151af7287e05afe7319e77cab731cfc29705"
+  },
+  "error_dbd48db8d74754d3": {
+    "text": "Bağlantılı konuları güncelleyemezsiniz",
+    "source": "dbd48db8d74754d39f192dcd6d34b916ab91c57cedc39f1f12a09a2b6bee06a0"
+  },
+  "error_dc2d723d58c8ba86": {
+    "text": "Modeller yüklemeyi başaramadım.",
+    "source": "dc2d723d58c8ba86bfb53a738e8739e4362fe61e0593f8444fd93990ef966847"
+  },
+  "error_dd457021a575e7f6": {
+    "text": "BaşlangıçApprovers bir dizi kullanıcı adı olmalıdır",
+    "source": "dd457021a575e7f6a61acffb5c14e7b51e30745f41ce9e6a7c2f256ad74bdd3f"
+  },
+  "error_dd87408c2e84197d": {
+    "text": "Yasadışı öğe türü",
+    "source": "dd87408c2e84197d47d7f1bebecdf314b3c3c027a1edaf01511db422b4ab4b18"
+  },
+  "error_ddb27a0d23d40eb7": {
+    "text": "Bu bir çekirdek platform uygulamasıdır. UI'den silinemez.",
+    "source": "ddb27a0d23d40eb74b0e1dd4c7f8f469ed0697385dd437363e40138d5db21a35"
+  },
+  "error_dde48e8f3a4f3683": {
+    "text": "geçerli bir PR numarası gerektirir.",
+    "source": "dde48e8f3a4f3683be55974a1841cfefdbdb775df3c77911c3e529c2f96c8fa6"
+  },
+  "error_de5f01d79950bd2a": {
+    "text": "{{value1}} seansınız devam ediyor. bunlardan biri bittiğinde tekrar deneyin.",
+    "source": "de5f01d79950bd2ada342bd18808a093a55b715b562c10f447fd62ca8112b2cc"
+  },
+  "error_df1e87f29e2360c7": {
+    "text": "Bu uygulamada bir bonus yerleştirmek için işbirliğine erişmeniz gerekir",
+    "source": "df1e87f29e2360c782db724c36fccc01c7799c00665f4a1cb53f9bf88db4de02"
+  },
+  "error_e1bc1ffafad6dff8": {
+    "text": "Claude hala bu oturumda çalışıyor. senkronizasyon yapmadan önce döndürme için bekleyin.",
+    "source": "e1bc1ffafad6dff84f1a7c5e7a56d2929015a6a4e9c1bac659427436768fab67"
+  },
+  "error_e21cdb74f1a48c77": {
+    "text": "Sohbet açılamazdı",
+    "source": "e21cdb74f1a48c77a891381fdf1ef15b1e9ca384d25772095b03158ebfd13134"
+  },
+  "error_e226647bcf742c7c": {
+    "text": "katılımcı bulunamadı",
+    "source": "e226647bcf742c7cb2d45b57433ec010a42643f2ddab92550618b6f5ac85672a"
+  },
+  "error_e22c6fd92c8c096f": {
+    "text": "Engelli durdurma talebi",
+    "source": "e22c6fd92c8c096f779bd2417f4ba34a8f3453b33f064d5ba69c787dbbf003f5"
+  },
+  "error_e27148bf0d039769": {
+    "text": "Birleşmek bir boolean olmalı",
+    "source": "e27148bf0d0397698d088da8a333b9eb362f7167ad060479b2c57801fc24cb2c"
+  },
+  "error_e2f62f1a04ef74f7": {
+    "text": "Müşteri Toplantısı Bulunmadı",
+    "source": "e2f62f1a04ef74f73a8632ac8e962322a86824d2a347d1e99267b6ff7cfc297f"
+  },
+  "error_e30c2ec3ce0121a5": {
+    "text": "Tekrar imza atın.",
+    "source": "e30c2ec3ce0121a59e7bb72307796514602c68cbf87d50b9962ee8d5a4bfbac7"
+  },
+  "error_e3ebaa16dd9d9b9f": {
+    "text": "bulamadı",
+    "source": "e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31"
+  },
+  "error_e5427bf67b669142": {
+    "text": "Sadece konu yazarı vücudunu düzenleyebilir.",
+    "source": "e5427bf67b66914203a02058b1ac8a34f471011cde139190cfdda9f41b2bc6e1"
+  },
+  "error_e584b55cf7a50974": {
+    "text": "Bu kopyadan gelen uygulama artık mevcut değildir, bu nedenle kopya geri çekilemez.",
+    "source": "e584b55cf7a50974447104ba002eabf0bcbc5cd0b670edcb9eefc29dc2e83236"
+  },
+  "error_e6728fefadd0c8b5": {
+    "text": "Sebep {{value1}} karakter veya daha az olmalıdır.",
+    "source": "e6728fefadd0c8b5aab34f026c2575b8f83e88c9781cca42df940e5b92e0fe08"
+  },
+  "error_e67ac755cbc8875c": {
+    "text": "Sadece uygulamanın yaratıcısı demo modunu kullanabilir.",
+    "source": "e67ac755cbc8875c9d757e7930588da8a7ed03f43cc4171407ef5c36894f4eef"
+  },
+  "error_e72c6d81025297d2": {
+    "text": "Demo modunda bir ortak yoktur.",
+    "source": "e72c6d81025297d2d6ae51fa72e466f9cde7292a930fa12aa3b20ac187d67b3d"
+  },
+  "error_e75d17a118d18771": {
+    "text": "Sadece başvuru sahibi bu teklifi geri getirebilir.",
+    "source": "e75d17a118d18771462e498b5e21efabe5ae4d082e54df907c6f2b6abb589e14"
+  },
+  "error_e78c40c6b0b17445": {
+    "text": "Uygulama izinlerini yüklemeyi başaramadı",
+    "source": "e78c40c6b0b174454e89c95f59bfbeee772f31584a1274c4f044018223951ba3"
+  },
+  "error_e79297b9b742fef9": {
+    "text": "Engelli Çağ",
+    "source": "e79297b9b742fef99930c55938109119f1c1fc7e913d711ca04d873d2b007b36"
+  },
+  "error_e7abbb53edb720f3": {
+    "text": "Bir retry kendi mesajını göndermez.",
+    "source": "e7abbb53edb720f3f4c0c80ae1392b70a40d1ac173bd94117571ffbe87da612f"
+  },
+  "error_e7b4f3eb830a51ce": {
+    "text": "Kötü id / versiyonu",
+    "source": "e7b4f3eb830a51ce8a087def1cc56a7d7ebe74452f487d4b503e31503d02119b"
+  },
+  "error_e8f2095ad34ebf3e": {
+    "text": "PR #{{value1}} zaten GitHub'da birleşti, bu yüzden oy kullanmak için bir şey yok.",
+    "source": "e8f2095ad34ebf3e26ac43672b5d20efbc969b47d0a7d7d140943ccdb88fbbc3"
+  },
+  "error_e917d7c89154b948": {
+    "text": "GitHub token yapılandırılmamış",
+    "source": "e917d7c89154b948cea24ef2d3bedb2b0eafaf30f07f4e9e91e259ac6107a2ec"
+  },
+  "error_e94d43232d4bc563": {
+    "text": "PR #{{value1}} açılmıyor.",
+    "source": "e94d43232d4bc5630cf7b95ef1ab979792d604f92bcea473c8c4ce8fdac54467"
+  },
+  "error_e9a9def7d8295252": {
+    "text": "Global Chat ayarlarını yüklemeyi başaramadım.",
+    "source": "e9a9def7d82952522fbf66c10393af9b26b17d445cc899d1edbcb3275409b1d0"
+  },
+  "error_e9b1e0403a1e9dd2": {
+    "text": "Hesabı bulamadım.",
+    "source": "e9b1e0403a1e9dd2f4cae5572856bc5185c5ce733deadc0122152060531dd516"
+  },
+  "error_eae8d4bc06039c5d": {
+    "text": "İsim {{value1}} karakter veya daha az olmalıdır.",
+    "source": "eae8d4bc06039c5dbc7666adf91985918391c2fabca788656ff6e0009e67b61a"
+  },
+  "error_ec227ad5f4917eaa": {
+    "text": "Desteklenmemiş alan: {{value1}}",
+    "source": "ec227ad5f4917eaaaf99cf974f206758af06e70dcf6d393dfa2961ece4c75986"
+  },
+  "error_eca93917ada98095": {
+    "text": "Engelli Kullanıcı ID",
+    "source": "eca93917ada98095b291ce24c50410b573f32f4d97e7e62060bd8f1eac01f4ca"
+  },
+  "error_ecc2a1a7fa9a2c63": {
+    "text": "Bazı alanlar düzeltilmelidir",
+    "source": "ecc2a1a7fa9a2c637a0b64dfceee0e960ff649fde32e05ac24a4937376761e90"
+  },
+  "error_ed4401e015fef364": {
+    "text": "Open handoff oturum bulunamadı",
+    "source": "ed4401e015fef364a77bd81c4ceeccac7c70ea68e6b4e5f909538a4a4895e182"
+  },
+  "error_ed94a6356cda659d": {
+    "text": "Global Chat'i açmayı başaramadım.",
+    "source": "ed94a6356cda659df3ca904abfed988c04f6bb0b2e1ee2a07a6a9e4fec7607e7"
+  },
+  "error_ed98b110a120385b": {
+    "text": "Bu mutasyonlar mevcut durumla çelişiyor.",
+    "source": "ed98b110a120385b6832a7b37048992fe555bfcc7223279d28dbbdb0ea7f3b6c"
+  },
+  "error_edcea6113806c52f": {
+    "text": "Sadece uygulama oluşturucusu veya bir yönetici geri çekilebilir",
+    "source": "edcea6113806c52fd559d1ad46da052a424f2f8148f4a1f39c24306505d7da43"
+  },
+  "error_ee42584b031047d0": {
+    "text": "Bu hesap yeniden adlandırılamaz.",
+    "source": "ee42584b031047d0ed9d8b7fe68e2f9eb04e5ffbb9d393ed57abad703c8927ea"
+  },
+  "error_ef2d407635853d5d": {
+    "text": "Oy “yukarı” ya da “düşük” olmalıdır.",
+    "source": "ef2d407635853d5d3cdf3a902cbb4a2ebd0c302728b10861264ff5ef4a4375df"
+  },
+  "error_ef4f73b0adf5e14c": {
+    "text": "Kullanıcı Adı Gerekli",
+    "source": "ef4f73b0adf5e14cc96df6a3cd1fcf9779ac8895a05ea8891644202befd14668"
+  },
+  "error_f0406a0e7eb17426": {
+    "text": "izin vermez",
+    "source": "f0406a0e7eb1742683c88500e46280322a3770d9df74ebdd651adf554a70cb30"
+  },
+  "error_f05f58195d776e50": {
+    "text": "-Hiçbir cüzdan hesabınıza bağlanmaz",
+    "source": "f05f58195d776e504de5ae21d119ff955df3f0966c0b49d07798acf0c56bd486"
+  },
+  "error_f1c0277bcfb85ce6": {
+    "text": "Bu kod yanlış ya da sona erdi. yeni birini isteyin.",
+    "source": "f1c0277bcfb85ce6edfc204f65facb1b706cb5211aaffeecc3b793e9fd9f4b48"
+  },
+  "error_f200c611d249bf80": {
+    "text": "Yürüyen iş değişti. tekrar durmaya çalışın.",
+    "source": "f200c611d249bf80a76e9c59ca55915d687653c7a720576ba56c9bca6723506c"
+  },
+  "error_f217dd35351e5d42": {
+    "text": "payload.issueNumber olumlu bir bütün olmalıdır",
+    "source": "f217dd35351e5d42360b2dcab7ece3f43d6fec316a2858b97b4e8ec9663e8ace"
+  },
+  "error_f335e06cfdf100b8": {
+    "text": "GitHub inceleme için hazır olan proje çekme talebini işaret edemedi. değişiklik hala devam ediyor; kısa sürede yeniden tanıtmaya çalışın.",
+    "source": "f335e06cfdf100b8aa84fad0af614d70b994e00a3da7161b7a02ad33c7f474d9"
+  },
+  "error_f366bfb3ef0254e3": {
+    "text": "Lütfen epoch verilerini yenilemek için bir an bekleyin.",
+    "source": "f366bfb3ef0254e3fec24e11f534dc3abd7718d35d6ae6e9d8e1ef122b43b412"
+  },
+  "error_f3c4f3dc71d37c19": {
+    "text": "Sürücünün durduğunu doğrulayamadım.Retry Stop.",
+    "source": "f3c4f3dc71d37c195e99e4fecbf533172f409b3877d5886a089770b0c4e0ede8"
+  },
+  "error_f3d68d26d386e8bc": {
+    "text": "partnerName ilk kez demo modu değiştirildiğinde gereklidir.",
+    "source": "f3d68d26d386e8bc073e0d3c1f6f29dd543d7a7a2494550b7515c733f6f4b200"
+  },
+  "error_f3da6b24873250c9": {
+    "text": "Rapor bulunamadı",
+    "source": "f3da6b24873250c959ced55e307eb5a181d8d1124d928e7701a2f750e5d19a0d"
+  },
+  "error_f425e745e3d57a63": {
+    "text": "Bilinmeyen veya tükenmiş bağlantı.",
+    "source": "f425e745e3d57a6303f0abead2af9edfd563af4354c097780d381fe824ff342b"
+  },
+  "error_f43aecdf5531d590": {
+    "text": "Atölye temalarını yüklemeyi başaramadı",
+    "source": "f43aecdf5531d590ce9fa8b062b4224f4b12e6ec305bd666efb4e9fac8312501"
+  },
+  "error_f515307fa34dcec8": {
+    "text": "Bu kullanıcı adı Homeroom botuna eklenemez.",
+    "source": "f515307fa34dcec81fee3cfa44c86685170311683d44929fb82c17278fff26b2"
+  },
+  "error_f5419515bdd58384": {
+    "text": "Bilinmeyen veya zaten kullanılan ekran görüntüsü",
+    "source": "f5419515bdd583843c5b0b367e37e4a8de59f2716f4d911d7cdf57ae4973678a"
+  },
+  "error_f6058d37a324835f": {
+    "text": "Invalid raporu nedeni",
+    "source": "f6058d37a324835f86bb3885bb2e7574bbe5fef47e967aaaca1ec04761cd9482"
+  },
+  "error_f6744745b01beb72": {
+    "text": "E-posta hesabını yükleyemezsiniz.",
+    "source": "f6744745b01beb729d1074e6583cae8d9a90df8875213302020a5c31b931685a"
+  },
+  "error_f6d312c0e5d20594": {
+    "text": "Açıklama kaydedilemez. tasarımınız korunmuştur.",
+    "source": "f6d312c0e5d20594ee500b7c1b7961ba20e1980bbbd18bb9feba649f38e08b29"
+  },
+  "error_f74d744451ed1350": {
+    "text": "Sunucu Hatası",
+    "source": "f74d744451ed13502cccccac6c65505d59099b6621cc4debe58575e9442d66e6"
+  },
+  "error_f75cff84836c6cb8": {
+    "text": "Başlangıç işareti nereden geldiğini söyleyin.",
+    "source": "f75cff84836c6cb896d8b7fccc15ca9f59b49a87d560ea925aa4e9c1d480b4e5"
+  },
+  "error_f7c2d447fe33b9c1": {
+    "text": "DailyCapCents olumlu bir bütün (cents) olmalıdır.",
+    "source": "f7c2d447fe33b9c1848f0cb354de8d01439af7ebb3e55dbb95a79b251f0c8a19"
+  },
+  "error_f83669788618cdd8": {
+    "text": "Global Chat ayarlarını kaydetmeyi başaramadım.",
+    "source": "f83669788618cdd803e5c220598b0fc83ccbe886a20226f637518221608d538b"
+  },
+  "error_f8ae1cfac47c3fe6": {
+    "text": "Yeni bir Global Chat thread başlatmayı başaramadım.",
+    "source": "f8ae1cfac47c3fe679a91f154d570549235d3e497aacbeb6c49c0e914b223df6"
+  },
+  "error_f93af56d67c13d31": {
+    "text": "Başlık gerektirir ve ≤ {{value1}} şarj olmalıdır",
+    "source": "f93af56d67c13d31e87687400ad1f08ad463da2ed20620cecd06df86d232c437"
+  },
+  "error_f9cbf4043ab5c83f": {
+    "text": "Bu adı taşıyan bir uygulama zaten var.",
+    "source": "f9cbf4043ab5c83f91903e3683fddcabcb5deb940d6e67559bdcb82e21f75864"
+  },
+  "error_f9d4d6ebc3875b65": {
+    "text": "Sorun şu anda doğrulanamaz: GitHub bu uygulama için kullanılamaz.",
+    "source": "f9d4d6ebc3875b650bf30908d802b0149a8ebcbea522d2f950a9a813fd5375c0"
+  },
+  "error_fa6ba4b3e6203803": {
+    "text": "Engelli Sorun Numarası",
+    "source": "fa6ba4b3e62038030c12800805cb86867c2fe82a2a4eb6a63f4e77d8307ea242"
+  },
+  "error_fb4490c1629c9f19": {
+    "text": "App zaten bu onay ayarlarına sahiptir.",
+    "source": "fb4490c1629c9f19649c8c6f9d100b9dd56b82b40c4e45555791990e96018225"
+  },
+  "error_fb7cc2c7b14e198a": {
+    "text": "Öneriler pozitif bir bütün olmalı",
+    "source": "fb7cc2c7b14e198af869ba9ea65619b5b872219311a220b243f7e1e64ebf93d7"
+  },
+  "error_fc6a5f0eaa1426c5": {
+    "text": "raporu kilitlemeyi başaramadı",
+    "source": "fc6a5f0eaa1426c57b06fa0c3044027748c40a93e3533e0b2517bd7d5756d471"
+  },
+  "error_fc8f3545b1b734db": {
+    "text": "Demo modunda ortak yoktur. bir ortakla değiştirinİlk olarak adı.",
+    "source": "fc8f3545b1b734dbea274b3ca01f32176d846446f085620cad947c50c6bb0a60"
+  },
+  "error_fcc9c18d5edd82e8": {
+    "text": "Bu önerinin çekme isteği (#{{value1}}) GitHub'da kapatıldı ve yeniden açılamazdı.",
+    "source": "fcc9c18d5edd82e803b61872979f38525ac51c97f93871a122beaad9118cffc6"
+  },
+  "error_fd4b841588203fb4": {
+    "text": "Global Chat ayarlarını kontrol edemedi.",
+    "source": "fd4b841588203fb48a0210fba62edd57214c9d56998d66d1f1e28ece955d5c90"
+  },
+  "error_fd77fd28f7dbd0a9": {
+    "text": "Bir önerinin güncellenmesi bir staging preview'de engellenir.",
+    "source": "fd77fd28f7dbd0a926d26fbcddf56126b8db8af0afe879cf85da43afe7c5d133"
+  },
+  "error_fe26a9b5f7e36e63": {
+    "text": "Reload Homeroom bu cihazda doğrudan depolama verilerini yüklemek için.",
+    "source": "fe26a9b5f7e36e635f8547ebc6806d7d89bbccc013238fa3c7ea4a7dcfd6bde9"
+  },
+  "error_fea3384c16e4e52d": {
+    "text": "local bir BCP-47 dil etiketine sahip olmalıdır (örneğin “id”, “pt-BR”)",
+    "source": "fea3384c16e4e52dc0d90d308129b90b0029c307fdb7301910758f6aaf820fda"
+  },
+  "error_ff5e0e8540475740": {
+    "text": "Engelli Asyalı",
+    "source": "ff5e0e85404757408d5c14ad2d9702214685061cf1ea15c104f3f21a6ead912c"
+  }
+}
