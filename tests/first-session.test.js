@@ -242,19 +242,28 @@ test('"You\'re in" reads where the first version stands, and hands it to the tou
 });
 
 test('"You\'re in" fills its middle with the project, as its invite showed it', () => {
-  const { JoinedPicture, joinPicture, sketchSrc } = loadTsx(`${DIR}/joined-picture.tsx`);
+  const { JoinedPicture, joinPicture } = loadTsx(`${DIR}/joined-picture.tsx`);
   const { createElement } = require('./lib/render-tsx');
   const { renderToHtml } = require('./lib/render-tsx');
   const draw = (props) => renderToHtml(createElement(JoinedPicture, { slug: 'page-turners', name: 'Page Turners', tile: '📚', ...props }));
-  // A sketch is framed from the project's own route, which serves a member,
-  // whatever address the link's page used: a link this join used up stops
-  // serving its picture.
-  const sketch = draw({ picture: joinPicture({ kind: 'sketch', url: '/api/public/invites/abc/sketch.html', darkUrl: null }) });
+  // A project still without a picture of its own shows the featured card of
+  // its idea (./sketch-card.tsx), drawn from its words: nothing is fetched,
+  // so a link this join used up does not matter. "Being made" while its
+  // first version is on its way; compact (no points) for a new account.
+  const CARD = { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] };
+  const picture = joinPicture({ kind: 'sketch', url: null, darkUrl: null, card: CARD });
+  assert.deepEqual(picture, { kind: 'sketch', card: CARD });
+  const sketch = draw({ picture, building: true });
   assert.match(sketch, /data-first-session-picture="sketch"/);
-  assert.match(sketch, /<iframe title="A sketch of Page Turners" src="\/api\/apps\/page-turners\/sketch\.html\?theme=light" sandbox="" referrerPolicy="no-referrer"/);
-  assert.match(sketch, />Sketch<\/span>/);
-  assert.match(sketch, /min-h-\[200px\] max-h-\[440px\] flex-\[999_1_0%\]/, 'it takes the middle, up to a phone sketch\'s height');
-  assert.equal(sketchSrc('a b', true), '/api/apps/a%20b/sketch.html?theme=dark');
+  assert.match(sketch, /data-featured-card="ready"/);
+  assert.match(sketch, />Our little book club<\/p>/);
+  assert.match(sketch, />Pick the next book<\/span>/);
+  assert.match(sketch, />Being made<\/span>/);
+  assert.doesNotMatch(sketch, /<iframe|sketch\.html/);
+  const compact = draw({ picture, building: false, compact: true });
+  assert.match(compact, /h-\[88px\][\s\S]*h-\[84px\]/, 'the art and the tagline, 172px');
+  assert.doesNotMatch(compact, /Pick the next book|data-featured-card-stage|repeating-linear-gradient/, 'no points, and no pill once it is not being made');
+  assert.equal(joinPicture({ kind: 'sketch', card: null }), null, 'a sketch without a card is nothing');
   // The Discover card's image, light and dark.
   const art = draw({ picture: joinPicture({ kind: 'illustration', url: '/app-illustrations/1', darkUrl: '/app-illustrations/2' }) });
   assert.match(art, /<img src="\/app-illustrations\/1" alt="Page Turners"[^>]*dark:hidden/);
@@ -265,19 +274,20 @@ test('"You\'re in" fills its middle with the project, as its invite showed it', 
   assert.match(line, />A book club that meets monthly<\/p>/);
   assert.equal(draw({ picture: null, description: null }), '', 'nothing at all leaves the space as it was');
   // Only same-origin paths of a kind it knows.
-  assert.equal(joinPicture({ kind: 'sketch', url: 'https://evil.test/x' }), null);
+  assert.equal(joinPicture({ kind: 'shot', url: 'https://evil.test/x' }), null);
+  assert.equal(joinPicture({ kind: 'sketch', url: '/api/apps/x/sketch.html' }), null, 'a framed page is no longer drawn');
   assert.equal(joinPicture({ kind: 'video', url: '/x' }), null);
   assert.equal(joinPicture(null), null);
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /<JoinedPicture slug=\{info\.slug\} name=\{info\.name\} picture=\{joinPicture\(info\.picture\)\} description=\{info\.description\} tile=\{tile\} \/>\s+<div className="grow" \/>/);
+  assert.match(src, /<JoinedPicture slug=\{info\.slug\} name=\{info\.name\} picture=\{joinPicture\(info\.picture\)\} description=\{info\.description\} tile=\{tile\} building=\{!!info\.building\} compact=\{!existing\} \/>\s+<div className="grow" \/>/);
   // Both ways in hand it over: the link's standing, and an accepted invite.
   const app = read('public/js/app.js');
   assert.match(app, /description: project\.description \|\| null,\s+picture: project\.picture \|\| null,/);
   const collab = read('src/services/collab-invites.js');
   assert.match(collab, /picture: communityInvites\.memberPicture\(row\.slug, picture\),/);
   const invites = require('../src/services/community-invites');
-  assert.deepEqual(invites.memberPicture('page-turners', { kind: 'sketch' }),
-    { kind: 'sketch', url: '/api/apps/page-turners/sketch.html', darkUrl: null });
+  assert.deepEqual(invites.memberPicture('page-turners', { kind: 'sketch', card: CARD }),
+    { kind: 'sketch', url: null, darkUrl: null, card: CARD });
   assert.deepEqual(invites.memberPicture('x', { kind: 'illustration', id: 'a', darkId: null }),
     { kind: 'illustration', url: '/app-illustrations/a', darkUrl: null });
   assert.equal(invites.memberPicture('x', { kind: 'shot', artifactId: 'z' }), null, 'a shot is served only through a live link');
@@ -417,17 +427,19 @@ test('"You\'re in", drawn: the project under the welcome, and "is making" while 
     const { renderToHtml, createElement } = require('./lib/render-tsx');
     const info = {
       slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', inviterName: 'Alex', inviterMadeIt: true,
-      building: true, picture: { kind: 'sketch', url: '/api/public/invites/t/sketch.html' },
+      building: true, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] } },
     };
     const existing = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: false }, onGo() {} }));
     assert.match(existing, />Alex is making it for the group\. Have a look, then say hi\.</);
     // The sketch sits between the welcome and the button, and the spacer after it.
     const sketch = existing.indexOf('data-first-session-picture="sketch"');
     assert.ok(sketch > existing.indexOf('Have a look, then say hi.') && sketch < existing.indexOf('Go to Page Turners'));
-    assert.match(existing, /src="\/api\/apps\/page-turners\/sketch\.html\?theme=light"/);
+    assert.match(existing, /data-featured-card="ready"/);
+    assert.match(existing, />Pick the next book<\/span>/, 'the whole card, with room for it');
     const fresh = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: true }, onGo() {} }));
     assert.match(fresh, />Someone makes an app for their group\. Alex is making this one\.</);
     assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('How it works'));
+    assert.doesNotMatch(fresh, /Pick the next book/, 'compact under "How it works": the art and the tagline');
     const made = renderToHtml(createElement(YoureIn, { info: { ...info, building: false, picture: null, description: 'A book club' }, onGo() {} }));
     assert.match(made, />Alex made it for the group\./);
     assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);

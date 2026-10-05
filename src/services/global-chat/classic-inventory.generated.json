@@ -2714,21 +2714,6 @@
     {
       "source": "src/routes/apps.js",
       "method": "GET",
-      "path": "/api/apps/:slug/sketch.html",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.get.apps.item.sketch.html.5f5e2e3e",
-      "domain": "apps",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/app"
-    },
-    {
-      "source": "src/routes/apps.js",
-      "method": "GET",
       "path": "/api/apps/:slug/secrets",
       "expression": null,
       "status": "mapped",
@@ -4304,14 +4289,6 @@
       "source": "src/routes/community-invites.js",
       "method": "GET",
       "path": "/api/public/invites/:token/picture",
-      "expression": null,
-      "status": "exempt",
-      "reason": "anonymous public API rather than signed-in Classic"
-    },
-    {
-      "source": "src/routes/community-invites.js",
-      "method": "GET",
-      "path": "/api/public/invites/:token/sketch.html",
       "expression": null,
       "status": "exempt",
       "reason": "anonymous public API rather than signed-in Classic"

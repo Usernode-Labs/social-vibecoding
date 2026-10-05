@@ -6,11 +6,15 @@
  * The picture is the one the invite page showed (features/auth/invite-card.tsx,
  * services/community-invites.js pictureFor), handed over by whichever way in
  * they came: the link's standing (App._followInvite) or an accepted invite's
- * welcome (collab-invites.js welcomeFor, at member addresses). A sketch is
- * framed from the project's own route, which serves a member, so it does not
- * depend on the link still being live once this join has spent it; the
- * Discover card's image is anyone's; an after-shot comes only through a live
- * link, and one that does not load falls back to the next thing.
+ * welcome (collab-invites.js welcomeFor, at member addresses). A project
+ * still without a picture of its own shows the featured card of its idea
+ * (./sketch-card.tsx), drawn here from its words, so it does not depend on
+ * the link still being live once this join has spent it: "Being made" while
+ * its first version is on its way, no pill once it is not, and `compact`
+ * (the art and the tagline) for a new account, whose welcome leaves about
+ * 200px. The Discover card's image is anyone's; an after-shot comes only
+ * through a live link, and one that does not load falls back to the next
+ * thing.
  *
  * Without a picture it is the project's tile, name and one line, the invite
  * page's own fallback; without even a line, nothing, and the space stays.
@@ -20,20 +24,23 @@
 
 import { useState } from 'react';
 
-export type JoinPicture = { kind: 'shot' | 'illustration' | 'sketch'; url: string; darkUrl?: string | null };
+import { FeaturedCard, type FeaturedCardData, sketchCardOf } from './sketch-card';
+
+export type JoinPicture =
+  | { kind: 'shot' | 'illustration'; url: string; darkUrl?: string | null }
+  | { kind: 'sketch'; card: FeaturedCardData };
 
 /** A picture this screen can draw, or null. */
 export function joinPicture(picture: unknown): JoinPicture | null {
   if (!picture || typeof picture !== 'object') return null;
   const { kind, url, darkUrl } = picture as Record<string, unknown>;
-  if (kind !== 'shot' && kind !== 'illustration' && kind !== 'sketch') return null;
+  if (kind === 'sketch') {
+    const card = sketchCardOf(picture);
+    return card ? { kind, card } : null;
+  }
+  if (kind !== 'shot' && kind !== 'illustration') return null;
   if (typeof url !== 'string' || !url.startsWith('/')) return null;
   return { kind, url, darkUrl: typeof darkUrl === 'string' && darkUrl.startsWith('/') ? darkUrl : null };
-}
-
-/** The sketch's page, from the project's own route, in this screen's look. */
-export function sketchSrc(slug: string, dark: boolean): string {
-  return `/api/apps/${encodeURIComponent(slug)}/sketch.html?theme=${dark ? 'dark' : 'light'}`;
 }
 
 // Takes the space between the welcome and the button (all but a sliver of
@@ -45,28 +52,23 @@ export function sketchSrc(slug: string, dark: boolean): string {
 // phone.
 const FRAME = 'relative mt-6 flex min-h-[200px] max-h-[440px] flex-[999_1_0%] flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 
-export function JoinedPicture({ slug, name, picture, description, tile }: {
+export function JoinedPicture({ slug, name, picture, description, tile, building = false, compact = false }: {
   slug: string;
   name: string;
   picture: JoinPicture | null;
   description?: string | null;
   /** The project's tile, as the pill above draws it. */
   tile: React.ReactNode;
+  /** Its first version is still on its way (community-invites.js firstVersionPending). */
+  building?: boolean;
+  /** Little room: the card of the idea without its points. */
+  compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   if (picture && picture.kind === 'sketch') {
-    // Read once: the page is static, and this screen does not stay up long.
-    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
     return (
-      <div data-first-session-picture="sketch" className={FRAME}>
-        <iframe
-          title={`A sketch of ${name}`}
-          src={sketchSrc(slug, dark)}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="min-h-0 w-full flex-1 border-0"
-        />
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+      <div data-first-session-picture="sketch" className="mt-6">
+        <FeaturedCard name={name} colorKey={slug} emoji={picture.card.emoji} card={picture.card} stage={building ? 'making' : 'plain'} compact={compact} />
       </div>
     );
   }

@@ -442,7 +442,7 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
           </ol>
         </div>
       )}
-      <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} />
+      <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} building={!!info.building} compact={!existing} />
       <div className="grow" />
       <Button
         ref={go}

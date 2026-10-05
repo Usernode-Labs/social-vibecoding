@@ -396,11 +396,10 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example');
   assert.match(shot, /twitter:card" content="summary_large_image"/);
   assert.match(shot, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/t\/picture"/);
-  // WP-D: a sketch is a page, not an image: the preview keeps the icon.
-  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: '/api/public/invites/t/sketch.html' } } }, 'https://h.example');
+  // WP-D: the card of the idea is words, not an image: the preview keeps the icon.
+  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '🏃', tagline: 'Miles', points: [] } } } }, 'https://h.example');
   assert.match(sketched, /og:image" content="https:\/\/h\.example\/app-icons\/abc"/);
   assert.match(sketched, /twitter:card" content="summary"/);
-  assert.doesNotMatch(sketched, /sketch\.html/);
   // The note is escaped like everything else.
   assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
   // While its first version is on its way: "is making", as the page says.
@@ -418,14 +417,17 @@ test('the picture is served only through a live link, and only an after-shot of 
   const route = read('src/routes/community-invites.js');
   assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
   assert.match(route, /'X-Content-Type-Options': 'nosniff',/);
-  // WP-D: the sketch a project still being built shows, through a live link,
-  // sandboxed like the project's own sketch page.
-  assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/sketch\.html', invitePreviewLimiter,/);
-  assert.match(route, /'Content-Security-Policy': require\('\.\.\/services\/app-sketch'\)\.SKETCH_CSP,/);
-  assert.match(src, /async function sketchPage\(pool, token, \{ theme = null \} = \{\}\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  // WP-D: while a project is built, the card of the idea its maker was shown
+  // (services/app-sketch.js), as words in the preview the page draws itself.
+  // 5 October 2026: it was a framed page of a screen mock; no page is served.
+  assert.doesNotMatch(route, /sketch\.html/);
+  assert.match(src, /const card = sketch\[0\] \? require\('\.\/app-sketch'\)\.cardOf\(sketch\[0\]\.design\) : null;/);
+  assert.match(src, /if \(picture\.kind === 'sketch'\) return \{ kind: 'sketch', url: null, darkUrl: null, card: picture\.card \};/);
   const card = read('frontend/src/features/auth/invite-card.tsx');
-  assert.match(card, /<iframe\s+title=\{`A sketch of \$\{project\.name\}`\}\s+src=\{`\$\{picture\.url\}\?theme=/);
-  assert.match(card, /sandbox=""/);
+  assert.doesNotMatch(card, /<iframe/);
+  // "Being made" while its first version is on its way (`building`), no pill otherwise.
+  assert.match(card, /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} stage=\{building \? 'making' : 'plain'\} \/>/);
+  assert.match(card, /<Picture project=\{project\} building=\{!!preview\.building\} \/>/);
 });
 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {

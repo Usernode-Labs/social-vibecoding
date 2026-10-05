@@ -477,6 +477,9 @@ async function memberCount(db, communityId) {
  *                   while the link is live.
  *   'illustration'  the Discover card's image, which its group chose to show
  *                   (and is already served to anyone by its id).
+ *   'sketch'        WP-D: while it is built, the featured card its maker was
+ *                   shown (services/app-sketch.js): its emoji, tagline and
+ *                   points, which the page draws itself.
  *
  * A project with neither shows its icon and description instead.
  */
@@ -501,30 +504,15 @@ async function pictureFor(db, appId) {
     [appId]
   );
   if (ill[0]) return { kind: 'illustration', id: ill[0].id, darkId: ill[0].dark_id || null };
-  // WP-D: a project still being built has no shot yet; the sketch its maker
+  // WP-D: a project still being built has no shot yet; the card its maker
   // was shown (services/app-sketch.js) stands in for it.
   const { rows: sketch } = await db.query(
-    `SELECT 1 FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+    `SELECT design FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
     [appId]
   );
-  if (sketch[0]) return { kind: 'sketch' };
+  const card = sketch[0] ? require('./app-sketch').cardOf(sketch[0].design) : null;
+  if (card) return { kind: 'sketch', card };
   return null;
-}
-
-/**
- * WP-D: the sketch page a live link's picture frames, as the project's own
- * sketch route serves it, or null: the link must be live and its project's
- * picture must be the sketch.
- */
-async function sketchPage(pool, token, { theme = null } = {}) {
-  const invite = await loadInvite(pool, token);
-  if (deadReason(invite)) return null;
-  const picture = await pictureFor(pool, invite.app_id);
-  if (!picture || picture.kind !== 'sketch') return null;
-  const appSketch = require('./app-sketch');
-  const row = await appSketch.readSketch(pool, invite.app_id);
-  if (appSketch.sketchStatus(row) !== 'ready') return null;
-  return appSketch.sketchDocument({ name: invite.name || invite.slug, design: row.design, html: row.html, theme });
 }
 
 /**
@@ -547,7 +535,7 @@ async function pictureBytes(pool, token) {
 function pictureUrls(token, picture) {
   if (!picture) return null;
   if (picture.kind === 'shot') return { kind: 'shot', url: `/api/public/invites/${token}/picture`, darkUrl: null };
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: `/api/public/invites/${token}/sketch.html`, darkUrl: null };
+  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
   return {
     kind: 'illustration',
     url: `/app-illustrations/${picture.id}`,
@@ -588,16 +576,14 @@ async function firstVersionPending(db, appId) {
 
 /**
  * The same picture for somebody who has just joined, at addresses that need
- * no link ("You're in", frontend/src/features/first-session): the project's
- * own sketch route, which serves a member, and the Discover card's image,
+ * no link ("You're in", frontend/src/features/first-session): the card of
+ * the idea, as words the screen draws itself, and the Discover card's image,
  * which anyone may see. An after-shot is served only through a live link,
  * so a member is shown none here. Null for no picture.
  */
 function memberPicture(slug, picture) {
   if (!picture || !slug) return null;
-  if (picture.kind === 'sketch') {
-    return { kind: 'sketch', url: `/api/apps/${encodeURIComponent(slug)}/sketch.html`, darkUrl: null };
-  }
+  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
   if (picture.kind === 'illustration') {
     return {
       kind: 'illustration',
@@ -948,7 +934,6 @@ module.exports = {
   pictureFor,
   memberPicture,
   firstVersionPending,
-  sketchPage,
   joiningRule,
   joiningRuleText,
   NO_LIMIT,
