@@ -51,6 +51,7 @@ import {
   hiddenLast,
   isNative,
   legacy,
+  noteSignInBegun,
   type PublicApp,
   useAuthScreensPatch,
   zoomFx,
@@ -647,6 +648,9 @@ export function LandingScreen() {
   useEffect(() => {
     const result = takeProviderResult();
     if (!result) return;
+    // The result is read once, so a reload now would lose where this
+    // sign-in had got to.
+    noteSignInBegun();
     setResume(result);
     setSheet(inviteTokenFrom(location.pathname) ? 'join' : 'start');
   }, []);
