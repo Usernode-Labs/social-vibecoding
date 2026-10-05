@@ -304,7 +304,26 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
   return {
     sessions: page,
     nextBefore: rows.length > bounded ? page[page.length - 1].lastActivityAt : null,
+    started: page.length > 0 || await hasStartedAgentSession(pool, userId),
   };
+}
+
+/**
+ * Whether `userId` has ever had an agent session, archived ones included:
+ * whether they have built something themselves with a coding agent. The
+ * Homeroom menu's Agent chats section (Build it yourself and their
+ * sessions) is shown only then, so a first-time user's menu stays short
+ * (first-session run-through, 5 Oct 2026; ../../frontend/src/features/
+ * app-context/app-context-sheet.tsx). A list page with a session in it
+ * already says so; this one indexed read is for an empty page, which is
+ * a newcomer, or somebody whose sessions are all archived.
+ */
+async function hasStartedAgentSession(pool, userId) {
+  const { rows } = await pool.query(
+    'SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE user_id = $1) AS started',
+    [userId]
+  );
+  return !!(rows[0] && rows[0].started);
 }
 
 async function getAgentSession(pool, { userId, id }) {
@@ -1175,6 +1194,7 @@ module.exports = {
   setAgentChoice,
   getAgentChoice,
   listAgentSessions,
+  hasStartedAgentSession,
   getAgentSession,
   renameAgentSession,
   lookupRequestTitle,

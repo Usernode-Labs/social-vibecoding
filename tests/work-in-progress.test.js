@@ -155,22 +155,30 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
   assert.match(sheet, /setMessagesFilter\('agents'\);\s*followThenDismiss\(e, '#messages'\);/, 'and "Show more"');
 });
 
-test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sessions after mount only, with "Show more" when there are more', () => {
+test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
     'never in the prerender (the hydrating render matches it), and not keyed on the app');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
-  const at = (id) => sheet.indexOf(`id="${id}"`);
-  assert.ok(at('app-menu-row-workshop') < at('app-menu-row-about')
-    && at('app-menu-row-about') < at('app-menu-sessions')
-    && at('app-menu-sessions') < at('improve-row-new-session')
-    && at('improve-row-new-session') < at('app-menu-continue'),
-    'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
-  // A plain word since the first-session run-through (4 Oct 2026): it was
-  // "Continue", then "Agent sessions", a term a newcomer does not have.
-  assert.match(sheet, /<div className=\{SECTION\}>More<\/div>/, 'it was "Continue", then "Agent sessions"');
-  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/);
+  // The section, after mount too, and only for somebody who has had an agent
+  // session (first-session run-through, 5 Oct 2026; tests/agent-chats-menu.test.js).
+  assert.match(sheet, /const showAgentChats = mounted && agentChats;/);
+  const menu = sheet.slice(sheet.indexOf('export function AppsSwitcherSheet('));
+  const at = (needle) => menu.indexOf(needle);
+  assert.ok(at('id="app-menu-row-workshop"') < at('id="app-menu-row-about"')
+    && at('id="app-menu-row-about"') < at('{showAgentChats ? <AgentChats readOnly={!!readOnly} continuing={continuing} /> : null}'),
+    'Go to community and About are the app\'s section; Agent chats follow');
+  const section = sheet.slice(sheet.indexOf('export function AgentChats('), sheet.indexOf('export function AppsSwitcherSheet('));
+  const inSection = (id) => section.indexOf(`id="${id}"`);
+  assert.ok(inSection('app-menu-sessions') < inSection('improve-row-new-session')
+    && inSection('improve-row-new-session') < inSection('app-menu-continue'),
+    'led by Build it yourself, then the sessions');
+  // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
+  // sessions", then "More", a plain word for a newcomer, who no longer sees
+  // the section at all.
+  assert.match(section, /<div className=\{SECTION\}>Agent chats<\/div>/, 'it was "Continue", then "Agent sessions", then "More"');
+  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>(?:More|Agent sessions)<\/div>/);
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);

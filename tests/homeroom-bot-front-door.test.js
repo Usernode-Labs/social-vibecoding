@@ -33,7 +33,11 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
   assert.match(row, /title="Build it yourself"\s+sub="With a coding agent, then ask for approval"/);
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Tell Homeroom bot what should change\. It builds it for you, or passes it to the group as a request\. To build it yourself with a coding agent, tap Build it yourself\.'/);
+  // The tour no longer sends a newcomer to the menu's Build it yourself: that
+  // row shows only once they have had an agent session (first-session
+  // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
+  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Tell Homeroom bot what should change\. It builds it for you, or passes it to the group as a request\.',/);
+  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
   assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /openLabel=\{botChat \? 'Open chat' : 'Open project'\}/);
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /openBot: \(reference\?: StagedObject \| null\) => \{ void openBot\(reference\); \},/);

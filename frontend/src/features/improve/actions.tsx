@@ -63,7 +63,10 @@ function QuickAction({ id, label, onClick }: {
  * and differed in who does the work. So the button asks for the change (the
  * same dialog, headed "Suggest an improvement", which posts a request members
  * can see, vote on and pick up), and building it yourself is "Build it
- * yourself", a row of the list below (../app-context/app-context-sheet.tsx).
+ * yourself", leading the list's Agent chats below, which shows once the
+ * viewer has had an agent session (../app-context/app-context-sheet.tsx
+ * AgentChats). Until then this button is the menu's one way to change the
+ * app, which is the point for a first-time user.
  *
  * It said "Ask for a change" until the first-session run-through (5 Oct
  * 2026), which asked for words a first-time user would use.

@@ -762,8 +762,17 @@ const ADDED_IDS = {
   // it is. `Improve.setVersionState` and the store field stay; the second
   // renderer is what went. It never reached tests/baselines, so it leaves
   // this map without entering RETIRED_IDS.
-  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it is "Start a new change", the first row under Agent sessions in the Homeroom menu (#app-menu-sessions), not a button beside Suggest an improvement.',
-  'app-menu-sessions': 'UI overhaul: the Homeroom menu\'s Agent sessions section (it was "Continue"), rendered on the menu pane whether or not you have sessions, because it leads with "Start a new change" (#improve-row-new-session). Your sessions (#app-menu-continue) arrive after mount, inside it.',
+  // #improve-row-new-session and #app-menu-sessions LEAVE THIS MAP rather
+  // than entering RETIRED_IDS, because the frozen baseline never recorded
+  // either: the UI overhaul added them to the prerender, and the
+  // first-session run-through (5 Oct 2026) took them out of it. They are
+  // the Homeroom menu's Agent chats section (it was "Continue", then "Agent
+  // sessions", then "More") and the Build it yourself row that leads it,
+  // same ids, same call. The section is shown only to somebody who has had
+  // an agent session, which is their own data, known after mount
+  // (app-context-sheet.tsx AgentChats), so the prerender draws nothing
+  // there, as it never drew the sessions inside it. dapp.json's checks
+  // select both in the open menu, as a viewer with sessions.
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.

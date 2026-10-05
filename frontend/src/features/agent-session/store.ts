@@ -160,6 +160,13 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /**
+   * The viewer has had an agent session, archived ones included: they have
+   * built something themselves. The Homeroom menu's Agent chats section is
+   * shown only then (useAgentChatsShown). Set by the list's read and by the
+   * first message of a new one, and never cleared in this document.
+   */
+  sessionsStarted: boolean;
   /** The picker's options, read once per page. */
   catalog: ModelCatalog | null;
   /** A pick on its way to the server. */
@@ -230,6 +237,7 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  sessionsStarted: false,
   catalog: null,
   choosing: false,
   returnedText: null,
@@ -380,6 +388,22 @@ export function useAgentSessionPick<T extends Record<string, unknown>>(select: (
  */
 export function useAgentSessions(): AgentSession[] {
   return useAgentSessionSelector((current) => current.sessions);
+}
+
+/**
+ * Whether the Homeroom menu shows its Agent chats section (Build it yourself
+ * and your sessions): once the viewer has had an agent session, from any
+ * door (the hub's ⋯, a request's Build it yourself, Messages' new chat, the
+ * filed request's link). A first-time user's menu stays short (first-session
+ * run-through, 5 Oct 2026). A listed session counts at once, so the section
+ * is there from the moment the first one is created.
+ */
+export function agentChatsShown(current: Pick<AgentSessionState, 'sessionsStarted' | 'sessions'>): boolean {
+  return current.sessionsStarted || current.sessions.length > 0;
+}
+
+export function useAgentChatsShown(): boolean {
+  return useAgentSessionSelector(agentChatsShown);
 }
 
 export function getAgentSessionState() {
@@ -1074,7 +1098,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   try {
     const session = await api.createSession(draft.hint, draft.agent);
     telemetry?.outcome?.(attemptId, 'success');
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    // `sessionsStarted`: the Homeroom menu's Agent chats is theirs from now.
+    publish((current) => ({
+      sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)],
+      sessionsStarted: true,
+    }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
     if (state.open && state.draft === draft) {
@@ -2188,9 +2216,9 @@ export async function loadAgentSessions() {
   }
   const read = ++listRead;
   try {
-    const sessions = await api.listSessions();
+    const { sessions, started } = await api.listSessions();
     if (read !== listRead) return;
-    publish({ sessions, sessionsLoaded: true });
+    publish((current) => ({ sessions, sessionsLoaded: true, sessionsStarted: current.sessionsStarted || started }));
   } catch {
     if (read !== listRead) return;
     publish({ sessionsLoaded: true });

@@ -140,10 +140,10 @@ import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
-import { continueRows, type ContinueRow } from './continue-model';
+import { continueRows, type ContinueList, type ContinueRow } from './continue-model';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { archiveListedSession, loadAgentSessions, useAgentSessions } from '../agent-session/store';
+import { archiveListedSession, loadAgentSessions, useAgentChatsShown, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
 
@@ -294,7 +294,7 @@ function MenuRow({
 }
 
 /**
- * One of your agent sessions under Agent sessions: a MenuRow that, on a
+ * One of your agent sessions under Agent chats: a MenuRow that, on a
  * phone, a left swipe archives (#3515).
  *
  * ARCHIVE, NOT DELETE. The request asked to delete, and nothing deletes an
@@ -381,6 +381,95 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
   );
 }
 
+/**
+ * AGENT CHATS (it was "Continue", #2779 follow-up, then "Agent sessions",
+ * then "More"), BELOW the app's own rows: Build it yourself and your agent
+ * sessions, on every app, under their own heading. See the comment on
+ * `continuing` in the sheet below for the sessions' rules.
+ *
+ * ONLY FOR SOMEBODY WHO HAS BUILT SOMETHING THEMSELVES (first-session
+ * run-through, 5 Oct 2026). For a first-time user the menu is the app's own
+ * rows and Suggest an improvement, above, which is the front door: the
+ * whole section shows only once they have had an agent session, started
+ * from any of the other doors (the hub's ⋯, a request's Build it yourself,
+ * Messages' new chat, the filed request's link). The sheet asks the store
+ * (useAgentChatsShown): a session, archived ones included, which the list's
+ * read reports, and which the first message of a new one sets, so the
+ * section is here from the moment the first one exists, with no reload. The
+ * heading went back to "Agent chats" with it: "More" was a plain word for a
+ * newcomer, who no longer sees it.
+ *
+ * NOT IN THE PRERENDER, then: whether the viewer has one is their own data,
+ * known after mount, so the prerender and the hydrating render both draw
+ * nothing here. #app-menu-sessions and #improve-row-new-session left the
+ * shell's static ids for that reason (tests/shell-id-inventory.test.js).
+ *
+ * IT LEADS WITH "BUILD IT YOURSELF", which was the "New change" button
+ * beside Give feedback. People read that button as a way to ask for
+ * something, and it opened an agent session without saying so; under this
+ * heading it says what it opens. Same id and same call as the button
+ * (Improve.startSession()), and hidden, as the button was, for a viewer who
+ * may not write, who sees their sessions alone.
+ */
+export function AgentChats({ readOnly, continuing }: {
+  readOnly: boolean;
+  continuing: ContinueList;
+}): ReactNode {
+  return (
+    <div id="app-menu-sessions">
+      <div className={SECTION}>Agent chats</div>
+      {readOnly ? null : (
+        <button
+          id="improve-row-new-session"
+          type="button"
+          className={`${ROW} w-full text-left`}
+          onClick={() => Improve.startSession()}
+        >
+          {/* B8: Suggest an improvement (above) goes to Homeroom bot; this
+              is building it yourself, with a coding agent. */}
+          <RowBody
+            icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
+            label="Build it yourself"
+          />
+        </button>
+      )}
+      {continuing.rows.length ? (
+        <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
+          {/* A left swipe archives one, on a phone (#3515): see
+              SessionRow. */}
+          {continuing.rows.map((row, index) => (
+            <SessionRow key={row.key} row={row} index={index} />
+          ))}
+          {/*
+              SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).
+              Drawn as one more row (icon, label, chevron at the edge) it
+              read as a sixth session. It is small accent text instead,
+              set in line with the session titles above so it reads as
+              the list's own tail, with a small chevron because it leaves
+              the menu for Messages' Agents list. Still an anchor, so
+              it is in the Tab order and "open in new tab" works; the
+              tap target stays 44px tall though the text is small.
+          */}
+          {continuing.more ? (
+            <a
+              id="app-menu-continue-all"
+              href="#messages"
+              className={CONTINUE_ALL}
+              onClick={(e) => {
+                setMessagesFilter('agents');
+                followThenDismiss(e, '#messages');
+              }}
+            >
+              Show more
+              <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
 export function AppsSwitcherSheet(): ReactNode {
   const { open, adopted, view } = useStoreState(appContextStore);
@@ -393,6 +482,8 @@ export function AppsSwitcherSheet(): ReactNode {
     slug, name, showTerminal, restricted, canReport, readOnly,
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
+  // Whether the viewer has built something themselves: see AgentChats.
+  const agentChats = useAgentChatsShown();
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
@@ -457,6 +548,9 @@ export function AppsSwitcherSheet(): ReactNode {
   const continuing = mounted && view === 'menu'
     ? continueRows(agentSessions || [])
     : { rows: [], more: false };
+  // The section itself, after mount too, and only once the viewer has had
+  // an agent session (AgentChats).
+  const showAgentChats = mounted && agentChats;
 
 
   // Every way into an app funnels through improveStore.slug, so recording
@@ -826,75 +920,9 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
-          {/*
-              MORE (it was "Continue", #2779 follow-up, then "Agent
-              sessions"), BELOW the app's own rows: your agent sessions, on
-              every app, under their own heading. See the comment on
-              `continuing` above. The heading is a plain word since the
-              first-session run-through (4 Oct 2026): Suggest an improvement, above,
-              is the front door, and "agent sessions" is a term a newcomer
-              does not have. The rows say what each one is.
-
-              IT LEADS WITH "START A NEW CHANGE", which was the "New change"
-              button beside Give feedback. People read that button as a way to
-              ask for something, and it opened an agent session without
-              saying so; under this heading it says what it opens. Same id and
-              same call as the button (Improve.startSession()), and hidden,
-              as the button was, for a viewer who may not write. The section
-              and the row are in the prerender, so it is here before your
-              sessions have loaded; the sessions arrive after mount.
-          */}
-          <div id="app-menu-sessions">
-            <div className={SECTION}>More</div>
-            {readOnly ? null : (
-              <button
-                id="improve-row-new-session"
-                type="button"
-                className={`${ROW} w-full text-left`}
-                onClick={() => Improve.startSession()}
-              >
-                {/* B8: Suggest an improvement (above) goes to Homeroom bot; this
-                    is building it yourself, with a coding agent. */}
-                <RowBody
-                  icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-                  label="Build it yourself"
-                />
-              </button>
-            )}
-            {continuing.rows.length ? (
-              <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
-                {/* A left swipe archives one, on a phone (#3515): see
-                    SessionRow. */}
-                {continuing.rows.map((row, index) => (
-                  <SessionRow key={row.key} row={row} index={index} />
-                ))}
-                {/*
-                    SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).
-                    Drawn as one more row (icon, label, chevron at the edge) it
-                    read as a sixth session. It is small accent text instead,
-                    set in line with the session titles above so it reads as
-                    the list's own tail, with a small chevron because it leaves
-                    the menu for Messages' Agents list. Still an anchor, so
-                    it is in the Tab order and "open in new tab" works; the
-                    tap target stays 44px tall though the text is small.
-                */}
-                {continuing.more ? (
-                  <a
-                    id="app-menu-continue-all"
-                    href="#messages"
-                    className={CONTINUE_ALL}
-                    onClick={(e) => {
-                      setMessagesFilter('agents');
-                      followThenDismiss(e, '#messages');
-                    }}
-                  >
-                    Show more
-                    <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  </a>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+          {/* AGENT CHATS, for somebody who has built something
+              themselves: see AgentChats above. */}
+          {showAgentChats ? <AgentChats readOnly={!!readOnly} continuing={continuing} /> : null}
           {/*
               REPORT APP IS SMALL TEXT AT THE FOOT (UI overhaul), not a row in
               the list: it is the one thing here that is about the app rather

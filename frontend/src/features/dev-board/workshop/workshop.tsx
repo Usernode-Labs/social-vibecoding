@@ -499,24 +499,24 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu (#2740 review), where it is "Start a new change" under Agent sessions
- * since the UI overhaul — an owner decision this note does not undo. The "+"
+ * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
- * All items, where it is), and sends "make one yourself" to the row that
- * does it, by the name the header gives that menu ("Homeroom menu", the
- * mark's own aria-label).
+ * All items, where it is), and sends "make one yourself" to the ⋯'s own
+ * Build it yourself row. It sent it to the Homeroom menu's until that row
+ * showed only for people who have built something themselves (first-session
+ * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
+ * AgentChats), so a newcomer would have looked for a row they do not have.
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
- * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
- * writable rows are each gated on).
+ * read-only viewer, whose ⋯ holds Fork alone (`AppView.readOnly`, the flag
+ * the ⋯'s writable rows are gated on).
  *
  * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own Start a new change button — so sending the reader
- * to the Homeroom menu for the same button would be the note talking past
- * the screen it is on. All items has no banner, so there it says the whole
+ * above the note carries its own Start a new change button, so sending the
+ * reader to a menu for the same thing would be the note talking past the
+ * screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
 function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
@@ -529,7 +529,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
   const adds = canCollaborate ? ' to suggest an improvement or import a PR' : ' to suggest an improvement';
-  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
+  const start = underStartHere ? '.' : '; to make one yourself, use Build it yourself there.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -4107,15 +4107,17 @@ export function DevWorkshop(): ReactNode {
                 door the request pages open: AppView._botDoor), the way in is
                 asking for the change, not building it: a newcomer read the
                 developer path here on a project the bot builds (first-session
-                run-through, 5 Oct 2026). Elsewhere the menu's own name for
-                building it is Build it yourself (B8). */}
+                run-through, 5 Oct 2026). Elsewhere the way in is the hub's
+                ⋯, whose Build it yourself (B8) every writer has: the
+                Homeroom menu's shows only once you have had an agent session
+                (../../app-context/app-context-sheet.tsx AgentChats). */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
                   ? 'You have no work going on.'
                   : v.mine.bot
                     ? 'You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.'
-                    : 'You have no work going on. Pick up an open item in All items, or use Build it yourself in the Homeroom menu.'}
+                    : 'You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it yourself.'}
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the

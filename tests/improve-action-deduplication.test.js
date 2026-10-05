@@ -233,7 +233,7 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
   // button is Suggest an improvement now (the same dialog), and New change is
-  // "Start a new change" under Agent sessions in the menu's list, because
+  // "Build it yourself" under Agent chats in the menu's list, because
   // what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
