@@ -253,7 +253,12 @@ function communityInviteRoutes(config) {
   router.get('/api/invite-links/by-token/:token', invitePreviewLimiter, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
-      const standing = await invites.standing(pool, req.params.token, req.user);
+      // `page` (the project's page, for somebody who may open it before
+      // joining) follows the community read's own rule for the platform's
+      // own project (routes/apps.js GET /api/apps/:slug/community).
+      const standing = await invites.standing(pool, req.params.token, req.user, {
+        showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
+      });
       // Somebody signed in who is not in it yet (invite-activity.noteOpened
       // leaves out the maker and anybody already a member).
       if (standing.live && !standing.mine) countOpen(req, res, req.params.token, req.user.id);

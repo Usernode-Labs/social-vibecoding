@@ -3978,6 +3978,10 @@ export function DevWorkshop(): ReactNode {
           slug={slug}
           name={app.name || undefined}
           canOpenApp={!actions.selfHosted}
+          // #3700: Join through the invite link this page was opened from
+          // opens Needs you at its first card when votes are already
+          // waiting on the new member, and otherwise stays on this hub.
+          onJoinedByInvite={() => { if (owesVote(v.queue)) openTab('needs'); }}
           menu={(
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}

@@ -6,8 +6,9 @@
  * one thing:
  *
  *   who      the project's tile, "Maya made Run Tracker" (or "@ada invited
- *            you to join …" when the sender did not make it), and how many
- *            people are in it;
+ *            you to join …" when the sender did not make it), how many
+ *            people are in it, and its one-line description (#3700) unless
+ *            the picture below is the tile that already carries it;
  *   picture  the project itself: the after-shot of its latest change, else
  *            the Discover card's image, else, while it is built, the
  *            featured card of the idea its maker was shown
@@ -198,6 +199,16 @@ function Tile({ project, size }: { project: NonNullable<InvitePreview['project']
 }
 
 /**
+ * Whether the picture card is the tile with the one-line description in it
+ * (Picture's last case): no picture, or a sketch without a card to draw.
+ */
+export function pictureIsTile(project: Pick<NonNullable<InvitePreview['project']>, 'picture'>): boolean {
+  const picture = project.picture;
+  if (!picture) return true;
+  return picture.kind === 'sketch' ? !sketchCardOf(picture) : false;
+}
+
+/**
  * The project as a picture. A shot is phone-shaped, so it shows its top:
  * the part of a screen that says what the project is. An illustration has
  * a dark version when its group made one, and each theme shows its own.
@@ -298,6 +309,14 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
             {under ? <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{under}</p> : null}
           </div>
         </div>
+        {/* #3700: what it is, in its own line, beside the icon and the count:
+            the same proof the project's page gives somebody signed in. Not
+            when the picture below is the tile, which carries it already. */}
+        {project.description && !pictureIsTile(project) ? (
+          <p data-landing-invite-description="" className="mt-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200 text-pretty">
+            {project.description}
+          </p>
+        ) : null}
       </section>
       <Picture project={project} building={!!preview.building} />
       {preview.note ? (

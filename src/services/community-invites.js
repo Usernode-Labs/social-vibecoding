@@ -648,8 +648,16 @@ async function alreadyHasGrant(db, invite, userId) {
  * got there), 'queued' or 'cancelled' for a redemption still waiting or
  * called off, null when they have not followed it — and the project's slug
  * once they are in it.
+ *
+ * For somebody NOT in it yet, on a live link, how its project opens
+ * instead of a question over Home (App._followInvite, #3700; entryFor):
+ * `page`, that slug, when they may already open the project's page (a
+ * public community), or `invitePreview` when they may not (a private
+ * community), which the shell draws from this standing alone. A private
+ * project's slug still comes only after joining. `showSelfHosted` is
+ * whether the platform's own project's page is this viewer's to open.
  */
-async function standing(pool, token, user) {
+async function standing(pool, token, user, { showSelfHosted = false } = {}) {
   const base = await preview(pool, token);
   const invite = await loadInvite(pool, token);
   if (!invite || !user) return { ...base, mine: null, slug: null };
@@ -675,13 +683,54 @@ async function standing(pool, token, user) {
     );
     newAccount = !!u[0]?.fresh || await require('./test-accounts').onFirstRun(pool, user.id, appliedAt);
   }
+  const entry = !inIt && base.live ? await entryFor(pool, invite, user, showSelfHosted) : null;
   return {
     ...base,
     mine,
     slug: inIt ? invite.slug : null,
+    page: entry ? entry.page : null,
+    invitePreview: entry ? entry.invitePreview : null,
     joinedAt: appliedAt instanceof Date ? appliedAt.toISOString() : (appliedAt || null),
     newAccount,
   };
+}
+
+const NO_ENTRY = Object.freeze({ page: null, invitePreview: null });
+
+/**
+ * How a live link's project opens for `user`, who is not in it yet
+ * (standing's `page` and `invitePreview`, #3700). One of:
+ *
+ *   page           its slug: they may open its page already (a public
+ *                  community), so the shell opens it in its not-joined state;
+ *   invitePreview  they may not (a private community): what its invite
+ *                  preview draws beyond the link's own preview, which is the
+ *                  colour its header wears. The preview is drawn from this
+ *                  standing alone. It is not access: the app, its items, its
+ *                  discussion, its members and its proposals stay behind
+ *                  checkAppAccess, which this does not touch, until Join
+ *                  follows the link;
+ *   neither        a suspended app, one they blocked, the platform's own
+ *                  project where its page's community read would not answer
+ *                  them (routes/apps.js GET /community, `showSelfHosted`), or
+ *                  a read that failed: the confirm, as before.
+ *
+ * Only ever asked for a LIVE link (deadReason, the rule redeem follows too):
+ * a dead one shows nothing but why.
+ */
+async function entryFor(pool, invite, user, showSelfHosted) {
+  if (invite.self_hosted && !showSelfHosted) return NO_ENTRY;
+  try {
+    const { rows } = await pool.query(`SELECT ${appAccess.ACCESS_COLUMNS}, icon_color FROM apps WHERE id = $1`, [invite.app_id]);
+    const app = rows[0];
+    if (!app || app.moderation_suspended_at) return NO_ENTRY;
+    if (await appAccess.checkAppAccess(pool, app, user, 'view')) return { page: invite.slug, invitePreview: null };
+    if (await require('./app-blocks').isBlocked(pool, user.id, app.id)) return NO_ENTRY;
+    return { page: null, invitePreview: { iconColor: app.icon_color || null, audienceLabel: communities.AUDIENCE_LABELS.invited } };
+  } catch (err) {
+    log.warn('invites', 'Could not read how an invitee may open the project', { err: err.message });
+    return NO_ENTRY;
+  }
 }
 
 /**
