@@ -10081,6 +10081,9 @@ async function runCodexAttemptLoop({
         ? { ...result, agentHarness: runtimeContext.agentHarness }
         : result),
       usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
+      // The upstream provider OpenRouter named for the turn's requests, when
+      // the Claude Code listener saw one (worker.js observeCodingProviderResult).
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))

@@ -1009,6 +1009,47 @@ const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'netw
 function codingProviderCount(value, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
 }
+// What one model request came to, as the Claude Code listener reports it
+// (worker/claude-openrouter-request.js, provider_request_result): kept as
+// the turn's routed provider for its ledger row, and, when it failed, said
+// on the progress line and logged with the ids that find it in OpenRouter's
+// own log. Nothing here is the request's content: the listener sends a
+// status, ids, a provider name and an error's type and clipped message.
+const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
+const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
+function observeCodingProviderResult(event, ordinal, onProgress, state) {
+  const pick = (value, re) => (typeof value === 'string' && re.test(value) ? value : null);
+  const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+    ? event.httpStatus : null;
+  const providerName = pick(event.providerName, SAFE_PROVIDER_NAME);
+  const errorType = pick(event.errorType, SAFE_PROVIDER_ERROR_TYPE);
+  const errorMessage = typeof event.errorMessage === 'string'
+    ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
+    : null;
+  if (providerName) state.routedProvider = providerName;
+  const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
+  if (!failed) return;
+  state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
+  const detail = {
+    sessionId: state.hostSessionId || null,
+    requestOrdinal: ordinal,
+    httpStatus: status,
+    providerName,
+    requestId: pick(event.requestId, SAFE_PROVIDER_ID),
+    generationId: pick(event.generationId, SAFE_PROVIDER_ID),
+    errorType,
+    errorMessage,
+  };
+  log.warn('worker', 'Coding provider request failed', detail);
+  // OpenRouter's envelope carries the status again as its code: said once.
+  const what = [status != null ? `HTTP ${status}` : null, errorType !== String(status) ? errorType : null]
+    .filter(Boolean).join(' ');
+  const said = errorMessage ? `: ${errorMessage.slice(0, 160)}` : '';
+  const via = providerName ? ` (via ${providerName})` : '';
+  onProgress(`OpenRouter request #${ordinal} failed${what ? ` with ${what}` : ''}${said}${via}`);
+}
+
 function observeCodingProviderTiming(event, onProgress, state) {
   if (event?.kind === 'codex_output_idle') {
     const durationMs = event.durationMs;
@@ -1034,6 +1075,10 @@ function observeCodingProviderTiming(event, onProgress, state) {
   const ordinal = event?.requestOrdinal;
   if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
   const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_result') {
+    observeCodingProviderResult(event, ordinal, onProgress, state);
+    return;
+  }
   if (event.kind === 'provider_request_start') {
     const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
     requests.set(ordinal, request);
