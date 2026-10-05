@@ -384,3 +384,108 @@ test('the kit\'s class inside a reserving column is kept from reserving the inse
   assert.ok(inner, 'html.un-kb .platform-kb-column .un-kb-avoid rule is missing');
   assert.match(inner[1], /padding-bottom:\s*0/);
 });
+
+// ── 4. The composer's own tap: no pan at all (5 Oct 2026) ───────────────
+//
+// The pin above puts iOS's pan back a quarter second after the keys settle,
+// which is what was SEEN: in the Homeroom app and in iOS Safari the
+// composer rose into the top half of the screen, then dropped back onto the
+// keys. The column option takes the composer's tap the way the scroller's
+// fields are taken: focused with preventScroll, so there is no pan to put
+// back, and the column's own inset places it.
+
+function columnHarness() {
+  const start = NATIVE_JS.indexOf('  var KB_TAP_SLOP');
+  const end = NATIVE_JS.lastIndexOf('  /*', NATIVE_JS.indexOf('Spring tuner (?un-tune=1)', start));
+  const timers = [];
+  const listen = (bag) => ({
+    addEventListener: (type, fn) => { bag[type] = fn; },
+    removeEventListener: (type) => { delete bag[type]; },
+  });
+  const scrollerOn = {};
+  const columnOn = {};
+  const focused = [];
+  const field = (inScroller) => ({
+    nodeType: 1,
+    tagName: 'TEXTAREA',
+    value: 'a draft',
+    readOnly: false,
+    disabled: false,
+    isContentEditable: false,
+    inScroller,
+    selection: null,
+    closest(sel) { return /textarea/.test(sel) ? this : null; },
+    focus(opts) { focused.push({ field: this, opts }); doc.activeElement = this; },
+    setSelectionRange(a, b) { this.selection = [a, b]; },
+  });
+  const transcriptField = field(true);
+  const composerField = field(false);
+  const scrollEl = {
+    nodeType: 1,
+    classList: { contains: () => false, add() {}, remove() {} },
+    ...listen(scrollerOn),
+    contains: (n) => n === transcriptField,
+  };
+  const column = {
+    nodeType: 1,
+    ...listen(columnOn),
+    contains: (n) => n === scrollEl || n === transcriptField || n === composerField,
+  };
+  const doc = { activeElement: null, documentElement: { classList: { contains: () => false } }, body: {} };
+  const ctx = vm.createContext({
+    window: { visualViewport: listen({}), scrollY: 0, pageYOffset: 0, scrollTo() {}, innerHeight: VV_HEIGHT },
+    document: doc,
+    console,
+    platform: 'ios',
+    prefersReducedMotion: false,
+    kbInset: 0,
+    gestures: { owner: () => null },
+    isTextEntryField: physics.isTextEntryField,
+    revealScrollDelta: physics.revealScrollDelta,
+    getComputedStyle: () => ({ overflowY: 'hidden' }),
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout() {},
+  });
+  vm.runInContext(NATIVE_JS.slice(start, end), ctx);
+  const handle = ctx.attachKeyboardAvoidance(scrollEl, { column });
+  const tap = (target) => {
+    let prevented = false;
+    const touches = [{ clientX: 10, clientY: 10 }];
+    columnOn.touchstart({ touches, target });
+    columnOn.touchend({ touches: [], target, cancelable: true, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  return { handle, tap, focused, timers, scrollerOn, columnOn, transcriptField, composerField };
+}
+
+test('the composer\'s tap is focused without the pan, its draft picked up at the end, and nothing revealed', () => {
+  const h = columnHarness();
+  assert.ok(h.columnOn.touchend, 'the column carries the touch listeners');
+  assert.equal(h.scrollerOn.touchend, undefined, 'and only the column: a tap in the scroller bubbles to it once');
+  assert.equal(h.tap(h.composerField), true, 'the native tap (focus, pan, click) is cancelled');
+  assert.deepEqual(h.focused.map((f) => [f.field, f.opts && f.opts.preventScroll]), [[h.composerField, true]]);
+  assert.deepEqual(h.composerField.selection, [7, 7], 'the caret at the end of "a draft"');
+  assert.equal(h.timers.filter((t) => t.ms === 250).length, 0, 'no reveal: the column places the composer');
+});
+
+test('a field in the scroller is still revealed, and an already-focused composer keeps its native taps', () => {
+  const h = columnHarness();
+  assert.equal(h.tap(h.transcriptField), true);
+  assert.equal(h.timers.filter((t) => t.ms === 250).length, 1, 'the scroller\'s field waits for the settled pin');
+  h.tap(h.composerField);
+  assert.equal(h.tap(h.composerField), false, 'a second tap moves the caret natively');
+  h.handle.detach();
+  assert.equal(h.columnOn.touchend, undefined, 'detach takes the column\'s listeners off');
+});
+
+test('every chat hands the kit its composer column', () => {
+  const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
+  const { kit, calls } = fakeKit();
+  const column = { id: 'col' };
+  const el = { nodeType: 1, closest: (sel) => (sel === '.platform-kb-column' ? column : null) };
+  attachComposerKeyboard(el, { unNative: kit }, DOC);
+  assert.equal(calls[0].opts.column, column, 'React chats (Messages, #general)');
+  assert.match(read('public/js/platform-ui.js'),
+    /const column = typeof scrollEl\.closest === 'function' \? scrollEl\.closest\('\.platform-kb-column'\) : null;\s+handles\.push\(un\.attachKeyboardAvoidance\(scrollEl, \{ topEl: topEl \|\| undefined, column: column \|\| undefined \}\)\);/,
+    'and the legacy-mounted ones (a project\'s chat, a topic thread, a dev chat) through attachScreenFx');
+});
