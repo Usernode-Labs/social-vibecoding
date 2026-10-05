@@ -1392,7 +1392,13 @@ async function annotateDeploymentState(config, pool, app, rows) {
   }
 
   const releaseWatch = require('../services/release-watch');
-  const stall = releaseWatch.describe(app, runningSha);
+  let stall = releaseWatch.describe(app, runningSha);
+  // Several merges, one release: the record can name a commit that never
+  // ran by itself and is already inside the running build. Resolved, though
+  // the poller has not cleared it yet; the column says no stall.
+  if (stall.stalled && await releaseWatch.carriedBy(pool, app.id, stall.sha, runningSha)) {
+    stall = releaseWatch.describe(null);
+  }
   const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
   for (const row of prRows) {
     if (!isAfterDeploymentBoundary(row, boundary)) {

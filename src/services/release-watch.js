@@ -38,11 +38,26 @@
  *   unknown           past the grace, and no run to read (a token without
  *                     actions:read, or a workflow that never started).
  *
+ * The grace runs from the merge, but a release cannot start before the ones
+ * ahead of it: the workflow queues every push to main and runs them one at a
+ * time (build-kubernetes-images.yml, `queue: max`), and a run whose commit is
+ * no longer main's tip builds and then skips its publish. So a burst of
+ * merges releases one after another, and the newest waits for all of them.
+ * On 5 Oct 2026 ten merges landed in two minutes; ten minutes after the last
+ * one (#3860) its run was still waiting its turn, and the Dev board called it
+ * "Stuck going live" while the release was on its way. A run that has not
+ * finished is therefore late only once the queue it waits in has stood still
+ * for the grace: no run of the workflow on main has finished within it. And
+ * a run that succeeded gives Argo CD and the rollout their own grace, from
+ * when the run finished rather than from the merge.
+ *
  * Each (sha, kind) is reported once — an app_health notification to the
  * admins, and a record on apps.release_stall that the board banner draws
  * (dev-board/release-stall-store.ts words it) — and the record is cleared
  * when the running build catches up. Main moving on to a further commit starts
- * over for that commit; a release of it carries the earlier one too.
+ * over for that commit; a release of it carries the earlier one too, so a
+ * recorded commit that the running build already carries reads as resolved
+ * (carriedBy) even before the poller clears it.
  */
 const log = require('./logger');
 
@@ -55,6 +70,7 @@ function graceMs() {
 }
 
 const WORKFLOW_PATH = '.github/workflows/build-kubernetes-images.yml';
+const WORKFLOW_FILE = 'build-kubernetes-images.yml';
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'startup_failure', 'action_required']);
 
 function short(sha) {
@@ -89,6 +105,8 @@ async function workflowRun(octokit, owner, repo, sha) {
       conclusion: run.conclusion || null,
       url: run.html_url || null,
       id: run.id || null,
+      // A finished run's last update is when it finished.
+      completedAt: run.status === 'completed' ? (run.updated_at || null) : null,
     };
   } catch (err) {
     log.debug('release-watch', 'Could not read the release workflow run', {
@@ -98,14 +116,50 @@ async function workflowRun(octokit, owner, repo, sha) {
   }
 }
 
+// When the release workflow last finished a run on main, as epoch ms: the
+// last time the queue a merge's release waits in moved. Null when there is
+// none to read. Never throws — the verdict falls back to the merge's age.
+async function queueMovedAt(octokit, owner, repo) {
+  try {
+    const { data } = await octokit.rest.actions.listWorkflowRuns({
+      owner, repo, workflow_id: WORKFLOW_FILE, branch: 'main', status: 'completed', per_page: 5,
+    });
+    let latest = null;
+    for (const run of (data && data.workflow_runs) || []) {
+      const at = Date.parse((run && run.updated_at) || '');
+      if (Number.isFinite(at) && (latest == null || at > latest)) latest = at;
+    }
+    return latest;
+  } catch (err) {
+    log.debug('release-watch', 'Could not read the release workflow queue', {
+      repo: `${owner}/${repo}`, err: err.message,
+    });
+    return null;
+  }
+}
+
 // Pure: what to say about a merged commit that is not running, given how
 // long ago main moved and what GitHub says about its workflow. `null` is
 // "nothing yet" — the release is still within its normal time.
-function classify({ ageMs, run, grace = graceMs() }) {
+//
+// `idleMs` is how long the release queue has stood still (since the
+// workflow last finished a run on main) and `doneAgoMs` how long ago this
+// commit's own run finished; either is null when it could not be read, and
+// the verdict is then measured from the merge alone, as it always was.
+function classify({ ageMs, run, idleMs = null, doneAgoMs = null, grace = graceMs() }) {
   if (run && run.status === 'completed' && FAILED_CONCLUSIONS.has(run.conclusion)) return 'workflow_failed';
   if (!(ageMs >= grace)) return null;
-  if (run && run.status !== 'completed') return 'workflow_running';
-  if (run && run.conclusion === 'success') return 'rollout_missing';
+  if (run && run.status !== 'completed') {
+    // Waiting behind earlier merges' releases, or running right after
+    // them: on its way while the queue keeps moving.
+    if (Number.isFinite(idleMs) && idleMs < grace) return null;
+    return 'workflow_running';
+  }
+  if (run && run.conclusion === 'success') {
+    // Argo CD and the rollout get their time from when the run finished.
+    if (Number.isFinite(doneAgoMs) && doneAgoMs < grace) return null;
+    return 'rollout_missing';
+  }
   return 'unknown';
 }
 
@@ -146,14 +200,23 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
   const ageMs = Math.max(0, now - since);
 
   let run = null;
+  let idleMs = null;
   if (octokit) {
     const parsed = require('./github').parseGithubUrl(app.repo_url);
     if (parsed) run = await workflowRun(octokit, parsed.owner, parsed.repo, sha);
+    // Only a run that is late by the merge's clock and has not finished
+    // costs the second read: is it stuck, or waiting its turn?
+    if (parsed && run && run.status !== 'completed' && ageMs >= graceMs()) {
+      const movedAt = await queueMovedAt(octokit, parsed.owner, parsed.repo);
+      if (movedAt != null) idleMs = Math.max(0, now - movedAt);
+    }
   }
+  const doneAt = Date.parse((run && run.completedAt) || '');
+  const doneAgoMs = Number.isFinite(doneAt) ? Math.max(0, now - doneAt) : null;
 
-  const kind = classify({ ageMs, run });
+  const kind = classify({ ageMs, run, idleMs, doneAgoMs });
   if (!kind) {
-    return { status: 'release_pending', slug: app.slug, sha, running, ageMs, run };
+    return { status: 'release_pending', slug: app.slug, sha, running, ageMs, run, idleMs };
   }
 
   const previous = asRecord(app.release_stall);
@@ -236,12 +299,54 @@ function describe(appRow, runningSha = process.env.GIT_SHA || null) {
   };
 }
 
-/** The app's recorded stall, for routes that do not already hold the row. */
-async function readStall(pool, appId, runningSha) {
+/**
+ * Whether the build at `runningSha` already carries the recorded commit `sha`.
+ * A release ships main's tip, so a later merge's build holds every merge
+ * before it: several merges land, one release goes out, and the commit the
+ * record names never runs by itself. Read off the order the two merged
+ * changes merged in, the same order the Done column's deploy states use
+ * (routes/votes.js annotateDeploymentState). False whenever it cannot tell:
+ * a direct push has no merged change to order, and a failed read is no
+ * evidence either way. Never throws.
+ */
+async function carriedBy(pool, appId, sha, runningSha) {
+  if (!sha || !runningSha) return false;
+  if (sameSha(sha, runningSha)) return true;
+  if (!pool || appId == null) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1
+         FROM chat_sessions recorded
+         JOIN chat_sessions serving ON serving.app_id = recorded.app_id
+        WHERE recorded.app_id = $1
+          AND recorded.status = 'merged' AND serving.status = 'merged'
+          AND LOWER(recorded.merge_commit_sha) = LOWER($2)
+          AND LOWER(serving.merge_commit_sha) = LOWER($3)
+          AND (COALESCE(recorded.merged_at, recorded.created_at), recorded.id)
+              <= (COALESCE(serving.merged_at, serving.created_at), serving.id)
+        LIMIT 1`,
+      [appId, sha, runningSha]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('release-watch', 'Could not order the recorded commit against the running build', {
+      appId, sha: short(sha), running: short(runningSha), err: err.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * The app's recorded stall, for routes that do not already hold the row.
+ * A record whose commit the answering build already carries is resolved.
+ */
+async function readStall(pool, appId, runningSha = process.env.GIT_SHA || null) {
   if (!pool || appId == null) return describe(null);
   try {
     const { rows } = await pool.query('SELECT release_stall FROM apps WHERE id = $1', [appId]);
-    return describe(rows[0], runningSha);
+    const stall = describe(rows[0], runningSha);
+    if (stall.stalled && await carriedBy(pool, appId, stall.sha, runningSha)) return describe(null);
+    return stall;
   } catch (err) {
     log.warn('release-watch', 'Could not read release_stall', { appId, err: err.message });
     return describe(null);
@@ -253,6 +358,7 @@ module.exports = {
   converged,
   describe,
   readStall,
+  carriedBy,
   classify,
   prNumberFrom,
   graceMs,
