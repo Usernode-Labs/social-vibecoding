@@ -558,13 +558,16 @@ const CHIPS: readonly { line: string; dot: string }[] = [
  *
  * A new account made from the story is asked what to make next
  * (../first-session/make.tsx), not which communities to join: the session's
- * flag says so to the island, and the start is recorded. So is an account
- * that already existed and is signing in for the first time (one an admin
- * made, say, through the password step); the join step opens its make
- * screen in the same tick the shell starts and records it
+ * flag says so to the island, and the start is recorded as the story's. So
+ * is an account that already existed and has not answered that question
+ * yet (one an admin made, say, through the password step, or one that saw
+ * it, left without answering and is signing in again); the join step opens
+ * its make screen in the same tick the shell starts
  * (./communities-first-run.js). Either way the sheet hands off to that
  * screen (`handOff`) while this runs, so the two read as one movement.
- * Anyone else goes where they always have, with no hand-off.
+ * Recording the start answers nothing: the question is asked until Make it
+ * or "Look around first". Anyone else goes where they always have, with no
+ * hand-off.
  */
 export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
   if (kind !== 'new') {

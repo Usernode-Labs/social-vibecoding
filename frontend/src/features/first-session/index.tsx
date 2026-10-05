@@ -54,7 +54,8 @@ export type FirstSessionInfo = {
 
 type Legacy = {
   App?: {
-    user?: { id?: number; username?: string; displayName?: string | null } | null;
+    user?: { id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean } | null;
+    saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
     openDiscussionInHub?: (slug: string) => void;
@@ -393,7 +394,7 @@ function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
   );
 }
 
-type Mode =
+export type Mode =
   | { kind: 'none' }
   | { kind: 'welcome'; info: FirstSessionInfo }
   | { kind: 'make' }
@@ -404,8 +405,47 @@ type Mode =
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
 // An account that signed in any other way (a password, a code, a provider)
 // is asked through make() below instead, by the join screen it would
-// otherwise have seen (../auth/communities-first-run.js).
+// otherwise have seen (../auth/communities-first-run.js). So is every later
+// boot of an account that has not answered yet: the question is the
+// account's to answer, not this tab's, and the flag only gets the first
+// showing there a tick sooner.
 const MAKE_FLAG = 'usernode:first-session:make';
+
+export const LOOK_AROUND_PATH = '/api/me/first-session/look-around';
+
+/**
+ * The question was answered in this document: Make it made a project, or
+ * "Look around first". It is not opened here again, whatever asks: the
+ * verified session read can land after the answer and before the server has
+ * it (a reload's snapshot boot, ../auth/communities-first-run.js).
+ */
+let answeredHere = false;
+
+/**
+ * Answered: the shell's copy of the account says so, and so does this
+ * device's session snapshot, so the next boot does not draw the make screen
+ * from it before the session is confirmed. The server's own record is Make
+ * it's POST /api/apps, or recordLookAround below.
+ */
+export function noteAnswered(): void {
+  answeredHere = true;
+  const app = legacy().App;
+  if (!app?.user) return;
+  app.user.needsCommunitiesChoice = false;
+  try { app.saveSessionSnapshot?.(app.user); } catch { /* the next boot reads the server */ }
+}
+
+/**
+ * "Look around first", told to the server so the question is not asked
+ * again (src/routes/onboarding.js). Fire and forget: a request that fails
+ * leaves it owed, and the next boot asks it again, which is the honest
+ * outcome when the answer never arrived. Never a console.error.
+ */
+export async function recordLookAround(): Promise<void> {
+  try {
+    await fetch(LOOK_AROUND_PATH, { method: 'POST', credentials: 'same-origin' });
+  } catch { /* asked again on the next boot */ }
+}
 
 /**
  * Open "What do you want to make?", unless something else is already up.
@@ -415,7 +455,8 @@ const MAKE_FLAG = 'usernode:first-session:make';
  * the first thing seen after the sign-in sheet leaves. Never from a render
  * or an effect, where React cannot draw synchronously.
  */
-function openMake(setMode: Dispatch<SetStateAction<Mode>>, now: boolean): void {
+export function openMake(setMode: Dispatch<SetStateAction<Mode>>, now: boolean): void {
+  if (answeredHere) return;
   const open = () => setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
   if (now) flushSync(open);
   else open();
@@ -459,13 +500,21 @@ export function FirstSession() {
         return true;
       },
       // "What do you want to make?" for an account that is due the join
-      // screen and did not come through the story's sheet. Nothing else is
-      // open by the time the join screen's turn comes, and if the story's
-      // own flag got there first this leaves its screen as it is.
+      // screen and did not come through the story's sheet, and for any
+      // account still due it on a later boot. Nothing else is open by the
+      // time the join screen's turn comes, and if the story's own flag got
+      // there first this leaves its screen as it is.
       make(): boolean {
         try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
         openMake(setMode, true);
         return true;
+      },
+      // A make screen drawn from the session snapshot, for an account the
+      // confirmed session says is no longer due it (answered on another
+      // device, say). Only that screen: once Make it has made something,
+      // what follows it stays.
+      dismissMake(): void {
+        setMode((prev) => (prev.kind === 'make' ? { kind: 'none' } : prev));
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -483,8 +532,14 @@ export function FirstSession() {
     return (
       <MakeScreen
         who={viewerName()}
-        onMade={(made) => setMode({ kind: 'made', made })}
-        onLookAround={() => { setMode({ kind: 'none' }); legacy().App?.navigateHome?.(); }}
+        // POST /api/apps answered the question as it made the project.
+        onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
+        onLookAround={() => {
+          noteAnswered();
+          void recordLookAround();
+          setMode({ kind: 'none' });
+          legacy().App?.navigateHome?.();
+        }}
       />
     );
   }

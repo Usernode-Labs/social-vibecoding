@@ -123,8 +123,10 @@ function signInProviderRoutes(config) {
         pool, userId: result.userId, config, reason: `signup_${provider}`,
       });
       // Made from the story's sheet: asked what to make, not which
-      // communities to join (services/first-session.js).
-      if (state.started_from === 'story') await firstSession.answerJoinScreen(pool, result.userId, 'story');
+      // communities to join (services/first-session.js). Recorded as
+      // reached from the story; the question stays owed until it is
+      // answered, so the shell this sign-in lands in asks it.
+      if (state.started_from === 'story') await firstSession.recordStart(pool, result.userId, 'story');
     }
     const consented = result.created || state.follow_invite === true;
     const invite = consented

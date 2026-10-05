@@ -493,13 +493,19 @@ function firstMileSteps(row, now = new Date()) {
       : { done: false, stuck: row.username_shown_at ? 'Username sheet shown, not answered' : 'Username not chosen' },
     join: row.communities_onboarded_at
       ? { done: true, at: t(row.communities_onboarded_at), note: seen.join_answer || null }
-      // Not asked: an invite link, the signed-out story, the first session
-      // asked in its place at another sign-in, or a project made in the
-      // first session answered it (join_answer 'invite', 'story', 'sign_in'
-      // or 'made'), or the account predates the screen.
+      // Not asked: an invite link, or the first session answered it in its
+      // place (join_answer 'invite'; 'story' or 'sign_in', how that
+      // question reached them; 'made' for a project made with no start
+      // recorded), or the account predates the screen. The first session's
+      // own answer, Make it or Look around first, is first_session_answer.
       : (hasAccount && row.needs_communities_choice === false
         ? { done: true, at: null, note: seen.join_answer ? `not asked: ${seen.join_answer}` : 'not asked', weak: true }
-        : { done: false, stuck: row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
+        // The first session's question stays owed until it is answered
+        // (services/first-session.js), so this is where somebody sits who
+        // was asked what to make and has not said.
+        : { done: false,
+          stuck: seen.first_session ? 'Asked what to make, not answered'
+            : row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
     first_act: row.first_act_at ? { done: true, at: t(row.first_act_at), note: row.first_act_kind }
       : { done: false, stuck: 'Inside, no act yet' },
   };
