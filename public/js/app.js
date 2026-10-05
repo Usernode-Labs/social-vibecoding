@@ -1963,10 +1963,12 @@ const App = {
   //
   //   'signed-out'  the story landing (which is also an invite's page before
   //                 Join, and holds the sign-in sheet) and the sign-in page.
-  //                 Nothing on them can be lost, so a document that is behind
-  //                 moves to the live build as soon as it knows, typed text
-  //                 or not, unless a sign-in has begun here (noteSignInBegun):
-  //                 a request in flight is never cut off.
+  //                 A document that is behind moves to the live build as
+  //                 soon as it knows, unless somebody has started typing on
+  //                 it (an address or a password half typed is not wiped by
+  //                 a reload they did not ask for) or a sign-in has begun
+  //                 here (noteSignInBegun): a request in flight is never cut
+  //                 off. Either way the 'signed-in' move below still runs.
   //   'signed-in'   a sign-in or sign-up has just succeeded (finishLogin, or
   //                 the waiting room letting somebody in). The move happens
   //                 before the signed-in shell starts, so no first-run screen
@@ -2015,7 +2017,8 @@ const App = {
    */
   freshShellVerdict(input) {
     const {
-      moment, documentSha, live, controlled, embedded, signedIn, signInBegun, route, latched,
+      moment, documentSha, live, controlled, embedded, signedIn, signInBegun, typed, route,
+      latched,
     } = input || {};
     // The top window owns the build, as it owns the version poll.
     if (embedded) return 'side-panel';
@@ -2032,6 +2035,9 @@ const App = {
     if (moment !== 'signed-out') return 'moment';
     if (signedIn) return 'signed-in';
     if (signInBegun) return 'sign-in-begun';
+    // Somebody is typing: their text outranks the move, which the sign-in
+    // they are typing toward makes anyway ('signed-in').
+    if (typed) return 'typed';
     // The screens with nothing to lose. Not the waitlist's survey, a password
     // reset or an activation code: those hold answers or a token mid-way.
     if (!['landing', 'login', 'signup'].includes(route)) return 'route';
@@ -2081,6 +2087,9 @@ const App = {
       embedded: !!App.embeddedPanel,
       signedIn: !!App.user,
       signInBegun: !!App._signInBegun,
+      // Only the signed-out move asks: the 'signed-in' one runs from
+      // finishLogin, after the fields have done their job.
+      typed: moment === 'signed-out' ? App._hasUnsavedShellInput() : false,
       route: screens ? screens._current : null,
       latched,
     };
@@ -2121,7 +2130,8 @@ const App = {
       // Reloading before the cache holds the build serves the old one back.
       if (state !== 'ready') return false;
       // The download took a moment. Ask again: is the screen still one with
-      // nothing to lose, and has nobody started signing in on it?
+      // nothing to lose, has nobody typed on it, and has nobody started
+      // signing in on it?
       if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
       if (!App._reloadOntoLiveShell(sha)) return false;
       return new Promise(() => {});

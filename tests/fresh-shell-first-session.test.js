@@ -26,7 +26,7 @@
 //  2. SIGNED OUT, on the landing (also an invite's page before Join, and the
 //     home of the sign-in sheet) or the sign-in page: a document behind the
 //     live build pulls the build into the shell cache and reloads onto it,
-//     typed text or not, unless a sign-in has begun on it.
+//     unless somebody has typed on it or a sign-in has begun on it.
 //  3. RIGHT AFTER A SIGN-IN or sign-up (finishLogin, or the waiting room
 //     letting somebody in): the same move, before the signed-in shell
 //     starts, so no first-run screen is drawn by the old build.
@@ -274,20 +274,41 @@ test('on the sign-in page, the invite page and the landing alike', async () => {
   }
 });
 
-test('typed text on a signed-out screen does not hold the move', async () => {
-  // Unlike #1669's switch, which never discards a draft: an address half
-  // typed into the sign-in sheet is nothing next to signing up on old code.
-  const email = {
+test('typed text on a signed-out screen holds the move', async () => {
+  // Like #1669's switch, which never discards a draft: an address or a
+  // password half typed into the sign-in sheet is not wiped by a reload
+  // nobody asked for. The sign-in they are typing toward moves them anyway
+  // ('signed-in'), before any first-run screen is drawn.
+  const email = () => ({
     tagName: 'INPUT', type: 'email', value: 'ada@example.com',
     defaultValue: '', disabled: false, isContentEditable: false,
-  };
-  const h = harness({ controls: [email] });
-  assert.equal(h.App._hasUnsavedShellInput(), true);
-  h.App._moveToLiveShell('signed-out');
+  });
+  const before = harness({ controls: [email()] });
+  assert.equal(before.App._hasUnsavedShellInput(), true);
+  assert.equal(await before.App._moveToLiveShell('signed-out'), false);
+  assert.equal(before.posted.length, 0, 'nothing is even downloaded for it');
+
+  // …and typing that starts while the build is coming down.
+  const controls = [];
+  const during = harness({ controls });
+  const moving = during.App._moveToLiveShell('signed-out');
   await flush();
-  h.reply({ ok: true, sha: LIVE });
+  controls.push(email());
+  during.reply({ ok: true, sha: LIVE });
   await flush();
-  assert.equal(h.reloads.length, 1);
+  assert.equal(during.reloads.length, 0, 'the address stays where they typed it');
+  assert.equal(await moving, false);
+  assert.equal(during.session.get(during.App.SHELL_AUTO_RELOAD_KEY), undefined,
+    'and the latch is left for the move after the sign-in');
+
+  // The sign-in itself still moves, fields full or not.
+  const after = harness({ controls: [email()] });
+  const signingIn = after.App._moveToLiveShell('signed-in');
+  await flush();
+  after.reply({ ok: true, sha: LIVE });
+  await flush();
+  assert.equal(after.reloads.length, 1);
+  assert.equal(await settled(signingIn), 'pending');
 });
 
 test('a sign-in that has begun is never cut off', async () => {
@@ -459,7 +480,7 @@ test('the verdict, case by case', () => {
   const { App } = harness();
   const base = {
     moment: 'signed-out', documentSha: BOOTED, live: { sha: LIVE, deploying: false },
-    controlled: true, embedded: false, signedIn: false, signInBegun: false,
+    controlled: true, embedded: false, signedIn: false, signInBegun: false, typed: false,
     route: 'landing', latched: null,
   };
   const verdict = (patch) => App.freshShellVerdict({ ...base, ...patch });
@@ -467,6 +488,7 @@ test('the verdict, case by case', () => {
   assert.equal(verdict({ live: { sha: BOOTED } }), 'current', 'fresh');
   assert.equal(verdict({ signedIn: true }), 'signed-in', 'signed in mid-use');
   assert.equal(verdict({ signInBegun: true }), 'sign-in-begun');
+  assert.equal(verdict({ typed: true }), 'typed', 'a half-typed address or password');
   assert.equal(verdict({ route: 'waitlist' }), 'route');
   assert.equal(verdict({ latched: LIVE }), 'latched', 'the loop guard');
   assert.equal(verdict({ latched: BOOTED }), 'upgrade', 'a latch for another build');
@@ -476,8 +498,9 @@ test('the verdict, case by case', () => {
   assert.equal(verdict({ controlled: false }), 'uncontrolled');
   assert.equal(verdict({ documentSha: null }), 'unstamped');
   assert.equal(verdict({ embedded: true }), 'side-panel');
-  assert.equal(verdict({ moment: 'signed-in', signedIn: true, signInBegun: true, route: null }),
-    'upgrade', 'right after a sign-in');
+  assert.equal(verdict({
+    moment: 'signed-in', signedIn: true, signInBegun: true, typed: true, route: null,
+  }), 'upgrade', 'right after a sign-in');
   assert.equal(verdict({ moment: 'signed-in', latched: LIVE }), 'latched');
   assert.equal(verdict({ moment: 'mid-use' }), 'moment', 'no other moment moves anybody');
 });
