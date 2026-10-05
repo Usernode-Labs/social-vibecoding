@@ -40,12 +40,10 @@ test('no caller sends parallel_tool_calls: false through the OpenRouter transpor
   assert.deepEqual(offenders, [], 'pass null: false is still sent, and narrows the model to the providers that take it');
 });
 
-test('the transport sends the field for true or false, and leaves it out only for null', () => {
+test('null leaves the field out, and the transport asks OpenRouter to honour every field it sends', () => {
   const { buildRequest } = require('../src/services/global-chat/openrouter');
   const base = { model: 'z-ai/glm-5.3-flash', reasoning: 'low', messages: [], tools: [] };
   assert.equal('parallel_tool_calls' in buildRequest({ ...base, parallelToolCalls: null }), false);
-  assert.equal(buildRequest({ ...base, parallelToolCalls: false }).parallel_tool_calls, false);
-  assert.equal(buildRequest({ ...base, parallelToolCalls: true }).parallel_tool_calls, true);
   assert.equal(buildRequest(base).provider.require_parameters, true,
     'if this ever changes, the rule above can relax');
 });
