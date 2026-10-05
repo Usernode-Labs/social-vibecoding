@@ -46,6 +46,7 @@ import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js'
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
+import { StarterBar } from './starter-bar';
 
 function LaunchCover({
   iconKind,
@@ -236,13 +237,21 @@ export function AppFrameHost(): ReactNode {
     publishAppTone(document, state, window, false, screen);
   }, [state.slug, state.active, state.background, screen]);
 
+  // A column, for the bar over a starter (./starter-bar.tsx, #15): rendered
+  // unconditionally and FIRST, so the launch host is always the second child
+  // and a bar appearing is an insert before it, never a move. Without a bar
+  // the launch host's `h-full` is the whole host, as before; with one it
+  // shrinks by the bar's height (its own overflow is hidden, so it has no
+  // content minimum). `hidden` still wins over `flex` while the frame is
+  // parked: the same pair #app-view carries.
   return (
     <div
       id="app-frame-host"
       ref={hostRef}
-      className="hidden flex-1"
+      className="hidden flex-1 flex flex-col"
       style={{ minHeight: '0', overflow: 'hidden' }}
     >
+      <StarterBar />
       <div className="app-launch-host w-full h-full">
         {liveFrames(state).map((slug) => <AppFrame key={slug} slug={slug} />)}
       </div>

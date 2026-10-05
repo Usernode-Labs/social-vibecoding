@@ -469,7 +469,7 @@ test('the made screen says what is true: the bot builds it, or the description i
   const { loadTsx } = require('./lib/render-tsx');
   const made = loadTsx('frontend/src/features/first-session/made.tsx');
   assert.equal(made.buildLine(null, 'running', false), 'Your description is its first request.');
-  assert.equal(made.buildNote(true), 'Homeroom bot messages you when the first version is ready to try.');
+  assert.equal(made.buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
   assert.equal(made.buildNote(false), 'You or anyone you invite can build it from there.');
   assert.equal(made.sketchCaption, undefined, 'no caption calling it a sketch of the real app');
 });

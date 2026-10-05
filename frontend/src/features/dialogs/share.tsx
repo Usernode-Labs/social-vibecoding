@@ -75,15 +75,15 @@ export const SHARE_COPY: Readonly<Record<ShareAudience, string>> = Object.freeze
 
 /**
  * The Homeroom menu's invite pane for the app in context (the project hub's
- * Invite does the same). Reached as a global, like the hub reaches it.
+ * Invite does the same). Reached as a global, like the hub reaches it, and
+ * opened straight onto the pane, once (AppContext.openInvite).
  */
 function openInvitePane(): void {
   const ctx = (window as unknown as {
-    AppContext?: { open?: () => void; showInvite?: () => void };
+    AppContext?: { openInvite?: () => Promise<void> };
   }).AppContext;
   if (!ctx) return;
-  ctx.open?.();
-  ctx.showInvite?.();
+  void ctx.openInvite?.();
 }
 
 export function ShareDialog() {

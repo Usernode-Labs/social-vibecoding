@@ -104,10 +104,9 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
 test('while the plan waits, the build\'s note says so instead of promising a message', () => {
   const { buildNote } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
-  assert.equal(buildNote(true, true, true), 'Homeroom bot is waiting for your go-ahead.');
   assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(englishUiSource(src), /const note = buildNote\(botBuilds, !!plan, planAhead\(fv\)\);/);
+  assert.match(englishUiSource(src), /const note = buildNote\(botBuilds, !!plan\);/);
   // Under the card of the idea (./sketch-card.tsx), and in the plain card
   // without one. The sketch's caption calling it the real app is gone.
   assert.match(englishUiSource(src), /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
@@ -117,28 +116,24 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan\);/);
 });
 
-test('a first version promises no time at all: it says the plan comes first', () => {
+test('a first version promises no time at all, and says in one plain line that it asks when it has questions', () => {
   // First-session run-through, 5 October 2026: the made screen said "usually
   // in about 10 minutes", an ordinary request's typical build. Page Turners
   // sent its plan 11 minutes after Make it, waited on its maker's Build it,
   // and was ready to try 50 minutes after Make it. Evan: no average there.
-  const { buildNote, planAhead } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(buildNote(true, false, true),
-    'Homeroom bot plans it first, and asks you to approve the plan. It messages you when the first version is ready to try.');
-  assert.equal(buildNote(true, false, false),
-    'Homeroom bot messages you when the first version is ready to try.');
-  for (const words of [buildNote(true, false, true), buildNote(true, false, false), buildNote(true, true), buildNote(false)]) {
-    assert.doesNotMatch(englishUiSource(words), /minute|hour|usually|—/, words);
+  // Then, the same day: not "Homeroom bot plans it first, and asks you to
+  // approve the plan" either, but one line, before the plan and after it.
+  const { buildNote } = loadTsx(`${DIR}/made.tsx`);
+  const line = 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
+  assert.equal(buildNote(true), line);
+  assert.equal(buildNote(true, false), line);
+  for (const words of [buildNote(true), buildNote(true, true), buildNote(false)]) {
+    assert.doesNotMatch(englishUiSource(words), /minute|hour|usually|plans it first|approve the plan|—/, words);
   }
-  // The plan is still to come until its step (3 of 7).
-  assert.equal(planAhead(null), true, 'nothing read yet');
-  assert.equal(planAhead({ step: 1, of: 7 }), true);
-  assert.equal(planAhead({ step: 2, of: 7 }), true);
-  assert.equal(planAhead({ step: 3, of: 7 }), false);
-  assert.equal(planAhead({ step: 4, of: 7 }), false);
+  const src = read(`${DIR}/made.tsx`);
+  assert.doesNotMatch(src, /planAhead/, 'one line whatever the step');
   // Nothing reads an ordinary request's typical minutes for it any more,
   // and GET /api/apps/:slug no longer sends them with a first version.
-  const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src.replace(/\/\*\*[\s\S]*?\*\//g, ''), /typicalMinutes|usually in about|minutes\./);
   const route = read('src/routes/apps.js');
   const block = route.slice(route.indexOf('firstVersion = {'), route.indexOf('log.warn(\'apps\', \'Could not read the first version state\''));
@@ -153,21 +148,29 @@ test('Go to chat leaves the first session for the chat with Homeroom bot', () =>
   assert.doesNotMatch(englishUiSource(index), /changePlanInChat/);
 });
 
-test('while it is built, a quiet way to look around Home and the other apps', () => {
-  const { LOOK_AROUND } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(LOOK_AROUND(), 'look around Home and other apps');
+test('the made screen has two ways on and nothing under them: no "look around Home and other apps"', () => {
+  // Evan, 5 October 2026: "Invite people later" is already the way on
+  // without inviting anyone, so the quiet third way off the screen went.
+  const made = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(made.LOOK_AROUND, undefined);
   const src = read(`${DIR}/made.tsx`);
-  // Under both buttons, small and grey: it does not compete with Share invite.
-  assert.ok(src.indexOf('data-first-session-look-around') > src.indexOf('data-first-session-continue'));
-  assert.match(englishUiSource(src), /\{'While you wait, '\}\s+<button type="button" data-first-session-look-around="" onClick=\{onLookAround\} className="font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200">/);
-  assert.match(englishUiSource(src), /\{botBuilds \? \(\s+<p className="mt-4 text-center text-\[14px\]/, 'only while Homeroom bot builds it');
+  assert.doesNotMatch(englishUiSource(src).replace(/\/\*[\s\S]*?\*\//g, ''), /look-around|onLookAround|While you wait|look around/i);
   const index = read(`${DIR}/index.tsx`);
-  assert.match(englishUiSource(index), /onLookAround=\{\(\) => \{\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);\s+setMode\(\{ kind: 'none' \}\);\s+enterScreen\('home', made\.slug\);/);
-  const html = renderToHtml(createElement(loadTsx(`${DIR}/made.tsx`).MadeScreen, {
+  const madeBlock = index.slice(index.indexOf('<MadeScreen'), index.indexOf('if (mode.kind === \'welcome\')'));
+  assert.ok(madeBlock.length > 100, 'the made screen\'s block is findable');
+  assert.doesNotMatch(madeBlock, /onLookAround/, 'nothing hands it a third way off');
+  // The make screen's own "Look around first" is a different answer, and stays.
+  assert.match(englishUiSource(read(`${DIR}/make.tsx`)), />Look around first<\/button>/);
+  const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
-    me: 'Maya', onContinue() {}, onOpenChat() {}, onLookAround() {},
+    me: 'Maya', onContinue() {}, onOpenChat() {},
   }));
-  assert.match(englishUiSource(html), /While you wait, <button[^>]*>look around Home and other apps<\/button>\./);
+  assert.match(englishUiSource(html), />Share invite<\/button>/);
+  assert.match(englishUiSource(html), /<button type="button" data-first-session-continue=""[^>]*>Invite people later<\/button>/);
+  assert.doesNotMatch(englishUiSource(html), /look around|While you wait/i);
+  // Their invite line says it is still being built, not "while it's built".
+  assert.match(englishUiSource(html), />They can follow along and chat with you while it&#x27;s being built\.<\/p>/);
+  assert.doesNotMatch(englishUiSource(src), /while it's built/);
 });
 
 test('the invite line says who joined, once somebody has', () => {
@@ -205,12 +208,34 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
     me: 'Maya',
     onContinue() {},
     onOpenChat() {},
-    onLookAround() {},
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
   assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
-  assert.match(englishUiSource(html), /Homeroom bot plans it first, and asks you to approve the plan\. It messages you when the first version is ready to try\./);
+  assert.match(englishUiSource(html), />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
   assert.match(html, /Invite people later/);
+});
+
+test('the invite sheet names its note on screen, the way it names what they\'ll get', () => {
+  // Evan, 5 October 2026: the note sat in the card under the project with
+  // no name of its own, so it read as part of what they'll get rather than
+  // something to write.
+  const { InviteSheet } = loadTsx(`${DIR}/made.tsx`);
+  const html = renderToHtml(createElement(InviteSheet, {
+    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
+    me: 'Maya', onClose() {}, onSent() {},
+  }));
+  const label = html.match(/<label for="first-session-note" class="([^"]*)">([^<]*)<\/label>/);
+  assert.ok(label, 'the note has a label');
+  assert.equal(label[2], 'Note');
+  assert.doesNotMatch(label[1], /sr-only/, 'and it is on screen');
+  // The same 13px grey as "What they'll get" over the card, and the make
+  // screen's field labels (make.tsx LABEL).
+  assert.equal(label[1], 'block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400');
+  assert.match(html, /<p class="mt-4 pb-1\.5 text-\[13px\] text-zinc-500 dark:text-zinc-400">What they&#x27;ll get<\/p>/);
+  assert.match(read(`${DIR}/make.tsx`), /const LABEL = 'block text-\[13px\] text-zinc-500 dark:text-zinc-400';/);
+  // Right above the box it names, inside the card.
+  assert.ok(html.indexOf('>Note</label>') < html.indexOf('<textarea id="first-session-note"'));
+  assert.ok(html.indexOf('data-first-session-invite-maker') < html.indexOf('>Note</label>'));
 });
 
 // ── The step while a plan is redone ──

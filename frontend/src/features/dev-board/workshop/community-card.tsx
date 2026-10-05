@@ -261,12 +261,16 @@ const listeners = new Set<() => void>();
  * The menu's own "Invite to community" row is gone, so the hub's Invite is
  * the way in, beside the people it adds. Collaborators and approvals are
  * still the ⋯'s "Members & approvals".
+ *
+ * ONE CALL, which opens the menu ON the invite pane. It was `open()` then
+ * `showInvite()`, and the sheet went up twice: short, on the pane's loading
+ * line, then tall when the link came, with the dim fading in again between
+ * (AppContext.openInvite says why).
  */
 export function openInviteLinks(): void {
   const ctx = (window as any).AppContext;
   if (!ctx) return;
-  ctx.open?.();
-  ctx.showInvite?.();
+  void ctx.openInvite?.();
 }
 
 export function reloadCommunity(slug: string): Promise<void> {
@@ -884,7 +888,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
  *
  * While Homeroom bot builds its first version (the First version card above
  * it, ./hub-cards.tsx), the line says what an invite is for right now, in
- * the made screen's words: people can follow along while it is built.
+ * the made screen's words: people can follow along while it is being built.
  */
 export function shareItLine(building: boolean): string {
   return building
@@ -929,6 +933,10 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
  * the quiet path that can put a change live below it
  * (services/active-users.js). It was the hero's last line; it sits with the
  * work it governs now. Nothing until the shared read has answered.
+ *
+ * The rule and nothing else. A muted note under it said that changing these
+ * rules is a change too, approved before it goes live; the owner dropped it
+ * (5 Oct 2026), and the card is one line.
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
@@ -937,10 +945,6 @@ export function ApprovalRules({ slug }: { slug: string }) {
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head"><RichMessage id="workshop:sentence_14d8ef32eb50" components={[<span className="dev-ws-head-title" />]} /></div>
       <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
-      {/* A change to these rules changes a protected dapp.json block
-          (explicit-approval.js): it keeps the rule above but never goes
-          live after a wait, so "the same way" would not be true of it. */}
-      <p className="dev-ws-rules-sub"><Message id="workshop:rules_change_needs_approval" /></p>
     </section>
   );
 }

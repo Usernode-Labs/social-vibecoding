@@ -1015,9 +1015,21 @@ test('a week is a block on a rule: its heading, what landed, its line, then what
   const dashBody = dashRule.slice(0, dashRule.indexOf('}'));
   assert.ok(!/box-shadow/.test(dashBody), 'the figures are not cards');
   assert.match(dashBody, /border-left: 1px solid var\(--app-sheet-line\);/, 'a rule between them');
-  assert.match(CSS, /\.dev-ws-dash \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(CSS.slice(CSS.indexOf('@media (min-width: 420px)')).slice(0, 700),
-    /\.dev-ws-dash \{ grid-template-columns: repeat\(4, minmax\(0, 1fr\)\); \}/);
+  // FOUR ACROSS AT EVERY WIDTH (5 Oct 2026): one row on an iPhone 13 mini,
+  // not the 2x2 grid it was under 420px. A phone draws them closer and a
+  // size smaller instead, and a label wraps rather than being cut short.
+  assert.match(CSS, /\.dev-ws-dash \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.ok(!/\.dev-ws-dash \{[^}]*repeat\(2,/.test(CSS), 'no two-up grid on a phone');
+  assert.ok(!/\.dev-ws-dash-cell:nth-child/.test(CSS), 'and no second row to rule off');
+  assert.match(dashBody, /padding: 2px 8px;/, 'closer on a phone');
+  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell \{ padding-left: 14px; padding-right: 14px; \}\n\}/,
+    'the wider spacing from 420px');
+  assert.match(CSS, /\.dev-ws-dash-cell:first-child \{ border-left: 0; padding-left: 2px; \}/);
+  assert.match(CSS, /\.dev-ws-dash-cell:last-child \{ padding-right: 2px; \}/);
+  assert.match(CSS, /\.dev-ws-dash-cell b \{[^}]*font-size: 20px;/, 'a size smaller on a phone');
+  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell b \{ font-size: 24px; \}\n\}/,
+    'and the full size from 420px');
+  assert.ok(!/text-overflow|white-space: nowrap/.test(dashBody), 'a label wraps; it is never cut short');
   // An exclusive end is captioned with the Sunday before it.
   assert.match(WORKSHOP, /endMs - 86400000/);
 });
@@ -1601,10 +1613,10 @@ test('the hub is ordered for a returning member: the tabs, then what is owed; th
   assert.ok(!html.includes('data-ws-since=""') && !html.includes('data-ws-mine=""') && !html.includes('data-ws-dashboard'),
     'the since list, your work in full and the board are the Workshop page\'s');
   const workshop = workshopHtml(AppView, 'workshop');
-  const wsOrder = ['data-ws-mine=""', 'data-ws-dashboard', 'data-ws-since-head'].map((k) => workshop.indexOf(k));
+  const wsOrder = ['data-ws-dashboard', 'data-ws-mine=""', 'data-ws-since-head'].map((k) => workshop.indexOf(k));
   assert.ok(wsOrder.every((i) => i >= 0), `every section is drawn: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual(wsOrder.slice().sort((a, b) => a - b), wsOrder,
-    'the Workshop page: your work, All items, then what changed (#852 review)');
+    'the Workshop page: All items, your work, then what changed (5 Oct 2026)');
   assert.ok(!html.includes('data-ws-discussion'), 'and the old discussion section is gone');
   assert.ok(!html.includes('data-discussion-row'), 'nor its row');
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(workshop), 'no unsized text link toggles this pane');
@@ -2082,9 +2094,10 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
     'most recently active first, and keyed apart from the same card elsewhere');
 
   const html = workshopHtml(AppView, 'workshop');
-  // ON THE WORKSHOP PAGE, in full, and first: the hub shows the first two
-  // of it, and this is where its door goes. All items follows it.
-  assert.ok(html.indexOf('data-ws-mine=""') >= 0 && html.indexOf('data-ws-mine=""') < html.indexOf('data-ws-dashboard'));
+  // ON THE WORKSHOP PAGE, in full: the hub shows the first two of it, and
+  // this is where its door goes. It follows All items (and the approval
+  // rules, which wait on a read this render does not make), 5 Oct 2026.
+  assert.ok(html.indexOf('data-ws-dashboard') >= 0 && html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine=""'));
   assert.ok(!html.includes('data-ws-mine-more'), 'nothing of it waits behind a reveal');
   assert.match(html, /data-ws-lane="mine"/);
   assert.match(html, /<span class="dev-ws-head-title">Your work<\/span>/);
@@ -2800,10 +2813,23 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(route && /\[data-ws-dashboard\] > \[data-ws-open-line\]/
     .test(route.expectSelector), 'the lead line is what the gate can select');
   assert.ok(!route.expectSelector.includes(':has('), 'no :has() on a gate that blocks merge');
-  // The notices panel rides this check rather than a slot of its own: a
-  // sibling step, so it stays a plain chain. The staging demo gives it a
-  // Friday card and a setting changed (services/app-notices.js).
-  assert.match(route.expectSelector, /#dev-workshop \[data-ws-notices\] ~ \[data-ws-dashboard\] > \[data-ws-open-line\]$/);
+  assert.match(route.expectSelector, /#dev-workshop \[data-ws-dashboard\] > \[data-ws-open-line\]$/);
+  // THE PAGE'S ORDER (5 Oct 2026): All items, then the approval rules, then
+  // your work. The notices panel rode the line's check while it sat above
+  // All items; a plain chain only steps forward, so it rides the approval
+  // rules' check now, as the sibling straight after them. The staging demo
+  // gives it a Friday card and a setting changed (services/app-notices.js).
+  const rules = byName(/The Workshop tab leads with All items, then the approval rules/);
+  assert.ok(rules, 'the order is a declared check');
+  assert.match(rules.expectSelector,
+    /> \.dev-ws-tabbody > \[data-ws-dashboard\]:first-child \+ \[data-ws-approval-rules\] \+ \[data-ws-notices\]$/);
+  assert.ok(!rules.expectSelector.includes(':has('), 'a plain chain');
+  assert.equal(rules.expectText, 'A change goes live', 'and the rule itself is on the page');
+  const work = byName(/Your work stays on screen when it is empty/);
+  assert.match(work.expectSelector,
+    /\.dev-ws-tabbody > \[data-ws-approval-rules\] ~ \[data-ws-mine\] \[data-ws-lane="mine"\] > \[data-ws-mine-empty\]$/,
+    'your work comes after the approval rules');
+  assert.ok(!work.expectSelector.includes(':has('), 'a plain chain');
 
   const themesCheck = byName(/renders its themes into #dev-workshop/);
   assert.ok(themesCheck && /\.dev-ws-row\[role="button"\]\[aria-expanded\]/.test(themesCheck.expectSelector));
@@ -5055,7 +5081,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
       'a read-only viewer is told the fact alone');
   });
   assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
-  assert.ok(html.indexOf('data-ws-mine=""') < html.indexOf('data-ws-dashboard'), 'in its place, leading the Workshop page');
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine=""'), 'in its place, under All items');
   // First-session run-through, 5 Oct 2026: where Homeroom bot builds for
   // this viewer (the request pages' door, AppView._botDoor), the way in is
   // asking it, not the developer path.

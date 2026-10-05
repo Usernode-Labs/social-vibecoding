@@ -2978,7 +2978,9 @@ const AppView = {
   // anyone else is told whose description it is. Once it is built and up
   // for approval, it says it is ready to try and what it waits on
   // (_firstVersionReadyView). "Show the starter for now" mounts the frame
-  // anyway, for the rest of this visit to the page.
+  // anyway, for the rest of this visit to the page, under a bar whose "Back
+  // to the first version" puts this screen back (hideStarter;
+  // features/app-frame/starter-bar.tsx).
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
@@ -3354,6 +3356,37 @@ const AppView = {
     }
   },
 
+  /**
+   * "Back to the first version", on the bar over the starter
+   * (features/app-frame/starter-bar.tsx): the first version's screen again,
+   * read past every cache on the way if the record on hand is old
+   * (renderAppTab's `_firstVersionTrusted`), and its recheck armed again.
+   */
+  hideStarter(slug) {
+    if (!slug || !AppView._starterShown.delete(slug)) return;
+    AppView._publishStarter(AppView.appData);
+    if (AppView.appData && AppView.appData.slug === slug
+        && App.currentApp === slug && App.currentTab === 'app') {
+      AppView.renderAppTab();
+    }
+  },
+
+  /**
+   * Whose starter the bar is over: this record's, while its first version
+   * is on its way and the viewer asked for the starter; else nobody. Said on
+   * every App tab render, so a record that comes back built (or another
+   * app) takes the bar away. The bar itself draws only over that app's
+   * mounted frame.
+   */
+  _publishStarter(appData) {
+    const fv = appData && appData.first_version;
+    const slug = fv && fv.building && appData.slug && AppView._starterShown.has(appData.slug)
+      ? appData.slug : '';
+    const starter = typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appStarter;
+    if (starter && typeof starter.set === 'function') starter.set(slug);
+  },
+
   _stopFirstVersionWatch() {
     if (AppView._firstVersionTimer) clearTimeout(AppView._firstVersionTimer);
     AppView._firstVersionTimer = null;
@@ -3462,6 +3495,10 @@ const AppView = {
     // retire any interim React root that owns it first — see
     // _teardownDevRoots. Switching away from the Dev tab lands here.
     AppView._teardownDevRoots();
+
+    // #15: the bar over a starter shown while its first version is built,
+    // or no bar. Before any branch, so each one leaves it right.
+    AppView._publishStarter(appData);
 
     if (!appData || appData.status !== 'running' || !appData.url) {
       if (appData?.status === 'creating') {

@@ -384,10 +384,17 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
   assert.equal(chat.place, 'bottom');
   assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
-  // The other steps are as they were, and only this one moves a transcript.
+  // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
+  // "include the header on step 7 also").
+  assert.equal(chat.alongside, '#platform-header');
+  assert.equal(chat.endsAbove, undefined, 'the transcript ends at the composer, above the tab bar');
+  // The other steps' targets (the close step cuts out the app screen, with
+  // ✕ its press: tests/first-session.test.js), and only this one moves a
+  // transcript.
   assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#app-content', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+    '.app-card[data-slug="film"]', '#app-content', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
+  assert.equal(steps[2].press, '#back-btn');
   assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
@@ -440,7 +447,7 @@ test('the newest card is shown from its top: scrolled back just far enough, neve
   // Each frame, before the cut-out is measured, so the ring is drawn round
   // what it shows, and it holds when the rows arrive after the step lands.
   const src = read(`${DIR}/index.tsx`);
-  assert.match(englishUiSource(src), /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const b = targetBox\(stepRef\.current\.target\);/);
+  assert.match(englishUiSource(src), /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const m = measure\(at, stepRef\.current\);/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

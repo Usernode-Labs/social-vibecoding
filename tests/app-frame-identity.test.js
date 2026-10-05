@@ -218,6 +218,11 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     new URL('../frontend/src/features/app-frame/app-status-store.js', `file://${__filename}`).href
   );
   statusStoreMod.appStatusStore.set({ view: null });
+  // #15: whose starter the bar over the frame is for (starter-bar.tsx).
+  const starterStoreMod = await import(
+    new URL('../frontend/src/features/app-frame/starter-store.js', `file://${__filename}`).href
+  );
+  starterStoreMod.starterStore.set({ slug: '' });
 
   // The stores are module-scope singletons, like the islands they feed: reset
   // them to the prerendered state between cases.
@@ -373,6 +378,8 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       unmount: () => statusStoreMod.appStatusStore.set({ view: null }),
       clear: () => statusStoreMod.appStatusStore.set({ view: null }),
     },
+    // mount.ts's appStarterBridge, over the real store.
+    appStarter: { set: (slug) => starterStoreMod.starterStore.set({ slug: slug || '' }) },
   };
   if (offlineReady) {
     sandbox.localStorage.setItem(
@@ -403,6 +410,8 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     surface: () => outside['app-view'].getAttribute('data-app-surface'),
     /** The placeholder currently published, or null when a frame is up. */
     status: () => statusStoreMod.appStatusStore.get().view,
+    /** #15: whose starter the bar is published for ('' for none). */
+    starter: () => starterStoreMod.starterStore.get().slug,
   };
 }
 
@@ -774,6 +783,85 @@ test('#15: a first version being built shows its screen, not the starter, and dr
   assert.equal(h.surface(), 'app');
   assert.equal(AppView._firstVersionTimer, null, 'nothing is re-asked once the viewer chose the app');
   AppView._starterShown.delete(SLUG);
+});
+
+// Evan, first-session run-through, 5 October 2026: once "Show the starter for
+// now" was tapped there was no way back to the screen that said it was being
+// built, for the rest of the visit. The starter is framed under a bar now
+// (features/app-frame/starter-bar.tsx) whose "Back to the first version"
+// calls AppView.hideStarter.
+test('#15: the starter is framed under a bar, and its Back puts the first version\'s screen back', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING } };
+  AppView.renderAppTab();
+  assert.equal(h.starter(), '', 'no bar over the first version\'s own screen');
+
+  AppView.showStarter(SLUG);
+  const el = bridge.frame();
+  assert.ok(el, 'the starter is framed');
+  assert.equal(h.starter(), SLUG, 'under the bar');
+  // A render that keeps the starter (back from another tab) keeps the bar,
+  // and the frame is the same frame.
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), el);
+  assert.equal(el.loads, 1, 'not reloaded');
+  assert.equal(h.starter(), SLUG);
+
+  // "Back to the first version".
+  AppView.hideStarter(SLUG);
+  assert.equal(AppView._starterShown.has(SLUG), false);
+  assert.equal(h.starter(), '', 'the bar goes');
+  assert.equal(bridge.frame(), null, 'and so does the starter');
+  assert.equal(h.surface(), 'platform');
+  const shown = h.status();
+  assert.equal(shown.message, 'Homeroom is being built from your description');
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.equal(shown.secondary.key, 'starter', 'and the starter can be shown again');
+  assert.notEqual(AppView._firstVersionTimer, null, 'its recheck is armed again');
+  // A second Back, or one for an app whose starter is not shown, does nothing.
+  const before = h.status();
+  AppView.hideStarter(SLUG);
+  AppView.hideStarter('another-app');
+  AppView.hideStarter(null);
+  assert.equal(h.status(), before);
+
+  // Shown again, then the record comes back built: it is the app now, with no bar.
+  AppView.showStarter(SLUG);
+  assert.equal(h.starter(), SLUG);
+  assert.ok(bridge.frame());
+  AppView.appData = { ...h.record, self_hosted: false, first_version: null };
+  AppView.renderAppTab();
+  assert.equal(h.starter(), '', 'built: no bar');
+  assert.ok(bridge.frame(), 'and the app stays');
+  // Another app's render says no bar either.
+  AppView._starterShown.add(SLUG);
+  AppView.appData = { ...h.record, slug: 'other-app', self_hosted: false, first_version: { ...BUILDING } };
+  AppView._publishStarter(AppView.appData);
+  assert.equal(h.starter(), '');
+  AppView._starterShown.delete(SLUG);
+});
+
+test('#15: the bar renders inside the frame host, before the launch host, and only over its own app\'s frame', () => {
+  const host = FRAME.slice(FRAME.indexOf('export function AppFrameHost'));
+  // Unconditional and first: the launch host is the second child whatever
+  // the bar draws, so a bar appearing is an insert, never a move.
+  assert.match(host, /className="hidden flex-1 flex flex-col"/, 'the host is a column');
+  const bar = host.indexOf('<StarterBar />');
+  assert.ok(bar !== -1, 'the bar is rendered');
+  assert.ok(bar < host.indexOf('<div className="app-launch-host w-full h-full">'), 'before the launch host');
+  assert.ok(!/\{[^}]*\?\s*<StarterBar/.test(host), 'not inside a conditional');
+  const BAR = read('frontend/src/features/app-frame/starter-bar.tsx');
+  assert.match(BAR, /export function StarterBar\(\): ReactNode \{\s+const starter = useStoreState\(starterStore\);\s+const frame = useStoreState\(appFrameStore\);\s+const slug = starterBarFor\(starter, frame\);\s+return slug \? <StarterBarView slug=\{slug\} \/> : null;/);
+  assert.match(BAR, /className="shrink-0 /, 'it never shrinks; the launch host gives up its height');
+  assert.match(MOUNT, /bridge\.appStarter = appStarterBridge;/);
+  assert.match(MOUNT, /starterStore\.set\(\{ slug: slug \|\| '' \}\);/);
+  // Said on every App tab render, before any branch.
+  const render = SRC.slice(SRC.indexOf('  renderAppTab() {'));
+  assert.ok(render.indexOf('AppView._publishStarter(appData);') !== -1);
+  assert.ok(render.indexOf('AppView._publishStarter(appData);') < render.indexOf('if (!appData || appData.status !== \'running\' || !appData.url) {'));
+  // The CSS the launch host's shrink relies on: no content minimum.
+  assert.match(read('public/css/app.css'), /#app-frame-host > \.app-launch-host \{\s+border-radius: inherit;\s+overflow: hidden;\s+\}/);
 });
 
 test('#15: once it is built, the next render mounts the app', async () => {

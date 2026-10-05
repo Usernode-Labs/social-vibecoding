@@ -321,8 +321,9 @@ export function firstVersionStep(fv: HubFirstVersion): string {
 
 /**
  * The line under the step: what happens next, for whoever reads it. Its
- * maker is told what it waits on from them, or that the bot messages them
- * when it is ready; anybody else, whose description it is.
+ * maker is told what it waits on from them, or that the bot will message
+ * them when it is ready or has a question (the made screen's words);
+ * anybody else, whose description it is.
  *
  * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
  * version. It plans first and waits on its maker's answer, so an ordinary
@@ -332,7 +333,7 @@ export function firstVersionNote(fv: HubFirstVersion): string {
   if (fv.ready) return 'Version one is ready to try.';
   if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
   if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
-  if (fv.mine) return 'Homeroom bot messages you when it’s ready to try.';
+  if (fv.mine) return 'Homeroom bot will message you when it’s ready to try, or if it has any questions.';
   return fv.creator
     ? `Homeroom bot is building it from @${fv.creator}’s description.`
     : 'Homeroom bot is building it from its description.';
