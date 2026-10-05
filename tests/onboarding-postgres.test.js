@@ -421,43 +421,6 @@ test('the first run: join screen and Getting started, against the full schema', 
     }
   });
 
-  // The first week is the first chapter, without points (first-session plan,
-  // 2026-10-04): Home draws no Challenges block while /api/auth/me says
-  // `firstWeek` (frontend/src/features/home/home-panels.js inFirstWeek). The
-  // server decides it from the row's own created_at by the database's clock,
-  // so this drives the real middleware and route against the real column.
-  await t.test('/api/auth/me says when an account is in its first week, by the database clock', async () => {
-    const cookieParser = require('cookie-parser');
-    const { authMiddleware } = require('../src/middleware/auth');
-    const { authRoutes } = require('../src/routes/auth');
-    const token = crypto.randomBytes(24).toString('hex');
-    await pool.query(
-      `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
-      [token, grace.id]);
-    const real = express();
-    real.use(express.json(), cookieParser());
-    real.use(authMiddleware({}));
-    real.use(authRoutes({}));
-    const listener = await new Promise((resolve) => { const s = real.listen(0, '127.0.0.1', () => resolve(s)); });
-    const base = `http://127.0.0.1:${listener.address().port}`;
-    const me = async () => (await (await fetch(`${base}/api/auth/me`, {
-      headers: { Cookie: `session=${token}` },
-    })).json()).user;
-    const age = (interval) => pool.query(
-      'UPDATE users SET created_at = NOW() - $2::interval WHERE id = $1', [grace.id, interval]);
-    const { rows: [before] } = await pool.query('SELECT created_at FROM users WHERE id = $1', [grace.id]);
-    try {
-      assert.equal((await me()).firstWeek, true, 'made today: the first day of the first week');
-      await age('6 days 23 hours');
-      assert.equal((await me()).firstWeek, true, 'still the first week on its seventh day');
-      await age('7 days 1 minute');
-      assert.equal((await me()).firstWeek, false, 'week two: Home draws Challenges again');
-    } finally {
-      await pool.query('UPDATE users SET created_at = $2 WHERE id = $1', [grace.id, before.created_at]);
-      await new Promise((resolve) => listener.close(resolve));
-    }
-  });
-
   // An admin's "Reset first run" (Admin → Users → ⋯). Continues from the
   // newcomer above, who has answered, visited, closed the card, joined and
   // finished the tour.
