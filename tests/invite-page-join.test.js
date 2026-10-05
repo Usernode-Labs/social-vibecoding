@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
 
 // #3700: an invite link opens the community's page with Join on it, instead
 // of a confirm over Home.
@@ -201,7 +202,7 @@ function follow({ standing, pressed = false, confirm = true, redeem = null, coun
     firstSession: { welcome() { return false; } },
     ...(island ? { invitePreview: { open(info) { previews.push(info); events.push(`preview:${info.name}`); return true; } } } : {}),
   };
-  const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
+  const App = vm.runInNewContext(`({ ${methods} })`, withLanguage(sandbox));
   Object.assign(App, {
     _markNavigationVia() {},
     _rootUrl: () => '/',
@@ -500,7 +501,7 @@ test('a private community\'s invite preview shows the community and Join, and no
   assert.match(html, />Maya will see that you joined\.</);
   assert.match(html, /<b>Private community<\/b><\/span> · 4 members/, 'the member count');
   assert.match(html, /data-invite-preview-description="">Our monthly pick</);
-  assert.ok(html.includes(CLOSED_LINE), 'and why there is no more to see');
+  assert.ok(html.includes(CLOSED_LINE()), 'and why there is no more to see');
   assert.doesNotMatch(html, /dev-ws-hero-face|dev-ws-hero-faces/, 'no faces');
   assert.doesNotMatch(html, /data-ws-community-open-app|Open app/, 'no Open app');
   assert.doesNotMatch(html, /data-ws-members-trend|data-ws-members-stats/, 'no trend');

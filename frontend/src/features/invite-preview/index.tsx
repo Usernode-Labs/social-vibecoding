@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * A private community's invite preview (#3700).
  *
@@ -53,7 +55,7 @@ export type InvitePreviewInfo = Pick<
 };
 
 /** Why there is nothing more to see: the rest is the members'. */
-export const CLOSED_LINE = 'Its members, its app and what it is deciding open once you join.';
+export const CLOSED_LINE = () => tr("workshop:sync_its_members_its_app_and_what_it_is_deciding_o_b9a7ef1e");
 
 export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
   info: InvitePreviewInfo;
@@ -64,6 +66,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
   // The colour the community's own header wears (lib/community-color.ts),
   // from what the link's standing says of its icon. With no icon at all it
   // picks from the name: the project's address is not the preview's to know.
+  useUiLanguage("workshop");
   const tint = useResolvedCommunityColor({
     color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.name,
   }) || GRAPHITE;
@@ -83,7 +86,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
       >
         <button
           type="button"
-          aria-label="Not now"
+          aria-label={tr("workshop:not_now_a0e63d7c")}
           data-invite-preview-close=""
           onClick={onClose}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white"
@@ -98,11 +101,11 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
       <div className="mx-auto w-full max-w-xl px-4 pb-8 pt-4">
         <section className="dev-ws-hero" data-ws-invite-preview="">
           <InviteCard offer={info} name={info.name} busy={busy} onJoin={onJoin} />
-          <HeroPeople members={[]} count={info.memberCount} audience="invited" audienceLabel={info.audienceLabel} />
+          <HeroPeople members={[]} count={info.memberCount} audience="invited" audienceLabel={tr("workshop:private_community_cbb6e031")} />
           {info.description ? (
             <p className="dev-ws-hero-desc" data-invite-preview-description="">{info.description}</p>
           ) : null}
-          <p className="dev-ws-hero-line" data-invite-preview-closed="">{CLOSED_LINE}</p>
+          <p className="dev-ws-hero-line" data-invite-preview-closed="">{CLOSED_LINE()}</p>
         </section>
       </div>
     </div>

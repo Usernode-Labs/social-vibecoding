@@ -1085,6 +1085,7 @@ const App = {
         if (n < 30) setTimeout(() => App._applyInviteJoinShot(n + 1), 100);
         return;
       }
+      const description = 'Routes, pace groups and who brings the coffee.';
       island.open({
         token: null,
         preview: true,
@@ -1092,9 +1093,9 @@ const App = {
         iconEmoji: '🏃',
         iconUrl: null,
         iconColor: null,
-        description: 'Routes, pace groups and who brings the coffee.',
+        description,
         memberCount: 6,
-        audienceLabel: 'Private community',
+        get audienceLabel() { return globalThis.PlatformI18n.t("workshop:private_community_cbb6e031"); },
         inviter: 'maya',
         inviterName: 'Maya',
         inviterMadeIt: false,
@@ -4521,13 +4522,13 @@ const App = {
     const project = standing.project || {};
     return island.open({
       token,
-      name: project.name || 'this community',
+      name: project.name || globalThis.PlatformI18n.t("core:sync_this_community_7a0984fa"),
       iconEmoji: project.iconEmoji || null,
       iconUrl: project.iconUrl || null,
       iconColor: shown.iconColor || null,
       description: project.description || null,
       memberCount: Number(standing.memberCount) || 0,
-      audienceLabel: shown.audienceLabel || 'Private community',
+      get audienceLabel() { return globalThis.PlatformI18n.t("workshop:private_community_cbb6e031"); },
       inviter: standing.inviter || null,
       inviterName: standing.inviterName || null,
       inviterMadeIt: !!standing.inviterMadeIt,

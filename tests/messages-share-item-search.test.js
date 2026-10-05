@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The composer's + → Share item searches and filters with chips (#3937).
 //
@@ -124,7 +125,7 @@ test('the list draws a row per app, the chosen one marked, and says when nothing
 });
 
 test('Enter in the search box attaches nothing, and attaching is unchanged', () => {
-  const source = src();
+  const source = englishUiSource(src());
   assert.match(source, /onKeyDown=\{\(event\) => \{ if \(event\.key === 'Enter'\) event\.preventDefault\(\); \}\}/);
   assert.ok(!/<form\b/.test(source), 'no form for Enter to submit');
   assert.match(source, /<Button type="button" disabled=\{!canAttach\} onClick=\{attach\}>Attach item<\/Button>/,

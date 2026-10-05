@@ -19685,7 +19685,7 @@ const AppView = {
     // spine is green again too.
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', get label() { return '✓ ' + globalThis.PlatformI18n.t("core:live_06b2d702"); }, tone: 'ok', lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deployed', get label() { return globalThis.PlatformI18n.t("core:live_06b2d702"); }, tone: 'ok', lock: false, advisory: 0,
           get title() { return globalThis.PlatformI18n.t("core:this_change_is_live_in_the_app_f3bb0a94"); } };
       }
       if (p.deployment_state === 'deploying') {
@@ -19710,7 +19710,7 @@ const AppView = {
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
-      return { ...base, tier: 0, key: 'merged', get label() { return '✓ ' + globalThis.PlatformI18n.t("core:live_06b2d702"); }, tone: 'ok', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', get label() { return globalThis.PlatformI18n.t("core:live_06b2d702"); }, tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
@@ -20229,7 +20229,10 @@ const AppView = {
   //                close-up. The radios hold it; the caller lays the sides out.
   // `key` makes the ids unique on the page, so a spec and a card can share one.
   _shotsSizeName(size) {
-    const value = String(size || 'screen');
+    if (size === 'phone') return globalThis.PlatformI18n.t("core:sync_phone_63dceb88");
+    if (size === 'desktop') return globalThis.PlatformI18n.t("core:sync_desktop_9bd88f24");
+    if (!size || size === 'screen') return globalThis.PlatformI18n.t("core:sync_screen_6e56137e");
+    const value = String(size);
     return value.charAt(0).toUpperCase() + value.slice(1);
   },
 
@@ -20256,14 +20259,14 @@ const AppView = {
     const stepper = (index) => {
       const same = indexesOf(list[index].viewport);
       const at = same.indexOf(index);
-      const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="Previous screen">‹</label>`
+      const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="${globalThis.PlatformI18n.htmlText("core:previous_screen_6f6e6978")}">‹</label>`
         : '<span class="shots-screen-step shots-screen-step-off">‹</span>';
-      const next = at < same.length - 1 ? `<label for="${pickId(same[at + 1])}" class="shots-screen-step" title="Next screen">›</label>`
+      const next = at < same.length - 1 ? `<label for="${pickId(same[at + 1])}" class="shots-screen-step" title="${globalThis.PlatformI18n.htmlText("core:next_screen_4ab5cc21")}">›</label>`
         : '<span class="shots-screen-step shots-screen-step-off">›</span>';
-      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${at + 1} of ${same.length}</span>${next}</span>`;
+      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${globalThis.PlatformI18n.htmlText("core:value1_of_value2_a48c498b", { value1: at + 1, value2: same.length })}</span>${next}</span>`;
     };
     const both = sideBySide
-      ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="Side by side">${bothIcon}<span class="shots-seg-label">Side by side</span></label>`
+      ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="${globalThis.PlatformI18n.htmlText("core:sync_side_by_side_a3d7b387")}">${bothIcon}<span class="shots-seg-label">${globalThis.PlatformI18n.htmlText("core:sync_side_by_side_a3d7b387")}</span></label>`
       : '';
     const views = list.map((screen, screenIndex) => {
       const sizeSwitch = shownSizes.length > 1
@@ -20273,25 +20276,25 @@ const AppView = {
         }).join('')}</span>`
         : '';
       const zoomSwitch = zooming && screen.zoomable
-        ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
+        ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="${globalThis.PlatformI18n.htmlText("core:sync_close_up_223f4cd0")}">${closeIcon}<span class="shots-seg-label">${globalThis.PlatformI18n.htmlText("core:sync_close_up_223f4cd0")}</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="${globalThis.PlatformI18n.htmlText("core:sync_whole_screen_d0cf2fa1")}">${wholeIcon}<span class="shots-seg-label">${globalThis.PlatformI18n.htmlText("core:sync_whole_screen_d0cf2fa1")}</span></label></span>`
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${globalThis.PlatformI18n.htmlText("core:before_9bb72500")}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${globalThis.PlatformI18n.htmlText("core:after_7b68fe55")}</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
-          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="Click to see before" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="Click to see after" aria-hidden="true"></label>
-          <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || 'After')}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || 'Before')}</span>
+          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${globalThis.PlatformI18n.htmlText("core:click_to_see_before_8205320a")}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${globalThis.PlatformI18n.htmlText("core:click_to_see_after_dcc76215")}" aria-hidden="true"></label>
+          <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || globalThis.PlatformI18n.t("core:after_7b68fe55"))}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || globalThis.PlatformI18n.t("core:before_9bb72500"))}</span>
         </div>
         <figcaption class="shots-view-notes">${screen.notesHtml || ''}</figcaption>
       </figure>`;
     });
-    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="Show the screen before the change"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="Show the screen after the change"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="Show before and after side by side">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="Show side by side when there is room, otherwise after" checked>` : ''}</span>`;
+    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="${globalThis.PlatformI18n.htmlText("core:show_the_screen_before_the_change_e7f5a5de")}"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="${globalThis.PlatformI18n.htmlText("core:show_the_screen_after_the_change_998a10c4")}"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="${globalThis.PlatformI18n.htmlText("core:sync_show_before_and_after_side_by_side_170d8d26")}">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="${globalThis.PlatformI18n.htmlText("core:sync_show_side_by_side_when_there_is_room_otherwis_eb297bef")}" checked>` : ''}</span>`;
     const zoomPicks = zooming
-      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="Show a close-up of what changes" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="Show the whole screen"></span>`
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${globalThis.PlatformI18n.htmlText("core:sync_show_a_close_up_of_what_changes_c0f31bdb")}" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${globalThis.PlatformI18n.htmlText("core:sync_show_the_whole_screen_8f4f712f")}"></span>`
       : '';
     const screenPicks = list.length > 1
-      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
+      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(globalThis.PlatformI18n.t("core:screen_value1_of_value2_value3_63c0382f", { value1: index + 1, value2: list.length, value3: sizeName(screen.viewport) }))}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
     return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },

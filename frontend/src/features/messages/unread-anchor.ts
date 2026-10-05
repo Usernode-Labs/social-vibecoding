@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -91,7 +92,7 @@ export function firstUnreadId(rows: readonly UnreadRow[], lastReadId: number): n
 export function newMessagesLabel(count: number): string {
   const n = Math.floor(Number(count) || 0);
   if (n <= 0) return '';
-  return `${n} new ${n === 1 ? 'message' : 'messages'}`;
+  return tr("community:new_messages", { count: n });
 }
 
 /**
@@ -182,8 +183,8 @@ export function jumpShown(box: ScrollBox, slack: number = STICK_SLACK_PX): boole
 
 /** The button's name, which says what the dot means. */
 export function jumpLabel(arrived: number): string {
-  const words = newMessagesLabel(arrived);
-  return words ? `Jump to latest, ${words}` : 'Jump to latest';
+  const count = Math.max(0, Math.floor(Number(arrived) || 0));
+  return count > 0 ? tr("community:jump_new_messages", { count }) : tr("community:sync_jump_to_latest_86752458");
 }
 
 /** A glide the reader asked for, or a jump for a reader who asked for less motion. */

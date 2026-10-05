@@ -236,7 +236,7 @@ export function ImageViewer({ src, alt, onClose }: {
           className="inline-flex items-center h-10 px-4 rounded-full bg-white/15 text-white text-sm font-semibold"
           data-image-viewer-download=""
         >
-          {remote ? 'Open original' : <Message id="core:download_d6eafe82" />}
+          {remote ? tr("core:sync_open_original_44a915fa") : tr("core:download_d6eafe82")}
         </a>
         <Localized element={<button
           ref={closeRef}

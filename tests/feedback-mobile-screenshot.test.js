@@ -129,7 +129,7 @@ test('choosing an image or resetting the row gives up the unanswered share', () 
 
 test('a long wait says what to do, and the line goes once the browser answers', () => {
   assert.match(controller, /const CAPTURE_WAIT_HINT_MS = 10 \* 1000;/);
-  assert.match(controller, /Still waiting for your browser to share the screen\. If you already chose what to share and nothing happened, restart the browser, or choose an image instead\. Your feedback is safe\./);
+  assert.match(englishUiSource(controller), /Still waiting for your browser to share the screen\. If you already chose what to share and nothing happened, restart the browser, or choose an image instead\. Your feedback is safe\./);
   const round = controller.slice(
     controller.indexOf('const runCapture = async'),
     controller.indexOf("screenshotBtn.addEventListener('click'"),
@@ -142,7 +142,7 @@ test('a long wait says what to do, and the line goes once the browser answers', 
 
 test('a share far smaller than the page is named, not reported as a locate failure', () => {
   assert.match(controller, /err\.code === 'wrong_surface'/);
-  assert.match(controller, /That was a small window, not this page\./);
+  assert.match(englishUiSource(controller), /That was a small window, not this page\./);
 });
 
 test('every capture failure says the feedback itself is safe', () => {

@@ -43,18 +43,18 @@ export type AppGroup = 'all' | 'mine' | 'others';
  * each one opens still names exactly which number it wants.
  */
 export const SHARE_TYPES: ReadonlyArray<{ value: SharedObjectType; label: string }> = [
-  { value: 'app', label: 'App' },
-  { value: 'issue', label: 'GitHub issue' },
-  { value: 'proposal', label: 'Code proposal' },
-  { value: 'governance', label: 'Governance proposal' },
-  { value: 'spec', label: 'Spec version' },
+  { value: 'app', get label() { return tr("community:app_0d04bfeb"); } },
+  { value: 'issue', get label() { return tr("community:sync_github_issue_7d94e2e7"); } },
+  { value: 'proposal', get label() { return tr("community:code_proposal_800e6d29"); } },
+  { value: 'governance', get label() { return tr("community:governance_proposal_5f1d1a55"); } },
+  { value: 'spec', get label() { return tr("community:spec_version_cd76c4ed"); } },
 ];
 
 /** The app list's filter chips: "All" first, then the dropdown's two option groups. */
 export const APP_GROUPS: ReadonlyArray<{ value: AppGroup; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'mine', label: 'Your projects' },
-  { value: 'others', label: 'Other projects' },
+  { value: 'all', get label() { return tr("community:all_a52ace42"); } },
+  { value: 'mine', get label() { return tr("community:your_projects"); } },
+  { value: 'others', get label() { return tr("community:other_projects"); } },
 ];
 
 /**
@@ -136,10 +136,10 @@ export function AppChoiceRows({ rows, appId, open, loading, failed, searching, o
   searching: boolean;
   onChoose: (id: number) => void;
 }) {
-  if (loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">Loading apps…</p>;
+  if (loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3"><Message id="community:loading_apps_f8bcca38" /></p>;
   if (!open || failed) return null;
   if (!rows.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{searching ? 'No apps match your search.' : 'No apps to share from yet.'}</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3"><Message id={searching ? "community:sync_no_apps_match_your_search_780f4366" : "community:sync_no_apps_to_share_from_yet_6157792d"} /></p>;
   }
   return (
     <>
@@ -156,7 +156,7 @@ export function AppChoiceRows({ rows, appId, open, loading, failed, searching, o
             className={`w-full min-h-[44px] sm:min-h-[36px] flex items-center gap-3 rounded-lg px-2 py-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
           >
             <span className="min-w-0 flex-1 text-sm font-medium truncate">{item.name}</span>
-            {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Selected</span> : null}
+            {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300"><Message id="community:selected_57fd7a0c" /></span> : null}
           </button>
         );
       })}
@@ -246,8 +246,8 @@ export function ShareItemDialog() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}
-          placeholder="Search apps"
-          aria-label="Search apps"
+          placeholder={tr("community:sync_search_apps_a10a36fa")}
+          aria-label={tr("community:sync_search_apps_a10a36fa")}
           autoComplete="off"
           enterKeyHint="search"
           className="mb-3"
@@ -263,13 +263,13 @@ export function ShareItemDialog() {
         <fieldset className="mb-3 min-w-0">
           <legend className={LEGEND}><Message id="community:app_0d04bfeb" /></legend>
           {grouped ? (
-            <ChipRail role="group" aria-label="Filter apps" className={`${RAIL} mb-1`}>
+            <ChipRail role="group" aria-label={tr("community:sync_filter_apps_c8be0116")} className={`${RAIL} mb-1`}>
               {APP_GROUPS.map((option) => (
                 <Chip key={option.value} size="bar" data-share-group={option.value} selected={group === option.value} className={chipClass(group === option.value)} onClick={() => setGroup(option.value)}>{option.label}</Chip>
               ))}
             </ChipRail>
           ) : null}
-          <div ref={listRef} role="listbox" aria-label="Apps" data-share-apps="" className="min-h-12 max-h-60 overflow-y-auto">
+          <div ref={listRef} role="listbox" aria-label={tr("community:sync_apps_89dd7484")} data-share-apps="" className="min-h-12 max-h-60 overflow-y-auto">
             <AppChoiceRows rows={shown} appId={appId} open={dialog.isOpen} loading={loading} failed={!!error} searching={!!query.trim()} onChoose={setAppId} />
           </div>
         </fieldset>

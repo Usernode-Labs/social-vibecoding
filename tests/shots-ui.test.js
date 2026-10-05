@@ -252,8 +252,8 @@ test('a Desktop / Phone switch picks the screen size, with no script', () => {
   const html = AppView.shotsHtml(value, { sessionId: 42 });
   const radios = html.match(/<input type="radio" class="shots-screen-pick"[^>]*>/g) || [];
   assert.equal(radios.length, 2);
-  assert.match(radios[0], /name="shots-42-screen-pick" id="shots-42-screen-0" aria-label="Screen 1 of 2: desktop" checked/);
-  assert.match(radios[1], /id="shots-42-screen-1" aria-label="Screen 2 of 2: phone">/);
+  assert.match(radios[0], /name="shots-42-screen-pick" id="shots-42-screen-0" aria-label="Screen 1 of 2: Desktop" checked/);
+  assert.match(radios[1], /id="shots-42-screen-1" aria-label="Screen 2 of 2: Phone">/);
   assert.ok(html.indexOf('class="shots-screen-pick"') < html.indexOf('<figure class="shots-view"'), 'the radios precede the screens they show');
   const [desktop, phone] = html.match(/<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/g);
   assert.match(desktop, /<label for="shots-42-screen-0" class="shots-seg-btn shots-seg-on" title="Desktop"><svg[\s\S]*?<\/svg><span class="shots-seg-label">Desktop<\/span><\/label><label for="shots-42-screen-1" class="shots-seg-btn" title="Phone">/);

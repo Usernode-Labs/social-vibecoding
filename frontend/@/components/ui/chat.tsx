@@ -1,3 +1,4 @@
+import { Message, useMessages as useUiLanguage } from "../../../src/lib/i18n/react";
 import { LocalizedValue, LocalizedDynamic } from "../../../src/lib/i18n/react";
 import { t as tr } from "../../../src/lib/i18n/runtime";
 import * as React from 'react';
@@ -167,17 +168,18 @@ export function groupsWithPrevious(
 export function NewMessagesDivider({
   className, ref, ...props
 }: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }) {
+  useUiLanguage("core");
   return (
     <div
       ref={ref}
       role="separator"
-      aria-label="New messages"
+      aria-label={tr("core:sync_new_messages_ef5df7e6")}
       data-unread-line=""
       className={cn('flex items-center gap-2 px-4 py-1.5', className)}
       {...props}
     >
       <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-violet-500/60 dark:bg-violet-400/60" />
-      <span aria-hidden="true" className="text-[0.8125rem] font-semibold leading-none text-violet-700 dark:text-violet-400">New</span>
+      <span aria-hidden="true" className="text-[0.8125rem] font-semibold leading-none text-violet-700 dark:text-violet-400"><Message id="core:sync_new_18fdd549" /></span>
     </div>
   );
 }

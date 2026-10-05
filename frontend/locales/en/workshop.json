@@ -1586,5 +1586,20 @@
   "merged_d3052fff5a0f": "Who approves proposals and how many approvals are needed",
   "merged_64035d331986": "Manage collaborators, app admins and proposal approvals",
   "merged_59a22acd2e28": "Renames are proposals, applied once voted in",
-  "merged_82bb5bb897a2": "Make your own copy"
+  "merged_82bb5bb897a2": "Make your own copy",
+  "sync_name_is_making_it_and_invited_you_92e63abe": "{{name}} is making it and invited you",
+  "sync_name_made_it_and_invited_you_996b9592": "{{name}} made it and invited you",
+  "sync_name_invited_you_74998e2d": "@{{name}} invited you",
+  "sync_you_were_invited_c4941a0e": "You were invited",
+  "sync_name_will_see_that_you_joined_69069dfd": "{{name}} will see that you joined.",
+  "sync_that_invite_link_has_expired_7aa263b3": "That invite link has expired.",
+  "sync_that_invite_link_was_turned_off_e06ebc93": "That invite link was turned off.",
+  "sync_that_invite_link_has_been_used_as_many_times__470ba439": "That invite link has been used as many times as it allows.",
+  "sync_that_invite_link_does_not_work_a0ffc591": "That invite link does not work.",
+  "sync_this_is_a_preview_of_an_invite_so_nothing_was_cc969dce": "This is a preview of an invite, so nothing was joined.",
+  "sync_could_not_join_try_again_d8162dad": "Could not join. Try again.",
+  "sync_you_re_in_fbf03a5a": "You're in.",
+  "sync_join_name_02226b7a": "Join {{name}}",
+  "sync_its_members_its_app_and_what_it_is_deciding_o_b9a7ef1e": "Its members, its app and what it is deciding open once you join.",
+  "sync_copied_ea61bc15": "Copied!"
 }

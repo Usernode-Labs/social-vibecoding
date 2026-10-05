@@ -1004,7 +1004,7 @@ export function init() {
         pendingCapture = attempt;
         waitHintTimer = setTimeout(() => {
           if (pendingCapture !== attempt) return;
-          showFeedbackNotice('Still waiting for your browser to share the screen. If you already chose what to share and nothing happened, restart the browser, or choose an image instead. Your feedback is safe.', false);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:sync_still_waiting_for_your_browser_to_share_the_s_f3425099"), false);
           waitHintText = feedbackStatus.textContent;
         }, CAPTURE_WAIT_HINT_MS);
       }
@@ -1093,7 +1093,7 @@ export function init() {
           // Something far smaller than this page was shared: on a Mac,
           // usually the browser's own "sharing" indicator, which the system
           // picker lists among the windows.
-          showFeedbackNotice('That was a small window, not this page. Try again and share the window showing this page, or your whole screen. Your feedback is safe.', true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:sync_that_was_a_small_window_not_this_page_try_aga_44657c62"), true);
         } else if (err && err.code === 'register_failed') {
           showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_locate_this_page_in_the_shared_window_k_07770918"), true);
         } else if (err && err.code === 'too-large') {

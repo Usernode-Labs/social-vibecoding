@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3908: a screenshot on a request's page opens in the app's own image
 // viewer, over the page, instead of following its file link out of it.
@@ -181,7 +182,7 @@ test('a screenshot hosted elsewhere opens in a new tab from the viewer rather th
   } finally {
     if (before === undefined) delete global.window; else global.window = before;
   }
-  const src = read(VIEWER);
+  const src = englishUiSource(read(VIEWER));
   assert.match(src, /download=\{alt \|\| true\}\n\s*\{\.\.\.\(remote \? \{ target: '_blank', rel: 'noopener noreferrer' \} : \{\}\)\}/);
   assert.match(src, /\{remote \? 'Open original' : 'Download'\}/);
 });

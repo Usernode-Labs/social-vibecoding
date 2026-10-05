@@ -1,3 +1,4 @@
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * An invite link, followed into the page of the project it is for (#3700).
  *
@@ -103,22 +104,22 @@ export function useInviteOffer(slug: string): InviteOffer | null {
  */
 export function invitedByLine(offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building'>): string {
   if (offer.inviterMadeIt && offer.inviterName) {
-    return `${offer.inviterName} ${offer.building ? 'is making' : 'made'} it and invited you`;
+    return tr(offer.building ? "workshop:sync_name_is_making_it_and_invited_you_92e63abe" : "workshop:sync_name_made_it_and_invited_you_996b9592", { name: offer.inviterName });
   }
-  return offer.inviter ? `@${offer.inviter} invited you` : 'You were invited';
+  return offer.inviter ? tr("workshop:sync_name_invited_you_74998e2d", { name: offer.inviter }) : tr("workshop:sync_you_were_invited_c4941a0e");
 }
 
 /** WP-E: the link's maker hears when somebody joins through it, so the page says so first. */
 export function seenByLine(offer: Pick<InviteOffer, 'inviter' | 'inviterName'>): string {
   const who = offer.inviterName || (offer.inviter ? `@${offer.inviter}` : '');
-  return who ? `${who} will see that you joined.` : '';
+  return who ? tr("workshop:sync_name_will_see_that_you_joined_69069dfd", { name: who }) : "";
 }
 
 const DEAD: Record<string, string> = {
-  expired: 'That invite link has expired.',
-  revoked: 'That invite link was turned off.',
-  used_up: 'That invite link has been used as many times as it allows.',
-  unknown: 'That invite link does not work.',
+  get expired() { return tr("workshop:sync_that_invite_link_has_expired_7aa263b3"); },
+  get revoked() { return tr("workshop:sync_that_invite_link_was_turned_off_e06ebc93"); },
+  get used_up() { return tr("workshop:sync_that_invite_link_has_been_used_as_many_times__470ba439"); },
+  get unknown() { return tr("workshop:sync_that_invite_link_does_not_work_a0ffc591"); },
 };
 
 export type InviteJoin = {
@@ -143,7 +144,7 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   const w = window as any;
   const toast = (msg: string, error = false) => w.PlatformUI?.toast?.(msg, error ? { error: true } : undefined);
   if (!offer.token) {
-    toast('This is a preview of an invite, so nothing was joined.');
+    toast(tr("workshop:sync_this_is_a_preview_of_an_invite_so_nothing_was_cc969dce"));
     return FAILED;
   }
   let res: Response;
@@ -153,7 +154,7 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
       credentials: 'same-origin',
     });
   } catch {
-    toast('Could not join. Try again.', true);
+    toast(tr("workshop:sync_could_not_join_try_again_d8162dad"), true);
     return FAILED;
   }
   if (res.status === 401) {
@@ -162,7 +163,7 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   }
   const result = await res.json().catch(() => ({}));
   if (!res.ok || !result.ok || !result.slug) {
-    toast(DEAD[result.reason] || 'Could not join. Try again.', true);
+    toast(DEAD[result.reason] || tr("workshop:sync_could_not_join_try_again_d8162dad"), true);
     if (!result.reason) return FAILED;
     // A link that died meanwhile is not this page's to offer any more: the
     // hero's own Join is still there.
@@ -177,6 +178,6 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   if (result.status === 'joined') w.HomePanels?.ensureLoaded?.({ force: true });
   void Promise.resolve(w.Home?.load?.()).catch(() => {});
   if (result.newAccount === true && offer.welcome?.(true, result.slug)) return { outcome: 'welcomed', slug: result.slug };
-  toast("You're in.");
+  toast(tr("workshop:sync_you_re_in_fbf03a5a"));
   return { outcome: 'joined', slug: result.slug };
 }

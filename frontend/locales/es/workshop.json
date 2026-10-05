@@ -6458,5 +6458,65 @@
   "tally_value1_of_value2_approvals_other": {
     "text": "{{value1}} de {{value2}} aprobados",
     "source": "b27fd6af0785e5f2b2cf63259db484cff26ab7015075dbeb18e8fd4843ff6b24"
+  },
+  "sync_name_is_making_it_and_invited_you_92e63abe": {
+    "text": "{{name}} está haciendo esto y te invita",
+    "source": "92e63abe7f32df5e1350e9d134ba80597a6f1615e0cf2ec068d748aca05626d0"
+  },
+  "sync_name_made_it_and_invited_you_996b9592": {
+    "text": "{{name}} lo hizo y te invitó",
+    "source": "996b9592396b0d54559461edad4b201caab61d37c46c0c44ebb64f1390bec5bb"
+  },
+  "sync_name_invited_you_74998e2d": {
+    "text": "@{{name}} te invitó",
+    "source": "74998e2d47f58443d550a037cc19fa5b47aa000d067eead90b058d9a1ed31090"
+  },
+  "sync_you_were_invited_c4941a0e": {
+    "text": "Usted fue invitado",
+    "source": "c4941a0e344f74bd11ae2c078eeea59ea409e3de31d1107eb25cd1017441e75a"
+  },
+  "sync_name_will_see_that_you_joined_69069dfd": {
+    "text": "{{name}} verá que usted se ha unido.",
+    "source": "69069dfdf3e0771e6cfa57ea0cda94c5b23cf407a281833cd1a0449ccc47c9d6"
+  },
+  "sync_that_invite_link_has_expired_7aa263b3": {
+    "text": "El enlace de invitación ha expirado.",
+    "source": "7aa263b33dcbbff9cadc7667e4d9c7079f92b139351fbf607da78f8ff78a0873"
+  },
+  "sync_that_invite_link_was_turned_off_e06ebc93": {
+    "text": "El enlace de invitación fue desactivado.",
+    "source": "e06ebc93751a841a4b1a9d257fb73bc5c0179c3dd0e40d24e5adc40ec977ec98"
+  },
+  "sync_that_invite_link_has_been_used_as_many_times__470ba439": {
+    "text": "Este enlace de invitación ha sido utilizado tantas veces como permite.",
+    "source": "470ba439321ab27f07f0e4c2173df61170c1a80c007eebc980d208f82562d07a"
+  },
+  "sync_that_invite_link_does_not_work_a0ffc591": {
+    "text": "Este enlace de invitación no funciona.",
+    "source": "a0ffc5912ef1f3588980bab8ae1204ac9a01bc56a63f27afa1d8914d9c2285b8"
+  },
+  "sync_this_is_a_preview_of_an_invite_so_nothing_was_cc969dce": {
+    "text": "Esta es una previsión de una invitación, por lo que nada se unió.",
+    "source": "cc969dceac9e5e8162a15a818b33891dfa941555975b5d8b029678ade4575f3d"
+  },
+  "sync_could_not_join_try_again_d8162dad": {
+    "text": "No se puede unirse, intenta de nuevo.",
+    "source": "d8162dad54a10098395d9e9322f73170fff9999c583d3857ba04b98b29c58b66"
+  },
+  "sync_you_re_in_fbf03a5a": {
+    "text": "Tú estás dentro.",
+    "source": "fbf03a5ae58a1e80a178da3f44f3dfbdd19db140c197bc723819f9e5f81b776b"
+  },
+  "sync_join_name_02226b7a": {
+    "text": "Unirse a {{name}}",
+    "source": "02226b7af64f973dff20b4acfec51d0e67f94fcac97e3d448cc05478cf57b3b4"
+  },
+  "sync_its_members_its_app_and_what_it_is_deciding_o_b9a7ef1e": {
+    "text": "Sus miembros, su app y lo que está decidiendo abrir una vez que usted se une.",
+    "source": "b9a7ef1e692e2a75fba574885ed47e44b16533bc0093c5906b8884d55f6e7c86"
+  },
+  "sync_copied_ea61bc15": {
+    "text": "¡Copio de la!",
+    "source": "ea61bc15688d1e482ae5335e8dc030d8300b1afc07ecc7c2e6af5c43728b1d25"
   }
 }

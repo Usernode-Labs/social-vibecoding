@@ -1,6 +1,6 @@
 import { useMessages as useUiLanguage } from "../../lib/i18n/react";
 import { t as tr } from "../../lib/i18n/runtime";
-import { Localized, message as catalogText } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#gc-spec-side-panel` — the shared-spec reader's contents, as the only React
  * writer below that host.
@@ -65,6 +65,7 @@ function HtmlPart({ html, className, role }: { html: string; className?: string;
  * new spec.
  */
 function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> }) {
+  useUiLanguage('workshop');
   const [tab, setTab] = useState<'user' | 'tech'>('user');
   useEffect(() => { setTab('user'); }, [body.userHtml, body.html]);
   if (!body.split) return <HtmlPart className="gc-spec-panel-body" html={body.html} />;
@@ -80,13 +81,13 @@ function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> 
   return (
     <div className="gc-spec-panel-body">
       {body.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={body.preambleHtml} /> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-        {tabButton('user', 'User-facing')}
-        {tabButton('tech', 'Technical')}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={tr("workshop:spec_sections_2c81579b")}>
+        {tabButton('user', tr("workshop:user_facing_9f6f005f"))}
+        {tabButton('tech', tr("workshop:technical_e851504f"))}
       </div>
       {half
         ? <HtmlPart role="tabpanel" html={half} />
-        : <div role="tabpanel"><p className="dc-spec-tab-empty">Nothing in this section.</p></div>}
+        : <div role="tabpanel"><p className="dc-spec-tab-empty"><Message id="workshop:nothing_in_this_section_04506069" /></p></div>}
     </div>
   );
 }
@@ -99,7 +100,7 @@ function CopyButton() {
       className="gc-spec-panel-copy" aria-label={catalogText("workshop:copy_the_whole_spec_as_markdown_c07d091d")} title={catalogText("workshop:copy_the_whole_spec_as_markdown_c07d091d")}
       onClick={async () => {
         const ok = await ui()?.copyText?.(controller()?._specPanelRaw);
-        setLabel(ok ? 'Copied!' : tr("workshop:copy_failed_5b50e7a6"));
+        setLabel(ok ? tr("workshop:sync_copied_ea61bc15") : tr("workshop:copy_failed_5b50e7a6"));
         if (!ok) ui()?.toast?.(tr("workshop:couldn_t_copy_select_the_text_and_copy_it_manual_9181be57"));
         setTimeout(() => setLabel(tr("workshop:copy_markdown_7a99a712")), 1500);
       }}

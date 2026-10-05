@@ -4,3 +4,9 @@ export { waitingWords } from '../../frontend/src/features/messages/approval-word
 export { NOTIFY_ME_LINES } from '../../frontend/src/features/messages/notify-me';
 export { pillLabel } from '../../frontend/src/features/first-session/sketch-card';
 export { BotStatusChip } from '../../frontend/src/features/group-chat/bot-request';
+export { SHARE_TYPES, APP_GROUPS, AppChoiceRows } from '../../frontend/src/features/messages/share-dialog';
+export { newMessagesLabel, jumpLabel } from '../../frontend/src/features/messages/unread-anchor';
+export { invitedByLine, seenByLine } from '../../frontend/src/features/dev-board/workshop/invite-offer';
+export { CLOSED_LINE } from '../../frontend/src/features/invite-preview';
+export { InviteCard } from '../../frontend/src/features/dev-board/workshop/community-card';
+export { NewMessagesDivider } from '../../frontend/@/components/ui/chat';

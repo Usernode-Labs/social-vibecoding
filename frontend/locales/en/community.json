@@ -819,5 +819,16 @@
   "approval_when_people_one": "when {{value1}} approves too",
   "approval_when_people_other": "when {{value1}} approve too",
   "approval_when_more_one": "when one more person approves",
-  "approval_when_more_other": "when {{count}} more people approve"
+  "approval_when_more_other": "when {{count}} more people approve",
+  "sync_github_issue_7d94e2e7": "GitHub issue",
+  "sync_no_apps_match_your_search_780f4366": "No apps match your search.",
+  "sync_no_apps_to_share_from_yet_6157792d": "No apps to share from yet.",
+  "sync_search_apps_a10a36fa": "Search apps",
+  "sync_filter_apps_c8be0116": "Filter apps",
+  "sync_apps_89dd7484": "Apps",
+  "new_messages_one": "{{count}} new message",
+  "new_messages_other": "{{count}} new messages",
+  "jump_new_messages_one": "Jump to latest, {{count}} new message",
+  "jump_new_messages_other": "Jump to latest, {{count}} new messages",
+  "sync_jump_to_latest_86752458": "Jump to latest"
 }

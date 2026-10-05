@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 // "when you go to a dm / discussion with unread messages, start so that the
 // top of the screen is where you've unread, and have a little unread banner,
 // like I think discord or slack does? And some little button to scroll down
@@ -607,7 +608,7 @@ test('the conversation opens at the line, draws it once, and measures after its 
   assert.match(THREAD, /if \(lineAt !== null && snap\.messages\[index \+ hidden\]\.id >= lineAt\) drawLine\(\);/);
   // The banner only with a mark (nothing for none); the button always there, hidden at the bottom.
   assert.match(THREAD, /\{mark \? \(\s*<TranscriptOverlay edge="top">\s*<NewMessagesBanner shown=\{unread\.banner\} onClick=\{toLine\}>\{newMessagesLabel\(mark\.count\)\}<\/NewMessagesBanner>\s*<\/TranscriptOverlay>\s*\) : null\}/);
-  assert.match(THREAD, /<JumpToLatestButton shown=\{unread\.jump\} dot=\{unread\.arrived > 0\} aria-label=\{jumpLabel\(unread\.arrived\)\} title="Jump to latest" onClick=\{jumpToLatest\} \/>/);
+  assert.match(englishUiSource(THREAD), /<JumpToLatestButton shown=\{unread\.jump\} dot=\{unread\.arrived > 0\} aria-label=\{jumpLabel\(unread\.arrived\)\} title="Jump to latest" onClick=\{jumpToLatest\} \/>/);
   // Both boxes sit beside the scroller, which keeps its class string.
   assert.match(THREAD, /<\/TranscriptOverlay>\s*\) : null\}\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">/);
   assert.match(THREAD, /<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<div className="messages-typing"/,

@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 import type { RefObject } from 'react';
 
 import { JumpToLatestButton, TranscriptOverlay } from '@/components/ui/chat';
@@ -27,12 +29,13 @@ export function JumpToLatest({ scroller, slack, rows = NO_ROWS }: {
   /** The transcript's messages, oldest first, when the caller has them: the dot counts what arrives. */
   rows?: readonly UnreadRow[];
 }) {
+  useUiLanguage("community");
   const { view, toLatest } = useUnreadAffordances(scroller, NO_LINE, {
     conversation: null, markKey: '', lineAt: null, rows, slack, watchContent: true,
   });
   return (
     <TranscriptOverlay edge="foot">
-      <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title="Jump to latest" onClick={toLatest} />
+      <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title={tr("community:sync_jump_to_latest_86752458")} onClick={toLatest} />
     </TranscriptOverlay>
   );
 }

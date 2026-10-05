@@ -1,4 +1,4 @@
-import { RichMessage } from "../../lib/i18n/react";
+import { useMessages as useUiLanguage, RichMessage } from "../../lib/i18n/react";
 import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
 import { t as tr } from "../../lib/i18n/runtime";
 import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
@@ -77,6 +77,7 @@ function useChannelRows(): { rows: readonly UnreadRow[]; unread: { lastReadId: n
  * line (a message the bell sent them to) offers no banner.
  */
 function ChannelUnreadBanner({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+  useUiLanguage("community");
   const { rows, unread } = useChannelRows();
   const opened = useStoreState(unreadOpenings).count;
   const [atMount] = useState(opened);

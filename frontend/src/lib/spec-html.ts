@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n/runtime";
 /**
  * HTML specs (#3699): the browser half. The server half, and the dialect
  * itself, are described in src/services/spec-html.js.
@@ -222,22 +223,22 @@ function screensHtml(figure: Element, key: string, styles: SpecStyles): string {
     holder.innerHTML = markup;
     const marked = new Set(Array.from(holder.content.querySelectorAll('[data-change]')).map((el) => String(el.getAttribute('data-change')).trim()));
     const here = changes.filter((change) => marked.has(change.n));
-    const persona = String(tpl.getAttribute('data-persona') || 'member').replace(/_/g, ' ');
+    const persona = String(tpl.getAttribute('data-persona') || '').replace(/_/g, ' ') || tr("core:member_persona");
     const described = here.map((change) => change.claim).join(' ');
     const list = here.map((change) => `<li class="shots-change" data-shots-n="${escapeAttr(change.n)}"><span class="shots-change-n">${escapeText(change.n)}</span>`
       + `<div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${escapeText(change.claim)}</strong>`
       + `${change.steps ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${escapeText(change.steps)}</div>` : ''}</div></li>`).join('');
-    const zoomWords = g.focus ? '<span class="shots-close-only"> · close-up</span><span class="shots-whole-only"> · whole screen</span>' : '';
-    const size = g.kind === 'phone' ? 'Phone' : 'Desktop';
+    const zoomWords = g.focus ? `<span class="shots-close-only">${escapeText(tr("core:sync_close_up_21bb7416"))}</span><span class="shots-whole-only">${escapeText(tr("core:sync_whole_screen_26446d6d"))}</span>` : "";
+    const size = g.kind === 'phone' ? tr("core:sync_phone_63dceb88") : tr("core:sync_desktop_9bd88f24");
     return {
       viewport: g.kind,
       zoomable: !!g.focus,
-      afterHtml: sideHtml('after', markup, g, `After (planned): ${described}`, styles),
-      beforeHtml: sideHtml('before', markup, g, `Before: ${described}`, styles),
-      afterChip: 'After · planned',
-      beforeChip: 'Before · today',
+      afterHtml: sideHtml('after', markup, g, tr("core:sync_after_planned_description_7ac26e58", { description: described }), styles),
+      beforeHtml: sideHtml('before', markup, g, tr("core:sync_before_description_334ddead", { description: described }), styles),
+      afterChip: tr("core:sync_after_planned_c2b21fad"),
+      beforeChip: tr("core:sync_before_today_08f06eaf"),
       notesHtml: `${list ? `<ol class="shots-changes">${list}</ol>` : ''}`
-        + `<div class="shots-view-meta"><span>${size}, ${g.width} × ${g.height}${zoomWords} · seen as a ${escapeText(persona)}</span></div>`,
+        + `<div class="shots-view-meta"><span>${escapeText(tr("core:sync_size_width_height_ea9f2790", { size, width: g.width, height: g.height }))}${zoomWords}${escapeText(tr("core:sync_seen_as_a_persona_78ee6798", { persona }))}</span></div>`,
     };
   });
   // Grouped by size, as the card groups them: the Desktop / Phone switch picks

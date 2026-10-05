@@ -3282,5 +3282,49 @@
   "approval_when_more_other": {
     "text": "Wenn {{count}} mehr Menschen stimmen",
     "source": "9f0c4312e56b6838090b716bbb23d870c0e3108c45d71f1f03061f6ab9e45c47"
+  },
+  "sync_github_issue_7d94e2e7": {
+    "text": "GitHub Thema",
+    "source": "7d94e2e7acad3b70eb76f83fbf6ce2314194503e524d5bc054df0bad880cd0eb"
+  },
+  "sync_no_apps_match_your_search_780f4366": {
+    "text": "Keine Apps entsprechen Ihrer Suche.",
+    "source": "780f43668735ba0c973bb0209b49ec710cfec8e13bc84c510b10c11e0109ffcf"
+  },
+  "sync_no_apps_to_share_from_yet_6157792d": {
+    "text": "Noch keine Apps zum Teilen.",
+    "source": "6157792df589083b85d65a8c52b7d5fe61f5acdeffbe084a714b5e758f1b478d"
+  },
+  "sync_search_apps_a10a36fa": {
+    "text": "Apps suchen",
+    "source": "a10a36fa109818bee2cb638ae0fe9d5a39559fb6ed84053eaa999595ab9d7c75"
+  },
+  "sync_filter_apps_c8be0116": {
+    "text": "Apps filtern",
+    "source": "c8be01160de85357e8cfa6a5a314f0c4287fafe9f127733c72bb229abd1deb27"
+  },
+  "sync_apps_89dd7484": {
+    "text": "Apps",
+    "source": "89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b"
+  },
+  "sync_jump_to_latest_86752458": {
+    "text": "Zur neuesten Nachricht",
+    "source": "867524581f012f0ba381fd98a720aa569ffd1b70f320307943072a253a2a3b6a"
+  },
+  "new_messages_one": {
+    "text": "{{count}} neue Nachricht",
+    "source": "665a014e59aad7052780f7274f4311cdc9b8750fae3f1de9414d7b1139ea7235"
+  },
+  "new_messages_other": {
+    "text": "{{count}} neue Nachrichten",
+    "source": "e2f12cf495489da976abcf2feaadcf943ff8cec0e1c5fcbbf65e0465e75c0c9f"
+  },
+  "jump_new_messages_one": {
+    "text": "Zur neuesten Nachricht, {{count}} neue Nachricht",
+    "source": "78e6a4432acb3d411126a38758b4610e5d15cf2b580cfabce9e9d4fcaf9a513f"
+  },
+  "jump_new_messages_other": {
+    "text": "Zur neuesten Nachricht, {{count}} neue Nachrichten",
+    "source": "70f4baf9f22951679ac68590ae59b6887ac792e143cf9baea89d59f590e16e6e"
   }
 }

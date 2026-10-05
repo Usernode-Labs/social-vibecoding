@@ -652,6 +652,7 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
   joinRef?: Ref<HTMLButtonElement>;
   children?: ReactNode;
 }) {
+  useUiLanguage("workshop");
   const seen = seenByLine(offer);
   return (
     <div className="dev-ws-invite" data-ws-invite="">
@@ -670,7 +671,7 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
           disabled={busy}
           onClick={onJoin}
         >
-          {`Join ${name}`}
+          {tr("workshop:sync_join_name_02226b7a", { name })}
         </Button>
         {children}
       </div>

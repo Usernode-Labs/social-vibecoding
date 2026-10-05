@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
 // A project's channel opens at its first unread message, as a conversation in
 // Messages does (tests/messages-unread-anchor.test.js pins the shared rules in
 // frontend/src/features/messages/unread-anchor.ts).
@@ -75,7 +76,7 @@ function harness({ lockedToBottom = true, line = true, reveal = null, lineAfterF
     fetch: (url) => new Promise((resolve) => requests.push({ url, resolve })),
     setTimeout: () => 0,
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(read('public/js/group-chat.js'), sandbox);
   const gc = sandbox.window.GroupChat;
   gc.appSlug = 'plant-pal';

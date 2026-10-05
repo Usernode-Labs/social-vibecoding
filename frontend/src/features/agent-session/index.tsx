@@ -1009,17 +1009,18 @@ export function SpecHtmlBody({ doc, tab, onTab }: {
   tab: SpecTab;
   onTab: (tab: SpecTab) => void;
 }) {
+  useUiLanguage("workshop");
   if (!doc.split) return <SpecHtmlPart html={doc.html} tagged />;
   const half = tab === 'tech' ? doc.techHtml : doc.userHtml;
   return (
     <>
       {doc.preambleHtml ? <div className="dc-spec-viewer-preamble"><SpecHtmlPart html={doc.preambleHtml} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
-        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={tr("workshop:spec_sections_2c81579b")}>
+        <SpecTabButton tab="user" active={tab} label={tr("workshop:user_facing_9f6f005f")} onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label={tr("workshop:technical_e851504f")} onTab={onTab} />
       </div>
       <div role="tabpanel" data-agent-session-spec-half={tab}>
-        {half ? <SpecHtmlPart html={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+        {half ? <SpecHtmlPart html={half} tagged /> : <p className="dc-spec-tab-empty"><Message id="workshop:nothing_in_this_section_04506069" /></p>}
       </div>
     </>
   );

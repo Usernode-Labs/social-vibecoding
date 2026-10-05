@@ -1885,7 +1885,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       {/* Jump to latest, over the transcript's foot whenever the reader is
           not at the bottom, with a dot for what arrived while they were up. */}
       <TranscriptOverlay edge="foot">
-        <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title="Jump to latest" onClick={jumpToLatest} />
+        <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={tr("community:sync_jump_to_latest_86752458")} onClick={jumpToLatest} />
       </TranscriptOverlay>
       <div className="messages-typing" aria-live="polite"><LocalizedValue render={() => (typing.length === 1 ? tr("community:value1_is_typing_eb59b2e3", { value1: typing[0] }) : typing.length > 1 ? tr("community:value1_are_typing_9fba80d4", { value1: typing.slice(0, 2).join(', ') }) : '')} /></div>
       <MessageComposer />
