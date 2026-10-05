@@ -466,6 +466,11 @@ const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
 const BOT_DM_PLAN_KEY = 'staging-hrbot-plan';
 const BOT_DM_PLAN_ACTION_ID = 990002;
 const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
+// B7, #3870: a change ready to try, its card saying what the change is.
+// Its session id stands for no session: Try it opens nothing (the demo
+// project has no slug) and Approve answers with an error, never a vote.
+const BOT_DM_READY_KEY = 'staging-hrbot-ready';
+const BOT_DM_READY_SESSION_ID = 990901;
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
@@ -590,6 +595,29 @@ async function ensureBotDmFixture(pool, user) {
     [opened.conversationId, bot.id, [cardKeys.done, cardKeys.working]]
   );
   const sentKeys = new Set(sentCards.rows.map((row) => row.idempotency_key));
+  // #3870: a change ready to try, sent just before the activity cards so the
+  // one being built stays the DM's newest message. A fixture whose cards are
+  // already there is left as it was rather than given a newer last message.
+  if (!sentKeys.size) {
+    const dm = require('./homeroom-bot-dm');
+    const ready = { appName: 'Staging demo app', issueNumber: 11, issueTitle: 'Staging demo, grey out finished items' };
+    const card = { approve: true, last: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.dmText('proposal', { sessionId: BOT_DM_READY_SESSION_ID, card }, ready),
+      idempotency_key: BOT_DM_READY_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'proposal', ...ready,
+          ready: { group: false, last: true, waitingOn: [] },
+          sessionId: BOT_DM_READY_SESSION_ID, epoch: 0,
+          actions: dm.readyActions({ sessionId: BOT_DM_READY_SESSION_ID, epoch: 0, approve: true }),
+          status: 'open',
+          changeTitle: 'Staging demo: a calmer colour for finished items',
+        },
+      },
+    });
+  }
   for (const card of [
     { key: cardKeys.done, issueNumber: 9, issueTitle: 'Staging demo, show item counts' },
     { key: cardKeys.working, issueNumber: 14, issueTitle: 'Staging demo, show a total under the list' },

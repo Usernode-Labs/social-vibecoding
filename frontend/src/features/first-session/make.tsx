@@ -15,6 +15,35 @@
  * button.
  *
  * "Look around first" is the quiet way out: Home, with nothing asked.
+ *
+ * It ARRIVES rather than appears: the screen's ground is the wallpaper
+ * from its first frame, the same one the signed-out story and the sign-in
+ * sheet's leaving cover paint over the same box (../auth/sign-in-sheet.tsx),
+ * and what stands on it rises into place a frame later. Transform and
+ * opacity only, no delay, so a busy main thread cannot hold it back on iOS;
+ * with reduced motion it is simply there.
+ *
+ * WITH THE KEYBOARD UP (production run, iOS app, 5 Oct 2026):
+ *   - The screen was one scroller from the top of the glass, so revealing
+ *     the description above the keys scrolled "Start from an example" up
+ *     behind the clock. The wordmark bar now stays put and only what is
+ *     under it scrolls, so nothing passes under the status bar. The bar
+ *     holds the whole mark below the inset (on a notched phone the mark
+ *     used to hang 12px out of its box, and the page would have scrolled
+ *     past it). The kit's keyboard avoidance is attached to the scroller
+ *     with the bar as its top (lib/composer-keyboard.ts), as every chat
+ *     column has it: a tap on a field is focused without the browser's pan,
+ *     and the field is revealed once, between the bar and the keys.
+ *   - The two answers are one sequence: the description's Return says
+ *     "next" and goes on to the name (Shift+Return is a new line), and the
+ *     name's Return makes it. In the app the keyboard's own next chevron
+ *     did not move from one to the other; Return is a way on that does not
+ *     depend on it.
+ *   - "Make it" only looks pale while it is making. It used to stay pale
+ *     until a name was typed, beside a placeholder that read like a name
+ *     already given. A press with an answer missing now puts the caret in
+ *     that field and says what it needs, and the placeholder reads as an
+ *     example.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,6 +51,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { EXAMPLES, type Example } from './examples';
 
 /** create-app.tsx's BRIEF_MIN: the server's floor for a description. */
@@ -39,6 +69,37 @@ export type Made = {
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// Where the bar and the form start, and where they settle (see the header).
+const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const HINT = 'pb-1 text-xs text-zinc-500 dark:text-zinc-400';
+const NEEDED = 'pb-1 text-xs text-red-600 dark:text-red-400';
+
+export type Missing = 'brief' | 'name' | null;
+
+/** The first answer "Make it" still needs, in the screen's order; null when both are there. */
+export function missingAnswer(brief: string, name: string): Missing {
+  if (brief.trim().length < BRIEF_MIN) return 'brief';
+  if (!name.trim()) return 'name';
+  return null;
+}
+
+/** What a field says when "Make it" found it missing. */
+export function neededLine(missing: Missing, brief: string): string | null {
+  if (missing === 'brief') return brief.trim() ? 'Say a little more about what it should do.' : 'Say what it should do first.';
+  if (missing === 'name') return 'Give it a name to make it. You can change it later.';
+  return null;
+}
+
+/** The device's IANA time zone ("Europe/London"), or null where it cannot be read. */
+export function deviceTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone ? zone : null;
+  } catch {
+    return null;
+  }
+}
 
 export function MakeScreen({ who, onMade, onLookAround }: {
   who: string;
@@ -50,25 +111,46 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   const [picked, setPicked] = useState<Example | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The answer a press of "Make it" found missing, said under its field
+  // until it changes.
+  const [missing, setMissing] = useState<Missing>(null);
   const briefRef = useRef<HTMLTextAreaElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   useEffect(() => { briefRef.current?.focus(); }, []);
+  // The kit's keyboard avoidance on the scroller, below the wordmark bar.
+  useComposerKeyboard(scrollerRef, barRef);
+  // One frame on the wallpaper alone, so the rise has a start.
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setArrived(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const motion = arrived ? ARRIVED : ARRIVING;
 
   const pick = useCallback((e: Example) => {
     setPicked(e);
     setBrief(e.brief);
     setName(e.name);
     setError(null);
+    setMissing(null);
   }, []);
 
-  const valid = brief.trim().length >= BRIEF_MIN && name.trim().length > 0;
-
   const make = useCallback(async () => {
-    if (!valid || busy) return;
+    if (busy) return;
+    const gap = missingAnswer(brief, name);
+    if (gap) {
+      setMissing(gap);
+      (gap === 'brief' ? briefRef.current : nameRef.current)?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     // The example's one-line description only while the brief is still the
     // example's own; a brief they rewrote is theirs to describe later.
     const example = picked && brief.trim() === picked.brief ? picked : null;
+    const timeZone = deviceTimeZone();
     try {
       const res = await fetch('/api/apps', {
         method: 'POST',
@@ -80,6 +162,8 @@ export function MakeScreen({ who, onMade, onLookAround }: {
           brief: brief.trim(),
           ...(example ? { description: example.description } : {}),
           from: 'first-session',
+          // So the sketch's "today" is the maker's (services/app-sketch.js).
+          ...(timeZone ? { timeZone } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -100,96 +184,117 @@ export function MakeScreen({ who, onMade, onLookAround }: {
     } finally {
       setBusy(false);
     }
-  }, [valid, busy, picked, brief, name, onMade]);
+  }, [busy, picked, brief, name, onMade]);
+  const needed = neededLine(missing, brief);
 
   return (
     <div
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+      {/* Stays put over the scroller, so nothing scrolls under the status bar.
+          At least 32px tall under the status bar's inset, so the whole mark
+          is inside it and what scrolls stops below the mark, not beside it. */}
+      <div ref={barRef} className={`flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
-      <form
-        className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]"
-        onSubmit={(e) => { e.preventDefault(); void make(); }}
-      >
-        <div className="text-center">
-          <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-            {who ? `Hi ${who}!` : 'You\'re in!'}
-          </p>
-          <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
-          <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            Describe it for your group. Homeroom bot builds the first version while you invite your people.
-          </p>
-        </div>
-        <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an example</p>
-        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Examples">
-          {EXAMPLES.map((e) => {
-            const on = picked?.key === e.key;
-            return (
-              <button
-                key={e.key}
-                type="button"
-                aria-pressed={on}
-                data-first-session-example={e.key}
-                onClick={() => pick(e)}
-                className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
-              >
-                <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
-                <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <div className={FIELD}>
-            <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
-            <textarea
-              ref={briefRef}
-              id="first-session-brief"
-              rows={3}
-              value={brief}
-              onChange={(e) => { setBrief(e.target.value); setError(null); }}
-              placeholder="A tracker for our weekly miles…"
-              className={`${INPUT} resize-none leading-[22px]`}
-            />
-          </div>
-          <div className={FIELD}>
-            <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
-            <input
-              id="first-session-name"
-              type="text"
-              autoComplete="off"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setError(null); }}
-              placeholder="Sunday Run Club"
-              className={INPUT}
-            />
-            <p className="pb-1 text-xs text-zinc-500 dark:text-zinc-400">It's your group's name too. You can change it later.</p>
-          </div>
-        </div>
-        {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
-        <div className="grow" />
-        <Button
-          type="submit"
-          disabled={!valid || busy}
-          layout="full"
-          variant="pillAccent"
-          size="pillLg"
-          ink="solidLate"
-          className="mt-6 flex items-center justify-center disabled:opacity-50"
+      {/* The kit adds its class to this node: its className stays constant. */}
+      <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
+        <form
+          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
+          onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
-          {busy ? 'Making it…' : 'Make it'}
-        </Button>
-        <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-          {'Not sure yet? '}
-          <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400">Look around first</button>
-        </p>
-      </form>
+          <div className="text-center">
+            <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
+              {who ? `Hi ${who}!` : 'You\'re in!'}
+            </p>
+            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
+            <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
+              Describe it for your group. Homeroom bot builds the first version while you invite your people.
+            </p>
+          </div>
+          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an example</p>
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Examples">
+            {EXAMPLES.map((e) => {
+              const on = picked?.key === e.key;
+              return (
+                <button
+                  key={e.key}
+                  type="button"
+                  aria-pressed={on}
+                  data-first-session-example={e.key}
+                  onClick={() => pick(e)}
+                  className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
+                >
+                  <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
+                  <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+            <div className={FIELD}>
+              <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
+              <textarea
+                ref={briefRef}
+                id="first-session-brief"
+                rows={3}
+                value={brief}
+                enterKeyHint="next"
+                aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
+                onChange={(e) => { setBrief(e.target.value); setError(null); setMissing(null); }}
+                onKeyDown={(e) => {
+                  // Return goes on to the name, as the key says; Shift+Return is a new line.
+                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  nameRef.current?.focus();
+                }}
+                placeholder="A tracker for our weekly miles…"
+                className={`${INPUT} resize-none leading-[22px]`}
+              />
+              {missing === 'brief' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
+            </div>
+            <div className={FIELD}>
+              <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
+              <input
+                ref={nameRef}
+                id="first-session-name"
+                type="text"
+                autoComplete="off"
+                enterKeyHint="go"
+                value={name}
+                aria-describedby="first-session-name-hint"
+                onChange={(e) => { setName(e.target.value); setError(null); setMissing(null); }}
+                placeholder="For example, Sunday Run Club"
+                className={INPUT}
+              />
+              {missing === 'name'
+                ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p>
+                : <p id="first-session-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
+            </div>
+          </div>
+          {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+          <div className="grow" />
+          <Button
+            type="submit"
+            disabled={busy}
+            layout="full"
+            variant="pillAccent"
+            size="pillLg"
+            ink="solidLate"
+            className="mt-6 flex items-center justify-center disabled:opacity-50"
+          >
+            {busy ? 'Making it…' : 'Make it'}
+          </Button>
+          <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
+            {'Not sure yet? '}
+            <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400">Look around first</button>
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

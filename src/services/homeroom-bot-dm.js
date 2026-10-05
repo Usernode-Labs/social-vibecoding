@@ -247,20 +247,34 @@ function hasProposalCard(dm) {
 
 /**
  * #3624 stage 2: the card a post's news is about. The proposal once there
- * is one (built, revised, merged), else the request itself. #7 (WP3): the
- * news that it went live leads with the app itself, which is what there is
- * to open now (`dm.appCard`), then the proposal.
+ * is one (built, revised, merged), else the request itself. The news that
+ * it went live opens the app with its own button (openAppAction), not a
+ * card: an app card is one the bot can attach only to a project it can see,
+ * and Page Turners (5 October), a group the bot is not in, got its "It's
+ * live now." with no way in at all.
  */
 function cardsFor(kind, dm, app, issueNumber) {
   const appId = Number(app?.id);
   if (!Number.isInteger(appId) || appId <= 0) return [];
   const sessionId = Number(dm?.sessionId);
   if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged') && hasProposalCard(dm)) {
-    const proposal = { type: 'proposal', appId, sessionId };
-    return kind === 'merged' && dm.appCard ? [{ type: 'app', appId }, proposal] : [proposal];
+    return [{ type: 'proposal', appId, sessionId }];
   }
   const n = Number(issueNumber);
   return Number.isInteger(n) && n > 0 ? [{ type: 'issue', appId, issueNumber: n }] : [];
+}
+
+/**
+ * Pure (5 October): the button that opens a project's app, on its App tab,
+ * as the rest of the shell opens it (frontend/src/features/messages/
+ * bot-shared.ts openAppTarget: App.openAppTab). An `open` button is drawn
+ * from the message itself, so nothing about who the bot may see can keep it
+ * off: the person it is for can open their own project. Null for no slug.
+ */
+function openAppAction({ slug, appName }) {
+  if (typeof slug !== 'string' || !slug) return null;
+  const name = clip(String(appName || slug).replace(/\s+/g, ' '), 40);
+  return { id: 'open_app', label: `Open ${name}`, style: 'primary', type: 'open', target: `#app/${encodeURIComponent(slug)}/app` };
 }
 
 // What routes/conversations.js does after a send, done here because the
@@ -846,6 +860,31 @@ function questionLead(line, it, dm) {
 }
 
 /**
+ * Pure: why a build of `it` did not finish, said to the person it was for.
+ * `reason` is the run's own record (homeroom-bot.js, homeroom-bot-live.js),
+ * written for the platform: on 5 Oct 2026 a requester read "the build ran
+ * past its time limit (finished after a restart)". It is read for what
+ * happened and never quoted. "(finished after a restart)" only says which
+ * process recorded it, never why it ended: a build that ran too long or
+ * changed nothing is said as that.
+ */
+function buildFailedWords(reason, it = 'this') {
+  const r = String(reason || '').replace(/\s*\(finished after a restart\)/g, '');
+  const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
+  if (restarts) {
+    return `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${restarts[1]} times in a row.`;
+  }
+  if (/ran past its time limit/.test(r)) return `I couldn't finish building ${it}: it took longer than I'm allowed.`;
+  if (/restarted|by a restart/.test(r)) return `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`;
+  if (/built but could not be proposed/.test(r)) return `I built ${it}, but I couldn't put it up for approval.`;
+  if (/produced no change/.test(r)) return `I couldn't finish building ${it}: I ended up with no changes to show you.`;
+  if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
+    return `I couldn't get started on building ${it}.`;
+  }
+  return `I couldn't finish building ${it}: something went wrong while I was working on it.`;
+}
+
+/**
  * The DM text for one of the bot's posts on a request, from the structured
  * `dm` its caller passed (homeroom-bot.js): plain words, no code. Returns
  * null for a kind the DM does not carry.
@@ -904,8 +943,14 @@ function dmText(kind, dm, context) {
       return `${line}\n\nI looked into this and can't build it as it's written: ${clip(dm.reason, 600)}\n\n`
         + 'Reply to this message with more detail and I\'ll look again.';
     case 'build_failed':
-      return `${line}\n\nI tried to build ${it} but couldn't finish (${clip(dm.reason, 300) || 'unknown reason'}). `
-        + 'A person can pick it up from here.';
+      // What happened in plain words, never the run's own record of it
+      // (buildFailedWords), and what to do about it, as #3772 gave `person`:
+      // "A person can pick it up from here" was a dead end for somebody who
+      // was the person. A reply here, quoting this or not, is read by the
+      // bot (it is not one of MIRRORED_KINDS), which starts the request
+      // again (homeroom-bot-mayor.js start_request): on 5 Oct 2026 "Oh no,
+      // can you try again?" had it building again within seconds.
+      return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
     case 'person':
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
@@ -1170,6 +1215,8 @@ async function relayIssuePost({
       epoch: Number(dm.epoch) || 0,
       actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve }),
       status: 'open',
+      // #3870: what the change is, so the card says more than "is ready".
+      ...(typeof dm.title === 'string' && dm.title.trim() ? { changeTitle: clip(dm.title.trim(), 200) } : {}),
       ...(requester.askedText ? { askedText: askedLine(requester.askedText) } : {}),
     } : {}),
   };
@@ -1527,7 +1574,8 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const { rows } = await pool.query(
     `SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha,
             checks_commit_sha, handoff_head_sha, checks_checked_at,
-            shots_state, shots_run_id, shots_detail, shots_updated_at
+            shots_state, shots_run_id, shots_detail, shots_updated_at,
+            pr_title, pr_title_fallback, session_title
        FROM chat_sessions WHERE id = $1`, [id],
   );
   const row = rows[0];
@@ -1541,7 +1589,18 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
     epoch: Number(row.approval_epoch) || 0,
     waitingOnShots,
     broken: checked ? shotsState.brokenOnHead(row, head) : [],
+    // #3870: what the change is, for its ready card: its proposal's title,
+    // unless that is the placeholder written while titles could not be
+    // made, else its session's.
+    title: changeTitle(row),
   };
+}
+
+/** Pure (#3870): a change's own title, in one line, or null. */
+function changeTitle(row) {
+  const pr = !row?.pr_title_fallback && typeof row?.pr_title === 'string' ? row.pr_title.trim() : '';
+  const own = pr || (typeof row?.session_title === 'string' ? row.session_title.trim() : '');
+  return own ? clip(own.replace(/\s+/g, ' '), 200) : null;
 }
 
 /**
@@ -1615,6 +1674,7 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
       kind: 'proposal', runId: Number(run.run_id), bot, ready: true, key: readyKey(id, state.epoch),
       dm: {
         link, sessionId: id, epoch: state.epoch,
+        ...(state.title ? { title: state.title } : {}),
         card: {
           approve: !!(approval?.counts && !approval.already),
           last: !!approval?.last,
@@ -1922,6 +1982,157 @@ async function closeOlderReadyCards(pool, { userId, appId, issueNumber, keepMess
   }
 }
 
+// ── A ready card, read as it stands now ─────────────────────────────────
+//
+// A ready card is a message, sent once, and what it says about approval was
+// true when it was sent. Page Turners, 5 October: the maker's card still
+// said "It goes live when one more person approves" twenty minutes after the
+// change went live, and "Needs 2 approvals from you, @priya or @mo" never
+// moved as the others said Yes. So a ready card is read again whenever the
+// DM reads its activity cards (homeroom-bot-activity.js cardsFor), on the
+// same events: the bot's news landing in the DM (its "It's live now." is
+// one), the loop's work changing (a merge or a close announces it,
+// noteProposalChanged), and a vote on the change (noteVoted). What is read
+// is where the change stands now and, while it is up for approval, who it
+// still waits on and what happens next once the reader has said Yes.
+// Nothing is written: the message keeps its words for the inbox and the push.
+
+// The most ready cards one read answers for, newest first (an older one
+// keeps what its message says), and the most changes up for approval whose
+// approval it reads (a few reads of the project's rules each).
+const MAX_READY_READS = 12;
+const MAX_READY_APPROVALS = 4;
+
+/** The reader's newest ready cards, each with its change and its app (with the columns app-access reads). */
+async function readyRows(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT d.message_id, cs.id AS session_id, cs.status,
+            a.id, a.slug, a.name, a.created_by, a.self_hosted, a.collab_visibility, a.view_visibility,
+            a.moderation_suspended_at
+       FROM homeroom_bot_dm_messages d
+       JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+       JOIN apps a ON a.id = d.app_id
+       JOIN chat_sessions cs ON cs.app_id = d.app_id
+        AND cs.id = (CASE WHEN m.metadata->'homeroomBot'->>'sessionId' ~ '^[1-9][0-9]{0,8}$'
+                          THEN (m.metadata->'homeroomBot'->>'sessionId')::int END)
+      WHERE d.user_id = $1 AND d.kind = 'proposal'
+        AND jsonb_typeof(m.metadata->'homeroomBot'->'ready') = 'object'
+      ORDER BY d.message_id DESC
+      LIMIT $2`,
+    [userId, MAX_READY_READS],
+  );
+  return rows;
+}
+
+/**
+ * Pure: where a ready card's change stands, from a readyRows row: `live`
+ * (merged; with the button that opens the app, but for the platform's own,
+ * which has none), `going_live` (being merged), `closed` (closed without
+ * going live), or `open` (still up for approval; its approval is read
+ * apart). Null for anything else: the card keeps what it said.
+ */
+function readyStateOf(row) {
+  const base = { messageId: Number(row.message_id) };
+  if (row.status === 'merged') {
+    const open = row.self_hosted ? null : openAppAction({ slug: row.slug, appName: row.name || row.slug });
+    return { ...base, state: 'live', actions: open ? [open] : [] };
+  }
+  if (row.status === 'merging') return { ...base, state: 'going_live', actions: [] };
+  if (row.status === 'closed' || row.status === 'archived') return { ...base, state: 'closed', actions: [] };
+  if (row.status === 'promoted') return { ...base, state: 'open', actions: [] };
+  return null;
+}
+
+/**
+ * Where approval of one change stands for `userId`, as their card draws it:
+ * how many more it needs and in all, whether theirs would be the last, whom
+ * else it waits on (needsYesFrom, as the card was sent with), whether their
+ * Yes is in and, once it is, what happens next (goesLiveAfterYes).
+ */
+async function readyApproval(pool, sessionId, userId) {
+  const state = await approvalState(pool, { sessionId, userId });
+  if (!state) return null;
+  const names = state.missing === 0 ? [] : await usernamesOf(pool, await needsYesFrom(pool, state, { except: [Number(userId)] }));
+  return {
+    approval: {
+      missing: state.missing,
+      needed: state.needed,
+      last: !!state.last,
+      approved: !!state.already,
+      waitingOn: names.slice(0, 3),
+      more: Math.max(names.length - 3, 0),
+    },
+    ...(state.already ? { goesLive: goesLiveAfterYes(state.gate, names) } : {}),
+  };
+}
+
+/**
+ * The signed-in person's ready cards as they stand now (see the note above):
+ * [{ messageId, state, actions, approval?, goesLive? }], newest first. Their
+ * own cards only, on projects they can still view. A change whose approval
+ * could not be read is left out, and its card says what it was sent with.
+ */
+async function readyStates(pool, { user }) {
+  const userId = Number(user?.id);
+  if (!Number.isInteger(userId) || userId <= 0) return [];
+  const rows = await readyRows(pool, userId);
+  if (!rows.length) return [];
+  const appAccess = require('./app-access');
+  const viewable = new Map();
+  const approvals = new Map();
+  const out = [];
+  for (const row of rows) {
+    const appId = Number(row.id);
+    if (!viewable.has(appId)) viewable.set(appId, await appAccess.checkAppAccess(pool, row, user, 'view').catch(() => false));
+    if (!viewable.get(appId)) continue;
+    const state = readyStateOf(row);
+    if (!state) continue;
+    if (state.state === 'open') {
+      const sessionId = Number(row.session_id);
+      if (!approvals.has(sessionId)) {
+        if (approvals.size >= MAX_READY_APPROVALS) continue;
+        approvals.set(sessionId, await readyApproval(pool, sessionId, userId).catch((err) => {
+          log.warn('homeroom-bot-dm', 'Could not read where a ready card\'s change stands', { sessionId, err: err.message });
+          return null;
+        }));
+      }
+      const read = approvals.get(sessionId);
+      if (!read) continue;
+      Object.assign(state, read);
+    }
+    out.push(state);
+  }
+  return out;
+}
+
+/**
+ * Somebody voted on a change (routes/votes.js). When it is one of the
+ * bot's, whoever asked for it has their DM read again, so their ready card
+ * says who it still waits on as it stands now (readyStates): it used to keep
+ * the names it was sent with until the change went live. One indexed read
+ * for any other change. Resolves the requester's id, or null. Never throws.
+ */
+async function noteVoted(pool, sessionId, deps = {}) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT q.user_id
+         FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE r.proposal_session_id = $1
+        ORDER BY r.id DESC LIMIT 1`,
+      [id],
+    );
+    if (!rows.length) return null;
+    require('./homeroom-bot-tray').noteWorkChanged(rows[0].user_id, deps);
+    return Number(rows[0].user_id);
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not announce a vote on the bot\'s change', { sessionId: id, err: err.message });
+    return null;
+  }
+}
+
 /**
  * B4: one of the bot's changes cannot be tried yet for a reason that is not
  * the bot's to fix in it (`why`: 'preview', its preview did not start). Its
@@ -2012,7 +2223,8 @@ async function noteProposalChanged(pool, sessionId, deps = {}) {
  * (`platform`) is released after the merge and outside this process, so it
  * merged and will be live in a few minutes, as the merge's own line in its
  * discussion says (routes/votes.js liveSoon); so is a child app whose
- * health could not be confirmed yet. `card`: the app's card goes under it.
+ * health could not be confirmed yet. `card`: a way to open the app goes
+ * under it (its Open button, openAppAction).
  */
 function mergedText({ line, appName, live, platform = false, card = true, change = false }) {
   // B7: a change to a project is "your change"; a first version is the project.
@@ -2076,8 +2288,12 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
  * A proposal the bot built is merged: its requester hears it in their DM.
  * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
  * and "live now" waits for the app to answer its health check on it
- * (liveAfterMerge). The news carries the app's own card, to open it, and the
- * proposal's, and records the app's address as its link.
+ * (liveAfterMerge). The news carries a button that opens the app
+ * (openAppAction) and the proposal's card, and records the app's address as
+ * its link. The button is the message's own, so it is there even when the
+ * card cannot be (a project the bot cannot see). Its ready card says it is
+ * live by itself: that card reads where the change stands each time it is
+ * read (readyStates), and this news landing is one of those times.
  */
 async function noteProposalMerged(pool, session, { config = null, sha = null, deps = {} } = {}) {
   if (!session?.id) return null;
@@ -2110,22 +2326,23 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
     appName: run.name || run.slug, issueNumber: run.issue_number,
     issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
   };
+  // The platform's own app has no app of its own to open: its proposal.
+  const open = platform ? null : openAppAction({ slug: run.slug, appName: context.appName });
   return sendDm(pool, {
     bot,
     userId: requester.userId,
     replyToId: await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number }),
     idempotencyKey: `hrbot-merged-${session.id}`,
-    content: mergedText({ line: requestLine(context), appName: context.appName, live, platform, change: !context.firstVersion }),
-    withoutCards: mergedText({
-      line: requestLine(context), appName: context.appName, live, platform, card: false, change: !context.firstVersion,
+    content: mergedText({
+      line: requestLine(context), appName: context.appName, live, platform, card: !!open, change: !context.firstVersion,
     }),
     metadata: {
       kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number,
       link: `#app/${encodeURIComponent(run.slug)}`, live,
       ...(context.firstVersion ? { firstVersion: true } : {}),
+      ...(open ? { actions: [open] } : {}),
     },
-    // The platform's own app has no app of its own to open: its proposal.
-    objects: cardsFor('merged', { sessionId: session.id, appCard: !platform }, { id: run.app_id }, run.issue_number),
+    objects: cardsFor('merged', { sessionId: session.id }, { id: run.app_id }, run.issue_number),
   });
 }
 
@@ -3168,6 +3385,7 @@ module.exports = {
   PAUSED_FOR_WEEK_TEXT,
   weekKey,
   dmText,
+  buildFailedWords,
   twoQuestions,
   // B7: ready to try, and who approves it.
   approvalState,
@@ -3176,6 +3394,14 @@ module.exports = {
   noteApproversReady,
   noteApproved,
   goesLiveAfterYes,
+  usernamesOf,
+  // 5 October: a ready card read as it stands now, and the live news's way in.
+  MAX_READY_READS,
+  MAX_READY_APPROVALS,
+  readyStateOf,
+  readyStates,
+  noteVoted,
+  openAppAction,
   // B6: a first version's plan.
   PLAN_KIND,
   planCardText,

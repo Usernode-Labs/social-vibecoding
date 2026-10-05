@@ -35,10 +35,12 @@ const META = 'min-w-0 truncate text-[0.8125rem] font-medium tabular-nums text-zi
 const CHEVRON = 'h-[1.125rem] w-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-400';
 
 export function GroupHeader({
-  heading, meta = null, allDone = false, expanded = true, controlsId, onToggle, className,
+  heading, meta = null, metaTitle = null, allDone = false, expanded = true, controlsId, onToggle, className,
 }: {
   heading: string;
   meta?: string | null;
+  /** The meta's tooltip: when the clock runs out ("Ends Mon 12 Oct, 02:00"). */
+  metaTitle?: string | null;
   allDone?: boolean;
   /** Only read with `onToggle`. */
   expanded?: boolean;
@@ -55,7 +57,7 @@ export function GroupHeader({
         <span className={HEADING}>{heading}</span>
       </span>
       <span className={END}>
-        {meta ? <span className={META}>{meta}</span> : null}
+        {meta ? <span className={META} title={metaTitle || undefined}>{meta}</span> : null}
         {onToggle
           ? (expanded
             ? <ChevronUpIcon aria-hidden="true" className={CHEVRON} />

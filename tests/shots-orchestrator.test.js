@@ -893,6 +893,40 @@ test('the brief names the declared changes, both addresses and revisions, and no
   }
 });
 
+test('each side\'s home tile reaches the run: described in the brief, served from its own dapp.json', async (t) => {
+  // services/shots-home-tile.js: a hosted app's copies serve only the app,
+  // so an icon change had nothing to shoot (admin export 2026-10-05).
+  const tileCheckout = (manifest) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-orchestrator-tile-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify(manifest));
+    return dir;
+  };
+  let brief = null;
+  let pages = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      pages = { base: control.homeTilePage('base'), head: control.homeTilePage('head') };
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.pair.sides.base.checkout = tileCheckout({ name: 'Demo', tests: [] });
+  fixture.pair.sides.head.checkout = tileCheckout({ name: 'Demo', icon: { emoji: '🔥' }, tests: [] });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(brief.homeTile, {
+    path: '/__shots/home-tile',
+    before: { name: 'Demo', icon: { kind: 'letter' } },
+    after: { name: 'Demo', icon: { kind: 'emoji', emoji: '🔥' } },
+    differs: true,
+  });
+  assert.match(pages.base, /Home screen tile, before the change[\s\S]*data-icon="letter">D</);
+  assert.match(pages.head, /Home screen tile, after the change[\s\S]*<span class="emoji">🔥<\/span>/);
+});
+
 test('a declared preview moment reaches the brief in a fixed shape, so both copies open at it', () => {
   // services/preview-clock.js: a Thursday-evening reminder cannot show on a
   // Sunday copy. The author declares the moment in its testing guidance; the

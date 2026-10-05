@@ -119,6 +119,69 @@ function parseIssueSeed(text) {
   };
 }
 
+// #3183: a request written as a work order rather than as prose. Agents
+// driving a session from outside (and people copying their format) open
+// with a templated instruction that carries its own name:
+//
+//   Please implement this change in the app: TITLE: Add Calm mode: slower
+//   sheep, softer colors, same rounds. DETAIL: A Calm mode toggle in …
+//
+// Only "Please" counted as filler, so the session and its pull request were
+// called "implement this change in the app: TITLE: Add Calm mode: slower
+// sheep…". The TITLE is the name the author already chose; take it, the way
+// an issue seed's title is taken. `TITLE:` must be upper case and open the
+// message or follow a short preamble ending in a colon or a line break, so
+// prose that merely mentions a title ("change the page title: …") is left
+// alone. The title runs to `DETAIL:` (or `DESCRIPTION:`) or the end of its
+// line.
+const TITLED_REQUEST_RE = /^\s*(?:[^\n]{0,160}?(?::|\n)\s*)?[*_]*TITLE[*_]*:[*_]*[ \t]*([^\r\n]*?)(?:[ \t]*\.?\s*(?:[*_]*(?:DETAIL|DETAILS|DESCRIPTION)[*_]*:[*_]*)|\r?\n|$)/;
+
+// { title, body } for a templated request with a TITLE: field, or null.
+function parseTitledRequest(text) {
+  const raw = String(text || '');
+  const m = TITLED_REQUEST_RE.exec(raw);
+  if (!m) return null;
+  const title = m[1].replace(/\s+/g, ' ').trim().replace(/\.+$/, '').trim();
+  if (!title) return null;
+  return { title, body: raw.slice(m[0].length).trim() };
+}
+
+// #3183: the same work orders without a TITLE: field — "Please implement
+// this change in the app: add a dark mode toggle". The instruction to make a
+// change is not the change, so it is dropped wherever it appears at the
+// front, even in a message that already fits (a greeting is the person's own
+// words; this boilerplate is a template's). It only counts as boilerplate
+// when a colon, dash or line break ends it: "Make this change permanent" is
+// a request, "Make this change:" is a heading.
+const INSTRUCTION_WRAPPER_RE = new RegExp(
+  '^(?:implement|make|apply|build|add|do|ship|carry\\s+out)\\s+'
+  + '(?:this|these|that|the\\s+following|the\\s+below|the\\s+next|a|the)\\s+'
+  + '(?:(?:small|quick|new|following)\\s+)?'
+  + '(?:change|changes|feature|features|fix|fixes|request|update|updates|improvement|task|work\\s+order)'
+  + '(?:\\s+(?:in|to|for|on)\\s+(?:the|this|my|our)\\s+'
+  + '(?:app|application|project|code|codebase|repo|repository|site|game))?'
+  + '\\s*(?::|\\u2013|\\u2014|\\s-\\s|\\r?\\n)[\\s:\\u2013\\u2014-]*',
+  'i',
+);
+
+// The text with any instruction wrapper (and the greetings in front of it)
+// removed, or the text unchanged when it has no wrapper.
+function stripInstructionWrapper(text) {
+  let out = text;
+  let wrapped = false;
+  for (let i = 0; i < 6; i += 1) {
+    const next = out
+      .replace(LEAD_IN_RE, '')
+      .replace(AMBIGUOUS_BEFORE_LEAD_IN_RE, '');
+    const unwrapped = next.replace(INSTRUCTION_WRAPPER_RE, '');
+    if (unwrapped !== next) wrapped = true;
+    if (unwrapped === out) break;
+    out = unwrapped;
+  }
+  out = out.trim();
+  return wrapped && out ? out : text;
+}
+
 // #2653: a session named "just the first line of what I typed". The trim
 // below used to be a blind prefix — collapse the message, cut at 72, add an
 // ellipsis — which spends the whole budget on whatever the person happened
@@ -302,8 +365,12 @@ function deterministicTitle(text) {
   // A seeded message names the change after its issue, not after the
   // instruction wrapped around it. The body is the fallback for the
   // degraded seed whose issue fetch produced an empty title.
-  const seed = parseIssueSeed(text);
-  const source = seed ? (seed.title || seed.body) : text;
+  // #3183: a work order's own TITLE: field is a name in the same way, and
+  // is treated exactly like an issue title below.
+  const seed = parseIssueSeed(text) || parseTitledRequest(text);
+  const source = seed
+    ? (seed.title || seed.body)
+    : stripInstructionWrapper(String(text || '').trim());
   const plain = String(source || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/[#>*_`~\[\]()]/g, ' ')
@@ -353,7 +420,12 @@ function titleInputsFromRequests(requests) {
     .filter((r) => r.trim())
     .map((text) => {
       const seed = parseIssueSeed(text);
-      if (!seed) return text;
+      if (!seed) {
+        // #3183: a work order's TITLE/DETAIL scaffolding becomes its title
+        // and detail, so the model is not asked to name the template.
+        const titled = parseTitledRequest(text);
+        return titled ? [titled.title, titled.body].filter(Boolean).join('\n\n') : text;
+      }
       if (!issueTitle && seed.title) issueTitle = seed.title;
       return [seed.title, seed.body].filter(Boolean).join('\n\n') || text;
     });
@@ -542,5 +614,5 @@ function titleAtTurnEnd({ pool, session, message, userId, resolveBilling, firstT
 module.exports = {
   headlessTitle, deterministicTitle, generateAndApply,
   maybeTitleFirstMessage, titleFromFirstMessage, refreshFromHistory,
-  titleAtTurnEnd, parseIssueSeed, titleInputsFromRequests,
+  titleAtTurnEnd, parseIssueSeed, parseTitledRequest, titleInputsFromRequests,
 };

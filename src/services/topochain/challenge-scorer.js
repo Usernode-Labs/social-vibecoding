@@ -860,26 +860,55 @@ const RUN_END_SQL = `
      SET finished_at = NOW(), credits = $2, summary = $3, error = $4
    WHERE id = $1
 `;
+// The newest snapshot generation: when it was taken (`at`, its snapshot_at)
+// and when it was last written (`fresh`), which a refresh in place moves on
+// while `at` stays put.
 const LAST_AGGREGATE_SQL = `
-  SELECT MAX(snapshot_at) AS at FROM leaderboard_snapshots
+  SELECT ls.snapshot_at AS at, MAX(COALESCE(ls.updated_at, ls.created_at, ls.snapshot_at)) AS fresh
+    FROM leaderboard_snapshots ls
+   WHERE ls.snapshot_at = (SELECT MAX(snapshot_at) FROM leaderboard_snapshots)
+   GROUP BY ls.snapshot_at
+`;
+
+// Whether the ledger holds anything written after the standings were: a
+// scorer credit, an admin's manual one, a passport proof, an edit.
+const LEDGER_NEWER_SQL = `
+  SELECT EXISTS (
+    SELECT 1 FROM user_activities
+     WHERE COALESCE(updated_at, created_at) > $1
+  ) AS newer
 `;
 
 // The scorer writes the ledger; the snapshot builder turns the ledger into
 // standings. Progress rails read the ledger directly, so a credit shows up
-// on the card within a tick — but the leaderboard would sit still until
-// somebody pressed the admin's Aggregate button, which is exactly the manual
-// step this service exists to remove. Cadence is hours rather than minutes
-// because each run writes a new snapshot timestamp and the event keeps only
-// the ten newest, so aggregating too eagerly would shred the history the
-// standings chart draws.
+// on the card within a tick, and the standings have to keep up with it.
+//
+// Two rhythms, because the snapshots are two things. They are the CURRENT
+// totals the leaderboard prints, and they are the HISTORY the standings chart
+// draws: each new snapshot_at is a point, and an event keeps only the ten
+// newest. So a new point is taken every `hours` (6 by default), and in
+// between, whenever the ledger has anything newer than the latest snapshot,
+// that snapshot is REWRITTEN in place (the builder upserts on its
+// snapshot_at). Totals catch up within one check, about ten minutes, and the
+// chart keeps hours of history rather than the last hour and a half.
+//
+// Before this, totals waited for the next new point: a member saw "750 pts
+// earned" on the challenge and 500 fewer on the leaderboard for up to six
+// hours, and read it as lost points (#3650).
 async function maybeAggregate(pool, { hours, now = Date.now() }) {
   if (!(hours > 0)) return null;
   const { rows } = await pool.query(LAST_AGGREGATE_SQL);
-  const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
-  if (last != null && now - last < hours * 3600000) return null;
+  const last = rows[0] && rows[0].at ? new Date(rows[0].at) : null;
   const { buildSnapshots } = require('./snapshot-builder');
-  const result = await buildSnapshots(pool);
-  return { events: result.events.length };
+  if (last == null || now - last.getTime() >= hours * 3600000) {
+    const result = await buildSnapshots(pool);
+    return { events: result.events.length };
+  }
+  const fresh = rows[0].fresh ? new Date(rows[0].fresh) : last;
+  const { rows: newer } = await pool.query(LEDGER_NEWER_SQL, [fresh]);
+  if (!newer[0] || newer[0].newer !== true) return null;
+  const result = await buildSnapshots(pool, { now: last });
+  return { events: result.events.length, refreshed: true };
 }
 
 // One complete run, recorded. Exported so the admin's Run now and Dry run
@@ -973,12 +1002,16 @@ const CADENCE_RULES_SQL = `
 `;
 
 // `rows` are the list's own joined challenge rows (challenge columns bare,
-// template columns `t_`), which carry every field skipReason reads. Returns a
-// Map of challenge id -> { intervalMinutes, lastScoredAt }, holding only the
-// challenges something counts. Asks Postgres nothing when the schedule is off
-// (a default of 0 runs no rule at all) or the list is empty.
-async function loadCadence(pool, eventId, rows, { defaultMinutes, now = Date.now() } = {}) {
-  const out = new Map();
+// template columns `t_`), which carry every field skipReason reads. Returns
+// two Maps keyed by challenge id, each holding only the challenges something
+// counts: `cadence` -> { intervalMinutes, lastScoredAt } (rules.cadenceOf),
+// and `countedBy` -> { measure, target } (rules.countedByOf). Asks Postgres
+// nothing when the schedule is off (a default of 0 runs no rule at all) or
+// the list is empty.
+async function loadRuleFacts(pool, eventId, rows, { defaultMinutes, now = Date.now() } = {}) {
+  const cadence = new Map();
+  const countedBy = new Map();
+  const out = { cadence, countedBy };
   if (!(Number(defaultMinutes) > 0) || !rows || !rows.length) return out;
   const templateIds = [...new Set(rows.map((r) => r.challenge_template_id)
     .filter((v) => v != null).map(Number))];
@@ -1000,10 +1033,18 @@ async function loadCadence(pool, eventId, rows, { defaultMinutes, now = Date.now
         intervalMinutes: r.interval_minutes,
         lastScoredAt: r.last_scored_at,
       }));
-    const cadence = rules.cadenceOf(bound, { ...row, event_starts_at, event_ends_at }, { now, defaultMinutes });
-    if (cadence) out.set(Number(row.id), cadence);
+    const at = { ...row, event_starts_at, event_ends_at };
+    const c = rules.cadenceOf(bound, at, { now, defaultMinutes });
+    if (c) cadence.set(Number(row.id), c);
+    const by = rules.countedByOf(bound, at, { now, defaultMinutes });
+    if (by) countedBy.set(Number(row.id), by);
   }
   return out;
+}
+
+// The cadence half alone: Map of challenge id -> { intervalMinutes, lastScoredAt }.
+async function loadCadence(pool, eventId, rows, opts = {}) {
+  return (await loadRuleFacts(pool, eventId, rows, opts)).cadence;
 }
 
 // When this process last looked at the standings. In memory, and per process,
@@ -1278,8 +1319,11 @@ module.exports = {
   loadCredited,
   dueRuleIds,
   loadCadence,
+  loadRuleFacts,
   intervalMinutes,
   aggregateHours,
+  LAST_AGGREGATE_SQL,
+  LEDGER_NEWER_SQL,
   MAX_CREDITS_PER_RUN,
   MAX_GRADES_PER_RUN,
   CANDIDATE_LIMIT,

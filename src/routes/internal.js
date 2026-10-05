@@ -135,6 +135,22 @@ function internalRoutes(_config) {
     catch (err) { return shotsError(res, err); }
   });
 
+  // The app's tile on Homeroom's home screen, as one side's dapp.json draws
+  // it. The shots proxy asks for it when the browser opens the home tile
+  // path on that side's address (services/shots-home-tile.js).
+  router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, (req, res) => {
+    try {
+      const page = shotsControlForRequest(req).homeTilePage(String(req.params.side || ''));
+      res.set({
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(page);
+    } catch (err) { return shotsError(res, err); }
+  });
+
   // One shot or clip the shots agent saved on the before or after build.
   // The file travels as the raw body (the global JSON parser ignores it) and
   // its change/screen/side/kind as query fields. The parser limit sits above

@@ -9,6 +9,7 @@
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
+const homeTile = require('./shots-home-tile');
 
 const controls = new Map();
 
@@ -26,11 +27,15 @@ function cloneJson(value) {
 }
 
 class RunControl {
-  constructor({ runId, sessionId, intent, context, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
+    // Each side's tile on Homeroom's home screen, served on that side's
+    // address (services/shots-home-tile.js). Kept out of the brief, which
+    // only describes them: an icon image is up to 256 KB.
+    this.homeTiles = homeTiles ? cloneJson(homeTiles) : null;
     this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.saved = new Map();
     this.skipped = new Map();
@@ -64,6 +69,14 @@ class RunControl {
   getContext() {
     this.assertLive();
     return cloneJson({ ...this.context, progress: this.progress() });
+  }
+
+  // The page the proxy serves at the home tile path on one side's address.
+  homeTilePage(side) {
+    this.assertLive();
+    const tile = homeTile.SIDES.includes(side) ? this.homeTiles?.[side] : null;
+    if (!tile) throw new ShotsControlError('home_tile_unavailable', 'This run has no home tile for that side.', 404);
+    return homeTile.renderPage(tile, { side });
   }
 
   // One file the agent saved: a screen or element shot, or a clip. Saving the

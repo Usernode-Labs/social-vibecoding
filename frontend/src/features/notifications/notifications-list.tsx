@@ -80,6 +80,11 @@ export type NotificationRowView = {
   /** The subject line. EMPTY when the label is the whole of the row's copy. */
   segments: Segment[];
   /**
+   * #3227: a short line that explains the kind itself, under the subject.
+   * Only the kudos row carries one; it wraps rather than truncates.
+   */
+  note?: string;
+  /**
    * #1688: a row's own button, beside the tap that opens the thing — "Still
    * yes" on a re-confirm ask. Absent on every other row.
    */

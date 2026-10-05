@@ -147,6 +147,10 @@
     // The token of an invite link an account still waiting opened, kept by
     // showWaiting for the waiting room (features/auth/waiting.tsx).
     _waitingInvite: '',
+    // What a waitlist "you're in" mail's link asked for, `{ route, token }`,
+    // kept by enter() for the landing to take on show (takeReleaseLink in
+    // features/auth/shared.ts), which opens the sign-in sheet over the story.
+    _releaseLink: null,
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
 
@@ -225,14 +229,25 @@
       // the home page, and exactly what the access-ready mail was reported
       // doing on desktop while working from a phone. A query survives that.
       //
-      // First match wins, and the address is rewritten to the hash route, so
-      // whichever spelling arrives the address bar ends up identical.
+      // First match wins, and the query comes off the address, so whichever
+      // spelling arrives the address bar ends up identical.
       //
       // `?status=1` is the check-my-status mail's one button (#1538). It
       // resolves to the code-entry step of the waitlist screen, which is a
-      // hash ROUTE plus a hash QUERY — so it cannot use the bare `/#route`
-      // template the other two share. The state stays in the fragment for
+      // hash ROUTE plus a hash QUERY. The state stays in the fragment for
       // the same reason it always has: a query would put it in server logs.
+      //
+      // `?signup=1[&t=<token>]` and `?login=1` are the waitlist's "you're
+      // in" mail (sendWaitlistReleaseMail), and they no longer go to the
+      // sign-in screen. They open the STORY, the screen everybody else
+      // starts on, with the sign-in sheet over it at the step the link asked
+      // for (features/auth/landing.tsx takes this on show): for a new
+      // account, the address the token names filled in and the code sent;
+      // for one that exists, Sign in. So the address goes back to `/`, the
+      // landing's own, and the link waits on this object rather than in it,
+      // which also keeps the token out of the address bar. With the story
+      // switched off the landing hands it on to `#signup` / `#login`, as
+      // before.
       try {
         if (!location.hash) {
           const params = new URLSearchParams(location.search);
@@ -240,7 +255,14 @@
             : params.has('login') ? 'login'
               : params.has('status') ? 'waitlist?confirm=1'
                 : null;
-          if (route) history.replaceState(null, '', `/#${route}`);
+          if (route === 'signup' || route === 'login') {
+            const t = params.get('t');
+            AuthScreens._releaseLink = {
+              route,
+              token: route === 'signup' && t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null,
+            };
+            history.replaceState(null, '', '/');
+          } else if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();

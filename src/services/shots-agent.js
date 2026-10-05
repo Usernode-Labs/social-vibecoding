@@ -104,6 +104,13 @@ declaredChecks are the app's own checks, run as read_only_admin: their paths
 can show data only that persona has, so another persona may find nothing
 there.
 
+Homeroom's home screen is not on these addresses. When the brief has
+homeTile, each address also serves the app's tile on that screen (its icon
+and name, drawn from that side's own dapp.json) at homeTile.path, and
+homeTile.differs says whether the two sides differ. For a change to how the
+app looks on the home screen, open homeTile.path on each address and shoot
+that page.
+
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.

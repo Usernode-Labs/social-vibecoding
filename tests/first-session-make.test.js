@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadTsx } = require('./lib/render-tsx');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -81,10 +81,16 @@ test('an account that signs in some other way is asked what to make in the join 
   // It comes before the suggestions are fetched, so the join screen is never drawn first.
   assert.ok(join.indexOf('firstSession.make()') < join.indexOf("fetch('/api/me/join-suggestions'"));
   assert.match(read('src/routes/onboarding.js'), /const answer = req\.body && req\.body\.via === 'sign_in' \? 'sign_in' : 'story';/);
-  // The island opens it once, whichever of the two asks first.
+  // The island opens it once, whichever of the two asks first, and draws it
+  // at once when asked from the shell's own start (sv:authed, or the join
+  // step in that tick), so Home is never painted before it.
   const island = read(`${DIR}/index.tsx`);
-  assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
-  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
+  assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
+  assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
+  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // From the mount's own check it is an ordinary update: React is mid-effect
+  // there and cannot draw synchronously.
+  assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
 });
 
 test('the route records which way the first session was reached', async () => {
@@ -132,6 +138,89 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
+});
+
+// Production run, iOS app, 5 Oct 2026: the keyboard's next chevron did not
+// move from the description to the name; "Make it" looked disabled until a
+// name was typed, beside a placeholder that read like a name already given;
+// and with the keyboard up the screen scrolled "Start from an example" up
+// behind the status bar.
+
+test('"Make it" looks pale only while making: a press with an answer missing goes to that field and says what it needs', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.missingAnswer('', ''), 'brief');
+  assert.equal(make.missingAnswer('too short', 'Page Turners'), 'brief', 'under BRIEF_MIN');
+  assert.equal(make.missingAnswer('Our little book club, meeting monthly', '   '), 'name');
+  assert.equal(make.missingAnswer('Our little book club, meeting monthly', 'Page Turners'), null);
+  assert.equal(make.neededLine('brief', ''), 'Say what it should do first.');
+  assert.equal(make.neededLine('brief', 'a club'), 'Say a little more about what it should do.');
+  assert.equal(make.neededLine('name', 'Our little book club'), 'Give it a name to make it. You can change it later.');
+  assert.equal(make.neededLine(null, ''), null);
+  for (const line of ['Say what it should do first.', 'Give it a name to make it. You can change it later.']) {
+    assert.doesNotMatch(line, /\u2014/, 'no em dash');
+  }
+  const src = read(`${DIR}/make.tsx`);
+  assert.match(src, /disabled=\{busy\}/, 'never disabled for a missing answer');
+  assert.doesNotMatch(src, /disabled=\{!valid/);
+  assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\);\s+return;\s+\}/);
+  assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
+  // The placeholder reads as an example, not as a name already given.
+  assert.match(src, /placeholder="For example, Sunday Run Club"/);
+  assert.doesNotMatch(src, /placeholder="Sunday Run Club"/);
+  // Drawn: the button is live before anything is typed.
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const button = /<button[^>]*type="submit"[^>]*>/.exec(html)[0];
+  assert.doesNotMatch(button, /\sdisabled(?:=|[\s>])/, 'no disabled attribute');
+  assert.match(html, />Make it<\/button>/);
+});
+
+test('the description and the name are one sequence: Return says next and goes on, then makes it', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
+  // In the one form, the description first and the name straight after it.
+  const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
+  const fields = [...form.matchAll(/<(textarea|input)\b[^>]*>/g)].map((m) => m[0]);
+  assert.equal(fields.length, 2);
+  assert.match(fields[0], /^<textarea[^>]*id="first-session-brief"/);
+  assert.match(fields[0], /enterKeyHint="next"/i);
+  assert.match(fields[1], /^<input[^>]*id="first-session-name"/);
+  assert.match(fields[1], /enterKeyHint="go"/i);
+  assert.match(form, /<button[^>]*type="submit"/, 'Return in the name submits the form');
+  // Return in the description moves on; Shift+Return and an IME's Return do not.
+  assert.match(src, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s+e\.preventDefault\(\);\s+nameRef\.current\?\.focus\(\);/);
+  assert.match(src, /ref=\{nameRef\}\s+id="first-session-name"/);
+});
+
+test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it with the kit\'s avoidance', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const root = /<div role="dialog"[^>]*>/.exec(html)[0];
+  assert.match(root, /class="fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
+  // The bar (with the status bar's inset) comes first, then the scroller holding the form.
+  const bar = html.indexOf('pt-[env(safe-area-inset-top)]');
+  const scroller = html.indexOf('data-first-session-make-scroll=""');
+  assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
+  assert.match(html, /<div data-first-session-make-scroll="" class="flex min-h-0 grow flex-col overflow-y-auto">\s*<form/);
+  // The kit's keyboard avoidance, with this screen's bar as its top: a tapped
+  // field is focused without the browser's pan and revealed once below it.
+  assert.match(src, /import \{ useComposerKeyboard \} from '\.\.\/\.\.\/lib\/composer-keyboard';/);
+  assert.match(src, /useComposerKeyboard\(scrollerRef, barRef\);/);
+  // The bar holds the whole mark under the status bar's inset (on a notched
+  // phone the mark used to hang 12px out of a 52px box), so what scrolls
+  // stops below it.
+  assert.match(src, /<div ref=\{barRef\} className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // The kit adds its class to the scroller, so React must never rewrite it.
+  assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
+  // #3894's arrival is untouched: the bar and the form still rise in.
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+});
+
+test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  const zone = make.deviceTimeZone();
+  assert.ok(zone === null || (typeof zone === 'string' && zone.length > 0));
+  assert.match(read(`${DIR}/make.tsx`), /from: 'first-session',\s+\/\/[^\n]*\n\s+\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
 });
 
 test('after Make it: the build\'s step, then one invite, and the second button says where it goes', () => {
