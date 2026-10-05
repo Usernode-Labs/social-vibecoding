@@ -1166,6 +1166,12 @@ Rules:
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
+- **Before & after shots.** The tile is on Homeroom's home screen, which
+  the app's own pages never show. Declare an icon change as a visible
+  change with `startPath` `/__shots/home-tile`: during the shots each
+  version of the app answers that path with its own home tile, drawn
+  from its own `dapp.json` (icon, name and colour). The path exists only
+  in the shots, not in a preview or in production.
 
 #### Icon style: one set on the home screen
 

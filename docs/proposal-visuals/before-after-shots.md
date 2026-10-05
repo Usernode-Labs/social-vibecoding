@@ -245,6 +245,17 @@ app still on the Tailwind CDN script reaches `cdn.tailwindcss.com` like any
 public host, and that use is still counted (`legacy_tailwind_cdn`). The
 platform's own proposals serve the assets their revision carries.
 
+One path is the shots' own. The app's tile on Homeroom's home screen is
+not on a pair's addresses, so a change to an app's icon, name or colour in
+`dapp.json` had nothing to shoot. GET/HEAD of `/__shots/home-tile` on
+either address is answered with that side's tile, which the platform draws
+from the side's own `dapp.json` the way the home screen does (a committed
+image, else the emoji, else the first letter; light and dark, at the home
+screen's size and three times larger). The proxy fetches it with the run's
+shots token, which never reaches the page, and counts each answer as
+`home_tile`. The brief's `homeTile` names the path, what each side shows
+and whether they differ (`services/shots-home-tile.js`).
+
 It does **not** prove that a shot shows the change, or what a page drew on
 its own address. The address check guards against the agent's mistakes and
 steering, not against the page: a proposal's own page can already show
@@ -348,7 +359,8 @@ browser). Each persona's browser saves files under
 | Declaring on a hosted turn (`declare_visible_changes`) | `worker/visible-changes-mcp.js`, `POST /api/internal/sessions/:id/visible-changes` |
 | File checks and per-change results (`shotTarget`, `summarize`) | `src/services/shots-files.js` |
 | Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `summary`) | `src/services/shots-control.js` |
-| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`) | `src/routes/internal.js` |
+| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/home-tile/:side`) | `src/routes/internal.js` |
+| The app's home-screen tile on each side (`/__shots/home-tile`) | `src/services/shots-home-tile.js` |
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |

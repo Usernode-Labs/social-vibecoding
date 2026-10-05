@@ -6473,6 +6473,14 @@
     },
     {
       "source": "src/routes/internal.js",
+      "method": "GET",
+      "path": "/api/internal/shots/:runId/home-tile/:side",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
       "method": "POST",
       "path": "/api/internal/shots/:runId/shot",
       "expression": null,
