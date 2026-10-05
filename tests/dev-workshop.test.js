@@ -976,6 +976,17 @@ test('a week is a block on a rule: its heading, what landed, its line, then what
     'the pane\'s own reveal, last in the week, and "more" because the next four cross into what was seen');
   assert.ok(!nested.includes('data-ws-since-seen=""') && !nested.includes('data-ws-row="seen:'), 'nothing seen is out on arrival');
   assert.ok(!/data-ws-since-more-new|data-ws-since-seen-fold|dev-ws-since-fold/.test(nested), 'the two folds are retired');
+  // THE STREAM STARTS VISIBLE (#3947): a week with fewer than three new
+  // runs on into its seen rows on arrival, the "Seen before" mark drawn
+  // where the column changes over.
+  const crossing = { ...live, fresh: ['a', 'b'].map((k) => row(`since:issue:${k}`)), seen: ['x', 'y', 'z'].map((k) => row(`seen:issue:${k}`)) };
+  const crossed = weekBlock(crossing);
+  assert.equal((crossed.match(/data-ws-row="since:/g) || []).length, 2);
+  assert.equal((crossed.match(/data-ws-row="seen:/g) || []).length, 1, 'the week\'s first seen row follows its new ones, unpressed');
+  assert.match(crossed, /<div class="dev-ws-since-seen" data-ws-since-seen=""><span class="dev-ws-since-seen-label">Seen before<\/span><span class="dev-ws-since-seen-n">3<\/span><\/div>/);
+  assert.ok(crossed.lastIndexOf('data-ws-row="since:') < crossed.indexOf('data-ws-since-seen=""')
+    && crossed.indexOf('data-ws-since-seen=""') < crossed.indexOf('data-ws-row="seen:'), 'new, the mark, then seen: one stream');
+  assert.match(crossed, /<\/svg>Show 2 more<\/button>/);
   const open = weekBlock(withRows, { more: 1 });
   assert.equal((open.match(/data-ws-row="since:/g) || []).length, 5, 'every new row once asked');
   assert.match(open, /<div class="dev-ws-since-seen" data-ws-since-seen=""><span class="dev-ws-since-seen-label">Seen before<\/span><span class="dev-ws-since-seen-n">2<\/span><\/div>/);
@@ -997,10 +1008,13 @@ test('a week is a block on a rule: its heading, what landed, its line, then what
   assert.match(step(2), /<\/svg>Show 2 more<\/button>/, 'no count left to name when the press shows the rest');
   assert.equal((step(3).match(/data-ws-row="/g) || []).length, 15);
   assert.equal(reveals(step(3)), 0);
-  // A week with nothing new is its one control, saying what it holds.
+  // A week with nothing new: its first rows are out with its heading
+  // (#3947), the mark names the whole column the seen side, and the one
+  // control shows the rest.
   const quietWeek = weekBlock({ ...live, seen: Array.from({ length: 7 }, (_, i) => row(`seen:issue:q${i}`)) });
-  assert.ok(!quietWeek.includes('data-ws-row="'), 'nothing out on arrival');
-  assert.match(quietWeek, /<\/svg>Show 5 you have seen<span class="dev-ws-since-week-left"> · 7 left<\/span><\/button>/);
+  assert.equal((quietWeek.match(/data-ws-row="seen:/g) || []).length, 3, 'three seen rows out on arrival');
+  assert.match(quietWeek, /<div class="dev-ws-since-seen" data-ws-since-seen=""><span class="dev-ws-since-seen-label">Seen before<\/span><span class="dev-ws-since-seen-n">7<\/span><\/div>/);
+  assert.match(quietWeek, /<\/svg>Show 4 more<\/button>/);
   const { SINCE_STEP } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.equal(SINCE_STEP, 5, 'a few, as the request asked');
 
@@ -4255,10 +4269,13 @@ test('since-your-last-visit shows three a week and reveals the rest in place', (
   assert.ok(quiet.includes('Nothing has changed since you were last here.'));
   // Zero says nothing: no "0" pill beside the heading on a quiet visit.
   assert.doesNotMatch(quiet, /dev-ws-since-n"/, 'no count pill when nothing moved');
-  // #2183: the way into what was seen is still there on a quiet day, the day
-  // the reader most wants it: this week's seen rows, one press into the week
-  // (#3524: its one reveal, where a fold of their own was).
-  assert.match(quiet, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/);
+  // #2183, #3947: the way into what was seen is still there on a quiet day,
+  // the day the reader most wants it — the week's seen rows are out with
+  // its heading now, under the "Seen before" mark, rather than a press
+  // into the week.
+  assert.match(quiet, /data-ws-since-seen=""/, 'the mark is out with the week');
+  assert.equal((quiet.match(/data-ws-row="seen:/g) || []).length, 2, 'the week\'s seen rows, out on arrival');
+  assert.ok(!quiet.includes('data-ws-since-week-more'), 'and no reveal, with nothing left in the week');
 });
 
 test('since-your-last-visit counts one unnamed change in the singular', () => {
@@ -4352,10 +4369,11 @@ test('Clear moves the baseline to now, persists it, and the rows fold under thei
   assert.doesNotMatch(cleared, /dev-ws-since-n"/, 'and no "0" pill once cleared');
   assert.match(cleared, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="" disabled="">Clear<\/button>/,
     'disabled rather than absent, so the row does not reflow');
-  // #3524: one press into its week, the week's own reveal, where a "you
-  // have seen" fold was.
-  assert.match(cleared, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/,
-    'and the way back to what was cleared is one press into its week');
+  // #3524, #3947: the way back to what was cleared is its week's seen
+  // rows, out with the heading under the "Seen before" mark.
+  assert.match(cleared, /data-ws-since-seen=""/);
+  assert.ok((cleared.match(/data-ws-row="seen:/g) || []).length > 0,
+    'and the way back to what was cleared is its week\'s seen rows, out with the week');
 
   // A row a server clock put a moment in the future is cleared with the
   // rest: the stamp is the newer of now and `through`.
@@ -4460,8 +4478,9 @@ test('Clear is live once anything is unfolded, and folds what it revealed (#2240
   const html = workshopHtml(AppView, 'workshop');
   assert.match(html, /data-ws-since-none=""/, 'the strip opens on "nothing has changed"');
   assert.doesNotMatch(html, /dev-ws-since-n"/, 'with no "0" count pill beside it');
-  assert.match(html, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/,
-    'with the week\'s seen rows a press away (#3524: its one reveal)');
+  assert.match(html, /data-ws-since-seen=""/, 'the mark out with the week');
+  assert.ok((html.match(/data-ws-row="seen:/g) || []).length > 0,
+    'with the week\'s seen rows on screen (#3947: the stream starts visible)');
   assert.match(html, /data-ws-since-clear="" disabled=""/,
     'and Clear still disabled BEFORE the walk — there is nothing on screen to fold yet');
 

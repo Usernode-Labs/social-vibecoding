@@ -111,8 +111,11 @@ type TabKey = ProjectTabKey;
  * with its summary line, and what moved in it is nested under it, new
  * first and then what you have already seen, in the same column.
  *
- * Three new rows a week are on screen, because the question a returning
- * member asks is "did anything happen", which three rows answer. The
+ * Three rows a week are on screen — new first, and the week's seen rows
+ * following in the same stream once the new ones run out (#3947), so the
+ * stream starts visible and nothing is a press into the week itself —
+ * because the question a returning member asks is "did anything happen",
+ * which three rows answer. The
  * newest week holding something new is open on arrival (with any quieter
  * week above it, so the page reads down to it); `Show an earlier week`
  * steps back one week at a time from there, past what is loaded down to
@@ -132,9 +135,15 @@ type TabKey = ProjectTabKey;
  * its own, where the week it reveals will appear, so the two never read as
  * one gesture spelled twice.
  *
+ * THE STREAM STARTS VISIBLE (#3947): a week's first rows are out with its
+ * heading, counting new and seen together, so a quiet week shows its seen
+ * rows directly instead of offering a press to reveal them, and the only
+ * fold left in a week is its rows' own. The "Seen before" mark in the
+ * stream is where new gives way to seen, not a second list's header.
+ *
  * #2183 carries over: the baseline is only a line across one list, so a
  * quiet visit, or a visit just after Clear, still has somewhere to look
- * (the seen rows, a press into their week), and `Show an earlier week`
+ * (the week's first seen rows, out on arrival), and `Show an earlier week`
  * disables rather than leaves when there is nothing further back.
  */
 const SINCE_FIRST = 3;
@@ -983,29 +992,28 @@ export function sinceNewFurther(weeks: SinceWeek[], open: number): number {
 
 /**
  * How many of a week's rows are on screen, new and seen counted as one
- * stream (new first): its first SINCE_FIRST new rows on arrival, and
- * SINCE_STEP more for each press of its `Show N more` (#3524). Seen rows
- * are never out on arrival, even under a week with fewer than three new:
- * the list is about what is new, and what was seen is a press into it.
+ * stream (new first): its first SINCE_FIRST rows on arrival, and SINCE_STEP
+ * more for each press of its `Show N more` (#3524). The stream starts
+ * visible, so a quiet week's first rows are out with its heading, and the
+ * "Seen before" mark in the stream is the only sign of the crossing (#3947).
  */
 export function sinceWeekShown(week: Pick<SinceWeek, 'fresh' | 'seen'>, more: number): number {
-  const base = Math.min(SINCE_FIRST, week.fresh.length);
+  const base = Math.min(SINCE_FIRST, week.fresh.length + week.seen.length);
   return Math.min(week.fresh.length + week.seen.length, base + Math.max(0, more) * SINCE_STEP);
 }
 
 /**
  * The one control under a week's rows, in words: how many the next press
  * shows and, where one word can say it, which side of the line they are
- * on. "new" while the whole batch is new; "you have seen" when nothing of
- * the week is out yet and the batch is all seen (a quiet week, or a visit
- * just after Clear); plain "more" once the batch crosses the line, where
- * the "Seen before" mark in the stream says the rest.
+ * on. "new" while the whole batch is new; plain "more" once the batch
+ * crosses the line, where the "Seen before" mark in the stream says the
+ * rest (#3947: the stream starts visible, so no week is ever pressed into
+ * from nothing).
  */
 export function sinceRevealLabel(week: Pick<SinceWeek, 'fresh' | 'seen'>, shown: number): string {
   const next = Math.min(SINCE_STEP, week.fresh.length + week.seen.length - shown);
   const nextNew = Math.max(0, Math.min(next, week.fresh.length - shown));
   if (nextNew === next) return `Show ${next} more new`;
-  if (!nextNew && !shown) return `Show ${next} you have seen`;
   return `Show ${next} more`;
 }
 
