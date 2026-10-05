@@ -259,6 +259,8 @@ const GroupChat = {
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       GroupChat._applyPendingReveal();
+      // Loaded off screen and still unread: open at the first.
+      GroupChat._openAtUnread();
       // #2387: coming back to a channel whose socket stayed up is opening it
       // too — what arrived while it was off screen is read now. After this
       // turn, once the remounted transcript is on the page.
@@ -289,6 +291,9 @@ const GroupChat = {
     // #2387: a new channel starts unread-cursor bookkeeping afresh.
     GroupChat._readUpTo = 0;
     GroupChat._unreadHold = null;
+    // And where reading stood when it opened (_takeUnreadMark).
+    GroupChat._unreadMark = null;
+    GroupChat._unreadOpened = false;
     GroupChat._longPressed = false;
     GroupChat._pressActive = false;
     GroupChat._clearPressTimer();
@@ -482,11 +487,15 @@ const GroupChat = {
 
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { messages } = await res.json();
+      const body = await res.json();
+      const { messages } = body;
       // Disconnect invalidates this request, even if we return to the same app.
       if (GroupChat._historyLoad !== load) return;
       ok = true;
       GroupChat._historyFailed = false;
+      // Where reading stood, from the first page and before markRead below
+      // moves it: the stream opens at the first message after it.
+      if (isFirstLoad) GroupChat._takeUnreadMark(body && body.read);
 
       if (messages.length < 50) GroupChat.hasMore = false;
 
@@ -503,6 +512,8 @@ const GroupChat = {
         GroupChat.scrollToBottom();
         GroupChat._didInitialScroll = true;
         GroupChat._applyPendingReveal();
+        // Unread messages: at the first of them instead (_openAtUnread).
+        GroupChat._openAtUnread();
         // B9: the viewer's own cards under their requests, and the bot's door.
         void GroupChat._loadBotCards();
         // #2387: opening the channel reads it.
@@ -1015,9 +1026,57 @@ const GroupChat = {
           appName: GroupChat._appName()
             || 'this app',
         },
+        // Where reading stood when the channel opened: the transcript draws
+        // its "New" line above the first message after it, and the pane
+        // counts them (features/group-chat/transcript.tsx, general-chat.tsx).
+        unread: GroupChat._unreadMark || null,
       },
       { flush: !!(opts && opts.flush) },
     );
+  },
+
+  // ── Where the channel opens ─────────────────────────────────────────
+  //
+  // A channel with unread messages opens at the first of them, as a
+  // conversation in Messages does (frontend/src/features/messages/
+  // unread-anchor.ts): its "New" line a row or two under the top, with what
+  // was already read just above, instead of at the newest message. The mark
+  // is the cursor the first page reported (`read`, src/routes/chat.js),
+  // taken before this open reads the channel, and it lasts while the pane is
+  // open (releaseUnreadHold lets it go). Nothing unread, no mark: the stream
+  // opens at the bottom as it always did.
+
+  _takeUnreadMark(read) {
+    const last = read ? Number(read.last_read_message_id) : NaN;
+    const count = read ? Math.floor(Number(read.unread_count) || 0) : 0;
+    GroupChat._unreadMark = Number.isSafeInteger(last) && last >= 0 && count > 0
+      ? { lastReadId: last, count }
+      : null;
+    GroupChat._unreadOpened = false;
+  },
+
+  // Once per mark, with the stream on screen. After scrollToBottom and the
+  // bell's reveal: a message the reader was sent to wins (it unlocks the
+  // bottom), as does a place they scrolled to on an earlier visit. React
+  // finds the line and makes the move (mount.ts openAtUnreadLine); this
+  // module keeps its own follow state in step.
+  _openAtUnread() {
+    const container = document.getElementById('gc-messages');
+    if (!container || !GroupChat._unreadMark || GroupChat._unreadOpened) return;
+    const react = GroupChat._react();
+    if (!react || typeof react.openAtUnreadLine !== 'function') return;
+    GroupChat._unreadOpened = true;
+    if (GroupChat._pendingReveal || !GroupChat._lockedToBottom) return;
+    // A remount publishes batched: put the rows, and the line, on the page.
+    if (!container.querySelector('[data-unread-line]')) GroupChat.render({ flush: true });
+    const at = react.openAtUnreadLine(container);
+    if (!at) return;
+    // At the very top with history above it, the scroll listener would page
+    // back at once and carry the line out of view: a pixel down, the reader
+    // pages back when they scroll up, as they always do.
+    if (container.scrollTop === 0 && GroupChat.hasMore) container.scrollTop = 1;
+    GroupChat._lockedToBottom = at.pinned;
+    GroupChat._savedScrollTop = container.scrollTop;
   },
 
   appendMessage(msg) {
@@ -1970,6 +2029,11 @@ const GroupChat = {
   // never read again before then.
   releaseUnreadHold(appSlug) {
     if (GroupChat._unreadHold && GroupChat._unreadHold === appSlug) GroupChat._unreadHold = null;
+    // The "New" line lasts while the channel is open, too (_openAtUnread).
+    if (GroupChat.appSlug === appSlug) {
+      GroupChat._unreadMark = null;
+      GroupChat._unreadOpened = false;
+    }
   },
 
   async markUnread(id) {

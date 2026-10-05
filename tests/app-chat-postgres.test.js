@@ -527,6 +527,13 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     await ws.handleMessage(pool, client(bob, reads), { type: 'delete', id: gone });
     assert.equal((await row(alice)).unreadCount, 3);
     assert.equal(await appChat.unreadCount(pool, reads.id, alice.id), 3, 'the service and the list agree');
+    // The stream's first page says where reading stands, so the channel can
+    // open at its first unread (public/js/group-chat.js _takeUnreadMark); an
+    // earlier page and a thread are no opening and say nothing.
+    const opening = await call('GET', '/api/apps/ta-reads/messages?limit=50', alice);
+    assert.deepEqual(opening.body.read, { last_read_message_id: early, unread_count: 3 });
+    assert.equal((await call('GET', `/api/apps/ta-reads/messages?limit=50&before=${m3}`, alice)).body.read, undefined);
+    assert.equal((await call('GET', `/api/apps/ta-reads/messages?thread_type=message&thread_ref=${m1}`, alice)).body.read, undefined);
 
     const read = await call('POST', '/api/apps/ta-reads/messages/read', alice, { message_id: m2 });
     assert.equal(read.status, 200);
