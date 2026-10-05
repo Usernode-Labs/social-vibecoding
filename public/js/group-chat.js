@@ -1998,11 +1998,12 @@ const GroupChat = {
   // history) to a message — update state + patch just its pill row. The
   // message may live in the general stream or any cached thread (#194).
   // B9: the chip a request's message wears, from its metadata: reading,
-  // building, ready (with the change to try), live, or fixing (a fix asked
-  // on one of the bot's changes waiting for approval). Null for none.
+  // building, ready (with the change to try), live, fixing (a fix asked on
+  // one of the bot's changes waiting for approval), or waiting_first_version
+  // (held until the project's first version is live). Null for none.
   _botRequestView(value) {
     if (!value || typeof value !== 'object') return null;
-    const status = ['reading', 'building', 'ready', 'live', 'fixing'].includes(value.status) ? value.status : null;
+    const status = ['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'].includes(value.status) ? value.status : null;
     if (!status) return null;
     return {
       status,
@@ -2044,8 +2045,9 @@ const GroupChat = {
   },
 
   // The stages at which a card's request is still going (homeroom-bot-chat.js
-  // CARD_STAGES), or waiting on approval that may come in at any time.
-  _BOT_CARD_GOING: new Set(['reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+  // CARD_STAGES), or waiting on approval that may come in at any time, or on
+  // the project's first version going live.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
 
   // Whether one card still has somewhere to go.
   _botCardGoing(card) {
