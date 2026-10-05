@@ -111,7 +111,12 @@ type InviteView = {
   who: string;
   verb: string;
   appName: string;
+  /** The inviter's own words, sent with the invite ('' for none). */
+  note?: string;
+  /** "2 people are in it", or '' (an approver invite, or nobody counted). */
+  members?: string;
   time: string;
+  timeTitle?: string;
 };
 
 // The controller is a classic-script-shaped global; this island reads it the
@@ -251,8 +256,15 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         {` ${view.verb} `}
         <span className="font-bold">{view.appName}</span>
       </div>
+      {/* The inviter's note, as an invite link's page shows it. */}
+      {view.note ? (
+        <p data-invite-note="" className="mt-0.5 text-sm leading-snug text-zinc-700 dark:text-zinc-200 line-clamp-3">
+          {`“${view.note}”`}
+        </p>
+      ) : null}
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
         <span aria-hidden="true">{`${view.icon} `}</span>
+        {view.members ? <span data-invite-members="">{`${view.members} · `}</span> : null}
         <time title={view.timeTitle}>{view.time}</time>
       </div>
       <div className="flex gap-2 mt-2">

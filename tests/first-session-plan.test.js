@@ -155,11 +155,19 @@ test('the invite line says who joined, once somebody has', () => {
   // `members` is the newest eight; the count is everyone.
   assert.equal(joinedLine({ member_count: 12, members: [maker, { username: 'a' }] }), '✓ 11 people joined.');
   const src = read(`${DIR}/made.tsx`);
-  // Read only while an invite is out, and in place of "Invite sent" once somebody joined.
+  // Read only while an invite is out, and in place of "Invite sent" once
+  // somebody joined, except an invite by username, which stays said beside
+  // it (first-session run-through, 5 October 2026: priya had joined, so the
+  // line never said the invite to @mo went).
   assert.match(src, /const community = useCommunity\(made\.slug, sent\);/);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(!on\) return undefined;/);
-  assert.match(src, /\{joined \|\| `✓ Invite sent\$\{sentTo \? ` to \$\{sentTo\}` : ''\}\.`\}/);
+  const { sentLines } = loadTsx(`${DIR}/made.tsx`);
+  assert.deepEqual(sentLines(null, null), ['✓ Invite sent.']);
+  assert.deepEqual(sentLines(null, '@mo'), ['✓ Invite sent to @mo.']);
+  assert.deepEqual(sentLines('✓ priya joined.', null), ['✓ priya joined.']);
+  assert.deepEqual(sentLines('✓ priya joined.', '@mo'), ['✓ priya joined.', '✓ Invite sent to @mo.']);
+  assert.match(src, /\{sent \? sentLines\(joined, sentTo\)\.map\(/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
   assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);
