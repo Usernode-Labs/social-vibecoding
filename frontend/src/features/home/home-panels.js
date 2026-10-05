@@ -252,14 +252,39 @@ const HomePanels = {
 
   // Called from Home.load(). At most one fetch per TTL, and concurrent
   // callers share the in-flight promise.
+  //
+  // A FORCED read is a refresh, not a boot. Its caller knows the copy is
+  // behind something that just happened (a join the server has counted, the
+  // block expanded, Getting started finished), so two things that suit a
+  // boot are wrong for it:
+  //   * sharing a read already in flight, which may have left before that
+  //     thing happened. It waits for that read and then reads again, once,
+  //     however many forced callers arrive meanwhile (Home.load()'s rule);
+  //   * the service worker's zero-deadline lane, which answers
+  //     /api/home-panels from its cache on a device that has drawn Home
+  //     before. It is told first (App._announceRefreshIntent), as a pull and
+  //     a board refresh tell it.
+  _queued: null,
+
   ensureLoaded(opts) {
     const force = !!(opts && opts.force);
     if (!window.App || !App.user) return Promise.resolve();
-    if (HomePanels._inflight) return HomePanels._inflight;
+    if (HomePanels._inflight) {
+      if (!force) return HomePanels._inflight;
+      if (!HomePanels._queued) {
+        const again = () => {
+          HomePanels._queued = null;
+          return HomePanels.ensureLoaded({ force: true });
+        };
+        HomePanels._queued = HomePanels._inflight.then(again, again);
+      }
+      return HomePanels._queued;
+    }
     if (!force && HomePanels._data
         && Date.now() - HomePanels._fetchedAt < HomePanels.TTL_MS) {
       return Promise.resolve();
     }
+    if (force) App._announceRefreshIntent?.();
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
@@ -1077,4 +1102,21 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
   document.addEventListener('sv:session', () => {
     if (HomePanels._data) HomePanels.render();
   });
+}
+
+// A join or a leave has landed: Home.setMembership's `sv:membership-changed`
+// (Discover's Join pill and detail page, the join-required prompt, the
+// Mayor's join card, a project page's Leave) or the join screen's
+// `sv:communities-joined`. The server counted a join before it answered
+// ("Join a community", challengeScorer.scoreOnJoin), so the block reads
+// again now rather than at the end of its minute, and the challenge ticks on
+// Home as it does on the Challenges tab. Only once there is a block to
+// correct, or a first read under way that may predate the write: before
+// that, Home's own first load brings the current answer.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  const reread = () => {
+    if (HomePanels._data || HomePanels._inflight) HomePanels.ensureLoaded({ force: true });
+  };
+  document.addEventListener('sv:membership-changed', reread);
+  document.addEventListener('sv:communities-joined', reread);
 }
