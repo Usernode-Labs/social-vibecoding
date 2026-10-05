@@ -80,7 +80,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, goToCommunity, hydrateCommunityScope, toggleSwitcher, warmCommunities,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, tabVotes, toggleSwitcher, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
@@ -259,7 +259,8 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
 
 /**
  * The votes the tab's community is waiting on you for (All communities: all
- * of them), in the accent, because it asks for you. Only above zero, and
+ * of them, less an unchosen community's: ../workshop/community-scope.ts
+ * `tabVotes`), in the accent, because it asks for you. Only above zero, and
  * never in the prerender (the store starts empty). While it shows, app.css
  * hides the quiet unread-channels count beside it: one number per glyph.
  */
@@ -755,7 +756,9 @@ export function PlatformTabs() {
   useEffect(() => { hydrateCommunityScope(); }, []);
   useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
-  const votes = scope.slug ? Number(scoped?.needs) || 0 : Number(scope.totalNeeds) || 0;
+  // Less an unchosen community's votes: the one every account is put in,
+  // until you have taken part there (tabVotes says why).
+  const votes = tabVotes(scope);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
