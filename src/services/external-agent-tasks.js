@@ -1376,6 +1376,8 @@ function buildWorkOrder({
       '   and a ready change\'s `note` says what its shots leave out. A skip or',
       '   note usually means the declared steps or data cannot reach the state:',
       '   fix `steps` or `hints` rather than accepting a partial pair.',
+      '   A change whose `shotResults` status is `failed` was tried and broke',
+      '   on the after build (for example a server error): fix the code.',
       '   `failed` includes a specific reason.',
       '   Homeroom does not substitute a home-page screenshot when the declared',
       '   UI state cannot be reached.',

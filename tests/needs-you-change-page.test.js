@@ -25,13 +25,13 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-function context(user = { id: 42, username: 'Builder' }) {
+function context(user = { id: 42, username: 'Builder' }, globals = {}) {
   const c = { console, App: { user, currentApp: 'example', currentTab: 'dev', _appUrl: (slug, tab, ref) => `#app/${slug}/${tab}/issues/${ref?.id}` },
     relTime: () => 'just now',
     document: { getElementById: () => null, querySelector: () => null, addEventListener() {} },
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval,
-    location: { search: '', hash: '' }, URLSearchParams };
+    location: { search: '', hash: '' }, URLSearchParams, ...globals };
   c.window = c;
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) {
@@ -112,11 +112,23 @@ test('the hero: the eyebrow with its state, the age, the title, the by-line, the
   assert.match(details, /^<p class="dev-details-pr" data-details-part="pr"><span>PR#12<\/span><a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">Open on GitHub<\/a><\/p>/);
   assert.match(html, /<h2 class="dev-ws-item-title dev-topic-hero-title">Authenticate previews<\/h2>/);
   assert.match(html, /<p class="dev-ws-item-by dev-topic-hero-by"><span class="dev-ws-item-avatar" style="background:#[0-9a-f]{6}" aria-hidden="true">M<\/span><span><b>maya<\/b><span> · proposed /);
-  // The chips are the card's own tag specs (their tints ride along), and
-  // the linkage; the state tags stay off the hero, the steps say it.
+  // The chips are the card's own tag specs (their tints ride along); the
+  // state tags stay off the hero, the steps say it. The linkage is the
+  // Addresses line under the summary, by number and title, so it is not a
+  // "Closes #1993" tag up here as well (first-session run-through, 4 Oct
+  // 2026).
   const chips = html.slice(html.indexOf('dev-topic-hero-chips'), html.indexOf('dev-topic-hero-actions'));
   assert.match(chips, /data-attr-chip="" data-attr-field="priority"/);
-  assert.match(chips, /data-issue-chip="1993"[^>]*>Closes #1993</);
+  assert.doesNotMatch(chips, /data-issue-chip|Closes #/);
+  assert.match(page, /<span class="dev-topic-hero-issues-k">Addresses<\/span><a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"><b>#1993<\/b><span>Wait for authentication before opening previews<\/span><\/a>/);
+  // A linked request the line does not name keeps its tag.
+  const unlisted = av._topicViewFor('proposal', PR);
+  unlisted.card.linked = [...unlisted.card.linked, { ...unlisted.card.linked[0], key: 'issue:7', n: 7 }];
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const both = renderToHtml(createElement(ChangeDetail, { card: unlisted.card, body: unlisted.body, item: PR }));
+  const bothChips = both.slice(both.indexOf('dev-topic-hero-chips'), both.indexOf('dev-topic-hero-actions'));
+  assert.match(bothChips, /data-issue-chip="7"[^>]*>Closes #7</);
+  assert.doesNotMatch(bothChips, /data-issue-chip="1993"/);
   assert.doesNotMatch(chips, /data-status-tag/);
   assert.doesNotMatch(html, /data-status-tag/, 'no state tag anywhere on the page');
   // The summary is a paragraph, not a fold.
@@ -139,6 +151,144 @@ test('a merged change reads Live in the eyebrow and the pill, and the pill is qu
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'pending' }).status, 'Going live');
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'failed' }).status, 'Not live yet');
   assert.equal(av._topicHeroView('proposal', { ...PR, status: 'merging' }).status, 'Going live');
+});
+
+// Flat 4B Chores, 5 Oct 2026: the first version (PR 3) was up for a vote
+// when the bot built a fix on its branch (PR 8), and PR 8 merged with PR 3's
+// commit in it. PR 3 is marked merged as included in PR 8
+// (services/included-changes.js), and its page says where it went live: the
+// eyebrow and the steps' headline name the change, the hero links to it, and
+// nothing asks for a vote or offers to undo a merge it never had.
+test('a change that went live inside another one says so and links to it', () => {
+  const av = context();
+  const included = {
+    ...PR, status: 'merged', merged_at: '2026-10-05T12:00:00Z', mergeRequirements: undefined,
+    merge_commit_sha: 'c'.repeat(40), included_in_session_id: 6288,
+    included_in_pr_number: 8, included_in_pr_title: 'Fix mark as done in Jordan’s first version',
+  };
+  const { v, page, details } = render(av, included);
+  assert.equal(v.body.hero.status, 'Live, included in #8');
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live, included in #8<\/span>/);
+  assert.equal(v.body.steps.headline, 'Live, included in #8');
+  assert.match(details, /Live, included in #8/);
+  assert.deepEqual(plain(v.body.includedIn), {
+    heading: 'Went live as part of', state: 'merged', sessionId: 6288, label: '#8',
+    title: 'Fix mark as done in Jordan’s first version', href: '#app/example/dev/proposals/6288',
+  });
+  const box = page.slice(page.indexOf('data-topic-part="included-in"'));
+  assert.ok(page.includes('aria-label="The change this one went live in"'));
+  assert.match(box, /<h4 class="dev-topic-h">Went live as part of<\/h4>/);
+  assert.match(box, /href="#app\/example\/dev\/proposals\/6288"[^>]*data-included-in="6288"/);
+  assert.match(box, />#8<\/span><span[^>]*>Fix mark as done in Jordan’s first version<\/span>/);
+  // No vote, and the rollout words still lead.
+  assert.doesNotMatch(page, /data-vote-choice|Waiting for approval/);
+  assert.equal(av._topicHeroView('proposal', { ...included, deployment_kind: 'child', deployment_state: 'pending' }).status,
+    'Going live, included in #8');
+  // A change that merged on its own says nothing of the kind.
+  const own = render(av, { ...included, included_in_session_id: null, included_in_pr_number: null, included_in_pr_title: null });
+  assert.equal(own.v.body.hero.status, 'Live');
+  assert.equal(own.v.body.includedIn, null);
+  assert.ok(!own.page.includes('data-included-in'));
+  // A carrying change without a pull request number is still named.
+  assert.equal(av._topicHeroView('proposal', { ...included, included_in_pr_number: null }).status,
+    'Live, included in another change');
+});
+
+// First-session run-through, 4 Oct 2026. An invited flatmate tapped "Ready
+// to try" and read, top to bottom: "homeroom_bot · proposed 35m ago", a
+// "Closes #1" tag, "Thank homeroom_bot", and then the first version's spec:
+// its Design brief, with the accent as RGB triples, the kit's class names
+// and "Exact words: ...". The summary it came from is the spec's
+// user-facing half (homeroom-bot-live.js specUserFacing), credit line last.
+const LEAD = 'Everyone in the flat sees this week’s chores and who is on each one.';
+const BRIEF = [
+  '### Design',
+  '- Accent: sage green (light 95 118 83, dark 168 201 138).',
+  '- Kit: btn-primary, btn-secondary, card, skeleton, state-empty, state-error.',
+  '- Exact words: "This week", "Done".',
+].join('\n');
+const BOT_PR = {
+  ...PR, id: 5101, user_id: 99, username: 'homeroom_bot', pr_number: 2,
+  pr_title: 'Share the flat’s chores and who is on each',
+  pr_summary_md: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya`,
+  pr_body: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya\n\nCloses #1`,
+  linked_issues: [1],
+};
+const KUDOS = { Kudos: { _ensureCache: () => ({}), renderButton: () => '' } };
+
+test('a change Homeroom bot built: the plain lead first, its Design brief one tap down, and no developer chrome', () => {
+  const av = context({ id: 42, username: 'Builder' }, KUDOS);
+  av._ghIssues = [{ number: 1, title: 'First version of Flat 4B Chores' }];
+  const { v, page, details } = render(av, BOT_PR);
+  const hero = page.slice(page.indexOf('data-topic-sheet="hero"'), page.indexOf('data-change-conversation'));
+
+  // The summary is the lead and the credit; the brief is folded under it, shut.
+  const summary = hero.slice(hero.indexOf('data-topic-part="summary"'), hero.indexOf('data-topic-part="summary-more"'));
+  assert.ok(summary.includes(LEAD) && summary.includes('Asked for by @maya'));
+  assert.doesNotMatch(summary, /Design|sage green|btn-primary|Exact words/);
+  assert.match(hero, /<details class="dev-topic-details dev-topic-hero-more" data-topic-part="summary-more"><summary class="dev-topic-details-summary">How it’s built<\/summary><div class="dev-issue-body dev-topic-details-body">[\s\S]*### Design[\s\S]*btn-primary[\s\S]*<\/div><\/details>/);
+  assert.ok(hero.indexOf('data-topic-part="summary"') < hero.indexOf('data-topic-part="summary-more"'));
+  assert.ok(hero.indexOf('data-topic-part="summary-more"') < hero.indexOf('dev-topic-tested'), 'right under the lead');
+  assert.doesNotMatch(v.body.summaryMore.html, /Asked for by/, 'the credit is the change’s, not the brief’s');
+  // The open flag is AppView's, so a repaint keeps it open.
+  av._setSummaryMoreOpen(5101, true);
+  assert.equal(av._topicViewFor('proposal', BOT_PR).body.summaryMore.open, true);
+  av._setSummaryMoreOpen(5101, false);
+  assert.equal(av._topicViewFor('proposal', BOT_PR).body.summaryMore.open, false);
+  // The whole description is still in Details, as on every change.
+  assert.match(details, /data-details-part="description"[\s\S]*btn-primary[\s\S]*Closes #1/);
+
+  // The by-line names the bot as it is named everywhere else, and says it made it.
+  assert.equal(v.body.hero.author, 'Homeroom bot');
+  assert.equal(v.body.hero.verb, 'made');
+  assert.match(hero, /<b>Homeroom bot<\/b><span> · made /);
+  assert.doesNotMatch(hero, /homeroom_bot|proposed/);
+
+  // The request is named once, in words, under the summary: no "Closes #1" tag.
+  const chips = hero.slice(hero.indexOf('dev-topic-hero-chips'), hero.indexOf('dev-topic-hero-actions'));
+  assert.doesNotMatch(chips, /data-issue-chip|Closes #/);
+  assert.match(hero, /<span class="dev-topic-hero-issues-k">Addresses<\/span><a [^>]*data-issue-ref="1"><b>#1<\/b><span>First version of Flat 4B Chores<\/span><\/a>/);
+
+  // No kudos: they would thank the bot's account. Not on the band, not in ⋯.
+  assert.doesNotMatch(hero, /data-kudos-host/);
+  assert.ok(!av._cardMenuItems(v.card.rail.menuKey).some((a) => a.icon === 'kudos'));
+  assert.ok(!av._proposalCardModel(BOT_PR, {}).actions.some((a) => a.kudos != null), 'nor on its board card');
+  assert.ok(!av._proposalMenuItems(BOT_PR, { noNav: false }).some((a) => a.icon === 'kudos'), 'nor in the card’s ⋯');
+  // Asking the bot for changes still leads the band.
+  assert.ok(v.card.actions.some((a) => a.key === 'ask-bot'));
+
+  // A person's change keeps its kudos slot and its by-line.
+  const { v: theirs, page: theirsPage } = render(av, PR);
+  assert.match(theirsPage, /data-kudos-host="4090"/);
+  assert.equal(theirs.body.hero.verb, 'proposed');
+  assert.equal(theirs.body.summaryMore, null);
+});
+
+test('the lead is the stored summary’s own words: shown whole when there is nothing to fold, and never for a person’s change', () => {
+  const av = context();
+  const parts = (item) => plain(av._summaryParts(item));
+  // A description the build wrote itself has no brief: shown whole.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\nAsked for by @maya` }),
+    { lead: `${LEAD}\n\nAsked for by @maya`, more: '' });
+  // A summary that opens with the brief has no lead to show: shown whole, as before.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: BRIEF }), { lead: BRIEF, more: '' });
+  // A heading inside a code fence is not one.
+  const fenced = `${LEAD}\n\n\`\`\`\n### Design\n\`\`\``;
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: fenced }), { lead: fenced, more: '' });
+  // The credit stays with the lead when a later update follows it.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya\n\n**Latest update:** Tidied the list.` }),
+    { lead: `${LEAD}\n\nAsked for by @maya`, more: `${BRIEF}\n\n**Latest update:** Tidied the list.` });
+  // Other subsections a person will see stay in the lead, up to the brief.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\n### Screens\nA row each.\n\n${BRIEF}` }),
+    { lead: `${LEAD}\n\n### Screens\nA row each.`, more: BRIEF });
+  // A person's (or their agent's) summary is theirs, headings and all.
+  const mine = `${LEAD}\n\n${BRIEF}`;
+  assert.deepEqual(parts({ ...PR, pr_summary_md: mine }), { lead: mine, more: '' });
+  assert.equal(av._topicViewFor('proposal', { ...PR, pr_summary_md: mine }).body.summaryMore, null);
+  // An underway session the bot is building reads the same way.
+  const building = av._topicViewFor('session', { ...BOT_PR, status: 'active', shared_at: '2026-10-04T12:00:00Z' });
+  assert.ok(building.body.summaryMore && /btn-primary/.test(building.body.summaryMore.html));
+  assert.equal(building.body.hero.verb, 'started');
 });
 
 test('the proposal hero keeps the last summary visible with a quiet freshness note', () => {

@@ -35,6 +35,9 @@
 
   function api(method, url, body) {
     var headers = { 'x-usernode-token': token };
+    // A preview opened at a chosen moment tells the server what time it is
+    // there (req.now; "Time-dependent features" in the platform conventions).
+    if (window.usernode && window.usernode.previewNow) headers['x-usernode-now'] = window.usernode.now().toISOString();
     if (body) headers['Content-Type'] = 'application/json';
     return fetch(url, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined })
       .then(function (res) {

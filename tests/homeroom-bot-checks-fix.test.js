@@ -391,13 +391,75 @@ test('a failing verdict hook costs an error verdict nothing, and a passing one o
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'error');
   await new Promise((r) => setImmediate(r));
   assert.equal(asked.length, 0);
-  // B4: passing asks whether the change is ready to try, and nothing else.
+  // B4: passing asks whether the change is ready to try, and nothing else
+  // (with what its before & after shots on that head say).
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'passing');
   for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
   assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()),
-    ['SELECT status, check_state, approval_epoch FROM chat_sessions WHERE id = $1']);
+    ['SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
+      + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at '
+      + 'FROM chat_sessions WHERE id = $1']);
   asked.length = 0;
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'failing');
   for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
   assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');
+});
+
+// ── A declared change its shots show failing (Flat 4B Chores) ───────────
+//
+// Every check passed, but the before & after shots agent tapped the change's
+// main button on the after build and the app answered a 500. That is the
+// change not working, and the same round fixes it before anybody is asked
+// to approve it (tests/shots-failed-change.test.js has the rest).
+
+function brokenRow(extra = {}) {
+  return checksRow({
+    check_state: 'passing',
+    test_results: [{ name: 'rota.week', path: '/', status: 'pass' }],
+    shots_state: 'verified',
+    shots_detail: {
+      headSha: HEAD,
+      claims: [{ id: 'tick-and-undo', claim: 'Tapping "mark as done" ticks a chore off.', steps: ['Open the app', 'Tap "mark as done"'] }],
+      shotResults: [{ id: 'tick-and-undo', status: 'failed', reason: 'POST /api/chores/1/done answered 500, twice.' }],
+    },
+    ...extra,
+  });
+}
+
+test('a change its shots show failing: one build turn fixes it, said as what did not work', async (t) => {
+  const h = harness({
+    row: brokenRow(),
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Fixed.","summary":"Marking a chore done records the member, not the account."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(h.calls.exec.length, 1);
+  const { prompt, commitMsg } = h.calls.exec[0].opts;
+  assert.match(prompt, /Homeroom also tried what this change says it does/);
+  assert.match(prompt, /- "Tapping "mark as done" ticks a chore off\."\n {2}Steps it took: Open the app > Tap "mark as done"\n {2}What happened: POST \/api\/chores\/1\/done answered 500, twice\./);
+  assert.doesNotMatch(prompt, /automated checks on the proposal's current commit/, 'no checks failed, so none are listed');
+  assert.match(commitMsg, /fix what did not work on #50/);
+  assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again');
+  assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
+  assert.match(h.calls.onProposal[0].text, /^Homeroom bot fixed what didn't work on this change: Marking a chore done records the member/);
+});
+
+test('a change its shots show failing, with no revisions left: handed to a person, and its card goes out saying what is wrong', async (t) => {
+  const told = [];
+  const h = harness({ row: brokenRow(), revisions: followup.MAX_REVISIONS });
+  h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'person');
+  assert.equal(h.calls.exec.length, 0);
+  assert.match(h.calls.posts[0].text, /can't get this change working on its own: "Tapping "mark as done" ticks a chore off\." didn't work when Homeroom tried it/);
+  assert.match(h.calls.posts[0].dm.reason, /^part of it does not work yet/);
+  assert.deepEqual(told, [5001], 'the ready card that waited on this round is sent now');
+});
+
+test('a red-checks hand-off with nothing failing in the shots does not send a ready card', async (t) => {
+  const told = [];
+  const h = harness({ revisions: followup.MAX_REVISIONS });
+  h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+  await run(t, h);
+  assert.deepEqual(told, []);
 });

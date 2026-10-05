@@ -2487,11 +2487,17 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // from the kit's own rAF, so this observes the class rather than racing it
   // through a second viewport listener. Only while a sheet is up, and only
   // below the breakpoint: a panel on a wide window is not fixed at all.
+  //
+  // `platform-kb-open` counts as well (lib/keyboard-open.ts). In the Homeroom
+  // app the web view is resized to end at the keys, nothing is covered, and
+  // `un-kb` never comes on, so the card kept its resting two-thirds cap and
+  // the vote form ran off the page behind the keys (5 October 2026). That
+  // class is the page's own "the keyboard is up", however the host made room.
   useEffect(() => {
     if (!sheet || wide || typeof document === 'undefined') return undefined;
     const docEl = document.documentElement;
     const sync = () => {
-      const up = docEl.classList.contains('un-kb');
+      const up = docEl.classList.contains('un-kb') || docEl.classList.contains('platform-kb-open');
       setKbUp((cur) => (cur === up ? cur : up));
       if (!up) return;
       const active = document.activeElement as HTMLElement | null;
@@ -2869,6 +2875,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       className="dc-send-btn dc-circle-send dev-ws-ask-send"
       aria-label="Ask"
       disabled={!draft.trim() || !target || inFlight}
+      // The field keeps focus through the press (lib/keyboard-open.ts).
+      onMouseDown={(event) => event.preventDefault()}
     ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
   );
 

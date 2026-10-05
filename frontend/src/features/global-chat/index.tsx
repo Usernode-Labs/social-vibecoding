@@ -303,6 +303,9 @@ function Composer({ id }: { id: string }) {
         disabled={!sending && !value.trim()}
         aria-label={sending ? 'Stop response' : 'Send message'}
         title={sending ? 'Stop' : 'Send'}
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts).
+        onMouseDown={(event) => event.preventDefault()}
         onClick={sending ? stopGlobalChatTurn : undefined}
       >
         {sending ? <span className="global-chat-stop-mark" aria-hidden="true" /> : <ArrowUpIcon className="w-5 h-5" aria-hidden="true" />}

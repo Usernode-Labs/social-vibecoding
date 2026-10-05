@@ -1463,7 +1463,7 @@ const AppView = {
     AppView._stagingDockable = false;
     AppView._setStagingMode('fullscreen');
     staging.clearSrc();
-    staging.setUrlLabel('https://staging-demo-preview.example');
+    staging.setUrlLabel(AppView._stagingTitle(AppView.appData));
     staging.open();
     staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     if (shot === 'preview-rebuilding') {
@@ -2827,7 +2827,15 @@ const AppView = {
   // the shot runs against. Nothing is behind it: the record has no address
   // and is not the routed app, so "Show the starter for now" frames nothing,
   // and the chat button opens Messages.
-  showFirstVersionShot(withPlan = false) {
+  //
+  // `variant`: true or 'plan', its plan waiting for Build it; 'ready', built
+  // and waiting for the viewer's approval in a group; 'approved', the same
+  // once the viewer approved it, waiting on the other member with the
+  // group's clock running. Their change id stands for no change, so Try it
+  // and See the change open nothing real.
+  showFirstVersionShot(variant = false) {
+    const withPlan = variant === true || variant === 'plan';
+    const ready = variant === 'ready' || variant === 'approved';
     AppView.appData = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
@@ -2835,7 +2843,17 @@ const AppView = {
       status: 'running',
       url: null,
       self_hosted: false,
-      first_version: withPlan ? {
+      first_version: ready ? {
+        building: true, mine: variant === 'approved', step: 6, of: 7, stepName: 'Approval',
+        creator: variant === 'approved' ? null : 'jordan', ready: true, question: false, conversationId: null,
+        approval: variant === 'approved' ? {
+          sessionId: 990003, mustApprove: false, approved: true, waitingOn: ['sam'], more: 0, missing: 1,
+          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        } : {
+          sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
+          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        },
+      } : withPlan ? {
         // B6: its plan waits for Build it. A shot: the action id stands for
         // no plan, so a tap here decides nothing.
         building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan',
@@ -2952,8 +2970,10 @@ const AppView = {
   // services/homeroom-bot-dm.js firstVersionState); while it says building,
   // the App tab shows that instead of mounting the frame. Its creator gets
   // their DM with the bot (and its question, when the bot waits on one);
-  // anyone else is told whose description it is. "Show the starter for now"
-  // mounts the frame anyway, for the rest of this visit to the page.
+  // anyone else is told whose description it is. Once it is built and up
+  // for approval, it says it is ready to try and what it waits on
+  // (_firstVersionReadyView). "Show the starter for now" mounts the frame
+  // anyway, for the rest of this visit to the page.
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
@@ -2978,14 +2998,12 @@ const AppView = {
     // (Change something goes to that chat). The step line says the rest.
     const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
       && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
+    // Built and up for approval: no longer "being built" (_firstVersionReadyView).
+    if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
     if (plan) {
       // Nothing more to say under the step: the card is what comes next.
     } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
-    else if (fv.ready) {
-      // B10a: waiting for approval, in one word everywhere.
-      lines.push(mine ? 'Its first version is ready. Try it from your chat.'
-        : 'Its first version is waiting for approval.');
-    } else {
+    else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
     }
     return {
@@ -3013,6 +3031,131 @@ const AppView = {
         ? { key: 'starter', label: 'Show the starter for now', slug: appData.slug }
         : null,
     };
+  },
+
+  /**
+   * The first version is built and up for approval (`first_version.ready`).
+   * The screen says so in plain words, under the step line it is given,
+   * and says what it waits on for whoever reads it, from
+   * `first_version.approval` (services/homeroom-bot-dm.js
+   * firstVersionApproval):
+   *
+   *   still has to approve  "Waiting for your approval.", with Try it (the
+   *                         preview its ready card's Try it opens) and See
+   *                         the change, where they approve it
+   *   approved it           "You approved it. Waiting for @sam, or it goes
+   *                         live on Wednesday if nobody objects.", with Try
+   *                         it and See the change
+   *   anyone else           "Waiting for approval.", with See the change
+   *
+   * "Show the starter for now" stays, quieter, under them. Without
+   * `approval` (a read that failed) its creator is pointed at their chat,
+   * as before. No amber dot: nothing is being built.
+   */
+  _firstVersionReadyView(appData, lines) {
+    const fv = appData.first_version || {};
+    const slug = appData.slug;
+    const approval = fv.approval && Number.isInteger(fv.approval.sessionId) && fv.approval.sessionId > 0
+      ? fv.approval : null;
+    const view = {
+      dot: null,
+      message: `The first version of ${appData.name || slug} is ready to try`,
+      detail: null,
+      lines,
+      secondary: appData.status === 'running'
+        ? { key: 'starter', label: 'Show the starter for now', slug }
+        : null,
+    };
+    if (!approval) {
+      lines.push(fv.mine ? 'Try it from your chat.' : 'Waiting for approval.');
+      return {
+        ...view,
+        action: fv.mine
+          ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug,
+            conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
+          : null,
+      };
+    }
+    const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
+    const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    if (approval.mustApprove) {
+      lines.push('Waiting for your approval.');
+      return { ...view, action: tryIt, alt: change };
+    }
+    lines.push(AppView._firstVersionWaitLine(approval));
+    return approval.approved ? { ...view, action: tryIt, alt: change } : { ...view, action: change };
+  },
+
+  /**
+   * What a first version that is ready waits on, for a reader who is not
+   * asked to approve it now. "You approved it." leads when they did, then
+   * whom it waits for and, while a merge clock runs, the day it goes live
+   * anyway, in the reader's own time zone: "You approved it. Waiting for
+   * @sam, or it goes live on Wednesday if nobody objects." Anyone else
+   * reads "Waiting for approval." until no Yes is missing.
+   */
+  _firstVersionWaitLine(approval, now = new Date(), locale) {
+    const day = approval.goesLiveAt ? AppView._liveDay(approval.goesLiveAt, now, locale) : null;
+    const missing = Math.max(Number(approval.missing) || 0, 0);
+    let next = null;
+    if (approval.soon) next = 'It goes live in a minute or two.';
+    else if (!missing && day) next = `It goes live ${day} if nobody objects.`;
+    else if (!approval.approved) next = 'Waiting for approval.';
+    else if (missing) {
+      next = `Waiting for ${AppView._firstVersionWhom(approval, missing)}${day ? `, or it goes live ${day} if nobody objects` : ''}.`;
+    }
+    if (!approval.approved) return next;
+    return next ? `You approved it. ${next}` : 'You approved it.';
+  },
+
+  /** Whose Yes it still needs: "@sam", "@sam and @ada", or how many more when no one person is needed. */
+  _firstVersionWhom(approval, missing) {
+    const names = (Array.isArray(approval.waitingOn) ? approval.waitingOn : [])
+      .filter((name) => typeof name === 'string' && name);
+    const more = Math.max(Number(approval.more) || 0, 0);
+    // Named only when they are exactly who is needed; else how many more.
+    if (names.length && names.length + more === missing) {
+      const who = [...names.map((name) => `@${name}`), ...(more ? [`${more} more`] : [])];
+      return who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who[0];
+    }
+    return missing === 1 ? 'one more person to approve' : `${missing} more people to approve`;
+  },
+
+  /**
+   * The day something goes live, in the reader's own clock, worded to follow
+   * "it goes live": "later today", "tomorrow", "on Wednesday" within the
+   * week, else "on October 12" (a day already past is its date too).
+   */
+  _liveDay(at, now = new Date(), locale) {
+    const when = new Date(at);
+    if (!Number.isFinite(when.getTime())) return null;
+    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    // Rounded: a day across a clock change is 23 or 25 hours long.
+    const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+    if (when.getTime() > now.getTime()) {
+      if (days === 0) return 'later today';
+      if (days === 1) return 'tomorrow';
+      if (days < 7) return `on ${new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when)}`;
+    }
+    return `on ${new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when)}`;
+  },
+
+  /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
+  tryFirstVersion(slug, sessionId) {
+    const id = Number(sessionId);
+    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    if (AppView.appData && AppView.appData.slug === slug && typeof AppView.ensureStaging === 'function') {
+      AppView.ensureStaging(id, null, null, {});
+      return;
+    }
+    AppView.openFirstVersionChange(slug, id);
+  },
+
+  /** See the change: the first version's change page, where it is approved. */
+  openFirstVersionChange(slug, sessionId) {
+    const id = Number(sessionId);
+    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    location.hash = `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 
   /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
@@ -4550,7 +4693,9 @@ const AppView = {
       // and the discussion thread — mirroring the issue body for issues.
       body = {
         actions: AppView._detailActionsView('proposal', item),
-        summaryHtml: AppView._proposalSummaryHtml(item),
+        // The lead, and on a change Homeroom bot built the rest of its
+        // summary one tap down (`_summaryParts`).
+        ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
@@ -4575,7 +4720,7 @@ const AppView = {
       card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       body = {
         actions: AppView._detailActionsView('session', item),
-        summaryHtml: AppView._proposalSummaryHtml(item),
+        ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
@@ -4719,7 +4864,7 @@ const AppView = {
           act: { fn: 'exploreProposalInDevChat', args: [item.id, null] },
         });
       }
-      if (proposal && window.Kudos && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
+      if (proposal && AppView._kudosOffered(item) && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
       if (body.build) {
         onBand.push({
           key: 'build', cls: 'gc-vote-btn', label: body.build.label,
@@ -4809,13 +4954,22 @@ const AppView = {
     const dep = item.deployment_state;
     const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
       : (dep === 'failed' || dep === 'stalled') ? 'Not live yet' : 'Live';
+    // A change that went live inside another one says which
+    // (services/included-changes.js): "Live, included in #8".
+    const included = AppView._includedInWords(item);
     const status = underway
       ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
       : item.status === 'promoted' ? AppView._waitingWords(item)
-        : ({ merging: 'Going live', merged: settled, closed: 'Closed' }[item.status]
+        : ({ merging: 'Going live', merged: included ? `${settled}, ${included}` : settled, closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
-    const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
+    // First-session run-through, 4 Oct 2026: a flatmate's first look at the
+    // group's first version read "homeroom_bot · proposed 35m ago". The bot
+    // is "Homeroom bot" wherever it is named (group-chat.js BOT_NAME, the
+    // notifications), and it MADE the change, which is what a reader needs.
+    const bot = AppView._botBuilt(item);
+    const author = bot ? 'Homeroom bot'
+      : (item.username || (kind === 'session' && App.user ? App.user.username : null) || null);
     // The provenance words the meta line carried, as text: React escapes.
     const bits = [];
     if (item.source === 'imported') {
@@ -4832,9 +4986,37 @@ const AppView = {
       status,
       age: age ? { s: age.s, title: age.title } : null,
       author,
-      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : 'proposed'),
+      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : (bot ? 'made' : 'proposed')),
       provenance: bits.length ? bits.join(' · ') : null,
       tint: Number(item.id) % 2 ? 'a' : 'b',
+    };
+  },
+
+  // ── A change that went live inside another one ─────────────────────
+  // services/included-changes.js: an open change whose head was one of a
+  // merged change's commits went live with it, and is marked merged with
+  // `included_in_session_id` naming the change that carried it. The words
+  // ("included in #8") ride on the eyebrow and the steps' headline, and the
+  // hero names the carrying change with a link to its page, as an issue
+  // page names the change that closed it (_issueProposalRefView).
+  _includedInWords(item) {
+    if (!item || !item.included_in_session_id) return null;
+    const n = parseInt(item.included_in_pr_number, 10) || 0;
+    return n ? `included in #${n}` : 'included in another change';
+  },
+  _includedInView(item) {
+    if (!item || item.status !== 'merged' || !item.included_in_session_id) return null;
+    const id = parseInt(item.included_in_session_id, 10) || 0;
+    if (!id) return null;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const n = parseInt(item.included_in_pr_number, 10) || 0;
+    return {
+      heading: 'Went live as part of',
+      state: 'merged',
+      sessionId: id,
+      label: n ? `#${n}` : 'Change',
+      title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
+      href: `#app/${slug}/dev/proposals/${id}`,
     };
   },
 
@@ -4931,8 +5113,9 @@ const AppView = {
     for (const r of rows) out.push(noteStep(r));
 
     const merged = item.status === 'merged';
+    const included = merged ? AppView._includedInWords(item) : null;
     return {
-      headline: req ? req.headline : (merged ? 'Live' : 'Where it stands'),
+      headline: req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
       detail: req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
@@ -5214,6 +5397,7 @@ const AppView = {
     const busy = AppView._changeActions.get(Number(item.id));
     const rows = body.details.ledger;
     body.changeId = item.id;
+    body.includedIn = AppView._includedInView(item);
     if (item.preview_placeholder) {
       body.note = 'This is a display-only sample. To try editing a description, open "[Preview sample] Your editable change" in your sessions.';
     }
@@ -5390,9 +5574,17 @@ const AppView = {
   // B10b: the one Tested line a change page shows, in place of the steps
   // list and its checks: what testing found, in words, from the latest run.
   // A tap opens Details at the Checks part. Nothing before the first run.
+  // Checks that passed never read "All checks passed" over a declared change
+  // the before & after shots agent tried and found broken (its
+  // `shotResults` status 'failed'): a page that renders is not a button
+  // that works.
   _testedLine(item) {
     const state = item && item.check_state;
     if (!state) return null;
+    const broken = (state === 'passing' || state === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
+    if (broken) {
+      return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
+    }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
     if (state === 'pending') return { state: 'running', text: 'Testing it…' };
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
@@ -5575,7 +5767,7 @@ const AppView = {
           act: { fn: 'withdrawProposal', args: [item.id] },
         });
       }
-      if (window.Kudos) pills.push({ key: 'kudos', label: '', kudos: item.id });
+      if (AppView._kudosOffered(item)) pills.push({ key: 'kudos', label: '', kudos: item.id });
     } else if (kind === 'session' && item.source === 'imported') {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
@@ -12786,6 +12978,85 @@ const AppView = {
     return `<div class="dev-issue-body">${renderMd(md)}</div>`;
   },
 
+  // First-session run-through, 4 Oct 2026: the summary on a first version
+  // Homeroom bot built was its spec's "User-facing changes" half, Design
+  // subsection and all (homeroom-bot-live.js specUserFacing, when the build
+  // wrote no description of its own): accent colours as RGB triples, the
+  // kit's class names, "Exact words: ..." — thousands of characters of build
+  // brief as the first thing a flatmate read. The spec's own shape says where
+  // the plain part ends: the spec prompt puts a "### Design" subsection LAST
+  // in that half (services/prompts.js, both design briefs), and it is
+  // written for the build: the look, the kit, the words to use.
+  //
+  // So a change the bot built shows its summary up to that heading, and the
+  // rest one tap down ("How it's built", ChangeHero). Nothing is written
+  // here: both halves are the stored summary's own words. The credit line
+  // the bot appends to every description it files ("Asked for by @maya",
+  // creditedDescription) is the change's, not the spec's, so it stays with
+  // the lead. A summary with no Design heading, one that OPENS with it (no
+  // lead to show), and every summary a person or their agent wrote are shown
+  // whole, as before. Specs written from now on leave Design out of the
+  // summary to begin with (specUserFacing); this is for the ones already up.
+  _summaryParts(item) {
+    const md = item && typeof item.pr_summary_md === 'string' ? item.pr_summary_md.trim() : '';
+    const whole = { lead: md, more: '' };
+    if (!md || !AppView._botBuilt(item)) return whole;
+    const lines = md.split('\n');
+    let fenced = false;
+    let at = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      const t = lines[i].trim();
+      if (/^(```|~~~)/.test(t)) fenced = !fenced;
+      else if (!fenced && /^#{1,6}\s+design\b/i.test(t)) { at = i; break; }
+    }
+    if (at < 0) return whole;
+    let lead = lines.slice(0, at).join('\n').trim();
+    let more = lines.slice(at).join('\n').trim();
+    if (!lead) return whole;
+    // Wherever it landed: a later update can follow it ("**Latest update:**",
+    // pr-metadata latestDescriptionSummary).
+    const credit = more.match(/^[ \t]*(Asked for by @\S+)[ \t]*$/m);
+    if (credit) {
+      more = `${more.slice(0, credit.index)}${more.slice(credit.index + credit[0].length)}`
+        .replace(/\n{3,}/g, '\n\n').trim();
+      lead = `${lead}\n\n${credit[1]}`;
+    }
+    return { lead, more };
+  },
+
+  // The folded half's open flag, kept out of the DOM for the reason
+  // `_proposalBodyOpen` below gives: a repaint must not shut it on a reader.
+  _summaryMoreOpen: new Set(),
+
+  _setSummaryMoreOpen(proposalId, open) {
+    const id = Number(proposalId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (open) AppView._summaryMoreOpen.add(id);
+    else AppView._summaryMoreOpen.delete(id);
+  },
+
+  // A change's summary as the hero reads it: `summaryHtml` (the lead) and
+  // `summaryMore`, the rest as a disclosure model, or null when there is no
+  // rest. `html` is DevChat.renderMarkdown's output, sanitised where built.
+  _changeSummaryView(item) {
+    const { lead, more } = AppView._summaryParts(item);
+    const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead });
+    if (!more) return { summaryHtml, summaryMore: null };
+    const id = Number(item && item.id);
+    const hasStableId = Number.isInteger(id) && id > 0;
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return {
+      summaryHtml,
+      summaryMore: {
+        id: hasStableId ? id : null,
+        open: hasStableId && AppView._summaryMoreOpen.has(id),
+        html: renderMd(more),
+      },
+    };
+  },
+
   // The complete GitHub PR description is deliberately quieter than the
   // generated summary above: reviewers can expand it when they need the
   // implementation and testing detail without making every proposal topic
@@ -12948,7 +13219,7 @@ const AppView = {
     // _fillKudosHosts writes it in). The detail head lists the slot in its
     // own action list below the header (_detailActionsView), so its card
     // carries none, and a merged card has always had one (_mergedRowModel).
-    const bandKudos = !isMerged && !AppView.readOnly && !noNav && window.Kudos
+    const bandKudos = !isMerged && !AppView.readOnly && !noNav && AppView._kudosOffered(pr)
       ? [{ key: 'kudos', label: '', kudos: pr.id }]
       : [];
     const actions = (isMerged || AppView.readOnly)
@@ -13506,7 +13777,9 @@ const AppView = {
     }
     if (isMerged && !ro) {
       // Undo opens a revert PR, which then needs its own merge vote.
-      if (!pr.revert_of_session_id && !pr.revert_session_id) {
+      // A change that went live inside another one has no merge of its own
+      // to undo (the server refuses it too): undoing the carrying change is.
+      if (!pr.revert_of_session_id && !pr.revert_session_id && !pr.included_in_session_id) {
         items.push({
           label: 'Undo',
           icon: 'undo',
@@ -13523,7 +13796,7 @@ const AppView = {
     // st.kudosOnFace — the merged card promotes the kudos button back onto
     // its action band (it has no votes to cast, so the band was empty), and
     // two ways to give the same kudos on one card is one too many.
-    if (window.Kudos && !ro && !st.kudosOnFace) {
+    if (AppView._kudosOffered(pr) && !ro && !st.kudosOnFace) {
       const entry = Kudos._ensureCache ? Kudos._ensureCache(pr.id) : {};
       const isSelf = !!(App.user && pr.user_id && pr.user_id === App.user.id);
       const mineKudos = !!entry.my_kudos;
@@ -17515,12 +17788,29 @@ const AppView = {
   },
 
   /**
+   * Whether a change offers kudos at all. Kudos thank a change's author, and
+   * the author of a change Homeroom bot built is the bot's own account, so
+   * "Thank homeroom_bot" thanked nobody (first-session run-through, 4 Oct
+   * 2026). Every kudos slot and row on a change asks this.
+   */
+  _kudosOffered(item) {
+    return !!window.Kudos && !AppView._botBuilt(item);
+  },
+
+  /**
    * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
-   * with it, with this change staged as a card to write about.
+   * with it, with this change attached on the composer and the caret in the
+   * box (messages/store.ts openBot). The page names the change's project, so
+   * nothing is asked of them first; the server reads its live title.
    */
   askBotForChanges(sessionId, title) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    const reference = { type: 'proposal', sessionId: Number(sessionId), title: title || null };
+    const app = AppView.appData || {};
+    const reference = {
+      type: 'proposal', sessionId: Number(sessionId), title: title || null,
+      appId: Number(app.id) > 0 ? Number(app.id) : undefined,
+      appSlug: app.slug || App.currentApp || undefined,
+    };
     if (messages && typeof messages.openBot === 'function') messages.openBot(reference);
     else location.hash = '#messages';
   },
@@ -18013,7 +18303,7 @@ const AppView = {
     // `_fillKudosHosts` writes Kudos.renderButton's markup into it, because
     // Kudos.attach / _refreshButton / _renderPopover all keep writing there.
     // The button is left out entirely when kudos.js isn't loaded.
-    const hasKudos = !!(window.Kudos && !AppView.readOnly);
+    const hasKudos = AppView._kudosOffered(pr) && !AppView.readOnly;
     const menu = AppView._proposalMenuItems(pr, {
       mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: hasKudos,
     });
@@ -19612,6 +19902,17 @@ const AppView = {
     return reason || 'Nothing has picked this preview up yet.';
   },
 
+  // How many declared changes the shots on this commit show failing: the
+  // shots agent did the steps and the after build broke. Zero for shots on
+  // another commit (the view serves no results for those) and for runs
+  // from before the failed outcome existed.
+  _shotsBrokenCount(shots) {
+    if (!shots || typeof shots !== 'object' || !['verified', 'failed'].includes(String(shots.state || ''))) return 0;
+    const results = Array.isArray(shots.shotResults) ? shots.shotResults : [];
+    const failed = results.filter((entry) => entry && entry.status === 'failed').length;
+    return failed || (shots.state === 'failed' && shots.failureCode === 'shots_change_failed' ? 1 : 0);
+  },
+
   // The words for each shots state — a label and a sentence — shared by
   // the verified/pending card below and the change page's strip.
   _shotsStateCopy(shots) {
@@ -19628,7 +19929,11 @@ const AppView = {
       reviewing: ['Saving the shots', 'The shots are being saved to the proposal.'],
       // A restart interrupted the run and the recovery sweep starts it
       // again by itself, so it is not a failure to act on yet.
-      failed: e.failureCode === 'shots_stopped'
+      // The shots agent did what the change says it does on the after
+      // build, and the app broke: the change does not work.
+      failed: e.failureCode === 'shots_change_failed'
+        ? ['Something didn\u2019t work', e.failureReason || 'The shots agent tried this change on the after build, and the app broke.']
+        : e.failureCode === 'shots_stopped'
         ? ['Shots stopped', e.failureReason || 'Stopped before it finished. No shots were taken for this commit.']
         : e.automaticRetryPending === true
           ? ['Trying the shots again', 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.']
@@ -19752,7 +20057,10 @@ const AppView = {
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
     const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
-    const skipped = (claim) => resultOf(claim)?.status === 'skipped';
+    // A failed change was tried on the after build and the app broke; like a
+    // skipped one it has no shots of its own, but it reads as a problem.
+    const failed = (claim) => resultOf(claim)?.status === 'failed';
+    const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
     const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
     const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
       : claim.persona === 'full_admin' ? 'full admin' : 'member');
@@ -19925,6 +20233,13 @@ const AppView = {
     const items = claims.map((claim) => {
       const result = resultOf(claim);
       const n = numberOf(claim.id);
+      if (failed(claim)) {
+        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
+          <span class="shots-claim-n">${n}</span>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">Didn\u2019t work</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent tried this on the after build, and the app broke.')}</p></div>
+        </li>`;
+      }
       if (skipped(claim)) {
         return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
           <span class="shots-claim-n">${n}</span>
@@ -21973,6 +22288,10 @@ const AppView = {
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
+        ...(typeof data.appName === 'string' ? { appName: data.appName } : {}),
+        // The moment a time-dependent change declared (services/preview-
+        // clock.js); swapToStaging opens the preview at it.
+        ...(data.previewAt ? { previewAt: data.previewAt } : {}),
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
@@ -22139,15 +22458,25 @@ const AppView = {
     const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
     AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
 
-    staging.setUrlLabel(resolved);
+    staging.setUrlLabel(AppView._stagingTitle(app, opts && opts.appName));
     // Who the app is for words the line under the bar: your own project's
     // preview goes live when you vote it in, a group's is tried by members
     // before they vote (#16).
     staging.setAudience(AppView._stagingAudience(app));
+    // A change that only shows at certain times declared a moment to see it
+    // at (`opts.previewAt`, from the ensure answer). The preview opens there,
+    // a line under the bar says so, and its button switches to now and back.
+    // `clock` is this open's own: a later open makes its own. It opens at the
+    // moment only where that line is drawn (setClock answers true); the DOM
+    // fallback has no line, so there it opens as now rather than unexplained.
+    const declared = AppView._stagingClockFrom(opts && opts.previewAt);
+    const clock = declared && staging.setClock({ label: declared.label, asNow: false }) === true
+      ? declared : null;
+    if (!clock) staging.setClock(null);
     staging.open();
     AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null });
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null, onClockToggle: null });
     staging.setTestBtn({ hidden: true });
     staging.setTestPanelHidden(true);
     staging.clearSrc();
@@ -22202,12 +22531,42 @@ const AppView = {
       // parameter the app gives meaning to (the platform's own shell pins its
       // theme from a bare `?theme=`, which a preview must not do).
       url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+      // Namespaced like the two above. Only ever on a staging preview's
+      // address: the app frame (buildAppIframeSrc) never carries it, the
+      // bridge ignores it on a production host, and an app's server reads it
+      // only under USERNODE_ENV=staging.
+      if (clock && !clock.asNow) url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
     // Mutable so a "Test this change" click during the readiness poll
     // retargets the pending load instead of being clobbered by it.
     const pending = { src: buildSrc(jump ? safePath : null) };
+
+    // "See it as now" and back: the same address with `un-now` dropped or
+    // put back, so a deep link the preview was opened at survives. Before the
+    // first load it only retargets the pending one.
+    staging.setHandlers({
+      onClockToggle: clock ? () => {
+        if (!current() || !pending.src) return;
+        clock.asNow = !clock.asNow;
+        staging.setClock({ label: clock.label, asNow: clock.asNow });
+        let next;
+        try {
+          const url = new URL(pending.src);
+          if (clock.asNow) url.searchParams.delete(AppView.PREVIEW_NOW_PARAM);
+          else url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
+          next = url.toString();
+        } catch { return; }
+        pending.src = next;
+        const frame = staging.frame();
+        if (frame && frame.src) {
+          AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+          AppView._watchStagingIframeLoad(frame, loadId, null);
+          staging.setSrc(next);
+        }
+      } : null,
+    });
 
     AppView._renderTestingControls(buildSrc, pending, jump);
     const checksRunning = !!(opts && opts.checksRunning);
@@ -22400,6 +22759,25 @@ const AppView = {
     if (app && app.audience) return app.audience;
     const open = AppView.appData;
     return (app && open && open.slug === app.slug && open.audience) || null;
+  },
+
+  // The preview bar's title: the app's name and that this is its preview,
+  // "Flat 4B Chores · Preview". It used to be the raw staging address
+  // ("https://flat-4b-chores-e98ecd--s62…"), which tells someone who tapped
+  // Try it on the bot's ready card nothing (first-session run, 4 October
+  // 2026). The name comes from the server's ensure answer (`appName`, which
+  // covers callers that hand over only a slug), else the caller's own app
+  // record, else the open app's when it is the same app. With none known it
+  // just says Preview.
+  _stagingTitle(app, name) {
+    const open = AppView.appData;
+    const candidates = [
+      name,
+      app && app.name,
+      app && open && open.slug === app.slug ? open.name : null,
+    ];
+    const found = candidates.find((v) => typeof v === 'string' && v.trim());
+    return found ? `${found.trim()} · Preview` : 'Preview';
   },
 
   _stagingReadOnly(opts) {
@@ -22706,6 +23084,9 @@ const AppView = {
     // The banner's wording by audience is the island's alone; without it the
     // shipped line stays as it is.
     setAudience() {},
+    // So is the line saying which moment a preview shows. Answering false
+    // tells swapToStaging it was not drawn, so the preview opens as now.
+    setClock() { return false; },
     setLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
       this._setHidden('staging-retry-btn', !visible || !retry);
       this._setText('staging-retry-btn', retryLabel || 'Retry sign-in');
@@ -23399,6 +23780,26 @@ const AppView = {
   // The bridge turns both into `usernode.theme` and a
   // `usernode:theme-changed` event. It reports; it never restyles the app.
   THEME_PARAM: 'un-theme',
+
+  // A staging preview shown as of a chosen moment (src/services/preview-
+  // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
+  // `?un-now=<at>` on the preview's address, which the bridge reads into
+  // `usernode.now()`, and the line under the bar ("Showing it as on Thursday
+  // 8 Oct, 7 pm"). Never on the app frame: production ignores it entirely.
+  PREVIEW_NOW_PARAM: 'un-now',
+
+  // The answer's moment, checked before it goes anywhere near an address: an
+  // exact ISO instant (what preview-clock writes) and a short label. Anything
+  // else opens the preview as now, as it always has.
+  _stagingClockFrom(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const at = typeof raw.at === 'string' ? raw.at : '';
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(at)) return null;
+    if (!Number.isFinite(Date.parse(at))) return null;
+    if (!label || label.length > 64) return null;
+    return { at, label, asNow: false };
+  },
 
   // The legacy copy of sameFrameSrc in
   // frontend/src/features/app-frame/app-frame-policy.js: a render compares

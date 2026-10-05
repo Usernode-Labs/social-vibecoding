@@ -115,6 +115,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
    never a hardcoded host. Handle checks use `usernode.lookupUser()` /
    `searchUsers()` — never a guess from users your app has already seen.
+   "Everyone in the group" is `GET /members` (see "Members"), which works
+   in previews: never the users who opened the app, never fake people.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
@@ -685,6 +687,77 @@ genuinely standalone server page left is `/cli/authorize`. **Always
 point a deep `path:` at the specific changed self-app screen** —
 omitting it defaults to `/` (the home feed), which no capture fix can
 rescue.
+
+## Time-dependent features
+
+Some changes only show at certain times: a reminder the evening before
+bins day, a rota that turns over on Monday, a deadline, "tonight", a
+seasonal screen. A preview opens on whatever day it happens to be, so
+without help nobody can see such a change before they vote on it. (A group
+was once asked to approve a Thursday-evening banner that Try it opened on a
+Monday and the shots could not show.) A staging preview can instead be
+shown as of a chosen moment. Four things make that work:
+
+1. **Read "now" through the platform, never `new Date()`, `Date.now()` or
+   SQL's `NOW()` / `CURRENT_DATE`, wherever the day or the time decides
+   what shows.**
+   - In the page: `usernode.now()` (the bridge) returns a `Date`. It is the
+     real time, except on a preview opened at a moment, where it is that
+     moment plus the time since the page loaded. `usernode.previewNow` is
+     that moment as an ISO string, or `null`.
+   - On the server: `req.now`, a `Date`. New apps' `server.js` sets it (its
+     sign-in middleware calls `requestNow`). An app without it adds this
+     before its routes:
+
+     ```js
+     const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+     const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+     function requestNow(req) {
+       const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+       return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+     }
+     app.use((req, _res, next) => { req.now = requestNow(req); next(); });
+     ```
+
+   - The page tells the server: every API call sends
+     `x-usernode-now: usernode.now().toISOString()` when
+     `usernode.previewNow` is set. The starter templates' `api()` helper
+     already does.
+   - In SQL, pass `req.now` as a parameter (`WHERE due_on = $1::date`)
+     instead of `NOW()` where the answer decides what shows. A timestamp
+     that records when something happened (`created_at DEFAULT NOW()`)
+     stays as it is.
+   - Name the zone. The server runs in UTC, so "Thursday evening" computed
+     with `getDay()` / `getHours()` is Thursday evening in UTC. Work out the
+     day and the hour in the group's zone with `Intl.DateTimeFormat` and
+     `timeZone`, and say which zone the app uses in its `CLAUDE.md`.
+   - **Production ignores it entirely.** The platform only adds
+     `?un-now=` to a staging preview's address, the bridge never reads it
+     on a production app's address, and the server reads it only when
+     `USERNODE_ENV` is `staging`. The code path is the same everywhere; only
+     the value of "now" differs, so this is data, not a gated feature.
+2. **Say when it shows** in the change's description and testing steps,
+   in plain words: "The reminder shows on Thursdays from 6 pm until bins is
+   ticked."
+3. **Declare a preview moment.** Put one line in the TESTING block (it is
+   carried into the pull request's "How to test", where it shows to
+   nobody):
+
+   ```
+   <!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->
+   ```
+
+   A local date and time (`YYYY-MM-DDTHH:MM`), then the IANA time zone the
+   app reasons in (UTC when left out). Pick a moment when the change shows
+   with the preview's own data: a Thursday at 7 pm, with the seeded rota's
+   bins still unticked. Try it then opens the preview at that moment and
+   says so above it ("Showing it as on Thursday 8 Oct, 7 pm", with "See it
+   as now" beside it), and the shots agent opens both the before and the
+   after copy at it. On `submit_work`, put the same line in
+   `testingSteps`. Only one moment per change; the first valid line wins.
+4. **Check it yourself** in the in-loop browser: add
+   `?un-now=2026-10-08T18:00:00Z` (an ISO time with `Z` or an offset) to
+   the URL, and look at it before and after the moment.
 
 ## Proposal tests — "CI for proposals"
 
@@ -1776,6 +1849,8 @@ Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
 wallet field. Only view-public, non-platform apps with a usable deployment
 appear. Use the returned `url`, never rebuild a hostname from `slug`.
 `icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+Contributors are who built an app, not who is in it: for your own
+project's people use "Members" below.
 
 Cache the response for 30–60 seconds; the route allows 60 requests/minute
 per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
@@ -1931,7 +2006,7 @@ const { found, user, ambiguous } = await resp.json();
 ```
 
 This user-token-only fallback exists **only** on the two `/users/*`
-endpoints. The governance feed still requires the app token, so its
+endpoints and `/members` (see "Members"). The governance feed still requires the app token, so its
 `FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
 `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
@@ -1981,6 +2056,46 @@ try {
   known = (await usernode.lookupUser(handle)).found;
 } catch { /* no shell — accept it */ }
 ```
+
+The directory never returns the platform's own accounts (the
+`usernode-*` service identities that run checks, and synthetic users such
+as the Homeroom bot), so a handle like `usernode-capture-admin` is
+`found: false`.
+
+## Members: who is in this project
+
+"Everyone in the group" (a chore rota, a turn order, a "who's coming"
+list) is the project's member list, and the platform has it. Ask for it;
+don't build it.
+
+```js
+const headers = { 'x-usernode-user-token': userTokenFromThisRequest };
+if (process.env.USERNODE_LLM_PROXY_TOKEN) {
+  headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+}
+const resp = await fetch(`${PLATFORM_API_BASE}/members`, { headers });
+if (resp.status === 403) { /* not a member: show the screen without the roster */ }
+const { members, has_more } = await resp.json();
+// members: [{ id, username }, ...], the creator first, then oldest member first
+```
+
+- **Same auth as `/users/*`, previews included.** A staging preview sends
+  only the user token and gets the project's **real** members, the same
+  people the live app will see. So the preview is where a member checks
+  that the rota has the right people in it.
+- **Only members get an answer.** Anyone else (an admin looking in, the
+  platform's check runner) gets `403 { code: 'not_a_member' }`. Show the
+  screen without the roster, and never fail the page on it.
+- **Never "whoever has opened the app".** Every proposal check opens the
+  preview as a platform account, so a list built from visitors shows that
+  account to the group. Key per-person rows by `members[].id`.
+- **Never a staging fixture of fake people for this.** It hides the real
+  answer in the one place people review it. If a declared check needs fixed
+  names, serve them only behind `IS_STAGING && req.query.demo === '1'` and
+  point that check at the `?demo=1` path; the plain route stays real.
+- Rate limit: shared with `/users/*` (120/min per app and user). Cache the
+  list for a minute rather than asking on every request. `?limit=` defaults
+  to 100, at most 200; `has_more` says there are more.
 
 ## Don't `git push` yourself
 

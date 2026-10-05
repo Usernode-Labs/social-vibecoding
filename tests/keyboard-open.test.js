@@ -13,7 +13,14 @@
 // resizes its web view to end at the keyboard instead, so nothing is covered,
 // the kit measures 0 and `un-kb` never comes on.
 //
-// Five parts:
+// Production run, 5 October 2026, the iOS app, a project's Discussion: with
+// the keyboard up, a tap on the group chat's Send closed the keyboard and
+// sent nothing; the text stayed in the box. The tap blurred the field, the
+// class came off in that blur, the bars came back and the composer fell by
+// the keyboard's height before the click was dispatched, so the click landed
+// on nothing.
+//
+// Seven parts:
 //   1. the kit, executed with the app's numbers: it cannot see this keyboard;
 //   2. lib/keyboard-open.ts, executed against a fake window: it can, in the
 //      app and in Safari, and it stays off for everything that is not a
@@ -23,7 +30,12 @@
 //      drops the band they reserve, so the composer sits on the keys;
 //   4. the boot entry installs it;
 //   5. the composer keeps the field focused through a send and refocuses
-//      without a scroll (the likely cause of 2).
+//      without a scroll (the likely cause of 2);
+//   6. a blur during a press keeps the class on until that press's click has
+//      been dispatched, so any button pressed with the keyboard up still gets
+//      its click;
+//   7. every composer's Send keeps its field focused through the press, the
+//      way Messages' does.
 //
 // What this cannot do is raise a real keyboard in the app's web view; the
 // numbers below are the iPhone 17 Pro's 874pt screen with a 336pt keyboard.
@@ -40,7 +52,7 @@ const COMPOSER = read('frontend/src/features/messages/composer.tsx');
 const MAIN = read('frontend/src/main.tsx');
 const { physics } = require('../public/usernode-native/v1/native.js');
 const {
-  KB_OPEN_CLASS, PHONE_QUERY, KB_SHRINK_MIN,
+  KB_OPEN_CLASS, PHONE_QUERY, KB_SHRINK_MIN, PRESS_WINDOW_MS, CLICK_WAIT_MS,
   describeFocus, canHoldKeyboard, visibleHeight, keyboardOpen, initKeyboardOpen,
 } = loadTsx('frontend/src/lib/keyboard-open.ts');
 
@@ -55,8 +67,12 @@ const BUTTON = { tagName: 'BUTTON' };
 const IFRAME = { tagName: 'IFRAME' };
 
 // A window, a document and the kit, enough for initKeyboardOpen. Events are
-// dispatched by hand in the order a browser fires them.
+// dispatched by hand in the order a browser fires them, on a clock and timers
+// the test moves by hand.
 function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics } } = {}) {
+  let clock = 10_000;
+  let seq = 0;
+  const timers = [];
   const listeners = { win: {}, vv: {}, doc: {} };
   const on = (bucket) => (type, fn) => { (listeners[bucket][type] ||= []).push(fn); };
   const fire = (bucket, type, event = {}) => (listeners[bucket][type] || []).forEach((fn) => fn(event));
@@ -77,11 +93,32 @@ function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics
     matchMedia: (query) => ({ matches: phone && query === PHONE_QUERY }),
     addEventListener: on('win'),
     unNative: kit,
+    performance: { now: () => clock },
+    setTimeout(fn, ms) { seq += 1; timers.push({ id: seq, fn, due: clock + ms }); return seq; },
+    clearTimeout(id) { const at = timers.findIndex((t) => t.id === id); if (at >= 0) timers.splice(at, 1); },
   };
   initKeyboardOpen(doc, win);
   return {
     get open() { return classes.has(KB_OPEN_CLASS); },
     get toggles() { return toggles; },
+    get timers() { return timers.length; },
+    // Move the clock, running each timer that falls due, in order.
+    advance(ms) {
+      const end = clock + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.due <= end).sort((a, b) => a.due - b.due || a.id - b.id)[0];
+        if (!due) break;
+        timers.splice(timers.indexOf(due), 1);
+        clock = due.due;
+        due.fn();
+      }
+      clock = end;
+    },
+    // A finger on the glass, and off it. Pointer and touch events both fire.
+    press() { fire('doc', 'pointerdown'); fire('doc', 'touchstart'); },
+    release() { fire('doc', 'pointerup'); fire('doc', 'touchend'); },
+    cancel() { fire('doc', 'pointercancel'); },
+    click() { fire('doc', 'click'); },
     focus(el) {
       const from = doc.activeElement;
       if (from !== body) {
@@ -331,4 +368,253 @@ test('Send does not take focus from the field, and the refocus never scrolls', (
   const submit = COMPOSER.slice(COMPOSER.indexOf('function submit() {'), COMPOSER.indexOf('\n  }\n', COMPOSER.indexOf('function submit() {')));
   assert.match(submit, /requestAnimationFrame\(\(\) => inputRef\.current\?\.focus\(\{ preventScroll: true \}\)\)/);
   assert.doesNotMatch(submit, /\.focus\(\)/, 'no refocus that asks iOS to scroll the field into view');
+});
+
+// ── 6. A blur under a finger waits for its click ────────────────────────────
+
+// The keyboard up in the app, a composer focused.
+function typing() {
+  const h = harness();
+  h.focus(TEXTAREA);
+  h.resized(SCREEN - KEYBOARD);
+  assert.equal(h.open, true);
+  return h;
+}
+
+test('a tap on a button that takes focus: the bars wait for its click, so it lands where the finger did', () => {
+  const h = typing();
+  // iOS: touch down, touch up, then the tap's mousedown (the blur), mouseup
+  // and click, in one burst.
+  h.press();
+  h.advance(90);
+  h.release();
+  h.blur();
+  assert.equal(h.open, true, 'still on after the blur: the click is not dispatched yet');
+  // The keys start down and the app's web view grows with them.
+  h.resized(SCREEN - 200);
+  assert.equal(h.open, true, 'the page growing back does not bring the bars before the click');
+  h.click();
+  assert.equal(h.open, true, 'on through the click\'s own handlers and the form\'s submit');
+  h.advance(0);
+  assert.equal(h.open, false, 'off once the click has been dispatched');
+  assert.equal(h.timers, 0, 'the backstop went with it');
+});
+
+test('a press whose click never comes lets go after CLICK_WAIT_MS at the most', () => {
+  const h = typing();
+  h.press();
+  h.blur();
+  h.advance(CLICK_WAIT_MS - 1);
+  assert.equal(h.open, true);
+  h.advance(1);
+  assert.equal(h.open, false);
+  assert.equal(CLICK_WAIT_MS, 350);
+});
+
+test('a cancelled press (a scroll took it) lets go at once', () => {
+  const h = typing();
+  h.press();
+  h.blur();
+  h.cancel();
+  h.advance(0);
+  assert.equal(h.open, false);
+});
+
+test('focus that moves to another field during the press keeps it on, without a flicker', () => {
+  const h = typing();
+  const before = h.toggles;
+  h.press();
+  h.release();
+  h.blur();
+  h.focus(TEXT_INPUT);
+  h.click();
+  h.advance(CLICK_WAIT_MS);
+  assert.equal(h.open, true);
+  assert.equal(h.toggles, before, 'the class was never written in between');
+});
+
+test('a click handler that puts focus back in the field keeps it on', () => {
+  const h = typing();
+  const before = h.toggles;
+  h.press();
+  h.release();
+  h.blur();
+  h.click();
+  h.focus(TEXTAREA);
+  h.advance(0);
+  assert.equal(h.open, true);
+  assert.equal(h.toggles, before);
+});
+
+test('a Send that keeps focus never blurs, so nothing waits; a field the send disables lets go at once', () => {
+  const h = typing();
+  h.press();
+  h.release();
+  h.click();
+  assert.equal(h.open, true, 'the field kept focus through the press');
+  assert.equal(h.timers, 0);
+  // The hub's channel and the reply composer disable the field while the
+  // post is in flight: that blur comes inside the click, after the tap has
+  // landed, and takes the bars' return with the keys.
+  h.blur();
+  assert.equal(h.open, false);
+});
+
+test('the keyboard\'s Done (no press in the page) and a press long gone still let go in the blur', () => {
+  const h = typing();
+  h.blur();
+  assert.equal(h.open, false, 'Done is no press in the page');
+  const g = typing();
+  g.press();
+  g.advance(PRESS_WINDOW_MS + 1);
+  g.blur();
+  assert.equal(g.open, false, 'a press more than PRESS_WINDOW_MS old is not on its way to a click');
+  assert.equal(PRESS_WINDOW_MS, 500);
+  const f = typing();
+  // A tap into the field (it moved the caret) ended in its click; Done after it.
+  f.press();
+  f.release();
+  f.click();
+  f.blur();
+  assert.equal(f.open, false, 'a press that has had its click is over');
+});
+
+test('a held release counts from when the finger lifted', () => {
+  const h = typing();
+  h.press();
+  h.advance(PRESS_WINDOW_MS - 50);
+  h.release();
+  h.advance(100);
+  h.blur();
+  assert.equal(h.open, true, 'lifted 100ms ago: the click is still on its way');
+  h.click();
+  h.advance(0);
+  assert.equal(h.open, false);
+});
+
+test('with the class off, a press and a blur write nothing', () => {
+  const h = harness({ phone: false });
+  h.focus(TEXTAREA);
+  h.resized(SCREEN - KEYBOARD);
+  h.press();
+  h.blur();
+  h.click();
+  h.advance(CLICK_WAIT_MS);
+  assert.equal(h.open, false);
+  assert.equal(h.toggles, 0);
+  assert.equal(h.timers, 0);
+});
+
+test('it hears presses on the document in capture, and passively', () => {
+  const src = read('frontend/src/lib/keyboard-open.ts');
+  for (const type of ['pointerdown', 'touchstart', 'pointerup', 'touchend', 'pointercancel', 'touchcancel']) {
+    assert.match(src, new RegExp(`doc\\.addEventListener\\('${type}', \\w+, quiet\\);`), type);
+  }
+  assert.match(src, /const quiet = \{ capture: true, passive: true \};/,
+    'passive: it must never hold up a scroll');
+  assert.match(src, /doc\.addEventListener\('click', onEnd, true\);/,
+    'the click in capture, so the settle is queued behind its handlers');
+});
+
+// ── 7. Every composer's Send keeps its field focused ────────────────────────
+
+const KEEPS_FOCUS = /onMouseDown=\{\(event\) => (?:\{ )?event\.preventDefault\(\)/;
+
+// The opening tag of the button whose attributes include the text at `at`.
+// Braces are counted, so an arrow inside an attribute does not end the tag.
+function openingTagAt(src, at, label) {
+  const start = Math.max(src.lastIndexOf('<button', at), src.lastIndexOf('<Button', at));
+  assert.ok(start >= 0, `${label}: no button before it`);
+  let depth = 0;
+  for (let i = start; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+    else if (c === '>' && depth === 0) {
+      assert.ok(i > at, `${label}: not on that button`);
+      return src.slice(start, i + 1);
+    }
+  }
+  return assert.fail(`${label}: the button never closes`);
+}
+
+function openingTag(file, anchor) {
+  const src = read(file);
+  const at = src.indexOf(anchor);
+  assert.ok(at >= 0, `${file}: ${anchor} is missing`);
+  return openingTagAt(src, at, `${file}: ${anchor}`);
+}
+
+const SENDS = [
+  // The Discussion's composer and a topic thread's, then the boxed thread's.
+  ['frontend/src/features/group-chat/composer.tsx', 'className="gc-send shrink-0"'],
+  ['frontend/src/features/group-chat/composer.tsx', '<Button type="submit" size="sm" className="shrink-0"'],
+  ['frontend/src/features/messages/composer.tsx', 'className="messages-send"'],
+  ['frontend/src/features/global-chat/index.tsx', 'className="global-chat-send"'],
+  ['frontend/src/features/dev-chat/composer.tsx', 'className="dc-draft-btn dc-draft-send"'],
+  // The agent session (the bot's chat): Send (Stop while it works), and
+  // Stop and Save draft in its place while a draft is being saved.
+  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-send={kind}'],
+  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-send="save"'],
+  ['frontend/src/features/agent-session/index.tsx', 'variant="pillDanger" ink="dangerTint" size="icon"'],
+  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-draft-send'],
+  ['frontend/src/features/agent-session/propose-confirm.tsx', 'data-agent-session-propose-confirm'],
+  ['frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'],
+  ['frontend/src/features/dev-board/workshop/workshop.tsx', 'className="dc-send-btn dc-circle-send dev-ws-ask-send"'],
+  ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
+  ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
+  ['frontend/src/features/dev-chat/spec-viewer.tsx', 'id="dc-spec-share-send"'],
+  ['frontend/src/features/first-session/made.tsx', '<Button type="submit" disabled={busy || !username.trim()}'],
+];
+
+test('every composer\'s Send prevents the mousedown, so a press never takes focus from the field', () => {
+  for (const [file, anchor] of SENDS) {
+    assert.match(openingTag(file, anchor), KEEPS_FOCUS, `${file}: ${anchor}`);
+  }
+});
+
+test('the dev session\'s Send keeps focus in every state it wears', () => {
+  const src = read('frontend/src/features/dev-chat/composer.tsx');
+  const common = /const common = \{([\s\S]*?)\n  \};/.exec(src);
+  assert.ok(common, 'SendButton\'s shared props are missing');
+  assert.match(common[1], /onMouseDown: \(event: MouseEvent<HTMLButtonElement>\) => event\.preventDefault\(\),/);
+  const body = src.slice(src.indexOf('function SendButton('), src.indexOf('function SavedDrafts('));
+  const buttons = body.match(/<Button\b/g) || [];
+  const spread = body.match(/<Button\s+\{\.\.\.common\}/g) || [];
+  assert.ok(buttons.length >= 5, 'send, save, stop, stopping, busy');
+  assert.equal(spread.length, buttons.length, 'every state spreads the shared props');
+});
+
+test('a press on Send still closes the suggestion lists, as the blur did', () => {
+  assert.match(openingTag('frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'),
+    /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); \}\}/);
+  assert.match(openingTag('frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'),
+    /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); refs\.close\(\); \}\}/);
+});
+
+test('every button labelled Send in the shell keeps focus (a new composer is caught here)', () => {
+  const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((d) => {
+    const rel = `${dir}/${d.name}`;
+    if (d.isDirectory()) return rel.endsWith('/admin') ? [] : walk(rel);
+    return /\.(tsx|jsx)$/.test(d.name) ? [rel] : [];
+  });
+  let seen = 0;
+  for (const file of walk('frontend/src')) {
+    const src = read(file);
+    for (let at = src.indexOf('aria-label="Send'); at >= 0; at = src.indexOf('aria-label="Send', at + 1)) {
+      const tag = openingTagAt(src, at, file);
+      seen += 1;
+      // The dev session's Send carries it in the shared props pinned above.
+      assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);
+    }
+  }
+  assert.ok(seen >= 7, `found ${seen}`);
+});
+
+test('"Send answers" is left to the press hold: its fields commit on their own blur', () => {
+  // Preventing the press there would keep a typed answer focused, so it
+  // would never commit before the answers are sent.
+  const tag = openingTag('frontend/src/features/dev-chat/transcript.tsx', 'className="dc-qa-send"');
+  assert.doesNotMatch(tag, /onMouseDown/);
+  assert.match(read('frontend/src/features/dev-chat/transcript.tsx'), /onBlur=\{\(e\) => controller\(\)\?\._onQaTypedCommit\?\.\(e\.currentTarget\)\}/);
 });

@@ -186,11 +186,16 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const questions = normalizePlanQuestions(pick(bot, 'questions'));
   const choices = array(pick(bot, 'choices')).filter((c): c is string => typeof c === 'string').slice(0, 2);
   const readyRow = pick(bot, 'ready');
+  // What does not work yet, when its before & after shots showed a change failing.
+  const broken = readyRow && typeof readyRow === 'object'
+    ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
+    : [];
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
+    ...(broken.length ? { broken } : {}),
   } : null;
   const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
   return {
@@ -645,11 +650,19 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
 }
 
-export async function listApps(): Promise<Array<{ id: number; slug: string; name: string }>> {
+/**
+ * The apps the viewer can see, for the Share item dialog. `mine` is a
+ * project they are in (its community, or building it), which the dialog
+ * lists first.
+ */
+export async function listApps(): Promise<Array<{ id: number; slug: string; name: string; mine: boolean }>> {
   const data = record(await request<unknown>('/api/apps'));
   return array(pick(data, 'apps')).map((item) => {
     const row = record(item);
-    return { id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)) };
+    return {
+      id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)),
+      mine: row.is_member === true || row.is_collaborator === true,
+    };
   }).filter((app) => app.id && app.slug);
 }
 

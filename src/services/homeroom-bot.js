@@ -2480,7 +2480,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
-            activeWorkers, votes: deps.votes || null, ...liveD,
+            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
           },
         });
       }
@@ -4553,9 +4553,13 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //     queued again.
 //   - each failing head is looked at once: the run that looked records it
 //     (checks_head_sha), and checksDue reads that back as `looked`.
+//   - a declared change its before & after shots show failing on that head
+//     is due the same turn (followup.brokenClaims): every settled shots run
+//     reaches homeroom-bot-dm.noteShotsSettled, whose noteChangeReady calls
+//     noteProposalChecks before it would offer the change as ready to try.
 
 const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_state, cs.checks_commit_sha,
-            cs.reviewed_head_sha, cs.test_results, a.slug, a.name, a.repo_url,
+            cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, a.slug, a.name, a.repo_url,
             EXISTS (
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
@@ -4573,12 +4577,14 @@ async function checksToFix(pool, sessionId) {
 }
 
 /**
- * A check verdict settled 'failing' on proposal `sessionId` (visuals.js).
- * When it is the bot's own open proposal, on an app it is live on, and a
- * fix is due on its current head, its issue is queued for a checks
- * follow-up and the loop woken. A run that looks like the platform's fault
- * (followup.checksLookLikeInfra) is left for the platform's own re-run.
- * Never throws; resolves whether it queued.
+ * A check verdict settled 'failing' on proposal `sessionId` (visuals.js),
+ * or its before & after shots showed a declared change failing while its
+ * checks passed (homeroom-bot-dm.noteChangeReady). When it is the bot's own
+ * open proposal, on an app it is live on, and a fix is due on its current
+ * head, its issue is queued for a checks follow-up and the loop woken. A
+ * run that looks like the platform's fault (followup.checksLookLikeInfra)
+ * is left for the platform's own re-run. Never throws; resolves whether it
+ * queued.
  */
 async function noteProposalChecks(pool, { sessionId } = {}) {
   try {
@@ -4607,8 +4613,11 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
        WHERE homeroom_bot_queue.started_at IS NULL`,
       [row.app_id, issueNumber, CHECKS_REASON],
     );
-    log.info('homeroom-bot', 'Its proposal\'s checks failed; queued to fix them', {
+    log.info('homeroom-bot', due.failing.length
+      ? 'Its proposal\'s checks failed; queued to fix them'
+      : 'Part of its proposal failed when Homeroom tried it; queued to fix it', {
       app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
+      broken: due.broken?.length || 0,
     });
     noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
     return true;
@@ -4633,6 +4642,8 @@ async function runChecksFix(pool, config, {
   const issueNumber = Number(item.issue_number);
   const prNumber = session.pr_number;
   const { head, failing, total } = checks;
+  // The declared changes its shots show failing on this head, if any.
+  const broken = Array.isArray(checks.broken) ? checks.broken : [];
   // The run keeps what the bot has seen of the issue: nobody said anything,
   // so the last run's mark stands (without one the next refresh would read
   // the whole thread as new).
@@ -4666,13 +4677,13 @@ async function runChecksFix(pool, config, {
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
-    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length });
+    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
     const posted = await live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
-      dm: { reason: `its checks are failing: ${why}` },
+      dm: { reason: failing.length ? `its checks are failing: ${why}` : `part of it does not work yet: ${why}` },
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -4682,8 +4693,16 @@ async function runChecksFix(pool, config, {
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
     }).catch(() => {});
     log.info('homeroom-bot', 'Handed its proposal\'s failing checks to a person', {
-      app: app.slug, issueNumber, sessionId: session.id, head, why,
+      app: app.slug, issueNumber, sessionId: session.id, head, why, broken: broken.length,
     });
+    // This head has been looked at now. A change whose checks pass but whose
+    // shots showed part of it failing was held back from "ready to try" for
+    // this round; it goes out now, saying plainly what does not work
+    // (homeroom-bot-dm.noteChangeReady).
+    if (broken.length) {
+      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
+        .catch(() => {});
+    }
     return { ran: true, verdict, runId, acted: 'checks_person' };
   };
 
@@ -4700,13 +4719,14 @@ async function runChecksFix(pool, config, {
     sessionId: session.id, prNumber,
     threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
   });
-  const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total });
+  const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
   snapshot = {
     stage: 'checks_fix', appId: app.id, issueNumber,
     baseSha: head,
     texts: {
       seed, prompt, proposal_block: proposalBlock,
       failing: JSON.stringify(failing),
+      ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
@@ -4716,7 +4736,9 @@ async function runChecksFix(pool, config, {
   const turn = await followup.runFollowUpTurn({
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-    commitMsg: `Homeroom bot: fix the failing checks on #${issueNumber}`,
+    commitMsg: failing.length
+      ? `Homeroom bot: fix the failing checks on #${issueNumber}`
+      : `Homeroom bot: fix what did not work on #${issueNumber}`,
   });
   const result = turn.result || {};
   const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
@@ -4767,7 +4789,9 @@ async function runChecksFix(pool, config, {
     const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
-      text: followup.checksRevisedText({ summary, reply: parsed?.reply, prNumber, link }),
+      text: followup.checksRevisedText({
+        summary, reply: parsed?.reply, prNumber, link, broken: broken.length > 0, failing: failing.length > 0,
+      }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks revision post failed', { app: app.slug, issueNumber, err: err.message }));
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, costUsd, runId,
@@ -5333,6 +5357,124 @@ function pickLive(candidates, {
   return picks;
 }
 
+// ── A project's first version goes first ────────────────────────────────
+//
+// Flat 4B Chores, 4 October 2026: the bot built the project's first version
+// (a chores rota) and put it up for approval. Six minutes after the invite,
+// the invitee's idea became a second request, and the bot read and built it
+// at once, on `main`: the starter the repository was made with, not the
+// first version. It proposed a different app altogether, and the group was
+// asked to approve both as if one built on the other; whichever merged
+// second would conflict with, or throw away, the other. A third request (a
+// fix to the first version) was queued to build on the starter too.
+//
+// So while a project's first version is not live, the bot starts nothing
+// else on that project: no other request is read (liveCandidates) and no
+// other build starts (liveBuildCandidates). The request waits in the queue
+// in its place, neither failed nor closed, and its card says what it waits
+// for (homeroom-bot-activity.js cardText, homeroom-bot-progress.js
+// queuedWait). Once the first version merges it is picked up in its usual
+// order, from the new main (noteRequestMerged wakes the loop for it).
+//
+// Not held: the first version's own request; a follow-up on a change of the
+// bot's already up for a vote (it runs on that change's own branch); an
+// admin's Run now; and anything already running, which is never stopped.
+//
+// "Not live" is a first version the bot builds (`bot_builds`; one left to
+// the group holds nothing, since nobody may ever build it), and either
+//   - not filed yet, for a day at most (the project is being set up), or
+//   - filed, with no change for it merged, its request not closed on the
+//     platform, and the bot still on it: a look at it waits or runs, it was
+//     filed within the day and nothing has looked at it yet, or the bot's
+//     newest live look has not ended short of a merge.
+// A first version that ended short of a merge holds nothing: filing it
+// failed, the bot left it to the group or found nothing to build, its look
+// or its build failed, its plan waited a week for Build it, or its change
+// was closed. Somebody taking it up again (a reply, Try again) queues a look
+// at it, and the hold is back until that look comes to something.
+//
+// `fv` is the first-version row (homeroom_bot_first_versions). One constant,
+// so the read lane, the build lane and the card read the same rule.
+const FIRST_VERSION_PENDING_SQL = `(
+         (fv.status IN ('waiting', 'filing') AND fv.created_at > NOW() - INTERVAL '24 hours')
+         OR (fv.status = 'filed' AND fv.issue_number IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM chat_sessions fvm
+              WHERE fvm.app_id = fv.app_id AND fvm.status = 'merged'
+                AND fv.issue_number = ANY(fvm.linked_issues))
+           AND NOT EXISTS (
+             SELECT 1 FROM homeroom_bot_runs fvr JOIN chat_sessions fvp ON fvp.id = fvr.proposal_session_id
+              WHERE fvr.app_id = fv.app_id AND fvr.issue_number = fv.issue_number AND fvp.status = 'merged')
+           AND NOT EXISTS (
+             SELECT 1 FROM issues fvi
+              WHERE fvi.app_id = fv.app_id AND fvi.github_issue_number = fv.issue_number
+                AND fvi.kind = 'general' AND fvi.status = 'closed')
+           AND (
+             EXISTS (
+               SELECT 1 FROM homeroom_bot_queue fvq
+                WHERE fvq.app_id = fv.app_id AND fvq.issue_number = fv.issue_number)
+             OR (COALESCE(fv.filed_at, fv.created_at) > NOW() - INTERVAL '24 hours'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM homeroom_bot_runs fvn
+                    WHERE fvn.app_id = fv.app_id AND fvn.issue_number = fv.issue_number))
+             OR EXISTS (
+               SELECT 1
+                 FROM (SELECT fvlr.mode, fvlr.verdict, fvlr.build_ok, fvlr.proposal_session_id
+                         FROM homeroom_bot_runs fvlr
+                        WHERE fvlr.app_id = fv.app_id AND fvlr.issue_number = fv.issue_number
+                          AND fvlr.budget_stop IS DISTINCT FROM 'input tokens'
+                          AND (fvlr.error IS NULL OR fvlr.error NOT LIKE 'collateral:%')
+                        ORDER BY fvlr.id DESC LIMIT 1) fvl
+                 LEFT JOIN LATERAL (
+                   SELECT fvcs.status
+                     FROM homeroom_bot_runs fvcr JOIN chat_sessions fvcs ON fvcs.id = fvcr.proposal_session_id
+                    WHERE fvcr.app_id = fv.app_id AND fvcr.issue_number = fv.issue_number
+                    ORDER BY fvcr.id DESC LIMIT 1) fvc ON TRUE
+                WHERE fvl.mode = 'live'
+                  AND (fvc.status IN ('promoted', 'merging')
+                       OR (fvl.build_ok IS NOT FALSE AND fvl.verdict NOT IN ('person', 'empty', 'failed')
+                           AND (fvc.status IS NULL OR fvc.status NOT IN ('closed', 'archived')
+                                OR (fvl.verdict IN ('ready', 'question') AND fvl.build_ok IS NULL
+                                    AND fvl.proposal_session_id IS NULL)))))))
+       )`;
+
+// What a request held by its project's first version waits for, by name
+// (homeroom-bot-progress.js `waitingFor.reason`).
+const FIRST_VERSION_HOLD = 'first_version_pending';
+
+/**
+ * The projects among `appIds` whose first version is not live yet (see
+ * above), as Map(app id → the first version's request number, or null while
+ * it is not filed yet). An app missing from the map holds nothing.
+ */
+async function firstVersionHolds(pool, appIds = []) {
+  const ids = [...new Set((Array.isArray(appIds) ? appIds : [])
+    .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT fv.app_id, fv.issue_number
+       FROM homeroom_bot_first_versions fv
+      WHERE fv.app_id = ANY($1::int[]) AND fv.bot_builds
+        AND ${FIRST_VERSION_PENDING_SQL}`,
+    [ids],
+  );
+  return new Map(rows.map((r) => [Number(r.app_id), r.issue_number == null ? null : Number(r.issue_number)]));
+}
+
+/**
+ * Pure: whether request `issueNumber` on `appId` waits for its project's
+ * first version, from firstVersionHolds' map. Never the first version's own
+ * request, nor an admin's Run now (`reason` 'admin'), as liveCandidates
+ * reads it.
+ */
+function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, reason = null } = {}) {
+  if (firstVersion || reason === 'admin' || !(holds instanceof Map)) return false;
+  const id = Number(appId);
+  if (!holds.has(id)) return false;
+  const number = holds.get(id);
+  return number == null || Number(number) !== Number(issueNumber);
+}
+
 /**
  * The live queue's heads, in priority order, with who each one is for.
  * Nothing on an app in `excludeAppIds` (backed off); on an app in
@@ -5391,6 +5533,15 @@ async function liveCandidates(pool, {
              AND (b.live_build_waiting_at IS NOT NULL OR b.build_session_id IS NOT NULL)
              AND b.created_at > NOW() - make_interval(days => $8)
         )
+        -- The project's first version goes first (FIRST_VERSION_PENDING_SQL):
+        -- while it is not live, nothing else on the project is read. Its own
+        -- request, a follow-up on a change of the bot's up for a vote, and an
+        -- admin's Run now are not held.
+        AND (fu.id IS NOT NULL OR q.reason = 'admin' OR NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_first_versions fv
+           WHERE fv.app_id = q.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM q.issue_number
+             AND ${FIRST_VERSION_PENDING_SQL}
+        ))
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
     [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
@@ -5412,7 +5563,9 @@ async function liveCandidates(pool, {
 /**
  * The live builds waiting their turn, oldest first, with who each is for,
  * on projects the bot acts on and has not paused. A run a newer verdict on
- * the same issue replaced waits for nothing.
+ * the same issue replaced waits for nothing. While a project's first
+ * version is not live (FIRST_VERSION_PENDING_SQL), no other build on it
+ * starts: it would be built on the starter.
  */
 async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], pausedApps = [], limit = 50 }) {
   // As liveCandidates: a scope, or a bare list of slugs.
@@ -5436,6 +5589,11 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
         AND NOT EXISTS (
           SELECT 1 FROM homeroom_bot_runs n
            WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_first_versions fv
+           WHERE fv.app_id = r.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM r.issue_number
+             AND ${FIRST_VERSION_PENDING_SQL}
         )
       ORDER BY r.live_build_waiting_at, r.id
       LIMIT $3`,
@@ -5714,6 +5872,21 @@ async function noteRequestMerged(pool, session, deps = {}) {
         sessionId: Number(merged.id), appId, issues, ...out,
       });
       wake({ appId });
+    }
+    // The project's first version is live: what waited for it
+    // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, on
+    // whichever Pod runs the loop, rather than on its next idle pass.
+    const { rows: firstVersion } = await pool.query(
+      `SELECT issue_number FROM homeroom_bot_first_versions
+        WHERE app_id = $1 AND bot_builds AND issue_number = ANY($2::int[])
+        LIMIT 1`,
+      [appId, issues],
+    ).catch(() => ({ rows: [] }));
+    if (firstVersion.length) {
+      log.info('homeroom-bot', 'A project\'s first version is live; what waited for it is picked up now', {
+        sessionId: Number(merged.id), appId, issueNumber: Number(firstVersion[0].issue_number),
+      });
+      noteIssueActivity({ appId, issueNumber: Number(firstVersion[0].issue_number), reason: 'first_version_live' });
     }
     return out;
   } catch (err) {
@@ -6163,6 +6336,10 @@ async function runOnce(pool, config, deps = {}) {
       // B6: and a plan nobody tapped Build it under for a week stops waiting.
       const stalePlans = await settleStalePlans(pool, { dm: deps.dm });
       if (stalePlans) out.plansStopped = stalePlans;
+      // A change that passed its checks and waited longer than it should on
+      // its before & after shots is offered as ready to try anyway.
+      const heldReady = await (deps.dm || require('./homeroom-bot-dm')).sweepHeldReady?.(pool, { ws: deps.ws || null });
+      if (heldReady) out.heldReadyLooked = heldReady;
     }
 
     // Inside a platform-fault backoff nothing is dispatched (#3122). A wake
@@ -7172,6 +7349,11 @@ module.exports = {
   enqueueFront,
   billingOf,
   liveCandidates,
+  // A project's first version goes first.
+  FIRST_VERSION_PENDING_SQL,
+  FIRST_VERSION_HOLD,
+  firstVersionHolds,
+  heldForFirstVersion,
   workingNow,
   dmChatSummary,
   dispatch,

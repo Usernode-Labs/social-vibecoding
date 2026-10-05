@@ -1941,40 +1941,70 @@ const CHAT_ASK_SCHEMA = {
   },
   required: ['kind', 'title'],
 };
+// Fix in place (5 October): with the bot's own changes still waiting for
+// approval on the project, a message to it may ask to fix one of them before
+// it goes live. The read is offered them by id (homeroom-bot-chat.js
+// offeredChanges) and may answer "revise", naming which in `change`; it never
+// names a change it was not offered.
+const CHAT_ASK_REVISE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: [...CHAT_ASK_KINDS, 'revise'] },
+    title: { type: 'string' },
+    change: { type: 'string' },
+  },
+  required: ['kind', 'title', 'change'],
+};
+
+/** Pure: the offered changes, as the read lists them. */
+function chatAskChangeLines(changes) {
+  return changes.map((c) => `- ${c.id}: "${stripLoneSurrogates(String(c.title || 'Untitled change')).replace(/\s+/g, ' ').slice(0, 120)}"${c.firstVersion ? ' (the project\'s first version)' : ''}`).join('\n');
+}
 
 // WP-C: `toBot: false` reads a message nobody addressed to the bot (a
 // newcomer's, homeroom-bot-chat.js maybeOffer): it is an idea for the app,
-// or anything else people say in a group chat.
-async function readChatAsk({ text, appName = null, toBot = true, apiKey, telemetryContext }) {
+// or anything else people say in a group chat. `changes` ({ id, title,
+// firstVersion }) are the bot's own changes waiting for approval, which a
+// message to it may ask to fix instead of asking for something new.
+async function readChatAsk({ text, appName = null, toBot = true, changes = [], apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   const model = 'claude-haiku-4-5';
+  const offered = toBot && Array.isArray(changes) ? changes.filter((c) => c && typeof c.id === 'string').slice(0, 5) : [];
+  const pending = offered.length
+    ? `
+
+Homeroom bot already built these changes to the project. Each is waiting for the group's approval and is not live yet:
+${chatAskChangeLines(offered)}`
+    : '';
   const resp = await createMessageWithTelemetry({
     activeClient,
     params: {
       model,
-      max_tokens: 80,
+      max_tokens: offered.length ? 120 : 80,
       messages: [{
         role: 'user',
-        content: `${toBot ? 'Somebody wrote this to Homeroom bot' : 'Somebody new to the group wrote this'} in the group chat of ${appName ? `"${stripLoneSurrogates(String(appName)).slice(0, 80)}"` : 'a project'}. Homeroom bot builds changes to the project's app.
+        content: `${toBot ? 'Somebody wrote this to Homeroom bot' : 'Somebody new to the group wrote this'} in the group chat of ${appName ? `"${stripLoneSurrogates(String(appName)).slice(0, 80)}"` : 'a project'}. Homeroom bot builds changes to the project's app.${pending}
 
 Decide what it is:
 ${toBot
-    ? `- "change": it asks for a change to the app: something new, something fixed, or something to look or work differently.
+    ? `${offered.length ? `- "revise": it asks to fix or change one of the changes above before it goes live. Set "change" to that change's id.
+- "change": it asks for a new change to the app as it is now: something new, something fixed, or something to look or work differently.` : '- "change": it asks for a change to the app: something new, something fixed, or something to look or work differently.'}
 - "question": it asks a question, or chats, and asks for nothing to change.
 - "unsure": it could be either.`
     : `- "change": it suggests or asks for a change to the app: something new, something fixed, or something to look or work differently.
 - "question": anything else: a greeting, a question, chat between people, or news, with no change to the app in it.
 - "unsure": it could be either.`}
 
-For a change, write a short title for it as a request: an imperative action starting with a verb, 5 to 10 words (e.g. "Add a Sunday watering reminder"). Otherwise the title is "".
+For a change${offered.length ? ' or a revise' : ''}, write a short title for it as a request: an imperative action starting with a verb, 5 to 10 words (e.g. "Add a Sunday watering reminder"). Otherwise the title is "".
 
-Respond with only a JSON object: {"kind": "change", "title": "..."}.
+Respond with only a JSON object: ${offered.length ? '{"kind": "change", "title": "...", "change": ""}' : '{"kind": "change", "title": "..."}'}.
 
 MESSAGE:
 ${stripLoneSurrogates(String(text || '')).trim().slice(0, 4000)}`,
       }],
-      output_config: { format: { type: 'json_schema', schema: CHAT_ASK_SCHEMA } },
+      output_config: { format: { type: 'json_schema', schema: offered.length ? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA } },
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'chat_ask' },
@@ -1983,10 +2013,22 @@ ${stripLoneSurrogates(String(text || '')).trim().slice(0, 4000)}`,
   const raw = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
   let parsed = null;
   try { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()); } catch { parsed = null; }
-  const kind = parsed && CHAT_ASK_KINDS.includes(parsed.kind) ? parsed.kind : 'unsure';
-  const title = kind === 'change' && typeof parsed?.title === 'string' && !issueTitleRejection(parsed.title)
+  return { ...chatAskVerdict(parsed, offered), usage: resp.usage, model };
+}
+
+/**
+ * Pure: the read's answer, checked. A "revise" naming a change it was not
+ * offered is a change like any other, so a new request rather than a fix to
+ * somebody's pending change on a guess.
+ */
+function chatAskVerdict(parsed, offered = []) {
+  let kind = parsed && (CHAT_ASK_KINDS.includes(parsed.kind) || (parsed.kind === 'revise' && offered.length))
+    ? parsed.kind : 'unsure';
+  const change = kind === 'revise' && offered.some((c) => c.id === parsed.change) ? parsed.change : null;
+  if (kind === 'revise' && !change) kind = 'change';
+  const title = (kind === 'change' || kind === 'revise') && typeof parsed?.title === 'string' && !issueTitleRejection(parsed.title)
     ? parsed.title.trim() : null;
-  return { kind, title, usage: resp.usage, model };
+  return { kind, title, change };
 }
 
 // ── AI progress report (Reporting tab) ─────────────────────────────────
@@ -2880,7 +2922,7 @@ module.exports = {
   // #3193: the guard between the title model and a published issue title.
   issueTitleRejection, feedbackTitleFromDescription, ISSUE_TITLE_SCHEMA,
   // B9
-  readChatAsk, CHAT_ASK_SCHEMA,
+  readChatAsk, CHAT_ASK_SCHEMA, CHAT_ASK_REVISE_SCHEMA, chatAskVerdict,
   // AI progress report (Reporting tab) — see services/report-ai.js.
   generateReportSummary, sanitizeReportSummary, REPORT_SUMMARY_SCHEMA,
   // Workshop themes (the Dev screen's lander) — see services/workshop-themes.js.

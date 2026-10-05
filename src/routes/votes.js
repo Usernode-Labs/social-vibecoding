@@ -2103,6 +2103,12 @@ function mergedRowSelect() {
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
+           -- A change that went live inside another one
+           -- (services/included-changes.js): the change that carried it, for
+           -- its page's "Live, included in #8".
+           cs.included_in_session_id,
+           inc.pr_number AS included_in_pr_number,
+           inc.pr_title  AS included_in_pr_title,
            -- #2779: the agent session the change was started from. Only its
            -- id: the conversation itself answers to its owner alone.
            cs.agent_session_id,
@@ -2206,7 +2212,8 @@ function mergedRowSelect() {
          FROM chat_sessions cs
          LEFT JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
-           AND rv.status IN ('promoted', 'merging', 'merged')`;
+           AND rv.status IN ('promoted', 'merging', 'merged')
+         LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
 }
 
 function voteRoutes(config) {
@@ -4913,6 +4920,17 @@ function voteRoutes(config) {
         return res.status(409).json({ error: 'Cannot undo a revert PR' });
       }
 
+      // A change that went live inside another one has no merge of its own
+      // to revert: its merge commit is the carrying change's, and reverting
+      // that would undo the carrying change too. The button is hidden on the
+      // client; undoing the carrying change is the way.
+      if (session.included_in_session_id) {
+        return res.status(409).json({
+          error: 'This change went live as part of another change. Undo that change instead.',
+          includedInSessionId: Number(session.included_in_session_id),
+        });
+      }
+
       // Block if a revert is already in flight or landed for this merge.
       const { rows: existingRevert } = await pool.query(
         `SELECT id, status, pr_number, pr_url FROM chat_sessions
@@ -5444,6 +5462,28 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
       },
     });
+
+    // A change built on another one that was up for a vote carried it (its
+    // head is one of this pull request's commits), so that one is live now
+    // too: it is marked merged as included in this one before anything
+    // below reads the app's open changes (the bot's request bookkeeping, the
+    // cascade at the end), and its pull request, requests and first version
+    // are settled in the background (services/included-changes.js). Never a
+    // reason the merge fails.
+    try {
+      const inclusion = await require('../services/included-changes').includeStackedChanges({
+        config, pool, session, sha: deployedSha,
+      });
+      if (inclusion?.included?.length) {
+        dstep({
+          phase: 'included',
+          message: `Marked ${inclusion.included.length === 1 ? 'an open change' : `${inclusion.included.length} open changes`} this one was built on as live with it.`,
+          detail: { sessionIds: inclusion.included },
+        });
+      }
+    } catch (err) {
+      log.warn('votes', 'Including the changes this merge carried failed', { sessionId: session.id, err: err.message });
+    }
 
     // #2779: the agent session that started this change, if one did, hears
     // that it landed and stops treating it as its active change. A classic
@@ -6889,6 +6929,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
         'Failed to mark session merged after post-merge error', {
           sessionId: session.id, err: e.message,
         }));
+
+      // What this merge carried is on main too (services/included-changes.js).
+      // finalizeMerge may already have marked it before the step that threw;
+      // a second pass finds nothing left up for a vote. Nobody is told it is
+      // live: the deploy failed.
+      try {
+        await require('../services/included-changes').includeStackedChanges({
+          config, pool, session, deployed: false,
+        });
+      } catch (e) {
+        log.warn('votes', 'Including the changes a merge carried failed after its deploy failed', {
+          sessionId: session.id, err: e.message,
+        });
+      }
 
       const failLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`

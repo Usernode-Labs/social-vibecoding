@@ -845,6 +845,9 @@ export function VotePicker({
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
           disabled={withLine && !yesOn && !trimmed}
+          // The line keeps focus through the press, so the sheet does not
+          // move under the tap as the keyboard goes (lib/keyboard-open.ts).
+          onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >
           {yesOn ? 'Vote yes' : 'Vote no'}

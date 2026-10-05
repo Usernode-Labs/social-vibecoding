@@ -87,6 +87,12 @@ export interface HomeroomBotReady {
   last: boolean;
   waitingOn: string[];
   more: number;
+  /**
+   * What does not work yet: the declared changes its before & after shots
+   * showed failing, after the bot's own fix round (homeroom-bot-dm.js
+   * noteChangeReady). The card then says so instead of "ready to try".
+   */
+  broken?: string[];
 }
 
 /**
@@ -258,6 +264,15 @@ export interface SharedObjectReference {
   sessionId?: number;
   proposalId?: number;
   version?: number;
+}
+
+/**
+ * An item staged on the composer: its reference, and the title the page that
+ * staged it knew, shown on the chip until the server's reading of it comes.
+ * The title is never sent: the server reads the live one.
+ */
+export interface StagedObject extends SharedObjectReference {
+  title?: string | null;
 }
 
 /**

@@ -1082,11 +1082,28 @@ app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   }
 });
 
+// "Now" for this request, as a Date: \`req.now\`, set for every request by
+// the middleware below. Read the day and the time through it (and
+// \`usernode.now()\` in the page), never \`new Date()\` or SQL's NOW(),
+// wherever they decide what shows: a reminder, a rota, a deadline.
+// Production always gets the real time. A staging preview may be shown as of
+// a chosen moment: the platform opens it with \`?un-now=<ISO time>\`, and the
+// page sends \`usernode.now()\` on as the \`x-usernode-now\` header. Only a
+// staging container reads either. See "Time-dependent features" in the
+// platform conventions.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+const PREVIEW_NOW = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2})$/;
+function requestNow(req) {
+  const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+  return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+}
+
 // Verify platform-issued JWT if one was passed, then enforce auth on
 // anything not explicitly marked public. The iframe adds \`?token=…\`
 // on load; the frontend script forwards the token via \`x-usernode-token\`
 // on subsequent fetches.
 app.use((req, res, next) => {
+  req.now = requestNow(req);
   const token = req.query.token || req.headers['x-usernode-token'];
   if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
     try {

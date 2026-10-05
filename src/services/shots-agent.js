@@ -85,6 +85,14 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+If the brief has previewAt, the change only shows at certain times, and
+previewAt.label says when in plain words. Open both copies at that moment:
+add the query parameter named by previewAt.param, set to previewAt.at, to
+intent.startPath on the after address and on the before address alike,
+keeping any query the path already has (for example
+"/rota?un-now=2026-10-08T18:00:00.000Z"). Do this for every change, screen
+and clip, so the two sides differ only by the change.
+
 The copies hold demo data for each persona. The brief's availableFixtures
 lists it: who it is for (persona, alsoFor), what it shows and its path. Look
 there for a state the steps need before you decide a change cannot be
@@ -104,7 +112,18 @@ beside the shots. If you cannot reach a change at all, or the shots you saved
 for it turn out not to show it, call skip_change with that change id and what
 you saw: nothing saved for that change is published. Then carry on with the
 others. You do not need to judge whether a change is good. Finish once every
-change is saved or skipped, and do not end with only prose.`;
+change is saved or skipped, and do not end with only prose.
+
+Tell apart a change you could not reach from one that does not work. When you
+carried out the steps on the after address and the app itself broke (an
+action answered a server error: check browser_network_requests for an HTTP
+5xx; the page showed an error; or the claimed effect never appeared because
+the app errored), try the step once more, then call skip_change with outcome
+"failed" and say what you did and what the app answered, for example the
+request and its status. That is the change not working, and people and its
+author need to know. Use the default outcome only when these copies cannot
+reach the state: missing data, access, or an interaction you could not
+perform.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of

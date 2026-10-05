@@ -393,7 +393,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
                 spellCheck={false}
                 className="h-11 min-w-0 flex-1 rounded-full border-0 bg-white px-4 text-[16px] placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:bg-zinc-800"
               />
-              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60">Send</Button>
+              {/* The username keeps focus through the press (lib/keyboard-open.ts). */}
+              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60" onMouseDown={(event) => event.preventDefault()}>Send</Button>
             </form>
           ) : (
             <button type="button" onClick={() => setByName(true)} className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700">

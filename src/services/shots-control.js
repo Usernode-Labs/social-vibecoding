@@ -34,12 +34,17 @@ class RunControl {
     this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.saved = new Map();
     this.skipped = new Map();
+    // The skipped changes the agent said the after build broke on: it did
+    // the steps and the app errored. Shown and handled as the change not
+    // working, not as a state these copies could not reach.
+    this.failed = new Set();
     // What a change's shots leave out, shown beside them once it is ready.
     this.notes = new Map();
     // Set when the agent says nothing at all can be shot (for example every
     // screen shows a sign-in page); it explains every change that is not
     // ready and has no reason of its own.
     this.skippedAll = null;
+    this.skippedAllFailed = false;
     // The last refused tool call survives a normal model exit, for the
     // owner's diagnostics.
     this.lastToolFailure = null;
@@ -71,6 +76,7 @@ class RunControl {
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
       this.saved.set(shots.slotKey(target), shots.stored(target, buffer, info));
       this.skipped.delete(target.storyId);
+      this.failed.delete(target.storyId);
       return {
         saved: true,
         change: target.storyId,
@@ -91,18 +97,24 @@ class RunControl {
   // not show it. Its reason is shown on the proposal for that change, and
   // nothing saved for it is published; the other changes still are. Without
   // a change id the reason covers every change that is not ready and has
-  // none of its own.
-  skipChange({ change = null, reason } = {}) {
+  // none of its own. `outcome: 'failed'` says the agent did the steps and
+  // the after build broke, so the change is failed rather than skipped.
+  skipChange({ change = null, reason, outcome = null } = {}) {
     try {
       this.assertOpen();
       const text = shots.reason(reason);
+      const broke = shots.outcome(outcome) === 'failed';
+      const said = broke ? { outcome: 'failed' } : {};
       if (change == null || change === '') {
         this.skippedAll = text;
-        return { skipped: 'all', progress: this.progress() };
+        this.skippedAllFailed = broke;
+        return { skipped: 'all', ...said, progress: this.progress() };
       }
       const story = this.declaredChange(change);
       this.skipped.set(story.id, text);
-      return { skipped: story.id, progress: this.progress() };
+      if (broke) this.failed.add(story.id);
+      else this.failed.delete(story.id);
+      return { skipped: story.id, ...said, progress: this.progress() };
     } catch (error) {
       this.lastToolFailure = { operation: 'skip-change', error };
       throw error;
@@ -133,14 +145,16 @@ class RunControl {
   }
 
   summary() {
-    return shots.summarize(this.intent, this.saved, this.skipped,
-      { fallbackReason: this.skippedAll, notes: this.notes });
+    return shots.summarize(this.intent, this.saved, this.skipped, {
+      fallbackReason: this.skippedAll, notes: this.notes,
+      failed: this.failed, fallbackFailed: this.skippedAllFailed,
+    });
   }
 
   progress() {
     return this.summary().stories.map((story) => ({
       change: story.id,
-      status: story.status === 'ready' ? 'ready'
+      status: story.status === 'ready' || story.status === 'failed' ? story.status
         : this.skipped.has(story.id) || this.skippedAll ? 'skipped' : 'missing',
       ...(story.status === 'ready' ? (story.note ? { note: story.note } : {}) : { detail: story.reason }),
     }));

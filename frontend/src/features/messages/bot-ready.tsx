@@ -23,6 +23,10 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, Homer
  *   Change something  quotes the card in the composer, for the bot to
  *                     change it (its revise path).
  *
+ * A change its before & after shots showed part of failing, which the bot
+ * could not fix in its own round, says what does not work instead of
+ * calling itself ready (brokenLine).
+ *
  * In a group the card says who else it waits on. Once they approve, here or
  * anywhere, the buttons give way to one line on every device, which says
  * what happens next (approvedLine): it goes live in a minute or two, or when
@@ -39,10 +43,27 @@ export function isReadyMessage(message: ConversationMessage): boolean {
   return !!meta && meta.kind === 'proposal' && !!meta.ready && !!meta.actions?.length && !message.deleted;
 }
 
-/** "Plant Pal is ready to try", or in a group "Your change to Supper Club is ready to try". */
+/**
+ * "Plant Pal is ready to try", or in a group "Your change to Supper Club is
+ * ready to try". A change part of which does not work is never called ready:
+ * "Flat 4B Chores is built, but not everything works yet".
+ */
 export function readyTitle(meta: HomeroomBotMeta): string {
   const app = meta.appName || meta.appSlug || 'Your project';
-  return meta.ready?.group && !meta.firstVersion ? `Your change to ${app} is ready to try` : `${app} is ready to try`;
+  const who = meta.ready?.group && !meta.firstVersion ? `Your change to ${app}` : app;
+  return meta.ready?.broken?.length ? `${who} is built, but not everything works yet` : `${who} is ready to try`;
+}
+
+/**
+ * Pure: what does not work, in plain words: "One thing isn’t working yet:
+ * Tapping ‘mark as done’ ticks it off". Null when everything it tried works.
+ */
+export function brokenLine(ready: HomeroomBotReady | undefined): string | null {
+  const said = (ready?.broken || []).filter((item) => typeof item === 'string' && item.trim());
+  if (!said.length) return null;
+  return said.length === 1
+    ? `One thing isn’t working yet: ${said[0]}`
+    : `${said.length} things aren’t working yet: ${said.join('; ')}`;
 }
 
 /** Pure: "a", "a and b", "a, b and c". */
@@ -155,6 +176,7 @@ export function ReadyCardView({
   const canApprove = actions.some((action) => action.type === 'vote');
   const waiting = state === 'open' ? waitingLine(meta.ready, canApprove) : null;
   const next = meta.goesLive || goesLive || goesLiveFromReady(meta.ready);
+  const broken = state === 'open' ? brokenLine(meta.ready) : null;
   const line = readyLine(state, next, now || new Date(Date.now()), locale);
   return (
     <div
@@ -170,6 +192,7 @@ export function ReadyCardView({
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
           {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
+          {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
         </div>
       </div>

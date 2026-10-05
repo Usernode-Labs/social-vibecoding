@@ -458,23 +458,33 @@ function proposalTitle(spec) {
 }
 
 /**
- * The spec's "User-facing changes" half, as far as its "### Assumptions"
- * subsection: what people will see and do differently, written for somebody
- * who is not a developer (specPrompt). The assumptions stay in the spec,
- * which is on the proposal as a card; they are choices, not changes. Null
- * when the spec has no such half.
+ * The spec's "User-facing changes" half, as far as its "### Design" or
+ * "### Assumptions" subsection: what people will see and do differently,
+ * written for somebody who is not a developer (specPrompt). The assumptions
+ * stay in the spec, which is on the proposal as a card; they are choices,
+ * not changes. The Design brief (services/prompts.js) is the build's: the
+ * look, its colours as values, the kit's parts and the words to use. It led
+ * a first version's summary into a flatmate's first look at the group's app
+ * (first-session run-through, 4 Oct 2026), so it stays in the spec too. A
+ * half that is nothing but its Design brief keeps the brief, as it did
+ * before, rather than leaving the proposal with no summary. Null when the
+ * spec has no such half.
  */
 function specUserFacing(spec) {
   const lines = String(spec || '').split('\n');
   const start = lines.findIndex((l) => /^##\s+user[- ]facing changes\s*:?\s*$/i.test(l.trim()));
   if (start === -1) return null;
-  const kept = [];
-  for (const line of lines.slice(start + 1)) {
-    const t = line.trim();
-    if (/^##\s/.test(t) || /^###\s+assumptions\b/i.test(t)) break;
-    kept.push(line);
-  }
-  const text = kept.join('\n').trim();
+  const half = (stopAtDesign) => {
+    const kept = [];
+    for (const line of lines.slice(start + 1)) {
+      const t = line.trim();
+      if (/^##\s/.test(t) || /^###\s+assumptions\b/i.test(t)) break;
+      if (stopAtDesign && /^#{3,6}\s+design\b/i.test(t)) break;
+      kept.push(line);
+    }
+    return kept.join('\n').trim();
+  };
+  const text = half(true) || half(false);
   if (!text) return null;
   const max = proposalDescription.DESCRIPTION_MAX;
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
@@ -1281,6 +1291,10 @@ function browserLines({ readsImages = false } = {}) {
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     '  the app cannot boot promptly, and then say why in your summary. Stay within the time budget above.',
+    '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
+    '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
+    '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
+    '  reload. Homeroom tries the same thing on its own copy before anybody is asked to approve the change.',
   ];
 }
 

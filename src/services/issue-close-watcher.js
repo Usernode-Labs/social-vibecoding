@@ -356,4 +356,10 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   return { closed, skipped, stillOpen: pending };
 }
 
-module.exports = { watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch };
+module.exports = {
+  watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch,
+  // What an observed close does, for a close made elsewhere: a change that
+  // went live inside another one closes its requests itself
+  // (services/included-changes.js), and they then read closed the same way.
+  bustAndBroadcast, resolveSupersededProposals, closeTwinRows,
+};

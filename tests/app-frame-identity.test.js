@@ -815,14 +815,30 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const appJs = read('public/js/app.js');
   const routeShots = appJs.slice(appJs.indexOf('  _applyRouteShots() {'), appJs.indexOf('\n  },', appJs.indexOf('  _applyRouteShots() {')));
   assert.match(routeShots, /App\._applyFirstVersionShot\(\);/, 'reached as ?shot=first-version');
-  // B6: and `?shot=first-version-plan`, the same screen while its plan waits.
-  assert.match(appJs, /if \(shot !== 'first-version' && shot !== 'first-version-plan'\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(shot === 'first-version-plan'\);/);
+  // B6: and `?shot=first-version-plan`, the same screen while its plan
+  // waits; `-ready` and `-approved`, built and up for approval.
+  assert.match(appJs, /'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',/);
+  assert.match(appJs, /if \(!Object\.prototype\.hasOwnProperty\.call\(variants, shot\)\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(variants\[shot\]\);/);
   AppView.showFirstVersionShot(true);
   const planned = h.status();
   assert.deepEqual([...planned.lines], ['Step 3 of 7: Write a plan'], 'the card says what comes next');
   assert.equal(planned.action, null, 'Change something is the way into the chat');
   assert.equal(planned.plan.bullets.length, 3);
   assert.deepEqual([...planned.plan.questions[0].answers], ['In the app', 'Phone alert']);
+  AppView.showFirstVersionShot('plan');
+  assert.deepEqual([...h.status().lines], ['Step 3 of 7: Write a plan'], '\'plan\' is the same shot');
+  // Ready to try, as a member who still has to approve it…
+  AppView.showFirstVersionShot('ready');
+  const waiting = h.status();
+  assert.equal(bridge.frame(), null);
+  assert.equal(waiting.message, 'The first version of Plant Pal is ready to try');
+  assert.deepEqual([...waiting.lines], ['Step 6 of 7: Approval', 'Waiting for your approval.']);
+  assert.deepEqual([waiting.action.key, waiting.alt.key, waiting.secondary.key], ['tryChange', 'seeChange', 'starter']);
+  // …and as one who approved it, waiting on the other member.
+  AppView.showFirstVersionShot('approved');
+  const approved = h.status();
+  assert.match(approved.lines[1], /^You approved it\. Waiting for @sam, or it goes live on \S+ if nobody objects\.$/);
+  assert.deepEqual([approved.action.key, approved.alt.key], ['tryChange', 'seeChange']);
 });
 
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
