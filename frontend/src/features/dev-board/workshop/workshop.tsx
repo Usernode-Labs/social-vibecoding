@@ -80,6 +80,7 @@ import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
+import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
@@ -3675,6 +3676,32 @@ export function DevWorkshop(): ReactNode {
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
+  // #3701: THE LIT COMMUNITIES TAB ASKS THIS PAGE WHERE IT IS
+  // (../../workshop/tab-ladder.ts). All items is a level below the Workshop
+  // tab, so a press over it comes up to the Workshop, at its top, as a new
+  // entry, the way a tab press pushes one; the page's own way up (openTab)
+  // steps Back instead when the Workshop is the entry below. The host says
+  // where the page scrolls, for the press that takes a tab to its top.
+  const climb = () => {
+    const was = tabRef.current;
+    const next = pageParent(was);
+    setTab(next);
+    callAppView('_setWorkshopTab', next);
+    callAppView('_pushWorkshopTab', v.slug, was, next);
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
+  };
+  const climbRef = useRef(climb);
+  climbRef.current = climb;
+  useEffect(() => {
+    if (!v.slug) return undefined;
+    return registerLevel({
+      slug: v.slug,
+      below: () => tabRef.current === 'all',
+      up: () => climbRef.current(),
+      host: () => hostRef.current,
+    });
+  }, [v.slug]);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its

@@ -19900,6 +19900,15 @@ html.un-ios {
     overflow: visible;
     text-overflow: clip;
   }
+  /* HELD, THE TAB OPENS "Your communities" (#3701, features/workshop/
+     tab-ladder.ts). The browser's own long press on a link would open over
+     it: iOS's preview and callout, and a selection of the label. Android's
+     menu is the `contextmenu` the hold stands down itself. */
+  #platform-tab-workshop {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the

@@ -1762,6 +1762,16 @@ export function openThread(rootId: number): void {
   else window.location.hash = target;
 }
 
+/**
+ * #3701: is a reply thread open beside `conversationId`'s room in its
+ * community's page (#general on Homeroom's)? The Communities tab pressed
+ * while it is lit closes it before it goes any higher
+ * (features/workshop/tab-ladder.ts).
+ */
+export function embeddedThreadOpen(conversationId: number): boolean {
+  return !!state.route.embedded && state.route.conversationId === conversationId && !!state.route.threadRootId;
+}
+
 /** Close the thread beside the conversation, keeping the conversation open. */
 export function closeThread(): void {
   const conversationId = state.route.conversationId;
