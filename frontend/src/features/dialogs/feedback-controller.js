@@ -676,7 +676,26 @@ export function init() {
     // dismissal is stale. useStaticModal's generation guard drops it — this
     // flag is the second belt: if a dismissal DOES reach `_reset` mid-capture,
     // the draft the screenshot was being attached to survives it.
+    //
+    // Set when the dialog is actually suspended (`hideDialog`), not when the
+    // attempt starts. A display capture keeps the dialog up until the browser
+    // grants the share, so a close before then is the viewer's own and must
+    // close for real; and a grant that never comes (Firefox can take a pick
+    // in the system picker and never answer) used to leave this true for the
+    // life of the page, so no later close ever cleared the dialog again.
     let captureInFlight = false;
+    // The display capture the browser has not answered yet, as the
+    // AbortController that gives it up. Choosing an image, closing the
+    // dialog, or anything else that resets the screenshot row aborts it, so
+    // a share that never comes is never something the viewer has to wait
+    // out. ScreenshotSelect.start() stops a stream that arrives afterwards.
+    let pendingCapture = null;
+    const abandonPendingCapture = () => {
+      if (!pendingCapture) return;
+      const attempt = pendingCapture;
+      pendingCapture = null;
+      attempt.abort();
+    };
 
     // #1284: the last-ditch copy of the draft, in sessionStorage, for the
     // failure the flag above cannot cover — a capture that takes the whole
@@ -863,6 +882,7 @@ export function init() {
     };
 
     const resetScreenshotState = () => {
+      abandonPendingCapture();
       for (const shot of screenshots.slice()) discardScreenshot(shot);
       screenshots = [];
       screenshotInput.value = '';
@@ -966,9 +986,37 @@ export function init() {
     // Extracted from the button handler so the ?shot=feedback-capture-failed
     // reviewable state exercises this exact path — notice copy, dialog
     // restore and draft retention included — rather than a mock of it.
+    //
+    // How long a display capture waits for the browser before the dialog
+    // says what to do if the answer is not coming (see pendingCapture). Long
+    // enough for an unhurried pick in the browser's own prompt.
+    const CAPTURE_WAIT_HINT_MS = 10 * 1000;
     const runCapture = async (capture, { nativeAttempt }) => {
-      setScreenshotActionsDisabled(true);
-      captureInFlight = true;
+      // Only the capture button for now. A display capture keeps the dialog
+      // up until the browser answers, and Photos stays usable meanwhile: it
+      // is the way out of a share that never comes. hideDialog disables the
+      // rest of the row once the dialog actually goes.
+      screenshotBtn.disabled = true;
+      let suspended = false;
+      const attempt = nativeAttempt ? null : new AbortController();
+      let waitHintTimer = null;
+      let waitHintText = null;
+      if (attempt) {
+        pendingCapture = attempt;
+        waitHintTimer = setTimeout(() => {
+          if (pendingCapture !== attempt) return;
+          showFeedbackNotice('Still waiting for your browser to share the screen. If you already chose what to share and nothing happened, restart the browser, or choose an image instead. Your feedback is safe.', false);
+          waitHintText = feedbackStatus.textContent;
+        }, CAPTURE_WAIT_HINT_MS);
+      }
+      // The browser has answered, or the attempt is over: the hint has
+      // nothing left to say, and goes if it is still the line on show.
+      const settleWait = () => {
+        clearTimeout(waitHintTimer);
+        if (attempt && pendingCapture === attempt) pendingCapture = null;
+        if (waitHintText && feedbackStatus.textContent === waitHintText) feedbackStatus.classList.add('hidden');
+        waitHintText = null;
+      };
       // Where the cursor was. A suspend/resume moves focus off the textarea,
       // so without this the draft comes back with the caret at 0 and the
       // user's next keystroke lands at the top of their own sentence.
@@ -994,6 +1042,10 @@ export function init() {
       // waits on — see captureBehindHiddenDialog.
       const hideDialog = () => {
         if (modalHidden) return undefined;
+        settleWait();
+        setScreenshotActionsDisabled(true);
+        captureInFlight = true;
+        suspended = true;
         // Armed before the dialog goes away, because from here on the page
         // itself might not come back.
         stashCaptureDraft();
@@ -1019,7 +1071,7 @@ export function init() {
           // Not waited on here: the share has only just been granted, and
           // the frame comes from the selection overlay the viewer still has
           // to drag and confirm — long after the exit has finished.
-          blob = await capture(hideDialog);
+          blob = await capture(hideDialog, attempt.signal);
         }
         restoreDialog();
         await attachScreenshotBlob(blob);
@@ -1028,13 +1080,21 @@ export function init() {
         // Every one of these says what happened to the SCREENSHOT and then
         // says the words are still there, because the words are what a user
         // is afraid of losing — the screenshot they can retake (#1284).
-        if (err && err.code === 'denied') {
+        if (err && err.code === 'abandoned') {
+          // Given up before the browser answered (an image chosen instead,
+          // the dialog closed): the viewer has moved on, so nothing is said.
+        } else if (err && err.code === 'denied') {
           showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
         } else if (err && err.code === 'capture_blank') {
           // The share arrived with nothing in it — on a Mac, what window
           // capture hands over when the browser's screen-recording
           // permission is off or has lapsed. Retrying the same way can't help.
           showFeedbackNotice("The shared window came through blank. On a Mac, allow your browser under System Settings, Privacy & Security, Screen & System Audio Recording, then try again. Your feedback is safe.", true);
+        } else if (err && err.code === 'wrong_surface') {
+          // Something far smaller than this page was shared: on a Mac,
+          // usually the browser's own "sharing" indicator, which the system
+          // picker lists among the windows.
+          showFeedbackNotice('That was a small window, not this page. Try again and share the window showing this page, or your whole screen. Your feedback is safe.', true);
         } else if (err && err.code === 'register_failed') {
           showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {
@@ -1045,10 +1105,16 @@ export function init() {
           showFeedbackNotice('Screenshot capture failed, but your feedback is safe. Try again, or send it without one.', true);
         }
       } finally {
+        settleWait();
         // The round trip is over: the page survived it, so the stash has
-        // nothing left to rescue and a later close is a real close.
-        captureInFlight = false;
-        clearCaptureDraft();
+        // nothing left to rescue and a later close is a real close. Only an
+        // attempt that suspended the dialog armed either; one given up
+        // before the browser answered leaves alone the stash Photos has just
+        // armed for its own trip.
+        if (suspended) {
+          captureInFlight = false;
+          clearCaptureDraft();
+        }
         // Full, the buttons are hidden anyway; otherwise there is room for
         // another, so they come back.
         setScreenshotActionsDisabled(false);
@@ -1063,12 +1129,16 @@ export function init() {
         ? async () => screenshotTools.blobFromNativeCapture(await window.usernode.captureScreenshot())
         // getDisplayMedia is called synchronously inside start() so the
         // click's transient activation is preserved; hide only after grant.
-        : async (hide) => (await screenshotTools.start({ onCaptureStart: hide })).blob,
+        // `signal` gives the attempt up while the browser has not answered.
+        : async (hide, signal) => (await screenshotTools.start({ onCaptureStart: hide, signal })).blob,
       { nativeAttempt });
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
+      // An image instead of the share the browser has not answered: that
+      // attempt is over (see pendingCapture).
+      abandonPendingCapture();
       // #1284: the camera roll is a full-screen native surface and this tab
       // can be evicted behind it. Nothing suspends the dialog here, so there
       // is no dismissal to race — only the page's own death to insure
