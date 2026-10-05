@@ -596,6 +596,8 @@ const TopochainChallenges = {
       key: s.group.key,
       heading: s.group.heading,
       meta: summaries[n].meta,
+      // #3203: the moment the clock runs out, for the meta's tooltip.
+      metaTitle: summaries[n].ends ? TopochainChallenges._cap(summaries[n].ends) : null,
       allDone: summaries[n].allDone,
       collapsed: Object.prototype.hasOwnProperty.call(toggled, s.group.key)
         ? toggled[s.group.key] === true
@@ -640,18 +642,21 @@ const TopochainChallenges = {
   // finished group, "1/3" for First challenges (which has no clock), "1/4 · 3d left"
   // or "0/2 · no deadline" for the rest. `left` is the time-left words alone,
   // or null (First challenges, a finished group, no deadline); the detail page's eyebrow
-  // reads it.
+  // reads it. `ends` is the same clock as a moment ("ends Mon 12 Oct, 02:00",
+  // _endsText), or null exactly when `left` is.
   _groupSummary(key, challenges) {
     const list = Array.isArray(challenges) ? challenges : [];
     const total = list.length;
     const done = list.filter((c) => TopochainChallenges._isDone(c)).length;
     const allDone = total > 0 && done === total;
-    const left = allDone || key === 'setup' ? null : TopochainChallenges._groupTimeLeft(key, list);
+    const clock = allDone || key === 'setup' ? null : TopochainChallenges._groupClock(key, list);
+    const left = clock ? clock.left : null;
+    const ends = clock ? TopochainChallenges._endsText(clock.at) : null;
     let meta;
     if (allDone) meta = `${total}/${total} done`;
     else if (key === 'setup') meta = `${done}/${total}`;
     else meta = `${done}/${total} · ${left || 'no deadline'}`;
-    return { done, total, allDone, left, meta };
+    return { done, total, allDone, left, ends, meta };
   },
 
   // A group's clock: the earliest end among its open, unfinished challenges,
@@ -660,18 +665,60 @@ const TopochainChallenges = {
   // never borrows the event's end; only an organiser's own end date gives that
   // group a clock. Null when nothing ends in the future.
   _groupTimeLeft(key, challenges) {
-    const ctx = window.TopochainEventContext;
-    const ev = key !== 'always' && ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    const clock = TopochainChallenges._groupClock(key, challenges);
+    return clock ? clock.left : null;
+  },
+
+  // The same clock with its moment: { at (epoch ms), left }, or null.
+  _groupClock(key, challenges) {
     let best = null;
     for (const c of challenges) {
       if (TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)) continue;
-      const raw = (c.effective && c.effective.schedule_end) || (ev && ev.ends_at);
+      const raw = TopochainChallenges._endRaw(c, key);
       const left = TopochainChallenges._timeLeft(raw);
       if (!left) continue;
       const at = Date.parse(raw);
       if (!best || at < best.at) best = { at, left };
     }
-    return best ? best.left : null;
+    return best;
+  },
+
+  // A challenge's end as the server sent it: its own `effective.schedule_end`,
+  // else the selected event's `ends_at`, except under Always open (`key`
+  // 'always'), which never borrows the event's end.
+  _endRaw(c, key = null) {
+    const own = c && c.effective && c.effective.schedule_end;
+    if (own || key === 'always') return own || null;
+    const ctx = window.TopochainEventContext;
+    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    return (ev && ev.ends_at) || null;
+  },
+
+  // #3203: WHEN a challenge's window closes, not only how long is left. A
+  // weekly challenge does not reset on a fixed weekday: each week is its own
+  // challenge, ending at the moment its organiser set (or the event's end),
+  // so "3d left" alone could not tell a viewer whether work done tonight
+  // still counts. In the viewer's own locale and time zone, lower case for
+  // the meta line it joins ("ends Mon 12 Oct, 02:00"); null once past or on
+  // an unparseable date, as _timeLeft is. `_clockFormat` lets tests pin the
+  // locale and zone.
+  _clockFormat: { locale: undefined, timeZone: undefined },
+  _endsText(raw, now = Date.now()) {
+    if (raw == null || raw === '') return null;
+    const at = typeof raw === 'number' ? raw : Date.parse(raw);
+    if (!Number.isFinite(at) || at <= now) return null;
+    const { locale, timeZone } = TopochainChallenges._clockFormat || {};
+    const opts = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+    if (timeZone) opts.timeZone = timeZone;
+    try {
+      return `ends ${new Date(at).toLocaleString(locale, opts)}`;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _cap(text) {
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
   },
 
   // A group header's tap. Flips the group's collapsed state AS DRAWN (the
@@ -783,10 +830,7 @@ const TopochainChallenges = {
   // started's cards; the other groups' headers carry the earliest end instead
   // (_groupTimeLeft), from the same two sources.
   _deadlineOf(c) {
-    const own = c && c.effective && c.effective.schedule_end;
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    return TopochainChallenges._timeLeft(own || (ev && ev.ends_at));
+    return TopochainChallenges._timeLeft(TopochainChallenges._endRaw(c));
   },
 
   // The same rule and words as HomePanels.timeLeft, so a challenge says the
@@ -1574,15 +1618,21 @@ const TopochainChallenges = {
     // challenge's group with that group's clock ("This week · 3d left"), and
     // the meta line leaves the deadline to it; First challenges has no clock, so its
     // page keeps the card's deadline.
+    //
+    // #3203: the meta line also says when THIS challenge ends, as a moment in
+    // the viewer's zone ("ends Mon 12 Oct, 02:00"), from the same end the
+    // clock reads; under Always open only an organiser's own end counts.
     let eyebrow = cp.label ? str(cp.label) : null;
-    let deadline = TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)
-      ? null : TopochainChallenges._deadlineOf(challenge);
+    const running = !TopochainChallenges._isDone(challenge) && TopochainChallenges._isOpen(challenge);
+    let deadline = running ? TopochainChallenges._deadlineOf(challenge) : null;
+    let ends = running ? TopochainChallenges._endsText(TopochainChallenges._endRaw(challenge)) : null;
     if (TopochainChallenges._grouped()) {
       const group = TopochainChallenges._groupOf(challenge);
       const members = TopochainChallenges._challenges.filter((c) => TopochainChallenges._groupOf(c) === group);
       const { left } = TopochainChallenges._groupSummary(group.key, members);
       eyebrow = left ? `${group.heading} · ${left}` : group.heading;
       if (group.key !== 'setup') deadline = null;
+      if (running) ends = TopochainChallenges._endsText(TopochainChallenges._endRaw(challenge, group.key));
     }
 
     return {
@@ -1590,6 +1640,7 @@ const TopochainChallenges = {
       eyebrow,
       goal: str(cp.goal || ''),
       deadline,
+      ends,
       amount,
       // The card shows only the title, its meta line and the rail, so the page
       // is where the task is read; before ITERATION 03 the card showed it and

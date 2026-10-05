@@ -336,6 +336,61 @@ test('a header with a clock takes the deadline off its cards and the page; First
   assert.deepEqual([d.eyebrow, d.deadline], ['This week', null], 'a finished group has no clock to give');
 });
 
+// ─── When the window ends (#3203) ───────────────────────────────────────
+
+test('#3203: the page says when the challenge ends, as a moment, and the header carries it as a tooltip', () => {
+  // A fixed future moment, so the words are exact: Monday 12 October 2099,
+  // 02:00 UTC, in a pinned locale and zone.
+  const END = '2099-10-12T02:00:00Z';
+  const event = { id: 10, name: 'Season 2', ends_at: '2099-12-31T00:00:00Z' };
+  const challenges = [
+    ch(1, 'WEEKLY', { effective: { schedule_end: END } }),
+    ch(2, 'PERSISTENT'),
+    ch(3, 'SPOTLIGHT', { effective: { schedule_end: END } }),
+    ch(4, 'WEEKLY', { ...DONE, effective: { schedule_end: END } }),
+  ];
+  const { pane, store } = loadPane({ challenges, event });
+  pane._clockFormat = { locale: 'en-GB', timeZone: 'UTC' };
+
+  assert.equal(pane._endsText(END), 'ends Mon 12 Oct, 02:00');
+  pane._clockFormat = { locale: 'en-GB', timeZone: 'Europe/Paris' };
+  assert.equal(pane._endsText(END), 'ends Mon 12 Oct, 04:00', 'in the viewer’s own zone');
+  pane._clockFormat = { locale: 'en-GB', timeZone: 'UTC' };
+  assert.equal(pane._endsText('2000-01-01T00:00:00Z'), null, 'a past end says nothing');
+  assert.equal(pane._endsText('not a date'), null);
+  assert.equal(pane._endsText(null), null);
+
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.equal(groupOf(grid, 'week').metaTitle, 'Ends Mon 12 Oct, 02:00', 'the header’s clock as a moment');
+  assert.equal(groupOf(grid, 'always').metaTitle, null, 'no deadline, no tooltip');
+  assert.equal(groupOf(grid, 'other').metaTitle, 'Ends Mon 12 Oct, 02:00');
+
+  const page = (c) => { const d = pageOf(pane, c); return [d.deadline, d.ends]; };
+  assert.deepEqual(page(challenges[0]), [null, 'ends Mon 12 Oct, 02:00'], 'the eyebrow keeps the countdown; the meta says when');
+  assert.deepEqual(page(challenges[1]), [null, null], 'Always open never borrows the event’s end');
+  assert.deepEqual(page(challenges[3]), [null, null], 'a finished challenge has nothing left to end');
+
+  // Ungrouped, the event's end stands in when the challenge has none.
+  const flat = loadPane({ challenges: [ch(5, 'SPOTLIGHT')], event });
+  flat.pane._clockFormat = { locale: 'en-GB', timeZone: 'UTC' };
+  assert.equal(pageOf(flat.pane, flat.pane._challenges[0]).ends, 'ends Thu 31 Dec, 00:00');
+});
+
+test('#3203: the page renders the end on its meta line, and the header puts it in a title', () => {
+  const { ChallengeMeta } = loadTsx('frontend/src/features/leaderboard/challenge-card.tsx');
+  const meta = renderToHtml(createElement(ChallengeMeta, { deadline: '3d left', ends: 'ends Mon 12 Oct, 02:00', text: '500 pts' }));
+  assert.match(meta, />3d left<\/span>.*>ends Mon 12 Oct, 02:00<\/span>.*>500 pts<\/span>/s,
+    'the countdown, then the moment, then the reward');
+  assert.match(PANE, /ends=\{view\.ends\}/, 'the detail page passes it');
+  assert.match(PANE, /metaTitle=\{g\.metaTitle\}/, 'the grid’s header passes its tooltip');
+  const { GroupHeader } = loadTsx('frontend/src/features/leaderboard/group-header.tsx');
+  const header = renderToHtml(createElement(GroupHeader, { heading: 'This week', meta: '0/2 · 3d left', metaTitle: 'Ends Mon 12 Oct, 02:00' }));
+  assert.match(header, /<span class="[^"]*" title="Ends Mon 12 Oct, 02:00">0\/2 · 3d left<\/span>/);
+  const plain = renderToHtml(createElement(GroupHeader, { heading: 'Always open', meta: '0/2 · no deadline' }));
+  assert.doesNotMatch(plain, /title=/, 'no moment, no title');
+});
+
 // ─── Ungrouped ──────────────────────────────────────────────────────────
 
 test('a season without the board’s categories keeps the ungrouped grid: open, then Completed, deadlines on the cards', () => {

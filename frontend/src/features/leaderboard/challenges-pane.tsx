@@ -123,6 +123,8 @@ type GroupView = {
   key: string;
   heading: string | null;
   meta?: string | null;
+  // #3203: "Ends Mon 12 Oct, 02:00", the header clock's moment, as its tooltip.
+  metaTitle?: string | null;
   allDone?: boolean;
   collapsed?: boolean;
   cards: CardView[];
@@ -188,6 +190,9 @@ type DetailView = {
   illustration: string | null;
   illustrationTone: string | null;
   deadline: string | null;
+  // #3203: "ends Mon 12 Oct, 02:00" (TopochainChallenges._endsText), the
+  // moment this challenge closes in the viewer's zone; null when done.
+  ends?: string | null;
   amount: { text: string; earned: boolean } | null;
   state: ChallengeState;
   stateLabel: string;
@@ -400,6 +405,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           <GroupHeader
             heading={g.heading}
             meta={g.meta}
+            metaTitle={g.metaTitle}
             allDone={!!g.allDone}
             expanded={!g.collapsed}
             controlsId={`tc-se-group-${g.key}`}
@@ -647,6 +653,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         <ChallengeMeta
           size="lg"
           deadline={view.deadline}
+          ends={view.ends}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
           cadence={view.cadence}
