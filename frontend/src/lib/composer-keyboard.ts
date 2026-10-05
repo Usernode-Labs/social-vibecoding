@@ -44,6 +44,14 @@ import { useEffect, useRef, type RefObject } from 'react';
  * reserving the inset a second time; the scroller's `className` must stay
  * constant so React never strips it. Everything the kit does is a structural
  * no-op on desktop and without `visualViewport`.
+ *
+ * A full-screen form gets the same physics: the first session's "What do
+ * you want to make?" (features/first-session/make.tsx) is a fixed screen
+ * whose fields scroll under a wordmark bar of its own, so it hands its
+ * scroller and that bar (`topEl`, the line a revealed field stays below)
+ * instead of the platform header, which is not on screen there. With no
+ * column reserving the inset around it, the kit's own `un-kb-avoid` padding
+ * on the scroller is the one reservation.
  */
 
 type KitHandle = { detach?: () => void } | null | undefined;
@@ -56,15 +64,18 @@ type DocLike = { getElementById(id: string): Element | null };
 const NOOP = () => {};
 
 /** Attach the kit's keyboard avoidance to a composer column's scroller.
- *  Returns the detach; a no-op when there is no element or no kit. */
+ *  `bar` is the bar over it, the kit's `topEl` (the platform header when it
+ *  is left out; null for none). Returns the detach; a no-op when there is no
+ *  element or no kit. */
 export function attachComposerKeyboard(
   el: Element | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? document : undefined,
+  bar?: Element | null,
 ): () => void {
   const kit = win?.unNative;
   if (!el || !kit || typeof kit.attachKeyboardAvoidance !== 'function') return NOOP;
-  const topEl = doc?.getElementById('platform-header') || undefined;
+  const topEl = (bar === undefined ? doc?.getElementById('platform-header') : bar) || undefined;
   let handle: KitHandle;
   try {
     handle = kit.attachKeyboardAvoidance(el, topEl ? { topEl } : {});
@@ -83,15 +94,18 @@ export function attachComposerKeyboard(
  * Keep the kit's keyboard avoidance on whatever element `ref` holds. Runs
  * after every commit, so a pane that renders its scroller only on some
  * branches (a conversation, not the empty state) attaches the moment it
- * appears; a ref compare when nothing changed.
+ * appears; a ref compare when nothing changed. `barRef` names the bar over
+ * the scroller when it is not the platform header.
  */
-export function useComposerKeyboard(ref: RefObject<Element | null>): void {
+export function useComposerKeyboard(ref: RefObject<Element | null>, barRef?: RefObject<Element | null>): void {
   const attached = useRef<{ el: Element; detach: () => void } | null>(null);
   useEffect(() => {
     const el = ref.current;
     if ((attached.current?.el || null) === el) return;
     attached.current?.detach();
-    attached.current = el ? { el, detach: attachComposerKeyboard(el) } : null;
+    attached.current = el
+      ? { el, detach: attachComposerKeyboard(el, undefined, undefined, barRef ? barRef.current : undefined) }
+      : null;
   });
   useEffect(() => () => {
     attached.current?.detach();

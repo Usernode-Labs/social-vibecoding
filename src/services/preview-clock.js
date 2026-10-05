@@ -205,6 +205,10 @@ function previewAnswer(session) {
 module.exports = {
   PREVIEW_NOW_PARAM,
   PREVIEW_NOW_HEADER,
+  // Also the first session's sketch's "today where its creator is"
+  // (services/sketch-dates.js).
+  canonicalZone,
+  wallClock,
   declaredMoment,
   parseMoment,
   formatLabel,
