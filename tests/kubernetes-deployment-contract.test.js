@@ -60,7 +60,10 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   ]) {
     assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
   }
-  assert.doesNotMatch(runtime, /^COPY .*frontend/m);
+  assert.match(runtime, /^COPY --chown=node:node --from=shell \/build\/server-locales \.\/frontend\/locales$/m,
+    'HTTP error translation needs the language registry and server catalogs in the runtime image');
+  assert.doesNotMatch(runtime.replace(/^COPY --chown=node:node --from=shell \/build\/server-locales \.\/frontend\/locales$/m, ''), /^COPY .*frontend/m,
+    'only runtime server catalogs, not frontend sources, belong in the final image');
   assert.doesNotMatch(runtime, /^COPY .*tests/m);
   assert.doesNotMatch(runtime, /^COPY .*docs/m);
 });

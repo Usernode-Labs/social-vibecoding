@@ -16,11 +16,26 @@ FROM node:22-alpine AS shell
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+COPY scripts/language-packs.js scripts/check-ui-messages.js scripts/server-messages.js ./scripts/
+COPY src/routes ./src/routes
+COPY src/middleware ./src/middleware
+COPY public/js ./public/js
+COPY public/cli-authorize.html public/connect-authorize.html ./public/
 COPY src/services/countries.json ./src/services/countries.json
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node frontend/scripts/build-shell.mjs
+
+# The HTTP error middleware needs its catalogs at runtime. Keep only those
+# messages and the language registry, not the browser sources or UI catalogs.
+RUN mkdir -p server-locales \
+    && cp frontend/locales/config.json server-locales/config.json \
+    && for catalog in frontend/locales/*/server.json; do \
+         locale="$(basename "$(dirname "$catalog")")"; \
+         mkdir -p "server-locales/$locale"; \
+         cp "$catalog" "server-locales/$locale/server.json"; \
+       done
 
 # Compile Tailwind in the same stage, only after the current shell has been
 # prerendered because public/index.html is one of the compiler's content
@@ -53,6 +68,7 @@ COPY --chown=node:node server.js dapp.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node worker ./worker
+COPY --chown=node:node --from=shell /build/server-locales ./frontend/locales
 # Copy the whole generated public tree: it contains the source assets plus the
 # prerendered document, every lazy shell chunk, and the compiled stylesheet.
 COPY --chown=node:node --from=shell /build/public ./public
