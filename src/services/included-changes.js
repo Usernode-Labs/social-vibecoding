@@ -246,6 +246,9 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
   await step('tell the vote panels', () => d.ws.pushVoteUpdate({
     sessionId: Number(row.id), appSlug: row.app_slug, appId: row.app_id, merged: true, includedIn: carrier.id,
   }));
+  // 5 October (Page Turners): and the bell stops asking about it, as on its
+  // own merge (notifications.settleDecidedChange).
+  await step('settle what the bell asks about it', () => d.notifications.settleDecidedChange?.(pool, row.id));
   if (!deployed) return did;
 
   await step('tell its author', async () => {

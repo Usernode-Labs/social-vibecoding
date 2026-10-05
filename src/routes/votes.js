@@ -3499,7 +3499,16 @@ function voteRoutes(config) {
       // the nudge is cleared, and it's idempotent (clears only unread rows).
       // Non-fatal: a notification hiccup must never 500 a successful vote.
       try {
-        const cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        let cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        // 5 October (Page Turners): and a "Waiting for your approval" digest
+        // with nothing left waiting on them, this being the last one. On its
+        // own: a digest that could not be read never loses the push above.
+        try {
+          const settled = await notifications.settleVoteDigests?.(pool, { userIds: [req.user.id] });
+          cleared += Array.isArray(settled) ? settled.length : 0;
+        } catch (err) {
+          log.warn('votes', 'Settling the voter\'s digests failed', { sessionId: session.id, err: err.message });
+        }
         if (cleared > 0) {
           // Fan out to the voter's OTHER tabs/devices so their unread badge
           // syncs without a manual refresh; the acting tab refreshes itself.
@@ -5528,6 +5537,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
     }
+    // 5 October (Page Turners): the bell stops asking about it. Its "ready
+    // to try" rows say it is live (unread again for whoever had not said
+    // yes), and the vote nudges and digests it answered are read
+    // (notifications.settleDecidedChange). Never a reason the merge fails.
+    try {
+      notifications.settleDecidedChange?.(pool, session.id)
+        ?.catch?.((err) => log.warn('votes', 'Settling the bell after a merge failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Settling the bell after a merge threw', { sessionId: session.id, err: err.message });
+    }
     // #3624: a proposal the Homeroom bot built for somebody it talks to in
     // a DM: they hear it is live there (the notification above goes to the
     // proposal's author, which for a bot build is the bot). Never a reason
@@ -6940,6 +6959,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
       } catch (e) {
         log.warn('votes', 'Including the changes a merge carried failed after its deploy failed', {
+          sessionId: session.id, err: e.message,
+        });
+      }
+      // The vote is over all the same: nothing is asked of anybody about it
+      // (notifications.settleDecidedChange). Never a reason this path fails.
+      try {
+        await notifications.settleDecidedChange?.(pool, session.id);
+      } catch (e) {
+        log.warn('votes', 'Settling the bell after a merge whose deploy failed failed', {
           sessionId: session.id, err: e.message,
         });
       }
