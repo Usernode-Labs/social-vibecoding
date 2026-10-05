@@ -55,6 +55,9 @@ const CURRENT_KINDS = [
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
   'invite_opened', 'member_joined', 'first_message',
+  // A person's message in a small private group's discussion, the group's
+  // chat, so it rides the Messages switch.
+  'channel_message',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

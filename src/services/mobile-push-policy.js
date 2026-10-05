@@ -273,6 +273,24 @@ function buildCopy(kind, context, now) {
         title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
+    // A person's message in a small private group's discussion
+    // (services/group-channel-notify.js). Only a fresh row rings, so this is
+    // nearly always the one message; `detail` counts the messages folded in
+    // since, should the row have grown before the push went out.
+    case 'channel_message': {
+      const count = /^\d{1,6}$/.test(detail) ? Number(detail) : 1;
+      const where = app ? truncate(app, TITLE_EMBED_MAX) : '';
+      if (count > 1) {
+        return {
+          title: where ? `${count} new messages in ${where}` : `${count} new messages`,
+          body: actor && message ? `@${actor}: ${message}` : message,
+        };
+      }
+      return actor && {
+        title: where ? `@${actor} in ${where}` : `@${actor} wrote in the discussion`,
+        body: message,
+      };
+    }
     case 'reaction':
       return actor && {
         title: withApp(detail

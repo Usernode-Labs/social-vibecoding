@@ -6,6 +6,7 @@ const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
+const groupChannelNotify = require('../services/group-channel-notify');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -400,11 +401,13 @@ function notificationsRoutes(config) {
       const app = await resolveApp(req.params.slug, req.user);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const overrides = await notificationPreferences.readOverrides(pool, req.user.id, app.id);
+      const smallGroup = await groupChannelNotify.isSmallGroup(pool, app.id);
       return res.json({
         app: { id: app.id, slug: app.slug, name: app.name },
         categories: notificationPreferences.serializeAppCategories({
           ...overrides,
           isAdmin: app.isAdmin,
+          smallGroup,
         }),
       });
     } catch (err) {
@@ -422,9 +425,12 @@ function notificationsRoutes(config) {
 
       // The allowed set is computed from THIS user's admin status, so a
       // non-admin posting `app_health` is refused rather than quietly
-      // storing a preference for something they will never be sent.
+      // storing a preference for something they will never be sent. The
+      // same for a small group's "Every message in the discussion" on a
+      // project that is not one (services/group-channel-notify.js).
+      const smallGroup = await groupChannelNotify.isSmallGroup(pool, app.id);
       const allowedKeys = notificationPreferences.APP_CATEGORY_DEFINITIONS
-        .filter((category) => !category.adminOnly || app.isAdmin)
+        .filter((category) => notificationPreferences.offeredOn(category, { isAdmin: app.isAdmin, smallGroup }))
         .map((category) => category.key);
       const { details, values } = notificationPreferences.validatePreferencePatch(
         req.body, { allowedKeys }
@@ -441,6 +447,7 @@ function notificationsRoutes(config) {
         categories: notificationPreferences.serializeAppCategories({
           ...overrides,
           isAdmin: app.isAdmin,
+          smallGroup,
         }),
       });
     } catch (err) {

@@ -113,5 +113,9 @@ test('opens are counted from the page\'s own reads, once per browser, never from
   const page = routes.slice(routes.indexOf("router.get('/invite/:token'"));
   assert.doesNotMatch(page, /countOpen/);
   assert.match(read('src/services/community-invites.js'), /void require\('\.\/invite-activity'\)\.noteJoined\(pool, \{ inviteId: invite\.id, user \}\);/);
-  assert.match(read('src/services/ws.js'), /void require\('\.\/invite-activity'\)\.noteFirstMessage\(pool, \{/);
+  // Not awaited where it starts: the small-group discussion ring waits for it
+  // later, so the maker is not told about the same message twice
+  // (services/group-channel-notify.js).
+  assert.match(read('src/services/ws.js'),
+    /const hello = postedVia !== 'agent'\s*\? require\('\.\/invite-activity'\)\.noteFirstMessage\(pool, \{/);
 });
