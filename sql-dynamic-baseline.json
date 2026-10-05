@@ -1041,9 +1041,9 @@
     {
       "source": "src/services/homeroom-bot-dm.js",
       "kind": "structural-template",
-      "fingerprint": "ed24ad3703716df52e4f",
+      "fingerprint": "c913b1f251da2021e1da",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at, ${communities.audienceSql('a', '(SELECT COUNT(*) "
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at, COALESCE(cs.requires_explicit_approval, FALSE) AS"
     },
     {
       "source": "src/services/homeroom-bot-dm.js",
