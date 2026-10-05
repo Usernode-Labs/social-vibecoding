@@ -677,6 +677,10 @@ const App = {
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
     App._drainLogoutNotice();
+    // A signed-out document behind the live build moves to it before a
+    // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
+    // paints now and the answer arrives behind it.
+    App._moveToLiveShell('signed-out');
   },
 
   // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
@@ -1935,6 +1939,206 @@ const App = {
         App._shellAutoReloadSha = null;
         return false;
       }
+    }
+    App._shellReloadStarted = sha;
+    location.reload();
+    return true;
+  },
+
+  // ── A first session runs on the live build ──────────────────────────
+  //
+  // The production run-through of 5 Oct 2026: the Homeroom app had last been
+  // opened twelve hours and several deploys earlier, so its cold launch lost
+  // the 200ms navigation race in public/sw.js, as designed, and ran the
+  // cached build. A brand-new account then signed in on it and got every old
+  // first screen: the sign-in page without its terms line, the blocking
+  // terms dialog, the old Home, and no "What do you want to make?". A force
+  // quit later the same account got the new flow.
+  //
+  // One deploy behind for one load is the accepted cost of that deadline, and
+  // for somebody already signed in it still is: the drawer's row and the
+  // pull-to-refresh upgrade are the recovery, and nothing here touches them.
+  // Two moments are different, because what is on screen then decides what a
+  // new account is asked and records what it agreed to:
+  //
+  //   'signed-out'  the story landing (which is also an invite's page before
+  //                 Join, and holds the sign-in sheet) and the sign-in page.
+  //                 Nothing on them can be lost, so a document that is behind
+  //                 moves to the live build as soon as it knows, typed text
+  //                 or not, unless a sign-in has begun here (noteSignInBegun):
+  //                 a request in flight is never cut off.
+  //   'signed-in'   a sign-in or sign-up has just succeeded (finishLogin, or
+  //                 the waiting room letting somebody in). The move happens
+  //                 before the signed-in shell starts, so no first-run screen
+  //                 (terms, make, join, tour) is drawn by the old build. The
+  //                 session cookie, the invite link's cookie and this tab's
+  //                 sessionStorage (`usernode:first-session:make`,
+  //                 `usernode:invite-join`) all survive the reload.
+  //
+  // It asks the server itself rather than reading loadVersion's answer.
+  // /api/version is an ordinary API read, so on a cold launch slower than
+  // API_TIMEOUT_MS the worker answers it from its cache, with the previous
+  // visit's sha: the OLD one, which matches the old document. The first
+  // answer said "current" and nothing moved, which is how #1669's boot-time
+  // switch (loadVersion) missed exactly this launch. `cache: 'no-store'`
+  // skips the worker (sw.js: "Explicit session confirmation must reach the
+  // server") as well as the HTTP cache.
+  //
+  // The move is the one the drawer's button makes: the build pulled into the
+  // shell cache first (_ensureShellPrefetch), then a reload, so it lands on
+  // the new build whichever way the navigation race goes. At most one forced
+  // reload per build per tab, on the same sessionStorage latch as #1669's
+  // switch, so the two can never take turns reloading.
+  FRESH_SHELL_CHECK_TIMEOUT_MS: 5000,
+  // How long a move waits for the build to come down. A signed-out screen
+  // that has been up longer than this is no longer "before they can type",
+  // and a sign-in holds its busy button for it; either way the 'signed-in'
+  // move, or the drawer's row, is still there afterwards.
+  FRESH_SHELL_WAIT_MS: 10_000,
+  _signInBegun: false,
+
+  /**
+   * A sign-in has begun on this page: a credential exchange is about to go
+   * out (features/auth/shared.ts: the guard every exchange runs first, and
+   * every session mint), or a provider's trip came back to finish one. The
+   * 'signed-out' move stands down for the rest of this document; the sign-in
+   * finishes here, and the 'signed-in' move follows it.
+   */
+  noteSignInBegun() {
+    App._signInBegun = true;
+  },
+
+  /**
+   * Should this document move itself onto the live build now? Pure: every
+   * input is passed in, so the whole rule is one table. 'upgrade', or the
+   * reason it stays.
+   */
+  freshShellVerdict(input) {
+    const {
+      moment, documentSha, live, controlled, embedded, signedIn, signInBegun, route, latched,
+    } = input || {};
+    // The top window owns the build, as it owns the version poll.
+    if (embedded) return 'side-panel';
+    // No worker: the document came from the network, so it IS the live build.
+    if (!controlled) return 'uncontrolled';
+    // A checkout or a staging preview carries no build to be behind with.
+    if (!documentSha) return 'unstamped';
+    if (!live || !live.sha || live.sha === 'dev') return 'unknown';
+    // Mid-rollout the answer can come from either pod: loadVersion's rule.
+    if (live.deploying) return 'deploying';
+    if (live.sha === documentSha) return 'current';
+    if (latched === live.sha) return 'latched';
+    if (moment === 'signed-in') return 'upgrade';
+    if (moment !== 'signed-out') return 'moment';
+    if (signedIn) return 'signed-in';
+    if (signInBegun) return 'sign-in-begun';
+    // The screens with nothing to lose. Not the waitlist's survey, a password
+    // reset or an activation code: those hold answers or a token mid-way.
+    if (!['landing', 'login', 'signup'].includes(route)) return 'route';
+    return 'upgrade';
+  },
+
+  /**
+   * The build the server runs right now, asked past the worker's cache and
+   * the HTTP cache alike: `{ sha, deploying }`, or null when it cannot be
+   * known in time. Null at once, with no request, for a document that cannot
+   * be behind (no worker, no build stamp, the side panel).
+   */
+  async _askLiveBuild() {
+    let timer = null;
+    try {
+      if (App.embeddedPanel || !App.loadedPlatformSha) return null;
+      if (!(navigator.serviceWorker && navigator.serviceWorker.controller)) return null;
+      const abort = typeof AbortController === 'function' ? new AbortController() : null;
+      if (abort) timer = setTimeout(() => abort.abort(), App.FRESH_SHELL_CHECK_TIMEOUT_MS);
+      const res = await fetch('/api/version', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: abort ? abort.signal : undefined,
+      });
+      if (!res.ok) return null;
+      const info = await res.json();
+      if (!info || typeof info.sha !== 'string') return null;
+      return { sha: info.sha, deploying: !!(info.deployProgress && info.deployProgress.deploying) };
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  _freshShellInputs(moment, live) {
+    let latched = null;
+    try { latched = sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY); } catch { latched = null; }
+    let controlled = false;
+    try { controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch { /* none */ }
+    const screens = typeof window !== 'undefined' ? window.AuthScreens : null;
+    return {
+      moment,
+      documentSha: App.loadedPlatformSha,
+      live,
+      controlled,
+      embedded: !!App.embeddedPanel,
+      signedIn: !!App.user,
+      signInBegun: !!App._signInBegun,
+      route: screens ? screens._current : null,
+      latched,
+    };
+  },
+
+  /**
+   * Move onto the live build when freshShellVerdict says so. Resolves false
+   * when this document stays as it is. Once it reloads it never resolves, so
+   * a caller that awaits it (finishLogin's busy button, the waiting room's
+   * release) holds still until the page goes.
+   *
+   * `live` is an _askLiveBuild() already in flight, so a sign-in can ask
+   * alongside its own session check instead of after it.
+   */
+  async _moveToLiveShell(moment, live) {
+    try {
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Screenshot states stay where they were asked to be.
+      try {
+        if (new URLSearchParams(location.search).get('shot')) return false;
+      } catch { /* no address to read */ }
+      const answer = await (live || App._askLiveBuild());
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      const sha = answer.sha;
+      // A sign-in is a moment of its own: a download that failed earlier in
+      // this document is asked for once more. The worker has usually staged
+      // the build behind the navigation by now, so the answer is quick.
+      if (moment === 'signed-in' && App.shellUpdate && App.shellUpdate.sha === sha
+          && App.shellUpdate.state === 'failed') {
+        App.shellUpdate = null;
+      }
+      const state = await new Promise((resolve) => {
+        App._ensureShellPrefetch(sha).then(resolve, () => resolve('failed'));
+        setTimeout(() => resolve('slow'), App.FRESH_SHELL_WAIT_MS);
+      });
+      // #1669's switch may have taken the same download to its own reload.
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Reloading before the cache holds the build serves the old one back.
+      if (state !== 'ready') return false;
+      // The download took a moment. Ask again: is the screen still one with
+      // nothing to lose, and has nobody started signing in on it?
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      if (!App._reloadOntoLiveShell(sha)) return false;
+      return new Promise(() => {});
+    } catch {
+      return false;
+    }
+  },
+
+  /** One forced reload per build per tab, on #1669's latch. */
+  _reloadOntoLiveShell(sha) {
+    if (App._shellReloadStarted) return true;
+    try {
+      if (sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY) === sha) return false;
+      sessionStorage.setItem(App.SHELL_AUTO_RELOAD_KEY, sha);
+    } catch {
+      // Without a cross-reload latch nothing proves this will not loop.
+      return false;
     }
     App._shellReloadStarted = sha;
     location.reload();
