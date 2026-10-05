@@ -252,12 +252,16 @@ const listeners = new Set<() => void>();
  * The menu's own "Invite to community" row is gone, so the hub's Invite is
  * the way in, beside the people it adds. Collaborators and approvals are
  * still the ⋯'s "Members & approvals".
+ *
+ * ONE CALL, which opens the menu ON the invite pane. It was `open()` then
+ * `showInvite()`, and the sheet went up twice: short, on the pane's loading
+ * line, then tall when the link came, with the dim fading in again between
+ * (AppContext.openInvite says why).
  */
 export function openInviteLinks(): void {
   const ctx = (window as any).AppContext;
   if (!ctx) return;
-  ctx.open?.();
-  ctx.showInvite?.();
+  void ctx.openInvite?.();
 }
 
 export function reloadCommunity(slug: string): Promise<void> {

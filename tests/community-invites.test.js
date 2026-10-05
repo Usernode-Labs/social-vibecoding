@@ -366,7 +366,8 @@ test('the words: the landing card, the invite pane', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.doesNotMatch(sheet, /id="app-menu-row-invite"/);
   const hubCard = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?ctx\.open\?\.\(\);\s*ctx\.showInvite\?\.\(\);/);
+  // One call that opens the menu ON the pane (tests/invite-sheet-once.test.js).
+  assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?void ctx\.openInvite\?\.\(\);/);
   assert.match(hubCard, /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
   assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
   assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
