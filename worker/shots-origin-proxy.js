@@ -172,6 +172,41 @@ function forwardPlatformAsset(req, res, target, side) {
   upstream.end();
 }
 
+// The app's tile on Homeroom's home screen, which a pair's copies do not
+// serve: each side's address answers this path with that side's tile, drawn
+// by the platform from the side's own dapp.json (services/shots-home-tile.js)
+// and fetched with this run's shots token, which never reaches the page.
+const HOME_TILE_PATH = '/__shots/home-tile';
+const RETURNED_TILE_HEADERS = Object.freeze(['content-type', 'content-length', 'cache-control',
+  'content-security-policy', 'x-content-type-options']);
+const shotsRunId = String(process.env.SHOTS_RUN_ID || '');
+const shotsJwt = String(process.env.SHOTS_JWT || '');
+
+function forwardHomeTile(req, res, side) {
+  if (!['GET', 'HEAD'].includes(req.method)) return reject(res, 405);
+  if (!platformAssetsOrigin || !/^[0-9a-f]{32}$/.test(shotsRunId) || !shotsJwt) return reject(res, 404);
+  const source = new URL(`/api/internal/shots/${shotsRunId}/home-tile/${side}`, platformAssetsOrigin);
+  const transport = source.protocol === 'https:' ? https : http;
+  const upstream = transport.request(source, {
+    method: req.method,
+    headers: { authorization: `Bearer ${shotsJwt}`, accept: 'text/html' },
+  }, (tileResponse) => {
+    const status = tileResponse.statusCode || 502;
+    diagnostic({ kind: 'home_tile', side, httpStatus: status });
+    const returned = {};
+    for (const name of RETURNED_TILE_HEADERS) {
+      if (tileResponse.headers[name] != null) returned[name] = tileResponse.headers[name];
+    }
+    res.writeHead(status, returned);
+    tileResponse.pipe(res);
+  });
+  upstream.on('error', () => {
+    diagnostic({ kind: 'home_tile', side, httpStatus: 502 });
+    reject(res, 502);
+  });
+  upstream.end();
+}
+
 let documentOrdinal = 0;
 const controlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 const controlPath = '/__usernode_shots_control/request-failure';
@@ -292,6 +327,9 @@ async function handleRequestAsync(persona, req, res) {
   }
   const side = target.origin === originList[0] ? 'base'
     : target.origin === originList[1] ? 'head' : vetted ? 'outside' : 'hosted';
+  if ((side === 'base' || side === 'head') && target.pathname === HOME_TILE_PATH) {
+    return forwardHomeTile(req, res, side);
+  }
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
