@@ -148,14 +148,30 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    - for the admins: a live Homeroom bot verdict with its build;
    - for every persona: the season's finished First challenges and an Always
      open challenge with its next count;
-   - for the member: their standing in the season, and a friend request.
+   - for every persona: a "This week" group of weekly challenges, and a
+     weekly challenge scored on sending a proposal (`PROPOSAL_SENT`),
+     switched on, open and counted hourly, with its own page;
+   - for the member: their standing in the season, and a friend request;
+   - for the member: a remix they made of another app, whose ⋯ offers
+     "Suggest this back";
+   - for the member: their chat with the Homeroom bot, with an activity card
+     whose build waits its turn (working) and a newer card on the same
+     request.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
    write on either side; neither fails the run. Every row is an obviously
-   fake `[shots fixture]` row in a reserved id block (990840 to 990859). The
+   fake `[shots fixture]` row in a reserved id block (990840 to 990895). The
    brief's `availableFixtures` tells the agent each state's persona, what it
    shows and its path.
+
+   The demo states are written by the deployed platform's own code, not by
+   either revision under test. So a proposal cannot use a demo state it adds
+   itself: the state reaches shots only once the proposal has merged. Data a
+   proposal needs for its own shots belongs in that revision's staging seeds
+   (`src/db/migrate.js`), which each side runs for its own revision: the
+   after side has it, and the before side has what the base revision
+   already seeded.
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
    shots worker. It has four browsers, one per persona (the guest's is not
    signed in), and the "shots" tools:
