@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for the reworked Approvers section + the
 // initial-approvers draft step in the members modal (spec: "hide the
 // misleading approvers empty state under Everyone, and set up the
@@ -205,7 +206,7 @@ function makeHarness({ appData = {} } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   vm.runInContext(MEMBERS_SRC, sandbox).init();
 

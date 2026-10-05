@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Hidden-until-pulled home search bar.
 //
 // The bar is the FIRST child inside #home-screen and is NOT sticky, so it
@@ -61,7 +62,7 @@ function makeHome(opts = {}) {
   sandbox.window = sandbox;
   if (opts.pageScroll) sandbox.PlatformUI = { scrollElement: () => page };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, screen, bar, page, sandbox };
 }

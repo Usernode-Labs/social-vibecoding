@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The home screen's non-canvas hosts, after #1191 made them React's:
 // `#home-apps-more` ("Show all N apps"), `#home-widget-strip-section` (the iOS
 // widget-editing strip), and the three fixed panel sections below the grid.
@@ -74,7 +75,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   installGridStore(sandbox);
   installPanelsStore(sandbox);
@@ -163,8 +164,8 @@ test('home.js no longer writes either host', () => {
 // ── 3. the initial state is the shipped markup ────────────────────────
 
 test('the initial chrome renders exactly what the prerendered shell ships', () => {
-  const { WidgetStripBody } = loadTsx(STRIP);
-  const { AppsMore } = loadTsx(MORE);
+  const { WidgetStripBody } = loadTsx(STRIP, { stubs: { 'react-i18next': { useTranslation: () => ({ t: globalThis.PlatformI18n.t }) } } });
+  const { AppsMore } = loadTsx(MORE, { stubs: { 'react-i18next': { useTranslation: () => ({ t: globalThis.PlatformI18n.t }) } } });
   assert.equal(
     renderToHtml(createElement(WidgetStripBody, { strip: INITIAL_CHROME.strip })),
     '',
@@ -214,7 +215,7 @@ const ACTIVE = {
 };
 
 function stripTree(strip) {
-  const { WidgetStripBody } = loadTsx(STRIP);
+  const { WidgetStripBody } = loadTsx(STRIP, { stubs: { 'react-i18next': { useTranslation: () => ({ t: globalThis.PlatformI18n.t }) } } });
   return WidgetStripBody({ strip });
 }
 
@@ -282,7 +283,7 @@ test('a tile ✕ removes that tile, and only that tile', () => {
 
 test('"Show all N apps" expands the grid and repaints', () => {
   withHome((home) => {
-    const { AppsMoreBody } = loadTsx(MORE);
+    const { AppsMoreBody } = loadTsx(MORE, { stubs: { 'react-i18next': { useTranslation: () => ({ t: globalThis.PlatformI18n.t }) } } });
     assert.equal(
       renderToHtml(createElement(AppsMoreBody, { moreCount: 0 })),
       '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',

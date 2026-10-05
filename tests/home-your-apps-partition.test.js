@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Homepage restructure: the "Your apps" partition and the client-side
 // search matcher in frontend/src/features/home/home.js.
 //
@@ -54,7 +55,7 @@ function makeHome(appOver) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return sandbox.__Home;
 }

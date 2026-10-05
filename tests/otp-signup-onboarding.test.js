@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // QA 2026-09-24 Q12: "Sign in with an email code" for an address with no
 // account used to create one silently. After the code it said "Code verified.
 // Now choose a password for your account.", then dropped the person in the
@@ -27,8 +28,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const LOGIN = read('frontend/src/features/auth/login.tsx');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
+const LOGIN = englishUiSource(read('frontend/src/features/auth/login.tsx'));
 const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 
@@ -44,28 +45,30 @@ test('the verify answer says what happened, additively, and suggests no name', (
 });
 
 test('the password step says the account is new, and asks for its handle with an empty field', () => {
-  assert.match(LOGIN, /"Code verified\. No account uses this email yet, so we'll create one\. Choose a username and a password\."/);
-  assert.match(LOGIN, /otpSignup\?\.created\s+\? OTP_PASSWORD_INTRO_NEW/);
-  const field = LOGIN.slice(LOGIN.indexOf('id="otp-username"'), LOGIN.indexOf('id="otp-username-hint"'));
-  assert.match(field, /\{\.\.\.HANDLE_FIELD\}/, 'no auto-capitalising a handle');
+  const LOGINEnglish = englishUiSource(LOGIN);
+  assert.match(englishUiSource(LOGINEnglish), /"Code verified\. No account uses this email yet, so we'll create one\. Choose a username and a password\."/);
+  assert.match(englishUiSource(LOGINEnglish), /otpSignup\?\.created\s+\? OTP_PASSWORD_INTRO_NEW/);
+  const field = LOGINEnglish.slice(LOGINEnglish.indexOf('id="otp-username"'), LOGINEnglish.indexOf('id="otp-username-hint"'));
+  assert.match(englishUiSource(field), /\{\.\.\.HANDLE_FIELD\}/, 'no auto-capitalising a handle');
   // #3575: nothing is put in the field for the person to accept.
-  assert.doesNotMatch(field, /defaultValue=|data-username-suggested/, 'the field starts empty');
-  assert.doesNotMatch(LOGIN, /suggestedUsername/);
+  assert.doesNotMatch(englishUiSource(field), /defaultValue=|data-username-suggested/, 'the field starts empty');
+  assert.doesNotMatch(englishUiSource(LOGINEnglish), /suggestedUsername/);
   // Beside it, who will see it; then the rule, or the server's refusal.
-  assert.match(field, /aria-describedby="otp-username-public otp-username-hint"/);
-  assert.match(field, /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>/);
-  assert.match(LOGIN, /\{otpUsernameError \|\| USERNAME_RULE\}/);
-  assert.match(LOGIN, /\{otpSignup\?\.needsUsername \? \(/, 'only when the account still owes a choice');
+  assert.match(englishUiSource(field), /aria-describedby="otp-username-public otp-username-hint"/);
+  assert.match(englishUiSource(field), /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\(\)\}\s*<\/p>/);
+  assert.match(englishUiSource(LOGINEnglish), /\{otpUsernameError \|\| USERNAME_RULE\(\)\}/);
+  assert.match(englishUiSource(LOGINEnglish), /\{otpSignup\?\.needsUsername \? \(/, 'only when the account still owes a choice');
   // The handle rides with the password, an empty field is caught before the
   // round trip, and a refusal lands under the field.
-  assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\('Enter a username\.'\);/);
-  assert.match(LOGIN, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
-  assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(data\.error\);/);
+  assert.match(englishUiSource(LOGINEnglish), /if \(handle === ''\) \{\s+setOtpUsernameError\('Enter a username\.'\);/);
+  assert.match(englishUiSource(LOGINEnglish), /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
+  assert.match(englishUiSource(LOGINEnglish), /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(data\.error\);/);
 });
 
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /"New accounts join a short waitlist\. After this step you'll wait in the queue, and you'll get in automatically when it's your turn\."/);
-  assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
+  const LOGINEnglish = englishUiSource(LOGIN);
+  assert.match(englishUiSource(LOGINEnglish), /"New accounts join a short waitlist\. After this step you'll wait in the queue, and you'll get in automatically when it's your turn\."/);
+  assert.match(englishUiSource(LOGINEnglish), /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
 });
 
 test('set-password spends the signup session only on a name it accepts', () => {

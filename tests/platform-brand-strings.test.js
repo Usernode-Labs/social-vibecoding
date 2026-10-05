@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #1873: the platform is called Homeroom. "Usernode" survives in three
 // legitimate roles and must NOT be swept up with the brand:
@@ -24,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(root, p), 'utf8'));
 
 // The bridge ships as two identical committed copies: the versioned URL every
 // app loads, and the legacy flat path. A change to one that misses the other

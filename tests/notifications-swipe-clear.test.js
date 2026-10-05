@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Clearing a notification without opening it (#3538): a swipe on a phone, the
 // × on a hovered row at a desk.
@@ -84,7 +87,7 @@ function load({ respond } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   sandbox.agoStamp = agoStamp;
   vm.runInContext(CONTROLLER_SRC, sandbox);
   const N = sandbox.Notifications;
@@ -293,24 +296,24 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
 });
 
 test('only an unread row offers a clear', () => {
-  assert.match(SHEET_SRC, /const clearable = view\.unread;/);
-  assert.match(SHEET_SRC, /\{clearable && !touch \? \(\s*<button\s+type="button"\s+data-notification-clear=\{view\.id\}/);
-  assert.match(SHEET_SRC, /if \(!clearable \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
+  assert.match(englishUiSource(SHEET_SRC), /const clearable = view\.unread;/);
+  assert.match(englishUiSource(SHEET_SRC), /\{clearable && !touch \? \(\s*<button\s+type="button"\s+data-notification-clear=\{view\.id\}/);
+  assert.match(englishUiSource(SHEET_SRC), /if \(!clearable \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
 });
 
 test('the swipe is the kit\'s, neutral, and a full swipe only where the row leaves', () => {
-  const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('const swipe = ui.swipeActions(el, {'),
-    SHEET_SRC.indexOf('}, [clearable, touch, removes, shape, view.id]);'));
-  assert.match(effect, /label: 'Clear'/);
+  const effect = SHEET_SRC.slice(englishUiSource(SHEET_SRC).indexOf('const swipe = ui.swipeActions(el, {'),
+    englishUiSource(SHEET_SRC).indexOf('}, [clearable, touch, removes, shape, view.id]);'));
+  assert.match(englishUiSource(effect), /label: 'Clear'/);
   // The kit's full swipe belongs to its destructive action and takes the row
   // out of the document. On Unread that is what happens to a cleared row; on
   // Messages and All the row stays, so the swipe only reveals the button.
-  assert.match(effect, /destructive: removes,/);
-  assert.match(SHEET_SRC, /removes=\{tab === 'unread'\}/);
+  assert.match(englishUiSource(effect), /destructive: removes,/);
+  assert.match(englishUiSource(SHEET_SRC), /removes=\{tab === 'unread'\}/);
   // Grey, not the kit's destructive red: clearing deletes nothing.
-  assert.match(effect, /color: 'var\(--un-action-neutral\)'/);
-  assert.match(effect, /handler: \(\) => \{ void controller\(\)\?\.clearNotification\(view\.id\); \}/);
-  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id\]\);/,
+  assert.match(englishUiSource(effect), /color: 'var\(--un-action-neutral\)'/);
+  assert.match(englishUiSource(effect), /handler: \(\) => \{ void controller\(\)\?\.clearNotification\(view\.id\); \}/);
+  assert.match(englishUiSource(SHEET_SRC), /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id\]\);/,
     'detached when the row stops being clearable, changes tab or changes shape');
 });
 

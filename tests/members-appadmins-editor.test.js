@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for the App-admins editor in the members modal
 // (issue #788 follow-up: creators/app admins stage a roster draft and
 // Propose opens a PR editing dapp.json's `admins` array).
@@ -203,7 +204,7 @@ function makeHarness({ appData = {} } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   vm.runInContext(MEMBERS_SRC, sandbox).init();
 

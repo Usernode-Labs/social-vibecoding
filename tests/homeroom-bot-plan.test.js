@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B6: a plan card before first versions; up to two questions on unclear
 // changes.
@@ -266,13 +267,13 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.equal(planState({ kind: 'plan', status: 'closed', changing: true }), 'changing');
   assert.equal(planState({ kind: 'plan', status: 'open' }), 'closed', 'nothing to decide without its action');
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /isPlanMessage\(message\) \? \([\s\S]{0,200}<BotPlanCard /);
+  assert.match(englishUiSource(row), /isPlanMessage\(message\) \? \([\s\S]{0,200}<BotPlanCard /);
   const api = read('frontend/src/features/messages/api.ts');
-  assert.match(api, /body: JSON\.stringify\(answers \? \{ choice, answers \} : \{ choice \}\)/);
+  assert.match(englishUiSource(api), /body: JSON\.stringify\(answers \? \{ choice, answers \} : \{ choice \}\)/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
+  assert.match(englishUiSource(css), /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
+  assert.match(englishUiSource(composer), /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
 });
 
 test('B6: the App tab shows the same plan, in place of the chat button, and builds through the same endpoint', () => {

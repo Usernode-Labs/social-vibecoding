@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,7 +16,7 @@ function fixture(userId = 7) {
     dispatchEvent: (event) => events.push(event),
   };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8') + '\nglobalThis.av = AppView;', c);
   const av = c.av;
   av.appData = { slug: 'demo', can_collaborate: true };

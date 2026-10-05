@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Fetch-on-demand recovery for opening a proposal that isn't in any cached
 // client list (the Completed list is keyset-paginated, so a merged proposal
 // beyond the first page is unresolvable from state). Covers the app-view.js
@@ -83,7 +84,7 @@ function makeAppView({ fetchImpl, thread = null } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo' };

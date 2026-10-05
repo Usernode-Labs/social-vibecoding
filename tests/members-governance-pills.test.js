@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for the Proposal-approvals mode pills in the members
 // modal (issues #646/#650, bug: "clicking 'At least' does nothing on the
 // self-edit app").
@@ -198,7 +199,7 @@ function makeHarness() {
     actionSheet: async () => null,
     gestures: () => null,
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   vm.runInContext(MEMBERS_SRC, sandbox).init();
 

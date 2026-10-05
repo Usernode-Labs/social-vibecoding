@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #3618: an app you close collapses into its Resume control, and grows back
 // out of it when you resume — the rail's Active row on the desktop (which now
@@ -304,13 +306,13 @@ function runZoom(type, opts) {
     get offsetHeight() { return 0; },
   };
   const { physics } = require('../public/usernode-native/v1/native.js');
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     document: { scrollingElement: { scrollTop: 0, scrollLeft: 0 } }, window: { innerHeight: 800 },
     prefersReducedMotion: false, vtActive: false, zoomCleanup: null,
     ZOOM_EASE: 'ease', ZOOM_RADIUS: '16px',
     zoomPose: physics.zoomPose, zoomRectUsable: physics.zoomRectUsable,
     setTimeout: (fn, ms) => timers.push(ms),
-  });
+  }));
   const start = KIT.indexOf('  function zoomPin(');
   const end = KIT.indexOf('  // Has the document painted', start);
   vm.runInContext(KIT.slice(start, end), context);

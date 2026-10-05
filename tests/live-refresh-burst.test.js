@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // One refresh per burst of live events (App._liveRefresh in public/js/app.js).
 //
@@ -63,7 +65,7 @@ function harness({ currentApp = 'demo', currentTab = 'dev', homeVisible = false 
   };
   sandbox.window = sandbox;
   sandbox.window.dispatchEvent = (e) => told.push(e.detail);
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`var App = { currentApp: ${JSON.stringify(currentApp)}, currentTab: ${JSON.stringify(currentTab)},\n${members}\n};\nglobalThis.__App = App;`, sandbox);
   const App = sandbox.__App;
   const flush = () => { const due = timers.splice(0); due.forEach((t) => t.fn()); };

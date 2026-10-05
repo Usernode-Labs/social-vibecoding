@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2760 — the fifth tab carries the signed-in user's USERNAME instead of "Me",
 // on the phone's bar and the desktop rail alike (the owner asked for both).
@@ -125,7 +128,7 @@ test('the bridge trims the name and treats a blank one as nobody', () => {
 // ── 4. The publisher ──────────────────────────────────────────────────
 
 function harness() {
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
     URL, URLSearchParams, console,
@@ -133,7 +136,7 @@ function harness() {
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
-  });
+  }));
   context.window = context;
   vm.runInContext(APP_JS, context);
   const names = [];
@@ -153,13 +156,14 @@ test('_syncViewer publishes the signed-in username, and nobody once signed out',
 });
 
 test('every assignment of App.user is followed by the publish', () => {
+  const APP_JSEnglish = englishUiSource(APP_JS);
   // enterAuthed (every boot and login, snapshot or verified), the verified
   // answer in _reconcileSession, and enterAnonymous. Counted, so a fourth
   // writer added later has to decide what the tab should say.
-  const assigns = APP_JS.match(/^\s*App\.user = [^;]+;$/gm) || [];
+  const assigns = APP_JSEnglish.match(/^\s*App\.user = [^;]+;$/gm) || [];
   assert.equal(assigns.length, 3, 'App.user is assigned in exactly three places');
-  const followed = APP_JS.match(/^\s*App\.user = [^;]+;\n\s*App\._syncViewer\(\);$/gm) || [];
-  assert.equal(followed.length, 3, 'and each one publishes the name on its next line');
+  const followed = APP_JSEnglish.match(/^\s*App\.user = [^;]+;\n(?:\s*await globalThis\.PlatformI18n\?\.useAccountLanguage\?\.\(null\);\n)?\s*App\._syncViewer\(\);$/gm) || [];
+  assert.equal(followed.length, 3, 'and each one publishes the name after language initialization');
 });
 
 test('a rename reaches the tab through the sweep both username writers run', () => {

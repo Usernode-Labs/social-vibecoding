@@ -100,3 +100,7 @@ globalThis.fetch = async function fetchWithLocalRetry(input, init) {
     }
   }
 };
+
+// Classic UI modules normally receive this from the shell bundle before boot.
+// The real runtime keeps English assertions connected to the authoring catalog.
+require('./platform-language').withLanguage(globalThis);

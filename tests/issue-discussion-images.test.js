@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Regression coverage for screenshots in the GitHub half of an issue
 // discussion. GitHub writes resized uploads as raw <img ...> HTML. The shared
 // Markdown renderer escapes arbitrary HTML, so the image-enabled path must
@@ -41,7 +42,7 @@ function loadRenderer() {
     AbortController,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${src}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
     render: (text, options) => sandbox.__DevChat.renderMarkdown(text, options),

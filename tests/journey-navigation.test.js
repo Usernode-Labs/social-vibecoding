@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The shell's half of navigation telemetry (#3369): App._syncPlatformTabs,
 // the one place that settles which screen is showing, reports each step to
@@ -22,7 +24,7 @@ function harness({ gate = 'open' } = {}) {
   const settled = gate === 'open'
     ? Promise.resolve()
     : new Promise((resolve) => { releaseGate = resolve; });
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
     URL, URLSearchParams, console, Promise,
@@ -37,7 +39,7 @@ function harness({ gate = 'open' } = {}) {
     matchMedia: () => ({ matches: true, addEventListener() {} }),
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
-  });
+  }));
   context.window = context;
   vm.runInContext(appSource, context);
   const { App } = context;

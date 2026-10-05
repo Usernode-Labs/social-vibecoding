@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -21,7 +22,7 @@ function context(username = 'Builder') {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);
   c.av.appData = { slug: 'example', can_collaborate: true };

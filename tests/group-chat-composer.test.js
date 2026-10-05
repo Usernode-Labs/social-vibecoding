@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The group chat composer, after #1191 made both of them one component.
 //
 // ── Why this file is new ──────────────────────────────────────────────
@@ -141,15 +142,15 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   const code = stripped(gcJs);
   const fn = code.match(/_renderQuotePreview\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_renderQuotePreview() found');
-  assert.doesNotMatch(fn[1], /innerHTML|classList|getElementById/);
+  assert.doesNotMatch(englishUiSource(fn[1]), /innerHTML|classList|getElementById/);
   // #2387: to the scope the quote was staged in — both composers can be on
   // screen at once now — and to both only when no scope is known.
-  assert.match(fn[1], /_publishComposer\('general', \{ quote: !scope \|\| scope === 'general' \? view : null \}\)/);
-  assert.match(fn[1], /_publishComposer\('thread', \{ quote: !scope \|\| scope === 'thread' \? view : null \}\)/);
+  assert.match(englishUiSource(fn[1]), /_publishComposer\('general', \{ quote: !scope \|\| scope === 'general' \? view : null \}\)/);
+  assert.match(englishUiSource(fn[1]), /_publishComposer\('thread', \{ quote: !scope \|\| scope === 'thread' \? view : null \}\)/);
   // The label the sources produce: a PR number, an @author, or what an
   // authorless row is (#2391).
-  assert.match(fn[1], /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);
-  assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : \(q\.source === 'event' \? 'a platform message' : 'a message'\)/);
+  assert.match(englishUiSource(fn[1]), /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);
+  assert.match(englishUiSource(fn[1]), /q\.author \? `@\$\{q\.author\}` : \(q\.source === 'event' \? 'a platform message' : 'a message'\)/);
 });
 
 test('the attach error line hides itself when there is nothing to say', () => {
@@ -213,19 +214,19 @@ test('the status line is one slot with two owners, and both publish', () => {
   });
   assert.equal(html, '<div id="gc-typing" class="px-3 h-5">bob is typing...</div>');
   assert.match(
-    renderComponent(COMPOSER, 'StatusLineView', { scope: 'thread', className: 'x', status: '' }),
+    englishUiSource(renderComponent(COMPOSER, 'StatusLineView', { scope: 'thread', className: 'x', status: '' })),
     /<div id="gc-thread-typing" class="x"><\/div>/,
   );
 
   const code = stripped(gcJs);
   const fn = code.match(/_renderStatusLine\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_renderStatusLine() found');
-  assert.doesNotMatch(fn[1], /getElementById|textContent/);
+  assert.doesNotMatch(englishUiSource(fn[1]), /getElementById|textContent/);
   // Connection state still WINS over typing when the socket is down: it is
   // the actionable one, and a typing notice from a stale state misleads.
-  assert.match(fn[1], /Reconnecting… \(\$\{queued\} queued\)/);
-  assert.match(fn[1], /_publishComposer\('general'/);
-  assert.match(code, /_publishComposer\('thread', \{ status: `\$\{username\} is typing\.\.\.` \}\)/);
+  assert.match(englishUiSource(fn[1]), /Reconnecting… \(\$\{queued\} queued\)/);
+  assert.match(englishUiSource(fn[1]), /_publishComposer\('general'/);
+  assert.match(englishUiSource(code), /_publishComposer\('thread', \{ status: `\$\{username\} is typing\.\.\.` \}\)/);
 });
 
 test('removing an upload goes back through the module, by index', () => {

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The profile's token-allocation card says what the number is (#1552).
 //
 // It showed a label, a figure blurred behind a "Reveal" button, and one line
@@ -62,18 +63,18 @@ test('the card names what the figure is, not only what it is subject to', () => 
     require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/your-standing.tsx'),
     'utf8');
   // The allocated card explains the quantity …
-  assert.match(src, /Your share of the season&rsquo;s token pool\./);
+  assert.match(englishUiSource(src), /Your share of the season’s token pool\./);
 });
 
 test('someone with no allocation sees no token card at all (#1825)', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/your-standing.tsx'),
     'utf8');
-  assert.match(src, /if \(token\.empty\) return null;/,
+  assert.match(englishUiSource(src), /if \(token\.empty\) return null;/,
     'the empty state renders nothing: no blurred 0, no "nothing allocated" card');
-  assert.doesNotMatch(src, /Nothing allocated to you yet/);
+  assert.doesNotMatch(englishUiSource(src), /Nothing allocated to you yet/);
   // The two states that DO concern the viewer keep their card.
   const gated = src.slice(src.indexOf('if (token.gated)'), src.indexOf('if (token.empty)'));
-  assert.match(gated, /Token allocation withheld/, 'a terms gate may be hiding an allocation, so it stays');
+  assert.match(englishUiSource(gated), /Token allocation withheld/, 'a terms gate may be hiding an allocation, so it stays');
   assert.ok(src.indexOf('if (token.gated)') < src.indexOf('if (token.empty)'), 'and is checked first');
 });

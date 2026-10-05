@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B5: Homeroom bot's name, face and first hello.
 //
@@ -42,17 +43,17 @@ test('B5: the bot is named by its name, a person by their handle', () => {
 
 test('B5: every place Messages names the bot names it, with an AI badge beside it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/);
-  assert.doesNotMatch(row, />Bot<\/span>/);
-  assert.match(row, /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
-  assert.match(row, /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
-  assert.match(row, /label: `Message from \$\{senderName\(message\.sender\)\}`/, 'the report');
-  assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
+  assert.match(englishUiSource(row), /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/);
+  assert.doesNotMatch(englishUiSource(row), />Bot<\/span>/);
+  assert.match(englishUiSource(row), /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
+  assert.match(englishUiSource(row), /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
+  assert.match(englishUiSource(row), /label: `Message from \$\{senderName\(message\.sender\)\}`/, 'the report');
+  assert.doesNotMatch(englishUiSource(row), /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/, 'the list row');
-  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">AI<\/span>/, 'the header');
-  assert.match(read('frontend/src/features/messages/composer.tsx'), /Replying to \{senderName\(reply\.sender\)\}/);
-  assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
+  assert.match(englishUiSource(screen), /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/, 'the list row');
+  assert.match(englishUiSource(screen), /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">AI<\/span>/, 'the header');
+  assert.match(englishUiSource(read('frontend/src/features/messages/composer.tsx')), /Replying to \{senderName\(reply\.sender\)\}/);
+  assert.match(englishUiSource(read('frontend/src/features/messages/store.ts')), /state\.active\.peer\.displayName/, 'the typing line');
 });
 
 test('B5: the bot\'s DM is the first row, and a search lists results as they happened', () => {

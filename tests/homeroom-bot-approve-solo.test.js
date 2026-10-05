@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // B7 (decided: "Approve" on a project that is just you). A change on a
 // project that is just the viewer's, whose one Yes is the Yes it needs, no
@@ -43,7 +46,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
@@ -69,6 +72,7 @@ test('B7: which changes are approved in one tap', () => {
 });
 
 test('B7: the button, the status, the step and ⋯ on a project that is just yours', () => {
+  const SRCEnglish = englishUiSource(SRC);
   const AppView = makeAppView();
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   const [yes, no] = AppView._cardVoteButtonSpecs(change());
@@ -93,14 +97,14 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   AppView.appData = { slug: 'plant-pal', audience: 'invited' };
   assert.equal(AppView.statusPillState(change({ votes_required: 2 })).label, 'Vote · 0/2');
   assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => i.label === 'Don’t approve'));
-  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? 'Your approval' : 'Vote';/);
+  assert.match(SRCEnglish, /const voteStep = AppView\._approveSolo\(item\) \? 'Your approval' : 'Vote';/);
   // B10a: the change page's eyebrow and the card's meta line say it the same way.
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for your approval');
   AppView.appData = { slug: 'plant-pal', audience: 'open' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for approval');
-  assert.match(SRC, /: item\.status === 'promoted' \? AppView\._waitingWords\(item\)/);
-  assert.match(SRC, /\(item\.status === 'promoted' \? AppView\._waitingWords\(item\) : item\.status\)/);
+  assert.match(SRCEnglish, /: item\.status === 'promoted' \? AppView\._waitingWords\(item\)/);
+  assert.match(SRCEnglish, /\(item\.status === 'promoted' \? AppView\._waitingWords\(item\) : item\.status\)/);
 });
 
 test('B7: Approve is one tap, the viewer\'s own Yes, and reads Approved once it is in', () => {

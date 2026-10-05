@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Offline session boot + the visible offline state (#1021).
 //
 // The reported symptom was that reloading the app on a bad connection
@@ -337,7 +339,7 @@ function loadSettings({ boot, fetchImpl }) {
     return Promise.resolve(fetchImpl ? fetchImpl(String(url)) : { ok: false });
   };
   if (boot !== undefined) sandbox.App = { bootSession: () => Promise.resolve(boot) };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SETTINGS, sandbox, { filename: 'settings.js' });
   return sandbox;
 }
@@ -397,23 +399,24 @@ test('a shell with no App at all still reads, rather than hanging', async () => 
 });
 
 test('every boot path settles the published read', () => {
+  const APPEnglish = englishUiSource(APP);
   // Settled from enterAuthed / enterAnonymous rather than from init(),
   // because every boot path ends in one of those two — INCLUDING the ?shot=
   // early returns, which never reach the session read at all and would
   // otherwise leave a joiner waiting forever.
-  assert.match(APP, /bootSession\(\) \{[\s\S]*?App\._bootSession = new Promise/,
+  assert.match(englishUiSource(APPEnglish), /bootSession\(\) \{[\s\S]*?App\._bootSession = new Promise/,
     'the promise is created lazily, so a joiner may arrive before init()');
-  const anon = APP.slice(APP.indexOf('async enterAnonymous()'));
-  assert.match(anon.slice(0, 600), /App\._publishBootSession\(\{ signedOut: true \}\)/);
-  const authed = APP.slice(APP.indexOf('enterAuthed(user) {'));
-  assert.match(authed.slice(0, 900),
+  const anon = APPEnglish.slice(APPEnglish.indexOf('async enterAnonymous()'));
+  assert.match(englishUiSource(anon.slice(0, anon.indexOf('App._publishBootSession') + 100)), /App\._publishBootSession\(\{ signedOut: true \}\)/);
+  const authed = APPEnglish.slice(APPEnglish.indexOf('enterAuthed(user) {'));
+  assert.match(englishUiSource(authed.slice(0, 900)),
     /if \(!App\._sessionFromSnapshot\) App\._publishBootSession\(\{ user \}\);/,
     'a snapshot boot publishes nothing here — the shell has a LAST-KNOWN '
     + 'user, not a confirmed one, and _reconcileSession publishes the answer');
   // Settled once. A reload-free login calls enterAuthed again later and a
   // joiner that already resolved is not listening — which is exactly the
   // pre-existing behaviour, not a regression this introduced.
-  assert.match(APP, /App\._settleBootSession = null;\s*settle\(outcome\);/);
+  assert.match(englishUiSource(APPEnglish), /App\._settleBootSession = null;\s*settle\(outcome\);/);
 });
 
 test('Settings no longer opens the boot read a second time', () => {
@@ -559,12 +562,13 @@ test('every credential exchange refuses to submit while offline', () => {
 });
 
 test('home says "offline", not "failed", when the feed cannot load', () => {
-  const cat = HOME.slice(HOME.indexOf("Couldn't load your apps") - 1500);
-  assert.match(cat, /Offline\.isOffline\(\)/);
-  assert.match(cat, /You're offline/);
+  const home = englishUiSource(HOME);
+  const cat = home.slice(home.indexOf("Couldn't load your apps") - 1500);
+  assert.match(englishUiSource(cat), /Offline\.isOffline\(\)/);
+  assert.match(englishUiSource(cat), /You're offline/);
   // The failure state is still there for real failures (#1899: the grid
   // draws it as the shared error card with a Retry).
-  assert.match(HOME, /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
+  assert.match(englishUiSource(HOME), /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────

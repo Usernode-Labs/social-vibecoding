@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Nothing outside React may write inside a launcher card.
 //
 // #1191 made `#app-list` React-owned. The stateful-island rule in AGENTS.md
@@ -125,9 +126,9 @@ test('onContextMenu is pointer-type aware and toggles by anchor (#1838)', () => 
 });
 
 test('the tile still advertises the hold gesture and no hamburger (#1838)', () => {
-  assert.match(GRID_TSX, /Hold or right-click for app actions/,
+  assert.match(englishUiSource(GRID_TSX), /Hold or right-click for app actions/,
     'the tooltip is the discovery affordance for both mouse entry points');
-  assert.doesNotMatch(GRID_TSX, /card-menu-btn/,
+  assert.doesNotMatch(englishUiSource(GRID_TSX), /card-menu-btn/,
     '#1740 removed the per-tile hamburger badge on purpose — the fix for'
     + ' #1838 is a reachable gesture, not a restored button');
 });

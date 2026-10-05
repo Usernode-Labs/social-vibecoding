@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The duplicate "Generate proposal" button, and why it can no longer recur.
 //
 // An issue row used to render BOTH "Go to session" and a second "Generate
@@ -52,7 +53,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._govProposals = [];

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Messages is one inbox (#2718).
 //
@@ -90,8 +91,8 @@ test('an agent chat falls back to when it was created', () => {
 
 test('each filter admits exactly its own kind, and All admits every one', () => {
   // The Channels filter went with the channels (they live on their hubs).
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'agents']);
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS().map((f) => f[0]), ['all', 'people', 'agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS().map((f) => f[1]), ['All', 'People', 'Agents']);
   for (const kind of ['person', 'agent']) {
     assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
   }
@@ -148,47 +149,48 @@ test('the discussions read fails quietly', () => {
 });
 
 test('the "+" is back at the strip\'s trailing end, and opens a choice rather than guessing (#2778)', () => {
+  const SCREENEnglish = englishUiSource(SCREEN);
   // It was a disc at the far end of the filter row, taken off in #2718's
   // review because ONE control could only mean one of the things the inbox
   // holds. It comes back as a popover of three choices: DM, group, agent.
-  const filters = SCREEN.slice(SCREEN.indexOf('function InboxFilters'));
+  const filters = SCREENEnglish.slice(SCREENEnglish.indexOf('function InboxFilters'));
   const body = filters.slice(0, filters.indexOf('\n}\n'));
   assert.ok(body.indexOf('messages-filter-track') < body.indexOf('<NewMessageButton />'),
     'the plus sits after the track, to the right of the filters');
-  assert.ok(!SCREEN.includes('function InboxCompose'), 'the row of compose buttons under the strip is gone');
-  assert.ok(!SCREEN.includes('id="messages-new-agent"'));
+  assert.ok(!SCREENEnglish.includes('function InboxCompose'), 'the row of compose buttons under the strip is gone');
+  assert.ok(!SCREENEnglish.includes('id="messages-new-agent"'));
 
-  const button = SCREEN.slice(SCREEN.indexOf('function NewMessageButton'));
+  const button = SCREENEnglish.slice(SCREENEnglish.indexOf('function NewMessageButton'));
   const fn = button.slice(0, button.indexOf('\n}\n'));
-  assert.match(fn, /id="messages-new"/);
-  assert.match(fn, /aria-haspopup="menu"/);
+  assert.match(englishUiSource(fn), /id="messages-new"/);
+  assert.match(englishUiSource(fn), /aria-haspopup="menu"/);
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
-  assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
+  assert.match(englishUiSource(fn), /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
   // B8: sized to its rows, which are four with Homeroom bot and three without.
-  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* newChoices\(\)\.length \+ 2 \}/);
-  assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
-  assert.match(fn, /role="menu"/);
-  assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
+  assert.match(englishUiSource(fn), /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* newChoices\(\)\.length \+ 2 \}/);
+  assert.match(englishUiSource(fn), /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
+  assert.match(englishUiSource(fn), /role="menu"/);
+  assert.match(englishUiSource(fn), /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
-  assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
-  assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
+  assert.match(englishUiSource(card), /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
+  assert.match(englishUiSource(card), /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
 
-  assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
-  assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);
+  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'direct', label: 'Direct message'/);
+  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'group', label: 'Group chat'/);
   // B8: building it yourself, beside Homeroom bot, which leads for somebody who has it.
-  assert.match(SCREEN, /\{ key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' \}/);
-  assert.match(SCREEN, /\{ key: 'bot', label: 'Homeroom bot', hint: 'Make an app or ask for a change' \}/);
-  assert.match(SCREEN, /return NEW_CHOICES\.filter\(\(item\) => item\.key !== 'bot' \|\| hasHomeroomBot\(\)\);/);
-  const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
+  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' \}/);
+  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'bot', label: 'Homeroom bot', hint: 'Make an app or ask for a change' \}/);
+  assert.match(englishUiSource(SCREENEnglish), /return NEW_CHOICES\.filter\(\(item\) => item\.key !== 'bot' \|\| hasHomeroomBot\(\)\);/);
+  const start = SCREENEnglish.slice(SCREENEnglish.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));
-  assert.match(starter, /if \(choice === 'bot'\) void openBot\(\);/, 'Homeroom bot opens the chat with it');
-  assert.match(starter, /else if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
+  assert.match(englishUiSource(starter), /if \(choice === 'bot'\) void openBot\(\);/, 'Homeroom bot opens the chat with it');
+  assert.match(englishUiSource(starter), /else if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
     'Agent opens one new conversation with the Mayor, with no app to pick first (#2779)');
-  assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
+  assert.match(englishUiSource(starter), /else openDialog\('messagesCreate', choice\);/,
     'DM and group open the create flow on the matching tab');
   const create = read('frontend/src/features/messages/create-dialog.tsx');
-  assert.match(create, /setMode\(tab === 'group' \? 'group' : 'direct'\)/);
+  assert.match(englishUiSource(create), /setMode\(tab === 'group' \? 'group' : 'direct'\)/);
 });
 
 test('the "+" asks no app first and opens no classic session any more (#2779)', () => {
@@ -274,16 +276,16 @@ test('the filter row ships in the prerendered document, with the plus at its end
 });
 
 test('one row shape per kind; the channels are headed rather than pilled', () => {
-  assert.match(SCREEN, /function GeneralChannelRow/);
-  assert.match(SCREEN, /function AppChannelRow/);
-  assert.match(SCREEN, /function AgentChatRow/);
-  assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
-  assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
-  assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
+  assert.match(englishUiSource(SCREEN), /function GeneralChannelRow/);
+  assert.match(englishUiSource(SCREEN), /function AppChannelRow/);
+  assert.match(englishUiSource(SCREEN), /function AgentChatRow/);
+  assert.doesNotMatch(englishUiSource(SCREEN), /<KindPill kind="app" \/>/, 'a section heading says it once');
+  assert.match(englishUiSource(SCREEN), /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
+  assert.match(englishUiSource(SCREEN), /chats: 'Chats',\s*channels: 'Channels',/);
   // ONE LIST, unheaded: the channels moved to their hubs, which leaves the
   // chats alone, and a lone "Chats" heading would label nothing.
-  assert.match(SCREEN, /sectionRuns\(shown, false\)/, 'no heading over the one list');
-  assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
+  assert.match(englishUiSource(SCREEN), /sectionRuns\(shown, false\)/, 'no heading over the one list');
+  assert.match(englishUiSource(SCREEN), /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
     'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
   const e = (section, more) => ({ section, more });
   assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels'), e('channels', true)], true)
@@ -292,7 +294,7 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
   assert.deepEqual(inbox.sectionRuns([e('channels')], false).map((r) => [r.section, r.head]), [['channels', false]],
     'under a filter: one card, no heading');
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
-  assert.doesNotMatch(conversationRow, /KindPill/,
+  assert.doesNotMatch(englishUiSource(conversationRow), /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
 });
 

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The view-transition safety contract in the usernode-native kit
 // (public/usernode-native/v1/native.js).
 //
@@ -65,13 +66,13 @@ test('zoom destination measurement preserves document scroll when hiding the out
     removeEventListener() {},
   };
   const { physics } = require('../public/usernode-native/v1/native.js');
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     document: { scrollingElement: page }, window: { innerHeight: 800 },
     prefersReducedMotion: false, vtActive: false, zoomCleanup: null,
     ZOOM_EASE: 'ease', ZOOM_RADIUS: '16px',
     zoomPose: physics.zoomPose, zoomRectUsable: physics.zoomRectUsable,
     setTimeout: (fn) => timers.push(fn),
-  });
+  }));
   const start = SRC.indexOf('  function zoomPin(');
   const end = SRC.indexOf('  // Has the document painted', start);
   vm.runInContext(SRC.slice(start, end), context);

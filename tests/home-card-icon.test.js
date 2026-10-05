@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Home-card icon tile states (dapp.json `icon` block): renderAppCard
 // must render exactly one of three tile kinds — a custom image
 // (icon_url), an emoji (icon_emoji), or the first-letter fallback —
@@ -89,7 +90,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.

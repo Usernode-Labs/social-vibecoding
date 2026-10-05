@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -107,7 +108,7 @@ function clientHarness({ search = '' } = {}) {
   sandbox.window = sandbox;
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   const file = path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);
   requests = 0;

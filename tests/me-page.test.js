@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The Me page as the navigation prototype draws it (`scrMe`), as the UI
 // overhaul left it: the profile card, three stat cards, then "Your work" and
 // "More", lists whose rows say what is behind them — shaped in
@@ -162,22 +163,22 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
 test('every part of the older Profile has a home', () => {
   // points, rank, breakdown, token → the Challenges tab's standing card
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
-  assert.match(standing, /Points by event/);
-  assert.match(standing, /Token allocation/);
-  assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);
+  assert.match(englishUiSource(standing), /Points by event/);
+  assert.match(englishUiSource(standing), /Token allocation/);
+  assert.match(englishUiSource(read('frontend/src/features/leaderboard/challenges-pane.tsx')), /<YourStanding \/>/);
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
-  assert.match(sheet, /id="public-profile-controls"/);
-  assert.match(sheet, /Profile\._setPublished\(!published\)/);
-  assert.match(sheet, /Copy public link/);
+  assert.match(englishUiSource(sheet), /id="public-profile-controls"/);
+  assert.match(englishUiSource(sheet), /Profile\._setPublished\(!published\)/);
+  assert.match(englishUiSource(sheet), /Copy public link/);
   // Admin & moderation, node / wallet / staking → Settings; Log out already there
   const rows = read('frontend/src/features/settings/account-rows.tsx');
   for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
     assert.ok(rows.includes(needle), needle);
   }
-  assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
+  assert.match(englishUiSource(read('frontend/src/features/settings/index.tsx')), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
-  assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);
+  assert.match(englishUiSource(read(STORE)), /summary\.challenges && summary\.challenges\.done/);
 });
 
 // #2787: "Publish profile" took five rows and a four-line footnote on a phone

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #platform-parked — the app you left, one tap above the tab bar (#2718), and
 // at the foot of the desktop rail.
@@ -187,7 +189,7 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   const inReveal = [];
   const noop = () => undefined;
   const elements = new Map();
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,
@@ -212,7 +214,7 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
         opts?.after?.();
       },
     },
-  });
+  }));
   context.window = context;
   vm.runInContext(APP_JS, context);
   context.UsernodeReact = {

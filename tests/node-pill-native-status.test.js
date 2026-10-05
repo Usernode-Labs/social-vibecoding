@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -88,7 +89,7 @@ function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true, reader 
   sandbox.NODE_PILL_EMPTY = mod().NODE_PILL_EMPTY;
   sandbox.mountNodeSheet = () => {};
   sandbox.unmountNodeSheet = () => {};
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
   // The module used to end with `NodePill.init()`. It is initialised from the
   // island's layout effect now (so the `hidden` it lifts off #account-row-node

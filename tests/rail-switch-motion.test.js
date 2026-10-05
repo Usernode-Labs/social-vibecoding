@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // A press on the desktop rail is a TAB SWITCH, and it swaps the page in place
 // (#2797). And the platform's own row opens on a plain Workshop panel, with no
@@ -47,7 +50,7 @@ function harness({ wide = true, railHidden = false } = {}) {
     return el;
   }
   const AppView = { appData: null, launchRecordFor: () => null };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'), URL, URLSearchParams, console,
     history: { pushState() {}, replaceState() {} },
     document: { title: '', getElementById: element, querySelector: () => null, addEventListener() {} },
@@ -56,7 +59,7 @@ function harness({ wide = true, railHidden = false } = {}) {
     matchMedia: (q) => ({ matches: q === '(min-width: 768px)' ? wide : false }),
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
     AppView,
-  });
+  }));
   context.window = context;
   vm.runInContext(read('public/js/app.js'), context);
   return { App: context.App, AppView, element };
@@ -235,7 +238,7 @@ test('navigateHome is a tab press only when the Home tab says so — never from 
   const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
   assert.match(body, /const viaTab = !!\(opts && opts\.viaTab === true\);/);
   assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab\)/);
-  const tabBar = read('frontend/src/features/nav/tab-bar.tsx');
+  const tabBar = englishUiSource(read('frontend/src/features/nav/tab-bar.tsx'));
   const home = tabBar.slice(tabBar.indexOf('function onHomeClick('), tabBar.indexOf('\n}\n', tabBar.indexOf('function onHomeClick(')));
   assert.match(home, /\.navigateHome\?\.\(\{ viaTab: true \}\)/, 'the Home tab is the caller that says so');
 });
@@ -271,8 +274,8 @@ test('the Workshop\'s loading state fills its column, and hands off to the Works
   const css = read('public/css/app.css');
   assert.match(css, /#dev-workshop \{ max-width: 760px; margin: 0 auto; width: 100%; \}/,
     'a flex item centred by auto margins shrinks to its content without it — the 72px sliver');
-  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
-  const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const frame = englishUiSource(read('frontend/src/features/dev-board/board-frame.tsx'));
+  const workshop = englishUiSource(read('frontend/src/features/dev-board/workshop/workshop.tsx'));
   const frameRows = Number(/skeletonListHtml\((\d+)\)/.exec(frame.slice(frame.indexOf('const DEV_BODY_WORKSHOP_INITIAL')))[1]);
   const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label="Loading the workshop"/.exec(workshop)[1]);
   assert.equal(frameRows, ownRows, 'the frame\'s placeholder and the Workshop\'s loading state draw the same rows');

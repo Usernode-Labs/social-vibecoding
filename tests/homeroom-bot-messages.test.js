@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #3288: the Homeroom bot posts ordinary messages from its own user.
 //
 // Its thread posts used to be system messages: no author, drawn as centred
@@ -250,7 +251,7 @@ function loadGroupChat() {
     console, setTimeout, clearTimeout, setInterval, clearInterval, Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }

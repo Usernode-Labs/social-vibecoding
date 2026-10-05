@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // A message shown in passing is one line of plain text, not its markdown.
 //
@@ -19,7 +20,7 @@ const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 const { plainText } = loadTsx('frontend/src/features/messages/plain-text.ts');
 
 test('a bot message loses its bold, and keeps its words', () => {
@@ -67,13 +68,13 @@ test('what is not markup is left as it was', () => {
 });
 
 test('the quote, the reply bar and the inbox preview all use it', () => {
-  const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\.content\) \|\| 'Attachment'/);
-  const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /className="messages-reply-draft"[\s\S]{0,200}<p className="truncate">\{plainText\(reply\.content\) \|\| 'Attachment'\}<\/p>/);
+  const row = englishUiSource(read('frontend/src/features/messages/message-row.tsx'));
+  assert.match(englishUiSource(row), /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\?\.content \|\| ''\) \|\| 'Attachment'/);
+  const composer = englishUiSource(read('frontend/src/features/messages/composer.tsx'));
+  assert.match(englishUiSource(composer), /className="messages-reply-draft"[\s\S]{0,200}<p className="truncate">\{plainText\(reply\.content\) \|\| 'Attachment'\}<\/p>/);
   const api = read('frontend/src/features/messages/api.ts');
-  assert.match(api, /latestSummary: plainText\(text\(pick\(row, 'latestSummary', 'latest_summary', 'preview'\)\) \|\| latestMessage\?\.content \|\| ''\),/);
+  assert.match(englishUiSource(api), /latestSummary: plainText\(text\(pick\(row, 'latestSummary', 'latest_summary', 'preview'\)\) \|\| latestMessage\?\.content \|\| ''\),/);
   for (const [file, src] of [['message-row.tsx', row], ['composer.tsx', composer], ['api.ts', api]]) {
-    assert.match(src, /import \{ plainText \} from '\.\/plain-text';/, file);
+    assert.match(englishUiSource(src), /import \{ plainText \} from '\.\/plain-text';/, file);
   }
 });

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #1688: the general chat's merge line names its people, and Friday's card.
 //
@@ -55,7 +57,7 @@ function loadGroupChat(AppView, App) {
   };
   if (AppView) sandbox.AppView = AppView;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }

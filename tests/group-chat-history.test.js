@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -11,7 +12,7 @@ function setup(scope) {
     document: { getElementById: () => null },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/group-chat.js'), 'utf8'), sandbox);
   const gc = sandbox.window.GroupChat;
   gc.appSlug = 'first-app';
@@ -120,7 +121,7 @@ function setupPublished(scope) {
     document: { getElementById: (id) => (id === 'gc-messages' || id === 'gc-thread-messages' ? host : null) },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/group-chat.js'), 'utf8'), sandbox);
   const gc = sandbox.window.GroupChat;
   gc.appSlug = 'first-app';
@@ -191,7 +192,7 @@ function setupScroll(scope) {
     document: { getElementById: (id) => (id === 'gc-messages' || id === 'gc-thread-messages' ? host : null) },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/group-chat.js'), 'utf8'), sandbox);
   const gc = sandbox.window.GroupChat;
   gc.appSlug = 'first-app';

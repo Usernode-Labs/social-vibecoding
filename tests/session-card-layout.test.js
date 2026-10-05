@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // In-progress session cards: the UNIFIED single-row shell (the same
 // DEV_CARD_CLS every other card on the board uses), the muted/draft
 // treatment that marks a private session, the ⋯ menu that absorbed the five
@@ -79,7 +80,7 @@ function makeCtx(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
 }

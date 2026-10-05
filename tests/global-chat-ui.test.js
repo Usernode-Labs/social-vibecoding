@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Source-level browser contract for #2377/#2543's React-owned screen. The repository
 // does not ship a DOM test runtime for TSX islands, so the shell build verifies
@@ -36,55 +37,55 @@ function sourceTree(...parts) {
 }
 
 test('Global Chat ships as an experimental hash-routed sibling screen', () => {
-  assert.match(shell, /<GlobalChatScreen\s*\/>/);
-  assert.match(screen, /id="global-chat-screen"/);
-  assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Saved in Messages\./);
-  assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
-  assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
-  assert.match(appJs, /parts\[0\] === 'chat'/);
-  assert.match(appJs, /navigateToGlobalChat\(threadId\)/);
-  assert.match(appJs, /App\._showOnlyScreen\('global-chat-screen'\)/);
+  assert.match(englishUiSource(shell), /<GlobalChatScreen\s*\/>/);
+  assert.match(englishUiSource(screen), /id="global-chat-screen"/);
+  assert.match(englishUiSource(screen), /Chat\s*<span>\(experimental\)<\/span>/);
+  assert.match(englishUiSource(screen), /Saved in Messages\./);
+  assert.match(englishUiSource(screen), /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
+  assert.match(englishUiSource(screen), /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
+  assert.match(englishUiSource(appJs), /parts\[0\] === 'chat'/);
+  assert.match(englishUiSource(appJs), /navigateToGlobalChat\(threadId\)/);
+  assert.match(englishUiSource(appJs), /App\._showOnlyScreen\('global-chat-screen'\)/);
   // THE ROWS ARE THE INBOX'S (#2718 review), gated on both flags, read once.
   // Starting one moved (#2778): the inbox's "+" offers Agent chat, which for
   // now opens a new dev session on an app the viewer picks — so the compose
   // button `#messages-new-agent` that started a Global Chat is retired, and
   // an existing chat is resumed from its row.
-  assert.match(inbox, /parityReady\s*\n?\s*&& chatBootstrap\.profiles\.globalChat\.enabled === true/);
-  assert.doesNotMatch(inbox, /id="messages-new-agent"/);
-  assert.match(inbox, /data-new-choice=\{item\.key\}/);
+  assert.match(englishUiSource(inbox), /parityReady\s*\n?\s*&& chatBootstrap\.profiles\.globalChat\.enabled === true/);
+  assert.doesNotMatch(englishUiSource(inbox), /id="messages-new-agent"/);
+  assert.match(englishUiSource(inbox), /data-new-choice=\{item\.key\}/);
 });
 
 test('the inbox lists resumable chats, and is where one is deleted', () => {
-  assert.doesNotMatch(header, /GlobalChatNewChatButton|GlobalChatModeSwitch/);
+  assert.doesNotMatch(englishUiSource(header), /GlobalChatNewChatButton|GlobalChatModeSwitch/);
   // THE PANEL'S LIST RETIRED WITH THE PANEL (#2718 review). These chats are
   // rows of the Messages inbox under its Agents filter — one list, loaded and
   // invalidated in one place — so what the panel's copy is asserted for is
   // asserted of that row now.
-  assert.match(inbox, /function AgentChatRow/);
+  assert.match(englishUiSource(inbox), /function AgentChatRow/);
   // #2813: the row's address is the inbox's own, so on a desktop the chat
   // opens beside the list; a phone's router swaps it for `#chat/<id>`.
-  assert.match(inbox, /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
-  assert.match(inbox, /href=\{href\}/);
-  assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
-  assert.match(inbox, /chat\.busy \? 'Working…'/);
+  assert.match(englishUiSource(inbox), /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
+  assert.match(englishUiSource(inbox), /href=\{href\}/);
+  assert.match(englishUiSource(inbox), /data-inbox-agent=\{chat\.id\}/);
+  assert.match(englishUiSource(inbox), /chat\.busy \? 'Working…'/);
   // The DELETE is the one thing that lived nowhere else, so it moved rather
   // than going away with the surface that carried it.
-  assert.match(inbox, /removeGlobalChatThread\(chat\.id\)/);
-  assert.match(inbox, /Delete this chat\?/);
-  assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
-  assert.match(inbox, /DraftTrashIcon/);
+  assert.match(englishUiSource(inbox), /removeGlobalChatThread\(chat\.id\)/);
+  assert.match(englishUiSource(inbox), /Delete this chat\?/);
+  assert.match(englishUiSource(inbox), /\{removing \? 'Deleting…' : 'Delete'\}/);
+  assert.match(englishUiSource(inbox), /DraftTrashIcon/);
 });
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
-  assert.match(store, /open:\s*false/);
-  assert.doesNotMatch(store, /setDocumentMode|CLASSIC_SCREEN_IDS|\.inert\s*=/);
-  assert.doesNotMatch(css, /body\.global-chat-mode/);
-  assert.match(appJs, /'global-chat-screen'/);
-  assert.match(store, /api\.thread\(threadId\)/);
-  assert.match(store, /api\.threads\(\)/);
-  assert.match(store, /deactivateGlobalChat/);
-  assert.match(screen, /aria-label="Close chat"/);
-  assert.match(screen, /onClick=\{\(\) => closeGlobalChat\(\)\}/);
+  assert.match(englishUiSource(store), /open:\s*false/);
+  assert.doesNotMatch(englishUiSource(store), /setDocumentMode|CLASSIC_SCREEN_IDS|\.inert\s*=/);
+  assert.doesNotMatch(englishUiSource(css), /body\.global-chat-mode/);
+  assert.match(englishUiSource(appJs), /'global-chat-screen'/);
+  assert.match(englishUiSource(store), /api\.thread\(threadId\)/);
+  assert.match(englishUiSource(store), /api\.threads\(\)/);
+  assert.match(englishUiSource(store), /deactivateGlobalChat/);
+  assert.match(englishUiSource(screen), /aria-label="Close chat"/);
+  assert.match(englishUiSource(screen), /onClick=\{\(\) => closeGlobalChat\(\)\}/);
 });
 
 test('Global Chat stays isolated from developer and proposal chat implementations', () => {
@@ -109,23 +110,23 @@ test('a streamed turn failure keeps its actionable error instead of being replac
 });
 
 test('suggestions stay compact, button-like, and append through a separate More control', () => {
-  assert.match(screen, /className="global-chat-suggestions"/);
-  assert.match(screen, /suggestions\.map\(\(suggestion\) => \(\s*<button/s);
-  assert.match(screen, />\s*\{suggestion\.label\}\s*<\/button>/s);
-  assert.match(screen, /className="global-chat-more-suggestions"/);
-  assert.match(screen, />\s*More suggestions\s*<\/button>/s);
-  assert.doesNotMatch(screen, /suggestion\.description|Fewer suggestions|Hide suggestions/);
-  assert.match(store, /\.\.\.current\.messages\.map[\s\S]*assistant,/);
-  assert.match(screen, /Hold an option for related suggestions\./);
-  assert.match(screen, /onPointerDown/);
-  assert.match(screen, /onContextMenu/);
-  assert.match(screen, /event\.shiftKey && event\.key === 'F10'/);
-  assert.match(screen, /global-chat-related-suggestions/);
-  assert.match(screen, /selectGlobalChatSuggestion\(suggestion\)/);
-  assert.match(screen, /requestMoreSuggestions\(context\)/);
-  assert.match(store, /if \(!boot\.available && !more\)/);
-  assert.match(screen, /The direct options below still work without it\./);
-  assert.match(screen, /snapshot\.bootstrap && !snapshot\.messages\.length/);
+  assert.match(englishUiSource(screen), /className="global-chat-suggestions"/);
+  assert.match(englishUiSource(screen), /suggestions\.map\(\(suggestion\) => \(\s*<button/s);
+  assert.match(englishUiSource(screen), />\s*\{suggestion\.label\}\s*<\/button>/s);
+  assert.match(englishUiSource(screen), /className="global-chat-more-suggestions"/);
+  assert.match(englishUiSource(screen), />\s*More suggestions\s*<\/button>/s);
+  assert.doesNotMatch(englishUiSource(screen), /suggestion\.description|Fewer suggestions|Hide suggestions/);
+  assert.match(englishUiSource(store), /\.\.\.current\.messages\.map[\s\S]*assistant,/);
+  assert.match(englishUiSource(screen), /Hold an option for related suggestions\./);
+  assert.match(englishUiSource(screen), /onPointerDown/);
+  assert.match(englishUiSource(screen), /onContextMenu/);
+  assert.match(englishUiSource(screen), /event\.shiftKey && event\.key === 'F10'/);
+  assert.match(englishUiSource(screen), /global-chat-related-suggestions/);
+  assert.match(englishUiSource(screen), /selectGlobalChatSuggestion\(suggestion\)/);
+  assert.match(englishUiSource(screen), /requestMoreSuggestions\(context\)/);
+  assert.match(englishUiSource(store), /if \(!boot\.available && !more\)/);
+  assert.match(englishUiSource(screen), /The direct options below still work without it\./);
+  assert.match(englishUiSource(screen), /snapshot\.bootstrap && !snapshot\.messages\.length/);
 });
 
 test('authoritative results never execute model HTML and retain exact Classic escapes', () => {
@@ -137,51 +138,51 @@ test('authoritative results never execute model HTML and retain exact Classic es
     renderers.indexOf('function itemClassicPath'),
     renderers.indexOf('function compactMetadata'),
   );
-  assert.doesNotMatch(renderers, /dangerouslySetInnerHTML|innerHTML|eval\s*\(/);
-  assert.match(renderers, /result\.authoritativeResult/);
-  assert.match(renderers, /Open in Classic/);
-  assert.match(renderers, /closeGlobalChat\(classicPath\)/);
-  assert.match(renderers, /status === 'confirmation_required'/);
-  assert.match(renderers, /confirmGlobalChatAction\(result, token\)/);
-  assert.match(renderers, /payload\.preview/);
-  assert.match(renderers, /result\.renderer === 'app' \? 6 : 3/);
-  assert.match(renderers, /items\.slice\(0, visibleCount\)/);
-  assert.match(renderers, /Math\.min\(count \+ pageSize, items\.length\)/);
-  assert.match(renderers, />\s*Show more\s*<ChevronDownIcon/s);
-  assert.doesNotMatch(renderers, /Show \{items\.length - visible\.length\} more/);
-  assert.match(renderers, /#apps\/\$\{segment\(slug\)\}/);
-  assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/issues\/\$\{segment\(issueNumber\)\}/);
-  assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/governance\/\$\{segment\(governanceId\)\}/);
-  assert.match(renderers, /#settings\/\$\{segment\(group\)\}/);
-  assert.match(renderers, /github_issue_number/);
-  assert.match(renderers, /githubIssueCapability/);
-  assert.match(renderers, /explicitGithubIssueNumber/);
-  assert.match(renderers, /executeGlobalChatResultAction/);
-  assert.match(renderers, /itemAction\([^\n]+?'issues\.for_app'/);
-  assert.match(renderers, /itemAction\([^\n]+?'messages\.for_app'/);
-  assert.match(renderers, /itemAction\([^\n]+?'issue\.comments'/);
-  assert.match(renderers, /itemAction\([^\n]+?'session\.checks'/);
-  assert.match(renderers, /itemAction\([\s\S]*?'notification\.detail'/);
-  assert.match(renderers, /itemAction\([\s\S]*?'leaderboard\.profile'/);
+  assert.doesNotMatch(englishUiSource(renderers), /dangerouslySetInnerHTML|innerHTML|eval\s*\(/);
+  assert.match(englishUiSource(renderers), /result\.authoritativeResult/);
+  assert.match(englishUiSource(renderers), /Open in Classic/);
+  assert.match(englishUiSource(renderers), /closeGlobalChat\(classicPath\)/);
+  assert.match(englishUiSource(renderers), /status === 'confirmation_required'/);
+  assert.match(englishUiSource(renderers), /confirmGlobalChatAction\(result, token\)/);
+  assert.match(englishUiSource(renderers), /payload\.preview/);
+  assert.match(englishUiSource(renderers), /result\.renderer === 'app' \? 6 : 3/);
+  assert.match(englishUiSource(renderers), /items\.slice\(0, visibleCount\)/);
+  assert.match(englishUiSource(renderers), /Math\.min\(count \+ pageSize, items\.length\)/);
+  assert.match(englishUiSource(renderers), />\s*Show more\s*<ChevronDownIcon/s);
+  assert.doesNotMatch(englishUiSource(renderers), /Show \{items\.length - visible\.length\} more/);
+  assert.match(englishUiSource(renderers), /#apps\/\$\{segment\(slug\)\}/);
+  assert.match(englishUiSource(renderers), /#app\/\$\{segment\(slug\)\}\/dev\/issues\/\$\{segment\(issueNumber\)\}/);
+  assert.match(englishUiSource(renderers), /#app\/\$\{segment\(slug\)\}\/dev\/governance\/\$\{segment\(governanceId\)\}/);
+  assert.match(englishUiSource(renderers), /#settings\/\$\{segment\(group\)\}/);
+  assert.match(englishUiSource(renderers), /github_issue_number/);
+  assert.match(englishUiSource(renderers), /githubIssueCapability/);
+  assert.match(englishUiSource(renderers), /explicitGithubIssueNumber/);
+  assert.match(englishUiSource(renderers), /executeGlobalChatResultAction/);
+  assert.match(englishUiSource(renderers), /itemAction\([^\n]+?'issues\.for_app'/);
+  assert.match(englishUiSource(renderers), /itemAction\([^\n]+?'messages\.for_app'/);
+  assert.match(englishUiSource(renderers), /itemAction\([^\n]+?'issue\.comments'/);
+  assert.match(englishUiSource(renderers), /itemAction\([^\n]+?'session\.checks'/);
+  assert.match(englishUiSource(renderers), /itemAction\([\s\S]*?'notification\.detail'/);
+  assert.match(englishUiSource(renderers), /itemAction\([\s\S]*?'leaderboard\.profile'/);
   assert.ok(renderers.includes("|| /\\/dev\\/chat$/.test(base)"));
-  assert.match(renderers, /Platform issues/);
-  assert.match(renderers, /GitHub issues/);
-  assert.match(renderers, /Recent app activity/);
-  assert.match(renderers, /Messages \(7d\)/);
-  assert.match(renderers, /Active time \(7d\)/);
-  assert.match(renderers, /No current proposals\./);
-  assert.match(renderers, /SettingInstruction/);
-  assert.match(renderers, /LocalSettingEditor/);
-  assert.match(renderers, /'settings\.local\.update'/);
-  assert.match(renderers, /await runGlobalChatClientAction\(pending\)/);
-  assert.match(renderers, /selected === saved \? 'Saved' : 'Save'/);
-  assert.match(renderers, /In the "\$\{title\}" settings group \(key: \$\{group\}\)/);
-  assert.match(renderers, /Preserve every value I did not ask to change/);
-  assert.doesNotMatch(renderers, /function safeFields/);
-  assert.doesNotMatch(renderers, />\s*Done\s*</);
-  assert.match(directItemActionSource, /proposalType === 'governance'[\s\S]*'governance\.detail'/);
-  assert.doesNotMatch(directItemActionSource, /return `#app\//);
-  assert.match(classicPathSource, /proposalType === 'governance'[\s\S]*return `#app\/\$\{segment\(slug\)\}\/dev\/governance/);
+  assert.match(englishUiSource(renderers), /Platform issues/);
+  assert.match(englishUiSource(renderers), /GitHub issues/);
+  assert.match(englishUiSource(renderers), /Recent app activity/);
+  assert.match(englishUiSource(renderers), /Messages \(7d\)/);
+  assert.match(englishUiSource(renderers), /Active time \(7d\)/);
+  assert.match(englishUiSource(renderers), /No current proposals\./);
+  assert.match(englishUiSource(renderers), /SettingInstruction/);
+  assert.match(englishUiSource(renderers), /LocalSettingEditor/);
+  assert.match(englishUiSource(renderers), /'settings\.local\.update'/);
+  assert.match(englishUiSource(renderers), /await runGlobalChatClientAction\(pending\)/);
+  assert.match(englishUiSource(renderers), /selected === saved \? 'Saved' : 'Save'/);
+  assert.match(englishUiSource(renderers), /In the "\$\{title\}" settings group \(key: \$\{group\}\)/);
+  assert.match(englishUiSource(renderers), /Preserve every value I did not ask to change/);
+  assert.doesNotMatch(englishUiSource(renderers), /function safeFields/);
+  assert.doesNotMatch(englishUiSource(renderers), />\s*Done\s*</);
+  assert.match(englishUiSource(directItemActionSource), /proposalType === 'governance'[\s\S]*'governance\.detail'/);
+  assert.doesNotMatch(englishUiSource(directItemActionSource), /return `#app\//);
+  assert.match(englishUiSource(classicPathSource), /proposalType === 'governance'[\s\S]*return `#app\/\$\{segment\(slug\)\}\/dev\/governance/);
 });
 
 test('app results reuse the platform icon primitive for images, emoji, and fallback letters', () => {
@@ -235,68 +236,68 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
 });
 
 test('Global Chat has a mobile/native layout and accessible composer controls', () => {
-  assert.match(api, /native_android/);
-  assert.match(api, /native_ios/);
-  assert.match(api, /viewport: window\.matchMedia\('\(max-width: 767px\)'\)/);
-  assert.match(screen, /aria-label="Chat \(experimental\)"/);
-  assert.match(screen, /aria-label="Message Global Chat"/);
-  assert.match(screen, /aria-label=\{sending \? 'Stop response' : 'Send message'\}/);
-  assert.match(screen, /className="global-chat-progress"/);
-  assert.match(screen, /<summary>Activity<\/summary>/);
-  assert.match(screen, /Model: \{progress\.model\}/);
-  assert.match(screen, /Reasoning: \{progress\.reasoningEffort\} effort/);
-  assert.match(store, /event\.type === 'turn\.progress'/);
-  assert.match(store, /event\.type === 'tool\.completed'/);
+  assert.match(englishUiSource(api), /native_android/);
+  assert.match(englishUiSource(api), /native_ios/);
+  assert.match(englishUiSource(api), /viewport: window\.matchMedia\('\(max-width: 767px\)'\)/);
+  assert.match(englishUiSource(screen), /aria-label="Chat \(experimental\)"/);
+  assert.match(englishUiSource(screen), /aria-label="Message Global Chat"/);
+  assert.match(englishUiSource(screen), /aria-label=\{sending \? 'Stop response' : 'Send message'\}/);
+  assert.match(englishUiSource(screen), /className="global-chat-progress"/);
+  assert.match(englishUiSource(screen), /<summary>Activity<\/summary>/);
+  assert.match(englishUiSource(screen), /Model: \{progress\.model\}/);
+  assert.match(englishUiSource(screen), /Reasoning: \{progress\.reasoningEffort\} effort/);
+  assert.match(englishUiSource(store), /event\.type === 'turn\.progress'/);
+  assert.match(englishUiSource(store), /event\.type === 'tool\.completed'/);
   // BUG e: on a phone #global-chat-screen keeps the platform tab bar up, and
   // the composer cleared only the home-indicator strip — "Ask Homeroom…" sat
   // under the bar. It wears the shell's safe-bar contract now, which clears
   // whichever of the tab bar and the strip is taller; and the transcript
   // above it no longer reserves that band too (it is always above the
   // composer, so the band is the composer's to clear, once).
-  assert.match(screen, /<form className="global-chat-composer platform-safe-bar" onSubmit=\{submit\}>/);
-  assert.match(screen, /<div ref=\{scroll\} className="global-chat-transcript" aria-live="polite">/);
-  assert.match(css,
+  assert.match(englishUiSource(screen), /<form className="global-chat-composer platform-safe-bar" onSubmit=\{submit\}>/);
+  assert.match(englishUiSource(screen), /<div ref=\{scroll\} className="global-chat-transcript" aria-live="polite">/);
+  assert.match(englishUiSource(css),
     /\.platform-safe-bar \{[^}]*padding-bottom: calc\(0\.5rem \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\) !important;/,
     'the contract the composer wears');
   // Comments off first: the rule's own note quotes the old declaration to say
   // what it replaced, and prose about a value is not the value.
   const composerRule = /\n\.global-chat-composer \{([\s\S]*?)\n\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ''));
   assert.ok(composerRule, 'the composer rule');
-  assert.match(composerRule[1], /padding: 10px 12px 8px;/,
+  assert.match(englishUiSource(composerRule[1]), /padding: 10px 12px 8px;/,
     'its own bottom is the safe bar\'s base gap, so desktop renders what the rule says');
-  assert.doesNotMatch(composerRule[1], /var\(--platform-safe-bottom/,
+  assert.doesNotMatch(englishUiSource(composerRule[1]), /var\(--platform-safe-bottom/,
     'and it no longer clears the strip alone');
-  assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
-  assert.match(css, /\.global-chat-progress-current/);
+  assert.match(englishUiSource(css), /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
+  assert.match(englishUiSource(css), /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
+  assert.match(englishUiSource(css), /\.global-chat-progress-current/);
 });
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
-  assert.match(settings, /idPrefix = embedded \? `chat-global-chat-\$\{instanceId\}` : 'settings-global-chat'/);
-  assert.match(settings, /id=\{`\$\{idPrefix\}-enabled`\}/);
-  assert.match(settings, /Enable experimental Global Chat/);
-  assert.match(settings, /api\.saveProfile\(\{ enabled: nextEnabled \}\)/);
-  assert.match(settings, /initializeGlobalChat\(\{ force: true \}\)/);
-  assert.match(settings, /Global Chat model/);
-  assert.match(settings, /Low · recommended for GLM Flash/);
-  assert.match(settings, /Monthly Chat cap in USD/);
-  assert.match(settings, /Global Chat this month/);
-  assert.match(settings, /Overall OpenRouter remaining/);
-  assert.match(settings, /Development AI settings/);
-  assert.match(settings, /This profile only controls Global Chat/);
+  assert.match(englishUiSource(settings), /idPrefix = embedded \? `chat-global-chat-\$\{instanceId\}` : 'settings-global-chat'/);
+  assert.match(englishUiSource(settings), /id=\{`\$\{idPrefix\}-enabled`\}/);
+  assert.match(englishUiSource(settings), /Enable experimental Global Chat/);
+  assert.match(englishUiSource(settings), /api\.saveProfile\(\{ enabled: nextEnabled \}\)/);
+  assert.match(englishUiSource(settings), /initializeGlobalChat\(\{ force: true \}\)/);
+  assert.match(englishUiSource(settings), /Global Chat model/);
+  assert.match(englishUiSource(settings), /Low · recommended for GLM Flash/);
+  assert.match(englishUiSource(settings), /Monthly Chat cap in USD/);
+  assert.match(englishUiSource(settings), /Global Chat this month/);
+  assert.match(englishUiSource(settings), /Overall OpenRouter remaining/);
+  assert.match(englishUiSource(settings), /Development AI settings/);
+  assert.match(englishUiSource(settings), /This profile only controls Global Chat/);
 });
 
 test('rendered rows disclose locally and settings can be edited and saved in place', () => {
-  assert.match(renderers, /aria-expanded=\{selectionAction \? undefined : expanded\}/);
-  assert.match(renderers, /className="global-chat-item-toggle"/);
-  assert.match(renderers, /action\.mode === 'inline'/);
-  assert.match(renderers, /loadGlobalChatInlineResults/);
-  assert.match(renderers, /<GlobalChatSettingsEditor embedded \/>/);
-  assert.match(renderers, /<DevelopmentAISettingsEditor \/>/);
-  assert.match(developmentSettings, /\/api\/me\/coding-agent/);
-  assert.match(developmentSettings, /method: 'PATCH'/);
-  assert.match(developmentSettings, /Save development AI/);
-  assert.match(developmentSettings, /does not change the Global Chat model/);
-  assert.match(css, /\.global-chat-item-toggle/);
-  assert.match(css, /\.global-chat-result-nested/);
+  assert.match(englishUiSource(renderers), /aria-expanded=\{selectionAction \? undefined : expanded\}/);
+  assert.match(englishUiSource(renderers), /className="global-chat-item-toggle"/);
+  assert.match(englishUiSource(renderers), /action\.mode === 'inline'/);
+  assert.match(englishUiSource(renderers), /loadGlobalChatInlineResults/);
+  assert.match(englishUiSource(renderers), /<GlobalChatSettingsEditor embedded \/>/);
+  assert.match(englishUiSource(renderers), /<DevelopmentAISettingsEditor \/>/);
+  assert.match(englishUiSource(developmentSettings), /\/api\/me\/coding-agent/);
+  assert.match(englishUiSource(developmentSettings), /method: 'PATCH'/);
+  assert.match(englishUiSource(developmentSettings), /Save development AI/);
+  assert.match(englishUiSource(developmentSettings), /does not change the Global Chat model/);
+  assert.match(englishUiSource(css), /\.global-chat-item-toggle/);
+  assert.match(englishUiSource(css), /\.global-chat-result-nested/);
 });

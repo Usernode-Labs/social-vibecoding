@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B4: the person stays the author, and the bot speaks in plain words.
 //
@@ -67,7 +68,7 @@ test('B4: a change the bot built credits who asked for it, once', () => {
 
 test('B4: a change is named a change on its card', () => {
   const src = fs.readFileSync(require.resolve('../frontend/src/features/messages/format.tsx'), 'utf8');
-  assert.match(src, /proposal: 'Change',/);
+  assert.match(englishUiSource(src), /proposal: 'Change',/);
 });
 
 test('B4: their words and the credit, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {

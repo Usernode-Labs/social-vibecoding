@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Message" on a person's page (the navigation prototype's person page,
 // `pageParts` → 'person'): #profile/<name> and #leaderboard/users/<name>.
 //
@@ -91,7 +92,7 @@ test('#leaderboard/users/<name>: the same gate, decided in the Kudos pane\'s mod
   const run = (user, who) => {
     const ctx = { window: null, App: { user }, location: { hash: '' } };
     ctx.window = ctx;
-    vm.createContext(ctx);
+    vm.createContext(withLanguage(ctx));
     vm.runInContext(`${src.replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
     ctx.__lb.profileUser = who;
     return ctx.__lb.chromeView().canMessage;

@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // A just-created app appears on My Apps while it is still building (#1547).
 //
 // `App.handleAppStatusUpdate` updated the home grid only when a card for that
@@ -39,7 +41,7 @@ function harness() {
   assert.ok(body, 'the helper is defined in app.js');
   const loads = [];
   const sandbox = { loads };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     'var Home = { load: function () { loads.push(1); } };'
     + 'var window = { Home: Home };'
@@ -91,6 +93,7 @@ test('it is reached exactly when there is no card for that slug', () => {
 });
 
 test('the tile already has the words for a building app', () => {
+  const HOMEEnglish = englishUiSource(HOME);
   // This change puts the card there; the label was never the missing part.
-  assert.match(HOME, /app\.status === 'creating' \? 'Spinning up\.\.\.'/);
+  assert.match(HOMEEnglish, /app\.status === 'creating' \? 'Spinning up\.\.\.'/);
 });

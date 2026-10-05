@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The Workshop tab comes back to the app Workshop you left (#2776).
 //
@@ -65,7 +67,7 @@ function router({ catalog = [WHITEBOARD, NOTES], appsLoaded = true, storage = ne
   const errors = [];
   const noop = () => undefined;
   const elements = new Map();
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     URL, URLSearchParams, setTimeout, clearTimeout,
     console: { ...console, error: (...a) => errors.push(a) },
     document: {
@@ -91,7 +93,7 @@ function router({ catalog = [WHITEBOARD, NOTES], appsLoaded = true, storage = ne
         opts?.after?.();
       },
     },
-  });
+  }));
   context.location = new URL('https://homeroom.test/');
   const move = (url) => { context.location = new URL(url, context.location.href); };
   context.history = { pushState: (_s, _t, url) => move(url), replaceState: (_s, _t, url) => move(url), state: null };

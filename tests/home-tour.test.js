@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The welcome tour (#2255), which replaces the one-line #home-welcome banner
 // (#1561).
 //
@@ -110,14 +111,14 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole Shortcuts section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
+  assert.match(englishUiSource(byId.apps.body), /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
   // #3567: the Communities tab, whose key and id are still `workshop`.
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
-  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/nav/tab-bar.tsx')),
     /\{ key: 'workshop' as const, label: 'Communities', href: '#communities'/,
     'the tab the step points at is the one labelled Communities');
   // THE MENU ARC: the mark that opens it, then the well inside it that holds
@@ -126,11 +127,11 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // feature.
   assert.deepEqual([...byId['app-menu'].targets], ['#platform-mark-btn']);
   assert.deepEqual([...byId['menu-actions'].targets], ['#improve-quick-actions', '#improve-row-feedback']);
-  assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-quick-actions"/,
+  assert.match(englishUiSource(read('frontend/src/features/improve/actions.tsx')), /id="improve-quick-actions"/,
     'the well the step draws around is a real element');
   assert.ok(!byId.improve, 'the Improve row retired with the panel it opened');
   for (const src of [STEPS_SRC, OVERLAY_SRC]) {
-    assert.doesNotMatch(src, /\bmock\b/i, 'the inline still life is gone, not hidden');
+    assert.doesNotMatch(englishUiSource(src), /\bmock\b/i, 'the inline still life is gone, not hidden');
   }
 });
 
@@ -1014,12 +1015,12 @@ test('on a phone, the card clears the whole menu sheet when there is room above 
 
 test('Settings offers Replay the tour, and it is a registered section', () => {
   const html = renderComponent('frontend/src/features/settings/sections/tour.tsx', 'TourSection');
-  assert.match(html, /data-settings-section="tour"/);
-  assert.match(html, /class="hidden"/, 'the pane ships hidden, like its siblings');
-  assert.match(html, /id="settings-tour-replay"/);
-  assert.match(html, /Replay the tour/);
+  assert.match(englishUiSource(html), /data-settings-section="tour"/);
+  assert.match(englishUiSource(html), /class="hidden"/, 'the pane ships hidden, like its siblings');
+  assert.match(englishUiSource(html), /id="settings-tour-replay"/);
+  assert.match(englishUiSource(html), /Replay the tour/);
   // Registered in the menu, a page of its own under Help & about.
-  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Help & about' \}/);
+  assert.match(englishUiSource(SETTINGS_JS), /\{ key: 'tour', label: 'Welcome tour', group: 'Help & about' \}/);
 });
 
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {

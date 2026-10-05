@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #2387 follow-up: FULL WIDTH on every discussion pane.
 //
@@ -46,19 +47,19 @@ function fn(name) {
 
 test('the toggle: "Full width" with arrows out, "Show the conversation list" with arrows in', () => {
   const toggle = fn('FullWidthToggle');
-  assert.match(toggle, /const label = collapsed \? 'Show the conversation list' : 'Full width';/);
-  assert.match(toggle, /className="messages-thread-action messages-list-toggle"/,
+  assert.match(englishUiSource(toggle), /const label = collapsed \? 'Show the conversation list' : 'Full width';/);
+  assert.match(englishUiSource(toggle), /className="messages-thread-action messages-list-toggle"/,
     'the disc every header action is, and the class the checks and app.css find it by');
-  assert.match(toggle, /aria-pressed=\{collapsed\}/);
-  assert.match(toggle, /aria-label=\{label\}\s+title=\{label\}/);
-  assert.match(toggle, /onClick=\{\(\) => setListCollapsed\(!collapsed\)\}/);
-  assert.match(toggle, /\{collapsed \? <ArrowsPointingInIcon aria-hidden="true" \/> : <ArrowsPointingOutIcon aria-hidden="true" \/>\}/,
+  assert.match(englishUiSource(toggle), /aria-pressed=\{collapsed\}/);
+  assert.match(englishUiSource(toggle), /aria-label=\{label\}\s+title=\{label\}/);
+  assert.match(englishUiSource(toggle), /onClick=\{\(\) => setListCollapsed\(!collapsed\)\}/);
+  assert.match(englishUiSource(toggle), /\{collapsed \? <ArrowsPointingInIcon aria-hidden="true" \/> : <ArrowsPointingOutIcon aria-hidden="true" \/>\}/,
     'the glyph is the verb a press performs');
-  assert.doesNotMatch(SCREEN, /SidebarIcon/, 'the rail glyph is the platform sidebar\'s toggle, not this one');
-  assert.doesNotMatch(SCREEN, /ListToggle/);
+  assert.doesNotMatch(englishUiSource(SCREEN), /SidebarIcon/, 'the rail glyph is the platform sidebar\'s toggle, not this one');
+  assert.doesNotMatch(englishUiSource(SCREEN), /ListToggle/);
 
-  assert.match(ICONS, /export const ArrowsPointingOutIcon = stroked\('ArrowsPointingOutIcon', 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'\);/);
-  assert.match(ICONS, /export const ArrowsPointingInIcon = stroked\('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'\);/);
+  assert.match(englishUiSource(ICONS), /export const ArrowsPointingOutIcon = stroked\('ArrowsPointingOutIcon', 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'\);/);
+  assert.match(englishUiSource(ICONS), /export const ArrowsPointingInIcon = stroked\('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'\);/);
 });
 
 test('a conversation, a group and #general: at the right of the header, just before ⋯', () => {
@@ -69,45 +70,45 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
   assert.ok(at > header.indexOf('aria-label="Group members"'), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
+  assert.match(englishUiSource(header), /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
     'immediately before the ⋯ menu');
   // #3407: #general's way back to its hub leads the row; the toggle does not.
-  assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
+  assert.match(englishUiSource(header), /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
 });
 
 test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
   const pane = fn('AppDiscussionThread');
-  assert.match(pane, /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
+  assert.match(englishUiSource(pane), /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
   // #3407: the channel's way back to its hub leads the row, then the tile.
-  assert.match(pane, /<header className="messages-thread-header">\s*<PageBackButton [^\n]*\/>\s*<AppIconLink\s+slug=\{slug\}\s+name=\{name\}\s+data-icon=/, 'no longer leading the row');
+  assert.match(englishUiSource(pane), /<header className="messages-thread-header">\s*<PageBackButton [^\n]*\/>\s*<AppIconLink\s+slug=\{slug\}\s+name=\{name\}\s+data-icon=/, 'no longer leading the row');
   // A channel is its community's room and opens with no list beside it, so
   // the toggle for that list stands down on it.
-  assert.match(fn('FullWidthToggle'),
+  assert.match(englishUiSource(fn('FullWidthToggle')),
     /if \(snap\.route\.appSlug \|\| \(snap\.active\?\.kind === 'channel' && snap\.active\.id === snap\.route\.conversationId\)\) return null;/);
 });
 
 test('a dev session: in the pane\'s bar, after "Open full view"', () => {
   const pane = fn('AgentSessionThread');
-  assert.match(pane, /<div className="messages-session-bar">\s*<a className="messages-session-full" href=\{full\}>Open full view<\/a>\s*<FullWidthToggle \/>\s*<\/div>/);
-  assert.match(CSS, /\.messages-session-bar \{\s*display: flex;\s*align-items: center;\s*justify-content: flex-end;\s*gap: 12px;/);
+  assert.match(englishUiSource(pane), /<div className="messages-session-bar">\s*<a className="messages-session-full" href=\{full\}>Open full view<\/a>\s*<FullWidthToggle \/>\s*<\/div>/);
+  assert.match(englishUiSource(CSS), /\.messages-session-bar \{\s*display: flex;\s*align-items: center;\s*justify-content: flex-end;\s*gap: 12px;/);
 });
 
 test('an agent chat and a Mayor session: handed to their panels, drawn at the end of their bars', () => {
-  assert.match(fn('AgentChatThread'), /<GlobalChatPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
-  assert.match(fn('MayorSessionThread'), /<AgentSessionPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
+  assert.match(englishUiSource(fn('AgentChatThread')), /<GlobalChatPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
+  assert.match(englishUiSource(fn('MayorSessionThread')), /<AgentSessionPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
 
   // The global chat: last in its toolbar, after New. Its own screen passes
   // nothing, so that surface is unchanged.
-  assert.match(CHAT, /export function GlobalChatPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
-  assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
-  assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
+  assert.match(englishUiSource(CHAT), /export function GlobalChatPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
+  assert.match(englishUiSource(CHAT), /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
+  assert.match(englishUiSource(CHAT), /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
   // The Mayor: the session bar's `action`, after Changes, the "Open app"
   // button (#2779 follow-up), and just before the session's ⋯, as on the
   // other panes.
-  assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
-  assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
+  assert.match(englishUiSource(SESSION), /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
+  assert.match(englishUiSource(SESSION), /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
+  assert.match(englishUiSource(SESSION), /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

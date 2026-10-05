@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3296: an OpenRouter model can run in Claude Code instead of Codex. The
 // backend id stays `codex_openrouter` (the OpenRouter venue: key, ledger,
@@ -66,15 +67,15 @@ test('the runner follows the harness for OpenRouter and never for Anthropic', ()
 });
 
 test('the platform default puts GLM in Claude Code and DeepSeek in Codex', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'config.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'config.js'), 'utf8'));
   assert.match(src, /openrouterModelHarnesses: parseOpenRouterHarnessMap\(/);
   assert.match(src, /'z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex'/);
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
+  const manifest = JSON.parse(englishUiSource(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8')));
   const declared = (manifest.platform_env || []).find((s) => s.key === 'OPENROUTER_MODEL_HARNESSES');
   assert.ok(declared, 'dapp.json declares OPENROUTER_MODEL_HARNESSES');
   assert.equal(declared.required, false);
   assert.equal(declared.default, `${GLM}=claude,${DEEPSEEK}=codex`);
-  assert.match(fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8'),
+  assert.match(englishUiSource(fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8')),
     /^OPENROUTER_MODEL_HARNESSES=z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex$/m);
 });
 
@@ -357,15 +358,15 @@ test('Codex and Anthropic Claude journals parse exactly as before', () => {
 });
 
 test('the dispatch records the harness so a restart replays the right parser', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'services', 'worker.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'services', 'worker.js'), 'utf8'));
   assert.match(src, /harness: resolvedHarness \|\| undefined,/);
   assert.match(src, /state\.agentHarness = recoveredBackend\.harness;/);
-  const sessions = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
+  const sessions = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8'));
   assert.match(sessions, /agentHarness: activeTurn\.harness \|\| null,/);
   // In the dev chat, its scout and build opt in to the per-model harness (the
   // Homeroom bot's turns do too: tests/homeroom-bot-claude-harness.test.js).
   assert.equal((sessions.match(/harness: 'auto',/g) || []).length, 2);
-  const ledger = fs.readFileSync(path.join(ROOT, 'src', 'services', 'agent-turn.js'), 'utf8');
+  const ledger = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'services', 'agent-turn.js'), 'utf8'));
   assert.match(ledger, /harness: registry\.resolveOpenRouterHarness\(ctx\.agentHarness\),\n\s+turnUuid: turnId,/);
 });
 
@@ -382,7 +383,7 @@ test('stop and liveness probes see the Claude-over-OpenRouter adapter', () => {
 // test pinning that source passed on text nobody saw. So pin the runtime copy,
 // and hold the static copy equal to it.
 function renderedOpenRouterCopy() {
-  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  const settings = englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8'));
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
   const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
   const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
@@ -395,14 +396,14 @@ function renderedOpenRouterCopy() {
 
 test('the OpenRouter settings copy people see names the models that run in Claude Code', () => {
   const copy = renderedOpenRouterCopy();
-  assert.match(copy.intro, /Models marked Claude Code in the model list run in Claude Code\./);
+  assert.match(englishUiSource(copy.intro), /Models marked Claude Code in the model list run in Claude Code\./);
   // Which CLI runs the rest is not a product choice, so it stays unnamed.
-  assert.doesNotMatch(`${copy.heading} ${copy.intro} ${copy.label}`, /Codex/);
+  assert.doesNotMatch(englishUiSource(`${copy.heading} ${copy.intro} ${copy.label}`), /Codex/);
 });
 
 test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
   const copy = renderedOpenRouterCopy();
-  const tsx = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
+  const tsx = englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8'));
   const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*([^<]*?)\s*<\/SectionHeading>/.exec(tsx);
   assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
   assert.equal(section[1], copy.heading);
@@ -413,23 +414,23 @@ test('the static OpenRouter settings markup says exactly what the runtime copy s
 });
 
 test('the transcript and the log name the CLI that actually ran', () => {
-  const transcript = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'transcript.ts'), 'utf8');
-  assert.match(transcript, /meta\.agentBackend === 'codex_openrouter' && meta\.agentHarness !== 'claude' \? 'Codex' : 'Claude Code'/);
-  const app = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
-  assert.match(app, /data\.agentBackend === 'codex_openrouter' && data\.agentHarness !== 'claude'\n\s+\? 'Codex log'/);
-  const sessions = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
-  assert.match(sessions, /\.\.\.\(harness === 'claude' \? \{ agentHarness: harness \} : \{\}\),/);
+  const transcript = englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'transcript.ts'), 'utf8'));
+  assert.match(englishUiSource(transcript), /meta\.agentBackend === 'codex_openrouter' && meta\.agentHarness !== 'claude' \? 'Codex' : 'Claude Code'/);
+  const app = englishUiSource(fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8'));
+  assert.match(englishUiSource(app), /data\.agentBackend === 'codex_openrouter' && data\.agentHarness !== 'claude'\n\s+\? 'Codex log'/);
+  const sessions = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8'));
+  assert.match(englishUiSource(sessions), /\.\.\.\(harness === 'claude' \? \{ agentHarness: harness \} : \{\}\),/);
 });
 
 test('pickers mark the Claude Code models and keep their thinking level', () => {
-  const credentials = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'credentials.js'), 'utf8');
-  assert.match(credentials, /harness: registry\.openRouterHarnessForModel\(model\.id, config\),/);
+  const credentials = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'routes', 'credentials.js'), 'utf8'));
+  assert.match(englishUiSource(credentials), /harness: registry\.openRouterHarnessForModel\(model\.id, config\),/);
   for (const file of ['frontend/src/features/dev-chat/dev-chat.js', 'frontend/src/features/settings/settings.js']) {
-    assert.match(fs.readFileSync(path.join(ROOT, file), 'utf8'),
+    assert.match(englishUiSource(fs.readFileSync(path.join(ROOT, file), 'utf8')),
       /if \(model\?\.harness === 'claude'\) badges\.push\('Claude Code'\);/, file);
   }
-  const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
-  assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
+  const choice = englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8'));
+  assert.match(englishUiSource(choice), /return !model \|\| model\.supportsReasoning !== false;/);
   assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
-  assert.match(choice, /'Runs on your OpenRouter key, in Claude Code'/);
+  assert.match(englishUiSource(choice), /'Runs on your OpenRouter key, in Claude Code'/);
 });

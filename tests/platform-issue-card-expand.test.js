@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #699: the "Suggested platform report" card must let the user read the
 // FULL report text before confirming or dismissing it. Bodies over the
 // 300-char preview render as a <details> whose summary carries the preview
@@ -69,7 +70,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.renderMarkdown = (t) => String(t || '');

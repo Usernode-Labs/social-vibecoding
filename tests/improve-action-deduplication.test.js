@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #1490: New change and Give feedback belong to Improve. The board's +
 // retains its distinct actions on both desktop and touch, with the same gates.
@@ -180,7 +183,7 @@ function menuHarness(touch) {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW, sandbox);
   const { AppView } = sandbox;
   AppView.refreshDevChatSecretsState = () => {};
@@ -240,7 +243,7 @@ test('Ask for a change and Start a new change each exist once, and the read-only
   // ONE method, whichever surface it is on.
   const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1, 'the button is here');
-  assert.match(PANEL, /id="improve-row-feedback"\s+label="Ask for a change"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.match(englishUiSource(PANEL), /id="improve-row-feedback"\s+label="Ask for a change"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
   assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 0, 'and it is alone in its well');
   assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
     'and not in two places — that id is what the outbox dot\'s writer selects');
@@ -248,16 +251,16 @@ test('Ask for a change and Start a new change each exist once, and the read-only
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
   // B8: the row is Build it yourself, beside Ask for a change going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it yourself"/);
+  assert.match(englishUiSource(MENU), /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it yourself"/);
   // A read-only viewer may not start a change, as the button's gate was.
-  assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
+  assert.match(englishUiSource(MENU), /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
   // only on a writeable board (it is inside the menu's readOnly gate).
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.equal(ROW.split('data-plus="new-change"').length - 1, 1, 'one row in the ⋯');
-  assert.match(ROW, /data-plus="new-change"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); void Improve\.startSession\(\); \}\}/);
+  assert.match(englishUiSource(ROW), /data-plus="new-change"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); void Improve\.startSession\(\); \}\}/);
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork'], 'and not for a read-only viewer');
-  assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
+  assert.doesNotMatch(englishUiSource(VIEW), /querySelector\('\[data-plus="proposal"\]'\)/);
 });
 
 // ── #1900: asking for a change is on the board again ─────────────────────
@@ -327,7 +330,7 @@ function improveHarness(currentApp = 'demo') {
     AppView: { createProposal: () => calls.push(['new-change', sandbox.App.currentApp]) },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
   // flag, not the Improve panel's — that panel retired (#2718 review).

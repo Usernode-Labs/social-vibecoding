@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // "You're in" and the first-session tour after an invite
 // (frontend/src/features/first-session). The tour walks real screens, so
@@ -65,10 +66,10 @@ test('the Communities and Messages steps point at the bar\'s own tabs, the same 
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /\{ key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon \}/);
-  assert.match(bar, /\{ key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon \}/);
-  assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
-  assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
+  assert.match(englishUiSource(bar), /\{ key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon \}/);
+  assert.match(englishUiSource(bar), /\{ key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon \}/);
+  assert.match(englishUiSource(bar), /id=\{`platform-tab-\$\{key\}`\}/);
+  assert.equal((englishUiSource(bar).match(/id="platform-tabs"/g) || []).length, 1);
 });
 
 test('a step draws only its own target, measured before its card is painted', () => {
@@ -130,31 +131,31 @@ test('the Communities tab opens on the project the tour is about', () => {
 
 test('App._followInvite welcomes somebody the link has just let in, and lands anyone else as before', () => {
   const app = read('public/js/app.js');
-  assert.match(app, /const fresh = standing\.joinedAt && Date\.now\(\) - Date\.parse\(standing\.joinedAt\) < 30 \* 60 \* 1000;\s+if \(fresh && welcome\(standing, standing\.slug\)\) return;\s+openHub\(standing\.slug\);/);
-  assert.match(app, /if \(welcome\(\{ \.\.\.standing, newAccount: false \}, result\.slug\)\) return;\s+toast\(`You joined \$\{result\.name \|\| name\}\.`\);/);
+  assert.match(englishUiSource(app), /const fresh = standing\.joinedAt && Date\.now\(\) - Date\.parse\(standing\.joinedAt\) < 30 \* 60 \* 1000;\s+if \(fresh && welcome\(standing, standing\.slug\)\) return;\s+openHub\(standing\.slug\);/);
+  assert.match(englishUiSource(app), /if \(welcome\(\{ \.\.\.standing, newAccount: false \}, result\.slug\)\) return;\s+toast\(`You joined \$\{result\.name \|\| name\}\.`\);/);
   const invites = read('src/services/community-invites.js');
-  assert.match(invites, /joinedAt: appliedAt instanceof Date \? appliedAt\.toISOString\(\) : \(appliedAt \|\| null\),\s+newAccount,/);
+  assert.match(englishUiSource(invites), /joinedAt: appliedAt instanceof Date \? appliedAt\.toISOString\(\) : \(appliedAt \|\| null\),\s+newAccount,/);
 });
 
 test('somebody an invite is bringing in is asked to join it once, and not what to make meanwhile', () => {
   const app = read('public/js/app.js');
   // The follow publishes whether it brought them in.
-  assert.match(app, /async _followInvite\(token\) \{\s*App\._markNavigationVia\?\.\('handed'\);[\s\S]{0,400}App\._inviteFollow = new Promise\(\(resolve\) => \{ settle = resolve; \}\);\s+try \{/);
-  assert.match(app, /\} finally \{\s+settle\(joinedHere\);\s+\}\s+\},\s+_deepLinkTarget\(\) \{/);
-  assert.match(app, /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
-  assert.match(app, /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
+  assert.match(englishUiSource(app), /async _followInvite\(token\) \{\s*App\._markNavigationVia\?\.\('handed'\);[\s\S]{0,400}App\._inviteFollow = new Promise\(\(resolve\) => \{ settle = resolve; \}\);\s+try \{/);
+  assert.match(englishUiSource(app), /\} finally \{\s+settle\(joinedHere\);\s+\}\s+\},\s+_deepLinkTarget\(\) \{/);
+  assert.match(englishUiSource(app), /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
+  assert.match(englishUiSource(app), /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
   // Join pressed on the link's page, then a password sign-in: no second ask.
-  assert.match(app, /pressed = sessionStorage\.getItem\('usernode:invite-join'\) === `\/invite\/\$\{token\}`;\s+sessionStorage\.removeItem\('usernode:invite-join'\);/);
-  assert.match(app, /const ok = pressed \? true : window\.ConfirmModal \? await ConfirmModal\.show\(\{/);
+  assert.match(englishUiSource(app), /pressed = sessionStorage\.getItem\('usernode:invite-join'\) === `\/invite\/\$\{token\}`;\s+sessionStorage\.removeItem\('usernode:invite-join'\);/);
+  assert.match(englishUiSource(app), /const ok = pressed \? true : window\.ConfirmModal \? await ConfirmModal\.show\(\{/);
   const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
-  assert.match(sheet, /onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\}/);
-  assert.match(sheet, /sessionStorage\.setItem\('usernode:invite-join', location\.pathname\.replace\(\/\\\/\$\/, ''\)\);/);
+  assert.match(englishUiSource(sheet), /onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\}/);
+  assert.match(englishUiSource(sheet), /sessionStorage\.setItem\('usernode:invite-join', location\.pathname\.replace\(\/\\\/\$\/, ''\)\);/);
   // The join step waits for the follow before it asks anything.
   const join = read('frontend/src/features/auth/communities-first-run.js');
-  assert.match(join, /if \(await CommunitiesFirstRun\._joinedByInvite\(\)\) \{\s+CommunitiesFirstRun\._answered = true;/);
+  assert.match(englishUiSource(join), /if \(await CommunitiesFirstRun\._joinedByInvite\(\)\) \{\s+CommunitiesFirstRun\._answered = true;/);
   assert.ok(join.indexOf('await CommunitiesFirstRun._joinedByInvite()') < join.indexOf('window.App.user.storyFirstSession === true'),
     'the invite is settled before the first session is offered');
-  assert.match(join, /try \{ return \(await app\._inviteFollow\) === true; \} catch \(_\) \{ return false; \}/);
+  assert.match(englishUiSource(join), /try \{ return \(await app\._inviteFollow\) === true; \} catch \(_\) \{ return false; \}/);
 });
 
 test('a join from the confirm reads Home\'s challenges again before the welcome opens on Home', () => {
@@ -184,8 +185,8 @@ test('a link answers the join screen for the person it brings in', () => {
 
 test("You're in tells a new account what Homeroom is, and an existing one only where it is", () => {
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /'On Homeroom, communities make apps together\.'/);
-  assert.match(src, /`Someone makes an app for their group\. \$\{maker\} made this one\.`/);
-  assert.match(src, /existing \? `Welcome to \$\{info\.name\}\.`/);
-  assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
+  assert.match(englishUiSource(src), /'On Homeroom, communities make apps together\.'/);
+  assert.match(englishUiSource(src), /`Someone makes an app for their group\. \$\{maker\} made this one\.`/);
+  assert.match(englishUiSource(src), /existing \? `Welcome to \$\{info\.name\}\.`/);
+  assert.match(englishUiSource(src), /\{`Go to \$\{info\.name\}`\}/);
 });

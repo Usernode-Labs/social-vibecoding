@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The Workshop's lists carry each proposal's FAILING checks and count the
 // passing ones (src/services/list-test-results.js).
 //
@@ -100,7 +101,7 @@ function loadAppView() {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);

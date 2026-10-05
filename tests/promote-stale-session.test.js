@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #707: DevChat.promotePR must not surface a spurious "Network error"
 // alert when the user leaves the dev chat (or switches sessions) while
 // the promote request is still in flight. The request carries no abort
@@ -126,7 +127,7 @@ function makeHarness() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8') + '\n;globalThis.AppView = AppView;', sandbox);
   sandbox.AppView._renderTopicHead = () => {};
   sandbox.AppView._loadDevData = async () => {};

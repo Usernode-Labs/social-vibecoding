@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The Improve control survives the walk back home from an app.
 //
 // ── The bug ────────────────────────────────────────────────────────────
@@ -114,7 +115,7 @@ function makeHome({ currentApp = null, appViewPainted = false,
   if (platformTarget) sandbox.PlatformTarget = platformTarget;
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installGridStore(sandbox);
   installAppCard(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__HOME = Home;`, sandbox);

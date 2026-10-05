@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Your feedback" on the Me screen (#3186): the More row, the list it opens,
 // the address that opens it from elsewhere, and the two ways in from outside
 // Me (the feedback challenge's page; the dialog's confirmations are pinned in
@@ -195,7 +196,7 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const pane = sandbox.window.TopochainChallenges;
   const pageOf = (illustration) => {

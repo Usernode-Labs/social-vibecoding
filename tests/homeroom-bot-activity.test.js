@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3736: activity cards in the Homeroom bot's DM.
 //
@@ -35,7 +36,7 @@ const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(root, p), 'utf8'));
 const CARD = 'frontend/src/features/messages/bot-activity.tsx';
 const STORE = 'frontend/src/features/messages/bot-activity-store.ts';
 const API = 'frontend/src/features/messages/api.ts';

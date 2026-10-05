@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -519,33 +520,33 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   const app = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 
-  assert.match(schema, /profile_user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
-  assert.match(schema, /reporter_user_id INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
-  assert.match(schema, /COMMENT ON TABLE profile_reports IS 'staging:private'/);
-  assert.doesNotMatch(schema, /ADD COLUMN IF NOT EXISTS profile_(display_name|bio|avatar_url)/);
-  assert.match(route, /LEFT JOIN user_avatars/);
-  assert.match(route, /verifiedProfileLinks/);
-  assert.doesNotMatch(route, /profile_(display_name|bio|avatar_url)/);
+  assert.match(englishUiSource(schema), /profile_user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
+  assert.match(englishUiSource(schema), /reporter_user_id INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
+  assert.match(englishUiSource(schema), /COMMENT ON TABLE profile_reports IS 'staging:private'/);
+  assert.doesNotMatch(englishUiSource(schema), /ADD COLUMN IF NOT EXISTS profile_(display_name|bio|avatar_url)/);
+  assert.match(englishUiSource(route), /LEFT JOIN user_avatars/);
+  assert.match(englishUiSource(route), /verifiedProfileLinks/);
+  assert.doesNotMatch(englishUiSource(route), /profile_(display_name|bio|avatar_url)/);
   // A stranger's display name and bio are attacker-controlled, so they have to
   // reach the page as text. JSX children are text nodes by construction, which
   // is the React spelling of the old `textContent = text` helper.
-  assert.match(publicCard, /\{profile\.displayName \|\| profile\.username\}/);
-  assert.match(publicCard, /\{profile\.bio\}/);
-  assert.match(publicCard, /referrerPolicy="no-referrer"/);
-  assert.match(publicCard, /verifiedSocialLinksView/);
-  assert.match(publicCard, /target="_blank"/);
-  assert.match(publicCard, /rel="noopener noreferrer"/);
-  assert.match(profileSheet, /#settings\/linked-accounts/);
-  assert.match(profileSheet, /Connect or change social accounts/);
-  assert.match(profileSheet, /Provider verification and public visibility are managed separately/);
-  assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
-  assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
-  assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);
-  assert.doesNotMatch(profile, /innerHTML\s*=/);
-  assert.doesNotMatch(publicCard, /dangerouslySetInnerHTML/);
-  assert.match(app, /publicProfileRoute/);
-  assert.match(app, /Profile\.open\(username\)/);
-  assert.match(server, /publicProfileRoutes\(config\)/);
+  assert.match(englishUiSource(publicCard), /\{profile\.displayName \|\| profile\.username\}/);
+  assert.match(englishUiSource(publicCard), /\{profile\.bio\}/);
+  assert.match(englishUiSource(publicCard), /referrerPolicy="no-referrer"/);
+  assert.match(englishUiSource(publicCard), /verifiedSocialLinksView/);
+  assert.match(englishUiSource(publicCard), /target="_blank"/);
+  assert.match(englishUiSource(publicCard), /rel="noopener noreferrer"/);
+  assert.match(englishUiSource(profileSheet), /#settings\/linked-accounts/);
+  assert.match(englishUiSource(profileSheet), /Connect or change social accounts/);
+  assert.match(englishUiSource(profileSheet), /Provider verification and public visibility are managed separately/);
+  assert.doesNotMatch(englishUiSource(profileSheet), /onChange=\{\(e\) => set(?:Github|X)/);
+  assert.match(englishUiSource(profileStore), /viewer\.hasPlatformAccess !== false/);
+  assert.match(englishUiSource(publicCard), /absolute inset-0 w-full h-full object-cover/);
+  assert.doesNotMatch(englishUiSource(profile), /innerHTML\s*=/);
+  assert.doesNotMatch(englishUiSource(publicCard), /dangerouslySetInnerHTML/);
+  assert.match(englishUiSource(app), /publicProfileRoute/);
+  assert.match(englishUiSource(app), /Profile\.open\(username\)/);
+  assert.match(englishUiSource(server), /publicProfileRoutes\(config\)/);
   assert.equal(fs.existsSync(path.join(root, 'public/js/profile.js')), false);
 });
 

@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #687 — frontend tests for the "Import Feature from a PR" "+" menu entry:
 // the item renders only when can_collaborate && !readOnly, and the prop that
 // gates it is fed from appData.can_collaborate by the module that still
@@ -86,7 +88,7 @@ function makeRenderHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   return { AppView: sandbox.window.AppView, captured };
 }
@@ -110,10 +112,12 @@ const FRAME_SRC = fs.readFileSync(
 );
 
 test('import-pr item renders for a collaborator', () => {
-  const start = FRAME_SRC.indexOf('{canCollaborate ? (');
+  const FRAME_SRCEnglish = englishUiSource(FRAME_SRC);
+  const VIEW_SRCEnglish = englishUiSource(VIEW_SRC);
+  const start = FRAME_SRCEnglish.indexOf('{canCollaborate ? (');
   assert.ok(start !== -1, 'the import-pr row is gated on the canCollaborate prop');
-  const end = FRAME_SRC.indexOf(') : null}', start);
-  const gated = FRAME_SRC.slice(start, end);
+  const end = FRAME_SRCEnglish.indexOf(') : null}', start);
+  const gated = FRAME_SRCEnglish.slice(start, end);
   assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
   assert.ok(gated.includes('Import Feature from a PR'), 'label present');
   // The group heading is NOT the row's to hide. #1490 gated heading and row
@@ -122,15 +126,15 @@ test('import-pr item renders for a collaborator', () => {
   // the group stays populated for every writeable viewer and only the import
   // row is conditional.
   assert.ok(!gated.includes('<PlusMenuHeading'), 'the heading is outside the row gate');
-  assert.ok(FRAME_SRC.indexOf('label="Add to the board"') < start,
+  assert.ok(FRAME_SRCEnglish.indexOf('label="Add to the board"') < start,
     'the group heading renders above the gate');
-  assert.ok(FRAME_SRC.indexOf('data-plus="issue"') < start,
+  assert.ok(FRAME_SRCEnglish.indexOf('data-plus="issue"') < start,
     'File an issue leads the group, outside the gate');
-  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('groupKey="settings"'),
+  assert.ok(FRAME_SRCEnglish.indexOf('data-plus="import-pr"') < FRAME_SRCEnglish.indexOf('groupKey="settings"'),
     'import-pr renders before the settings group');
   // …and the prop is fed from appData.can_collaborate, read in the module.
   assert.match(
-    VIEW_SRC,
+    VIEW_SRCEnglish,
     /canCollaborate:\s*!!AppView\.appData\?\.can_collaborate/,
     'renderDevView passes appData.can_collaborate as the canCollaborate prop'
   );

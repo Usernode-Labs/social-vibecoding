@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -652,7 +655,7 @@ function settingsHarness(credentialStatus) {
     }
     return elements.get(id);
   };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: {},
     document: {
       addEventListener() {},
@@ -669,7 +672,7 @@ function settingsHarness(credentialStatus) {
         : credentialStatus),
     }),
     setTimeout, clearTimeout, setInterval, clearInterval, console,
-  });
+  }));
   context.window.window = context.window;
   context.window.document = context.document;
   vm.runInContext(fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8'), context);
@@ -752,39 +755,39 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
   const appManifest = require('../src/services/app-manifest');
 
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS user_agent_model_favorites/);
-  assert.match(schema, /user_id\s+BIGINT NOT NULL UNIQUE/);
-  assert.match(routes, /post\('\/api\/me\/credentials\/openrouter\/managed'/);
-  assert.match(routes, /patch\('\/api\/me\/coding-agent\/models\/favorite'/);
-  assert.match(routes, /Cache-Control', 'no-store'/);
-  assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
-  assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
-  assert.doesNotMatch(routes, /\.\.\.claimed|shownOnce/);
-  assert.doesNotMatch(settingsSection, /settings-openrouter-(?:reveal|revealed-key|copy|dismiss-reveal)/);
-  assert.doesNotMatch(settingsSection, /Save this key now|Copy it if you also want your own backup/);
-  assert.doesNotMatch(settings, /j\.apiKey|_copyManagedOpenRouterKey|_dismissManagedOpenRouterReveal/);
+  assert.match(englishUiSource(schema), /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
+  assert.match(englishUiSource(schema), /CREATE TABLE IF NOT EXISTS user_agent_model_favorites/);
+  assert.match(englishUiSource(schema), /user_id\s+BIGINT NOT NULL UNIQUE/);
+  assert.match(englishUiSource(routes), /post\('\/api\/me\/credentials\/openrouter\/managed'/);
+  assert.match(englishUiSource(routes), /patch\('\/api\/me\/coding-agent\/models\/favorite'/);
+  assert.match(englishUiSource(routes), /Cache-Control', 'no-store'/);
+  assert.match(englishUiSource(admin), /patch\('\/api\/admin\/openrouter-keys\/:id'/);
+  assert.match(englishUiSource(admin), /delete\('\/api\/admin\/openrouter-keys\/:id'/);
+  assert.doesNotMatch(englishUiSource(routes), /\.\.\.claimed|shownOnce/);
+  assert.doesNotMatch(englishUiSource(settingsSection), /settings-openrouter-(?:reveal|revealed-key|copy|dismiss-reveal)/);
+  assert.doesNotMatch(englishUiSource(settingsSection), /Save this key now|Copy it if you also want your own backup/);
+  assert.doesNotMatch(englishUiSource(settings), /j\.apiKey|_copyManagedOpenRouterKey|_dismissManagedOpenRouterReveal/);
   // #2568: nothing on this screen CLAIMS a key any more, so the claim
   // action and its success copy are gone with the button.
-  assert.doesNotMatch(settings, /_claimManagedOpenRouterKey/);
-  assert.doesNotMatch(settingsSection, /Create my included key/);
-  assert.match(settingsSection, /GLM 5\.3 Flash/);
-  assert.match(settings, /GLM 5\.3 Flash/);
+  assert.doesNotMatch(englishUiSource(settings), /_claimManagedOpenRouterKey/);
+  assert.doesNotMatch(englishUiSource(settingsSection), /Create my included key/);
+  assert.match(englishUiSource(settingsSection), /GLM 5\.3 Flash/);
+  assert.match(englishUiSource(settings), /GLM 5\.3 Flash/);
   assert.ok(
     settings.indexOf("{ key: 'openrouter'") < settings.indexOf("{ key: 'api-key'"),
     'OpenRouter precedes the Anthropic key in the AI settings group',
   );
-  assert.match(deploy, /secrets\.USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
+  assert.match(englishUiSource(deploy), /secrets\.USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
   // #2568 retired the gate. The deploy workflow still writes the variable
   // (workflow files are not this change's to edit) and nothing reads it —
   // the same inert state OPENROUTER_MANAGED_DAILY_LIMIT_USD is in.
-  assert.match(deploy, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=\$\{\{ vars\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY \|\| 'false' \}\}/);
-  assert.doesNotMatch(envExample, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY/);
-  assert.doesNotMatch(envExample, /CODEX_OPENROUTER_BETA_USER_IDS/);
-  assert.match(deploy, /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
-  assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
-  assert.match(deploy, /OPENROUTER_RECOMMENDED_MODELS=/);
-  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=z-ai\/glm-5\.3-flash,deepseek\/deepseek-v4\.1-flash$/m);
+  assert.match(englishUiSource(deploy), /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=\$\{\{ vars\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY \|\| 'false' \}\}/);
+  assert.doesNotMatch(englishUiSource(envExample), /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY/);
+  assert.doesNotMatch(englishUiSource(envExample), /CODEX_OPENROUTER_BETA_USER_IDS/);
+  assert.match(englishUiSource(deploy), /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
+  assert.match(englishUiSource(envExample), /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
+  assert.match(englishUiSource(deploy), /OPENROUTER_RECOMMENDED_MODELS=/);
+  assert.match(englishUiSource(envExample), /OPENROUTER_RECOMMENDED_MODELS=z-ai\/glm-5\.3-flash,deepseek\/deepseek-v4\.1-flash$/m);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
@@ -800,7 +803,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const verificationDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
   );
-  assert.match(verificationDeclaration.description, /^No longer used\./);
+  assert.match(englishUiSource(verificationDeclaration.description), /^No longer used\./);
   const modelDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_DEFAULT_CODEX_MODEL',
   );
@@ -809,45 +812,45 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_RECOMMENDED_MODELS',
   );
   assert.equal(recommendedDeclaration.default, 'z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash');
-  assert.doesNotMatch(routes, /verificationRequired/);
-  assert.doesNotMatch(settings, /provisioning\.verificationRequired/);
+  assert.doesNotMatch(englishUiSource(routes), /verificationRequired/);
+  assert.doesNotMatch(englishUiSource(settings), /provisioning\.verificationRequired/);
 
   // #2119: the key carries the platform weekly allowance, and every label
   // derives from the stored cadence.
   const adminUsers = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
   const managementSource = fs.readFileSync(path.join(root, 'src/services/openrouter-management-client.js'), 'utf8');
   const managedSource = fs.readFileSync(path.join(root, 'src/services/openrouter-managed-keys.js'), 'utf8');
-  assert.match(schema, /managed_openrouter_keys_limit_reset_check\n\s+CHECK \(limit_reset IN \('daily', 'weekly'\)\)/);
-  assert.doesNotMatch(managementSource, /limit_reset: 'daily'/,
+  assert.match(englishUiSource(schema), /managed_openrouter_keys_limit_reset_check\n\s+CHECK \(limit_reset IN \('daily', 'weekly'\)\)/);
+  assert.doesNotMatch(englishUiSource(managementSource), /limit_reset: 'daily'/,
     'the cadence is policy the service owns, not a client default');
-  assert.match(managedSource, /limits\.getEffectiveUserWeeklyLimitCents\(pool, userId\)/,
+  assert.match(englishUiSource(managedSource), /limits\.getEffectiveUserWeeklyLimitCents\(pool, userId\)/,
     'the amount is the same weekly allowance the Claude gate resolves');
-  assert.doesNotMatch(managedSource, /identityGated/,
+  assert.doesNotMatch(englishUiSource(managedSource), /identityGated/,
     '#2568: a zero allowance is an admin decision now, never an identity gate');
-  assert.match(routes, /resolveAllowance\(pool, req\.user\.id\)/);
-  assert.match(routes, /syncAllowance\(\{/);
-  assert.match(admin, /users\/:id\/weekly-limit'[\s\S]*?syncAllowance\(\{/,
+  assert.match(englishUiSource(routes), /resolveAllowance\(pool, req\.user\.id\)/);
+  assert.match(englishUiSource(routes), /syncAllowance\(\{/);
+  assert.match(englishUiSource(admin), /users\/:id\/weekly-limit'[\s\S]*?syncAllowance\(\{/,
     'setting a user\'s weekly cap re-limits their included key');
-  assert.match(settings, /limitNoun\(managed\.limitReset\)/);
-  assert.match(settings, /limitNoun\(provisioning\.limitReset, 'allowance'\)/);
-  assert.match(settingsSection, /settings-openrouter-included-status/,
+  assert.match(englishUiSource(settings), /limitNoun\(managed\.limitReset\)/);
+  assert.match(englishUiSource(settings), /limitNoun\(provisioning\.limitReset, 'allowance'\)/);
+  assert.match(englishUiSource(settingsSection), /settings-openrouter-included-status/,
     'the claim card is a status line now (#2568)');
-  assert.match(settings, /provisioning\.reason === 'no_allowance'/);
-  assert.match(adminUsers, /RESET_PERIOD\[reset\]/);
-  assert.doesNotMatch(adminUsers, /toFixed\(2\)\}\/day/);
+  assert.match(englishUiSource(settings), /provisioning\.reason === 'no_allowance'/);
+  assert.match(englishUiSource(adminUsers), /RESET_PERIOD\[reset\]/);
+  assert.doesNotMatch(englishUiSource(adminUsers), /toFixed\(2\)\}\/day/);
   // No per-key amount from the environment: the deploy workflow is untouched
   // (the old daily variable it still writes is inert), and nothing declares
   // or documents a weekly one.
-  assert.doesNotMatch(deploy, /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
-  assert.match(deploy, /OPENROUTER_MANAGED_DAILY_LIMIT_USD=\$\{\{ vars\.OPENROUTER_MANAGED_DAILY_LIMIT_USD \|\| '1' \}\}/);
-  assert.doesNotMatch(envExample, /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
+  assert.doesNotMatch(englishUiSource(deploy), /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
+  assert.match(englishUiSource(deploy), /OPENROUTER_MANAGED_DAILY_LIMIT_USD=\$\{\{ vars\.OPENROUTER_MANAGED_DAILY_LIMIT_USD \|\| '1' \}\}/);
+  assert.doesNotMatch(englishUiSource(envExample), /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
   assert.equal(manifest.platform_env.some((item) => item.key === 'OPENROUTER_MANAGED_WEEKLY_LIMIT_USD'), false);
   const dailyDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_MANAGED_DAILY_LIMIT_USD',
   );
-  assert.match(dailyDeclaration.description, /^No longer used\./);
+  assert.match(englishUiSource(dailyDeclaration.description), /^No longer used\./);
   for (const file of ['public/js/app-view.js', 'public/js/build-venues.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
-    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /included daily credits/,
+    assert.doesNotMatch(englishUiSource(fs.readFileSync(path.join(root, file), 'utf8')), /included daily credits/,
       `${file} must not promise a cadence it cannot read from the key`);
   }
 });

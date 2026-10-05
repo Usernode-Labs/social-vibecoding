@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Unit tests for the service worker's pure request classifier
 // (public/sw.js → classifyRequest). This pins the offline-mode fetch
 // contract: what is bypassed (writes, SSE, credentials, auth), what is
@@ -25,13 +26,13 @@ test('an explicit session confirmation cannot fall back to the cached offline id
   let intercepted = false;
   let cacheReads = 0;
   let fetches = 0;
-  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), withLanguage({
     self: { location: { origin: ORIGIN }, addEventListener(name, fn) { handlers[name] = fn; } },
     URL, Headers, Response, Map, Set, Promise,
     caches: { open() { cacheReads++; throw new Error('must not read another user’s cached /me'); } },
     fetch() { fetches++; throw new Error('leave this request to the browser'); },
     setTimeout() {}, clearTimeout() {},
-  });
+  }));
   handlers.fetch({
     request: { method: 'GET', url: ORIGIN + '/api/auth/me', cache: 'no-store', headers: new Headers() },
     respondWith() { intercepted = true; },
@@ -105,7 +106,7 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
   let cacheReads = 0;
   let fetches = 0;
   const intercepted = [];
-  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), withLanguage({
     self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
     URL, Headers, Response, Map, Set, Promise,
     caches: { open: async () => {
@@ -116,7 +117,7 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
     // neither fetch on its behalf nor arm the shell fallback timer.
     fetch: () => { fetches++; return new Promise(() => {}); },
     setTimeout: () => 1, clearTimeout: () => {},
-  });
+  }));
   for (const provider of ['github', 'x']) {
     for (const path of [
       `/api/me/social-identities/${provider}/connect?account=7`,
@@ -208,13 +209,13 @@ test('the installed worker leaves a CSV download to the browser (#3381)', () => 
   const handlers = {};
   const intercepted = [];
   let fetches = 0;
-  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), withLanguage({
     self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
     URL, Headers, Response, Map, Set, Promise,
     caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
     fetch: () => { fetches++; return new Promise(() => {}); },
     setTimeout: () => 1, clearTimeout: () => {},
-  });
+  }));
   handlers.fetch({
     request: {
       method: 'GET', url: `${ORIGIN}/api/admin/homeroom-bot/export.csv`,
@@ -255,13 +256,13 @@ test('a navigation to a server-served file (an issue screenshot) never gets the 
 test('the installed worker leaves an issue screenshot to the browser (#3585)', () => {
   const handlers = {};
   const intercepted = [];
-  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), withLanguage({
     self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
     URL, Headers, Response, Map, Set, Promise,
     caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
     fetch: () => new Promise(() => {}),
     setTimeout: () => 1, clearTimeout: () => {},
-  });
+  }));
   handlers.fetch({
     request: {
       method: 'GET', url: `${ORIGIN}/issue-images/${'f'.repeat(32)}`,

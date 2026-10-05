@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Mutual friends (#2386) on screen: the button on a person's page, the
 // private Friends section on your own, the friend rows in the bell, and the
 // Messages composer's @ list putting friends first.
@@ -300,15 +301,15 @@ test('Me\'s Friends section leads with the search box, which fetches nothing unt
   const at = (needle) => html.indexOf(needle);
   assert.ok(at('id="profile-friends"') < at('id="profile-friend-search"'), 'inside the Friends section');
   assert.ok(at('id="profile-friend-search"') < at('id="profile-friends-empty"'), 'above the list');
-  assert.match(html, /id="profile-friend-search-input"[^>]*placeholder="Find friends by username"/);
-  assert.doesNotMatch(html, /profile-friend-search-results/, 'no results before anything is typed');
-  assert.match(html, /No friends yet\. Find someone by username above\./);
+  assert.match(englishUiSource(html), /id="profile-friend-search-input"[^>]*placeholder="Find friends by username"/);
+  assert.doesNotMatch(englishUiSource(html), /profile-friend-search-results/, 'no results before anything is typed');
+  assert.match(englishUiSource(html), /No friends yet\. Find someone by username above\./);
 
-  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /\{heading \? <SectionHeader>Friends<\/SectionHeader> : null\}\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
+  assert.match(englishUiSource(read('frontend/src/features/profile/friends-section.tsx')), /\{heading \? <SectionHeader>Friends<\/SectionHeader> : null\}\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
     'the search sits right under the Friends header (the card\'s title, in the card)');
   const src = read(SEARCH);
-  assert.match(src, /import \{ searchUsers \} from '\.\.\/messages\/api'/,
+  assert.match(englishUiSource(src), /import \{ searchUsers \} from '\.\.\/messages\/api'/,
     'reuses the messages-scoped people search, which leaves out you and anyone blocked either way');
-  assert.match(read('frontend/src/features/messages/api.ts'), /\/api\/users\/search\?q=\$\{[^}]+\}&scope=messages/);
-  assert.match(src, /useEffect\(\(\) => \{[\s\S]*?window\.setTimeout/, 'searches from an effect, debounced');
+  assert.match(englishUiSource(read('frontend/src/features/messages/api.ts')), /\/api\/users\/search\?q=\$\{[^}]+\}&scope=messages/);
+  assert.match(englishUiSource(src), /useEffect\(\(\) => \{[\s\S]*?window\.setTimeout/, 'searches from an effect, debounced');
 });

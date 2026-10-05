@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // frontend/src/features/home/home-panels.js — the home screen's Challenges
 // card (#911).
 //
@@ -152,7 +153,7 @@ function makeHomePanels({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
   // binding it would have made.
@@ -1283,7 +1284,7 @@ test('#1824: a block already showing every challenge draws no expand toggle', ()
   // that door is the heading's alone now, so an empty footer would be a
   // 26px gap under the cards.
   assert.doesNotMatch(html, /home-panel-footer/, 'no footer with nothing in it');
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/,
+  assert.match(html, /<button(?=[^>]*home-panel-lb-browse)(?=[^>]*aria-label="Open challenges")[^>]*>/,
     'the way out is still one tap away, in the heading');
   // The view says so in one field, so a renderer cannot re-derive it wrong.
   const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
@@ -2753,8 +2754,8 @@ test('the block draws all four rows, its footer and its toggle — at any width'
   // #1916: "Open challenges", landing on the
   // Leaderboard screen's Challenges tab — the area's name, not a different
   // thing's.
-  assert.match(html, /home-panel-lb-browse[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/);
+  assert.match(html, /<button(?=[^>]*class="home-panel-lb-browse)(?=[^>]*title="Go to the Challenges tab on the Leaderboard screen")[^>]*>/);
+  assert.match(html, /<button(?=[^>]*home-panel-lb-browse)(?=[^>]*aria-label="Open challenges")[^>]*>/);
   assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>\s*<\/button>/,
     'no chevron after the label, as Browse all apps has none');
   assert.doesNotMatch(html, /Open leaderboard/, 'the old label is gone');
@@ -2864,10 +2865,10 @@ test('#2989: the empty-state line is a keyboard-reachable button', () => {
     registry: [], hidden: [],
     panels: [panel({ total: 0, done: 0, challenges: [] })],
   });
-  assert.match(html, /<button type="button" class="home-panel-rows home-panel-row [^"]*w-full[^"]*text-left[^"]*"[^>]*>No challenges are running right now<\/button>/);
+  assert.match(html, /<button(?=[^>]*type="button")(?=[^>]*class="home-panel-rows home-panel-row [^"]*w-full[^"]*text-left[^"]*")[^>]*>No challenges are running right now<\/button>/);
   assert.match(html, /aria-label="No challenges are running right now\. Go to the Challenges tab on the Leaderboard screen"/);
   assert.doesNotMatch(html, /<p[^>]*home-panel-row/, 'no click-only paragraph left');
   const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
-  assert.match(src, /<button\s+type="button"[\s\S]{0,900}?goToChallenges\?\.\(\)/,
+  assert.match(src, /<button[^>]*type="button"[\s\S]{0,900}?goToChallenges\?\.\(\)/,
     'and it is wired to the Challenges tab');
 });

@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // "Featured apps" + "Create an app" — the two sections below the home
 // screen's "Your apps" grid.
 //
@@ -70,7 +72,7 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
   // binding it would have made.
@@ -117,7 +119,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   installAppCard(sandbox);
@@ -425,19 +427,19 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   // Cards OR a one-line note — never a bare bar over an empty lane. The
   // branch is on the MERGED list, so the note only appears when the whole
   // category is empty rather than when the curated half is.
-  assert.match(src, /tiles\.length \?/);
-  assert.doesNotMatch(src, /view\.featured\.length \?/);
-  assert.match(src, /Nothing to discover right now/);
+  assert.match(englishUiSource(src), /tiles\.length \?/);
+  assert.doesNotMatch(englishUiSource(src), /view\.featured\.length \?/);
+  assert.match(englishUiSource(src), /Nothing to discover right now/);
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
   // depend on the block having rendered.
-  assert.match(PANEL_SRC.ui, /home-browse-btn/);
-  assert.match(PANEL_SRC.ui, /Browse all apps/);
-  assert.match(PANEL_SRC.sections, /<BrowseLink \/>/);
+  assert.match(englishUiSource(PANEL_SRC.ui), /home-browse-btn/);
+  assert.match(englishUiSource(PANEL_SRC.ui), /Browse all apps/);
+  assert.match(englishUiSource(PANEL_SRC.sections), /<BrowseLink \/>/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.
-  assert.match(PANELS_SRC, /Home\.featuredApps\(/);
+  assert.match(englishUiSource(PANELS_SRC), /Home\.featuredApps\(/);
 });
 
 // ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
@@ -528,17 +530,17 @@ test('index.html stacks the three home areas in order', () => {
 
 test('the apps grid is four columns at every width, two rows by default', () => {
   const tag = INDEX.match(/<div id="app-list"[^>]*>/)[0];
-  assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
-  assert.doesNotMatch(tag, /sm:grid-cols-\d/,
+  assert.match(englishUiSource(tag), /\bgrid-cols-4\b/, 'four columns');
+  assert.doesNotMatch(englishUiSource(tag), /sm:grid-cols-\d/,
     'and no second breakpoint — one column count is the point');
   // The two-row default is a cap on what is SHOWN, with a way out. The
   // wording moved with the button: #1191 made `#home-apps-more` React's, so
   // home.js pushes the COUNT (Home._renderAppsMore) and apps-more.tsx spells
   // the label. Both halves are pinned so neither can drift alone.
-  assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
-  assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
+  assert.match(englishUiSource(LAYOUT_SRC), /DEFAULT_ROWS: 2,/);
+  assert.match(englishUiSource(HOME_SRC), /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
   assert.match(
-    read('frontend/src/features/home/apps-more.tsx'),
+    englishUiSource(read('frontend/src/features/home/apps-more.tsx')),
     /`Show all \$\{moreCount\} apps`/
   );
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
@@ -708,11 +710,11 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
 test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state carries the shared hint in its tooltip;
   // tapping opens the detailed used-of-limit row.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
-  const btn = TILE_SRC.slice(TILE_SRC.indexOf('onClick={'));
-  assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
+  assert.match(englishUiSource(HOME_SRC), /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
+  const btn = TILE_SRC.slice(englishUiSource(TILE_SRC).indexOf('onClick={'));
+  assert.match(englishUiSource(btn), /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');
-  assert.doesNotMatch(btn, /PlatformUI\?\.toast\?\.\(/,
+  assert.doesNotMatch(englishUiSource(btn), /PlatformUI\?\.toast\?\.\(/,
     'a generic toast cannot replace the exact quota display');
 });
 
@@ -766,10 +768,10 @@ function stagingFeaturedSeed(env = 'staging') {
     migrate.indexOf('async function seedStagingFeaturedApps(pool)'),
     migrate.indexOf('// Per-user app-quota fixtures')
   );
-  return vm.runInNewContext(`${source}\nseedStagingFeaturedApps;`, {
+  return vm.runInNewContext(`${source}\nseedStagingFeaturedApps;`, withLanguage({
     process: { env: { USERNODE_ENV: env } },
     log: { info() {}, warn(_area, _message, error) { assert.fail(error.message); } },
-  });
+  }));
 }
 
 for (const prepopulated of [false, true]) {

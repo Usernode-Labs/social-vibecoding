@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3660: card sharing and link embedding in chats.
 //
@@ -26,7 +27,7 @@ const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
 const links = loadTsx('frontend/src/features/messages/homeroom-links.ts');
 const { homeroomLinks, homeroomLinkOf, sameItem, MAX_LINK_EMBEDS } = links;

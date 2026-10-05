@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // WP-C: somebody new to a project adds something back from its chat.
 //
@@ -32,12 +33,12 @@ test('WP-C: the offer card, and the line under a first request', () => {
   assert.equal(cardWords({ kind: 'offer', title: 'Add a Sunday reminder' }),
     'Suggest this to the group? It goes in the project’s requests as “Add a Sunday reminder”, in your name.');
   const offer = renderToHtml(createElement(BotRequestCardView, { card: { messageId: 5, kind: 'offer', title: 'Add tags', issueNumber: null } }));
-  assert.match(offer, /data-bot-request-card="offer"/);
-  assert.match(offer, /data-bot-request-action="file"><span>Suggest it/);
-  assert.match(offer, /data-bot-request-action="not-now"><span>Not now/);
-  assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), `Filed as a request for the group: Add tags. ${STAYS_LINE}`);
+  assert.match(englishUiSource(offer), /data-bot-request-card="offer"/);
+  assert.match(englishUiSource(offer), /data-bot-request-action="file"><span>Suggest it/);
+  assert.match(englishUiSource(offer), /data-bot-request-action="not-now"><span>Not now/);
+  assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), `Filed as a request for the group: Add tags. ${STAYS_LINE()}`);
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.', 'only the first says it');
-  assert.equal(STAYS_LINE, 'It stays in the project’s requests with your name on it.');
+  assert.equal(STAYS_LINE(), 'It stays in the project’s requests with your name on it.');
 });
 
 test('WP-C: the reads behind offers are budgeted per person and per hour', () => {
@@ -55,12 +56,12 @@ test('WP-C: the reads behind offers are budgeted per person and per hour', () =>
 
 test('WP-C: an unaddressed message is read as an idea, not as something said to the bot', () => {
   const llm = read('src/services/llm.js');
-  assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, apiKey, telemetryContext \}\)/);
-  assert.match(llm, /'Somebody new to the group wrote this'/);
+  assert.match(englishUiSource(llm), /async function readChatAsk\(\{ text, appName = null, toBot = true, apiKey, telemetryContext \}\)/);
+  assert.match(englishUiSource(llm), /'Somebody new to the group wrote this'/);
   const schema = read('src/db/schema.sql');
-  assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'\)\)/);
+  assert.match(englishUiSource(schema), /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'\)\)/);
   // The invited person's tour says the bot does this, now that it does.
-  assert.match(read('frontend/src/features/first-session/tour-steps.ts'),
+  assert.match(englishUiSource(read('frontend/src/features/first-session/tour-steps.ts')),
     /Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in\./);
 });
 

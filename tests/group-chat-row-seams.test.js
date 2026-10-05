@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The two contracts a group chat row hands back to public/js/group-chat.js:
 // the vote-controls host and the quoted-reply block.
 //
@@ -311,7 +312,7 @@ function loadGroupChat() {
     Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }

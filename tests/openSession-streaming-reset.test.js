@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the "phantom Stop button" fix: session-open is authoritative
 // for the streaming UI. A freshly-opened idle session (e.g. a proposal
 // clone) must never inherit a previously-streaming session's red Stop
@@ -166,7 +167,7 @@ function makeHarness() {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // Expose the file-scoped `const DevChat` to the test.
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;

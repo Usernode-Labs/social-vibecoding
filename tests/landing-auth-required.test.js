@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #1522: render the actual lock treatment, and execute the actual viewer
 // callback to prove account-required apps never reach iframe/history writes.
@@ -58,7 +60,7 @@ function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
     refreshHeader() {},
     history: { pushState: (state) => historyEntries.push(state) },
   };
-  vm.runInNewContext(compiled, sandbox);
+  vm.runInNewContext(compiled, withLanguage(sandbox));
   return {
     open: sandbox.openApp,
     remembered,

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA 2026-09-24 Q2 and Q33a: a direct message REQUEST, from both ends.
 //
@@ -170,23 +171,23 @@ test('a send refused as awaiting_acceptance leaves no Retry row, and its words g
 
 test('an unanswered direct request is named by its requester in the row and the header', () => {
   const helper = SCREEN.slice(SCREEN.indexOf('function directPerson('), SCREEN.indexOf('function ConversationRow('));
-  assert.match(helper, /conversation\.membershipStatus === 'invited' \? conversation\.requester \|\| null : null/);
+  assert.match(englishUiSource(helper), /conversation\.membershipStatus === 'invited' \? conversation\.requester \|\| null : null/);
   const row = SCREEN.slice(SCREEN.indexOf('function ConversationRow('), SCREEN.indexOf('function KindPill('));
-  assert.match(row, /const peer = directPerson\(conversation\);/);
-  assert.match(row, /title=\{peer\?\.username \|\| conversation\.title\}/, 'the tile is theirs, not "DM"');
+  assert.match(englishUiSource(row), /const peer = directPerson\(conversation\);/);
+  assert.match(englishUiSource(row), /title=\{peer\?\.username \|\| conversation\.title\}/, 'the tile is theirs, not "DM"');
   const header = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.indexOf('/** The day a message was sent'));
-  assert.match(header, /const person = directPerson\(active\);/);
+  assert.match(englishUiSource(header), /const person = directPerson\(active\);/);
   // B5: named as senderName names it, the @handle for a person.
-  assert.match(header, /active\.kind === 'direct' && person \? senderName\(person\)/);
+  assert.match(englishUiSource(header), /active\.kind === 'direct' && person \? senderName\(person\)/);
   // The sender's own side of a request says it is pending too.
-  assert.match(header, /active\.awaitingAcceptance \? 'Request pending' : 'Direct message'/);
+  assert.match(englishUiSource(header), /active\.awaitingAcceptance \? 'Request pending' : 'Direct message'/);
 });
 
 test('the phone bar over an unanswered request names its requester too', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
-  assert.match(STORE, /: state\.route\.agent \? 'Messages' : chromeTitle\(state\.active\)\)/);
+  assert.match(englishUiSource(STORE), /: state\.route\.agent \? 'Messages' : chromeTitle\(state\.active\)\)/);
   const helper = STORE.slice(STORE.indexOf('function chromeTitle('));
-  assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
+  assert.match(englishUiSource(helper), /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });
 
 test('Recents names a request by its sender too', () => {

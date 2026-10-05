@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #846 — an IMPORTED proposal has no dev chat, so nothing may ever render
 // the dev-chat session view for one. The import flow no longer navigates
 // there (see pr-import-menu.test.js), but old bookmarks, the browser Back
@@ -111,7 +112,7 @@ function makeHarness(session) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;
   AppView.appData = { slug: 'x', name: 'X', can_collaborate: true };

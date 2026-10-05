@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -292,6 +293,6 @@ test('the settings screen explains a callback mismatch instead of staying silent
   const start = src.indexOf('_socialIdentityCallbackStatus(status) {');
   assert.ok(start > 0);
   const body = src.slice(start, src.indexOf('async _unlinkGithub', start));
-  assert.match(body, /callback_mismatch: `\$\{name\} did not accept Homeroom’s callback address/);
-  assert.match(body, /Ask an administrator to register this site’s callback URL \(\$\{window\.location\.origin\}\)/);
+  assert.match(englishUiSource(body), /callback_mismatch: `\$\{name\} did not accept Homeroom’s callback address/);
+  assert.match(englishUiSource(body), /Ask an administrator to register this site’s callback URL \(\$\{window\.location\.origin\}\)/);
 });

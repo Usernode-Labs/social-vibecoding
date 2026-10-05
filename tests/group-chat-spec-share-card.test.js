@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The shared-spec card in the group chat — restored, and covered for the
 // first time.
 //
@@ -69,7 +71,7 @@ function loadGroupChat(over = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/group-chat.js')}\n;globalThis.__GC = GroupChat;`, sandbox);
   return sandbox.__GC;
 }
@@ -163,24 +165,24 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   // The button's disabled/label were written onto it by a click delegate on
   // the messages container — two writes into a row React owns. They are its
   // own state now, bracketing the module's promise.
-  assert.match(row, /const \[loading, setLoading\] = useState\(false\)/);
-  assert.match(row, /disabled=\{loading\}/);
-  assert.match(row, /\{loading \? 'Loading…' : 'View full spec'\}/);
-  assert.match(row, /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
+  assert.match(englishUiSource(row), /const \[loading, setLoading\] = useState\(false\)/);
+  assert.match(englishUiSource(row), /disabled=\{loading\}/);
+  assert.match(englishUiSource(row), /\{loading \? 'Loading…' : 'View full spec'\}/);
+  assert.match(englishUiSource(row), /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
 
   // …and everything that is not markup stayed put: the per-app open state,
   // the fetch, and all three failure wordings.
   const gc = read('public/js/group-chat.js');
   const open = gc.slice(gc.indexOf('  async openSharedSpec('), gc.indexOf('  _specPanelRaw:'));
-  assert.match(open, /_writeSpecPanelOpen\(GroupChat\.appSlug/);
-  assert.match(open, /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
-  assert.match(open, /This spec is no longer available/);
-  assert.match(open, /Failed to load spec \(HTTP \$\{resp\.status\}\)/);
-  assert.match(open, /Error: \$\{err\.message\}/);
+  assert.match(englishUiSource(open), /_writeSpecPanelOpen\(GroupChat\.appSlug/);
+  assert.match(englishUiSource(open), /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
+  assert.match(englishUiSource(open), /This spec is no longer available/);
+  assert.match(englishUiSource(open), /Failed to load spec \(HTTP \$\{resp\.status\}\)/);
+  assert.match(englishUiSource(open), /Error: \$\{err\.message\}/);
   // The delegate that used to do all this is gone, along with the DOM
   // round-trip it needed to find the card's title.
-  assert.doesNotMatch(gc, /_attachSpecCardHandlers\(/);
-  assert.doesNotMatch(gc, /card\.dataset\.specTitle/);
+  assert.doesNotMatch(englishUiSource(gc), /_attachSpecCardHandlers\(/);
+  assert.doesNotMatch(englishUiSource(gc), /card\.dataset\.specTitle/);
 });
 
 // ── #3495: "View full spec" did nothing in a request's Discussion ─────────

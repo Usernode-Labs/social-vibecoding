@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The bell rows about an app's general discussion open it IN MESSAGES.
 //
@@ -68,7 +70,7 @@ function load({ controller = true, groupChat = true } = {}) {
   }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   sandbox.agoStamp = agoStamp;
   vm.runInContext(SRC, sandbox);
   const N = sandbox.Notifications;

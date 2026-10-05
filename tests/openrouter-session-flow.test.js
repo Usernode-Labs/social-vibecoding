@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Coherence guards for the OpenRouter session flow. These deliberately pin
 // the provider boundaries in the route source. An OpenRouter session never
@@ -147,21 +148,21 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     'async confirmAutoSession(issueNumber)',
     '// Singleton confirm popup for Generate proposal',
   );
-  assert.match(flow, /_prepareDefaultCodingAgentForBuild/);
-  assert.match(flow, /defaultBackend === 'codex_openrouter'/);
-  assert.match(flow, /coding-agent\/models\?backend=codex_openrouter/);
-  assert.match(flow, /backend: 'codex_openrouter'/);
-  assert.match(flow, /provider === 'openrouter'/);
+  assert.match(englishUiSource(flow), /_prepareDefaultCodingAgentForBuild/);
+  assert.match(englishUiSource(flow), /defaultBackend === 'codex_openrouter'/);
+  assert.match(englishUiSource(flow), /coding-agent\/models\?backend=codex_openrouter/);
+  assert.match(englishUiSource(flow), /backend: 'codex_openrouter'/);
+  assert.match(englishUiSource(flow), /provider === 'openrouter'/);
 
   const modal = between(
     appView,
     '_showAutoSessionModal(issueNumber, models, preselect, modalOptions = {})',
     '// "Start session from proposal"',
   );
-  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
-  assert.match(modal, /Uses your included OpenRouter credits/);
-  assert.match(modal, /Uses your OpenRouter account/);
-  assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
+  assert.match(englishUiSource(modal), /openrouterCredentialSource === 'usernode_managed'/);
+  assert.match(englishUiSource(modal), /Uses your included OpenRouter credits/);
+  assert.match(englishUiSource(modal), /Uses your OpenRouter account/);
+  assert.doesNotMatch(englishUiSource(modal), /onFavorite|onRefresh|Experimental/);
 });
 
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {
@@ -196,23 +197,23 @@ test('settings and restart recovery use OpenRouter as the user-facing provider n
     '_normalizeOpenRouterCopy() {',
     '_formatOpenRouterPrice(value)',
   );
-  assert.match(settingsCopy, /heading\.textContent = 'OpenRouter'/);
-  assert.match(settingsCopy, /all chat and coding in an OpenRouter session/);
-  assert.match(settingsCopy, /do not use your platform Claude allowance/);
-  assert.doesNotMatch(settingsCopy, /Codex/);
+  assert.match(englishUiSource(settingsCopy), /heading\.textContent = 'OpenRouter'/);
+  assert.match(englishUiSource(settingsCopy), /all chat and coding in an OpenRouter session/);
+  assert.match(englishUiSource(settingsCopy), /do not use your platform Claude allowance/);
+  assert.doesNotMatch(englishUiSource(settingsCopy), /Codex/);
 
   const recoveryIdentity = between(
     server,
     'function recoveredAgentIdentity',
     'async function adoptOrphanWorker',
   );
-  assert.match(recoveryIdentity, /isOpenRouter \? 'OpenRouter' : 'Claude Code'/);
+  assert.match(englishUiSource(recoveryIdentity), /isOpenRouter \? 'OpenRouter' : 'Claude Code'/);
   const recoveredFinalize = between(
     server,
     'async function finalizeRecoveredTurn({',
     'async function resumeDetachedTurn(',
   );
-  assert.match(recoveredFinalize, /directOpenRouterReply/);
-  assert.match(recoveredFinalize, /recoveryAgent\.name/);
-  assert.doesNotMatch(recoveredFinalize, /'Claude Code (?:finished|made no changes|did not complete)'/);
+  assert.match(englishUiSource(recoveredFinalize), /directOpenRouterReply/);
+  assert.match(englishUiSource(recoveredFinalize), /recoveryAgent\.name/);
+  assert.doesNotMatch(englishUiSource(recoveredFinalize), /'Claude Code (?:finished|made no changes|did not complete)'/);
 });

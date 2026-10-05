@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #platform-tabs — the shell's five sections as a permanent bar.
 //
@@ -103,7 +106,7 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
 // ── 3. One place decides ──────────────────────────────────────────────
 
 function harness() {
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
     URL, URLSearchParams, console,
@@ -116,7 +119,7 @@ function harness() {
     addEventListener() {},
     localStorage: { getItem: () => null },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
-  });
+  }));
   context.window = context;
   vm.runInContext(appSource, context);
   const { App } = context;
@@ -464,11 +467,11 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // THE STATE SHIPS OPEN, which is what makes it safe to hold in the nav
   // store at all: the prerendered document carries a visible bar, so the
   // first client render agrees with it and hydration is silent.
-  assert.match(navStoreSrc, /railOpen: true,/);
-  assert.match(toggle, /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
+  assert.match(englishUiSource(navStoreSrc), /railOpen: true,/);
+  assert.match(englishUiSource(toggle), /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
     'the state is on the control, so the label can stay the ACTION');
-  assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
-  assert.match(toggle, /aria-controls="platform-tabs"/);
+  assert.match(englishUiSource(toggle), /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
+  assert.match(englishUiSource(toggle), /aria-controls="platform-tabs"/);
 
   // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,
   // signed out — because a toggle for a thing that is not there is a dead
@@ -483,7 +486,7 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // without being told: that hook decides whether the title can centre from
   // the group's inner edge, and a control outside the group is 28px of room
   // it would hand to the title.
-  assert.match(header, /<SidebarToggle \/>/);
+  assert.match(englishUiSource(header), /<SidebarToggle \/>/);
 
   // NOTHING ABOUT THE MARKUP VARIES WITH THE RAIL (#2718 review). Both this
   // group's class and the toggle's existence were computed from
@@ -491,45 +494,45 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // publishes before this deferred bundle hydrates — so the prerender and the
   // first client render disagreed, and React threw #418 on every route. A
   // console error on any route fails every declared check.
-  assert.match(header, /className=\{LEFT_GROUP_CLASS\}/, 'a constant, rendered once');
-  assert.match(header, /const LEFT_GROUP_CLASS = '[^']*platform-header-left';/);
+  assert.match(englishUiSource(header), /className=\{LEFT_GROUP_CLASS\}/, 'a constant, rendered once');
+  assert.match(englishUiSource(header), /const LEFT_GROUP_CLASS = '[^']*platform-header-left';/);
   // The header still READS a visibility flag — its own — and that is fine
   // because it spends it through `useHiddenClass`, a ref effect that runs
   // after hydration has already agreed with the prerender. The rule is not
   // "never read the store", it is "never let a read reach the markup".
   const reads = header.match(/^\s*const \w+ = useVisibility\(/gm) || [];
   assert.equal(reads.length, 1, 'one read, and it is not the rail\u2019s');
-  assert.match(header, /const visible = useVisibility\('platform-header', true\);\n\s*useHiddenClass\(headerRef, !visible\);/);
+  assert.match(englishUiSource(header), /const visible = useVisibility\('platform-header', true\);\n\s*useHiddenClass\(headerRef, !visible\);/);
 
   // A PHONE'S BAR IS AT THE FOOT OF THE SCREEN and is the only navigation
   // there is. Folding must never reach it — so the fold is a CLASS that
   // app.css acts on inside the desktop media query and nowhere else, rather
   // than the `hidden` the router uses. A desktop window narrowed to a phone
   // gets its bar back with no store watching the viewport.
-  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/nav/tab-bar.tsx')),
     /useClassToggle\(barRef, 'platform-tabs-folded', !railOpen\);/);
   const folded = css.indexOf('.platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)');
   assert.ok(folded > 0, 'a folded rail is not drawn');
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', folded) > 0);
   // …and it is not drawn only while it is not peeking, which is what makes
   // the hot zone at the window's edge the way back from folded.
-  assert.match(css.slice(folded, folded + 120), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
+  assert.match(englishUiSource(css.slice(folded, folded + 120)), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
   // The toggle itself is desktop-only by the same mechanism, and the group
   // that holds it goes with it when the back slot is empty — an
   // empty-but-present flex item still reserves the header's own `gap-4`,
   // which put the wordmark 16px in from the edge of every root screen the
   // first time this was tried. The id beats Tailwind's own `.flex`, which
   // wins equal-specificity conflicts because app.css loads first.
-  assert.match(css, /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
+  assert.match(englishUiSource(css), /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
   // All three questions are CSS's, and none is part of hydration: does the
   // rail exist (`#platform-tabs.hidden`), is there room for it (the media
   // query), and has the group anything in it (`:has(> #back-btn.hidden)`).
-  assert.match(css,
+  assert.match(englishUiSource(css),
     /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
-  assert.match(css,
+  assert.match(englishUiSource(css),
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');
-  assert.match(css,
+  assert.match(englishUiSource(css),
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
     'which is what replaces the `return null` the component used to do');
   // FOLDED RESERVES NOTHING, and only on the desktop layout.
@@ -537,7 +540,7 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(zero > 0);
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', zero) > 0,
     'the zeroing rule is inside the desktop block, so a phone never sees it');
-  assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
+  assert.match(englishUiSource(css.slice(zero, zero + 120)), /\{\s*--platform-rail-w: 0px;/);
 });
 
 test('a peek over a running app never brings the sidebar toggle into the app\'s strip', () => {

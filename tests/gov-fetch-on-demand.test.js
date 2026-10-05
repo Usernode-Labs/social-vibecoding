@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // (#1115) Fetch-on-demand recovery for opening a GOVERNANCE proposal that
 // isn't in any cached client list. Applied close-issue proposals live in the
 // keyset-paginated Completed stream (_merged, which _loadDevData resets to
@@ -90,7 +91,7 @@ function makeAppView({ fetchImpl, thread = null } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo' };

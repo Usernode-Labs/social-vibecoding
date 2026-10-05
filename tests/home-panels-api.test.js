@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // /api/home-panels — the home screen's Challenges card (#911) and the
 // fixed sections that remain visible for every signed-in account (#1801).
 //
@@ -636,7 +638,7 @@ function loadHomePanels() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
   return sandbox.__HP;
@@ -1018,7 +1020,7 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
 test('demoChallengesPanel: registry artwork on the rows, with one fallback in the collapsed four', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
   const registry = read('frontend/src/lib/challenge-illustrations.ts');
-  const members = new Set([...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
+  const members = new Set([...englishUiSource(registry).matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
   assert.ok(members.size >= 9, 'the registry keys parse out of the source');
 
   const all = demoChallengesPanel({ expanded: true, username: 'tester' }).challenges;

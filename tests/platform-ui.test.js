@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // PlatformUI (public/js/platform-ui.js) — the platform frontend's single
 // seam over the hosted usernode-native kit. These tests pin two contracts:
 //
@@ -44,7 +45,7 @@ function makeSandbox({ kit } = {}) {
   if (kit) sandbox.unNative = kit;
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox);
   return { PlatformUI: sandbox.PlatformUI, calls, sandbox };
 }

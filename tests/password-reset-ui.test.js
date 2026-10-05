@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Content pins for the email password-reset UI (login screen recovery
 // flow + the #reset-password/<token> magic-link route).
 //
@@ -19,7 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 // The login screen (and with it both reset views) is React now; the router
 // that dispatches to it is still the legacy module until the last chunk.
@@ -53,7 +54,7 @@ test('recovery screen builds an email form that posts to the request endpoint', 
 
 test('the request result copy is anti-enumeration (same message either way)', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /If that address matches an account/i,
+  assert.match(englishUiSource(tsx), /If that address matches an account/i,
     'success copy must not confirm the account exists');
 });
 
@@ -61,14 +62,14 @@ test('the admin fallback is separated and its copy is spaced correctly (#1158)',
   const tsx = read(LOGIN_TSX);
   // The divider marks the admin route as the final alternative below the
   // email flow.
-  assert.match(tsx, /id="recovery-admin"[\s\S]{0,1200}?<hr /,
+  assert.match(englishUiSource(tsx), /id="recovery-admin"[\s\S]{0,1200}?<hr /,
     'a divider opens the admin fallback block');
   // JSX drops a line-ending space, so the separators before the inline
   // elements must live inside string expressions — the shipped copy rendered
   // "atemporary" / "fromSettings" without them.
-  assert.match(tsx, /\{'Ask a Homeroom platform admin to issue you a '\}/,
+  assert.match(englishUiSource(tsx), /Ask a Homeroom platform admin to issue you a \s*<span/,
     'explicit space before the "temporary password" span');
-  assert.match(tsx, /\{"\. Once you're back in, set a password you choose from "\}/,
+  assert.match(englishUiSource(tsx), /\. Once you're back in, set a password you choose from \s*<a/,
     'explicit space before the Settings → Change password link');
 });
 
@@ -106,12 +107,12 @@ test('the stale "no email on file" claim is rewritten once the email path exists
   const tsx = read(LOGIN_TSX);
   // The frozen markup's lead still carries the pre-email copy; the screen
   // must swap it so the admin path reads as the fallback, not the rule.
-  assert.match(tsx, /recovery-admin/, 'admin fallback block is still used');
-  assert.match(tsx, /If you did not confirm your email account, you will not receive the reset email\./,
+  assert.match(englishUiSource(tsx), /recovery-admin/, 'admin fallback block is still used');
+  assert.match(englishUiSource(tsx), /If you did not confirm your email account, you will not receive the reset email\./,
     'fallback copy explains the unconfirmed-email gap (#2969)');
-  assert.match(tsx, /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
+  assert.match(englishUiSource(tsx), /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
     'fallback copy points to support instead of a platform admin (#2969)');
-  assert.match(tsx, /ADMIN_LEAD_WITH_EMAIL/,
+  assert.match(englishUiSource(tsx), /ADMIN_LEAD_WITH_EMAIL/,
     'the swap is tied to the same flag that mounts the email form');
 });
 
@@ -155,12 +156,12 @@ test('a successful reset clears secrets, replaces history and opens login withou
 
 test('the login destination carries a durable accessible success notice', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
-  assert.match(tsx, /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
+  assert.match(englishUiSource(tsx), /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
+  assert.match(englishUiSource(tsx), /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
     'success uses the established green auth treatment, not the error red');
-  assert.match(tsx, /Password changed/);
-  assert.match(tsx, /signed out everywhere/);
-  assert.match(tsx, /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
+  assert.match(englishUiSource(tsx), /Password changed/);
+  assert.match(englishUiSource(tsx), /signed out everywhere/);
+  assert.match(englishUiSource(tsx), /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
     'an ordinary later visit does not retain the one-time result');
 });
 
@@ -178,8 +179,8 @@ test('the completed state is directly checkable without consuming a reset token'
 
 test('a refused token gets the generic expired-link message with a way back', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /invalid or has expired/i);
-  assert.match(tsx, /request a new/i, 'points the user back at requesting a fresh link');
+  assert.match(englishUiSource(tsx), /invalid or has expired/i);
+  assert.match(englishUiSource(tsx), /request a new/i, 'points the user back at requesting a fresh link');
 });
 
 // ─── frozen-markup contract ────────────────────────────────────────

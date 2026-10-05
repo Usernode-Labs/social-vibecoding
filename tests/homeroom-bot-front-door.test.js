@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B8: one front door. A request asked for on the platform (Ask for a change)
 // goes to Homeroom bot as one filed in its chat does: recorded as the
@@ -16,7 +17,7 @@ const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 test('B8: Ask for a change is gated on membership and hands its request to the bot', () => {
   const route = read('src/routes/feedback.js');
@@ -29,18 +30,18 @@ test('B8: Ask for a change is gated on membership and hands its request to the b
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it yourself"/);
-  const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Ask for a change leads the hub\'s ⋯');
-  assert.match(row, /title="Build it yourself"\s+sub="With a coding agent, then ask for approval"/);
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Tell Homeroom bot what should change\. It builds it for you, or passes it to the group as a request\. To build it yourself with a coding agent, tap Build it yourself\.'/);
-  assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /openLabel=\{botChat \? 'Open chat' : 'Open project'\}/);
+  assert.match(englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx')), /label="Build it yourself"/);
+  const row = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
+  assert.ok(englishUiSource(row).indexOf('data-plus="issue"') < englishUiSource(row).indexOf('data-plus="new-change"'), 'Ask for a change leads the hub\'s ⋯');
+  assert.match(englishUiSource(row), /title="Build it yourself"[\s\S]{0,240}sub="With a coding agent, then ask for approval"/);
+  assert.match(englishUiSource(read('frontend/src/features/home/tour/tour-steps.ts')), /body: 'Tell Homeroom bot what should change\. It builds it for you, or passes it to the group as a request\. To build it yourself with a coding agent, tap Build it yourself\.'/);
+  assert.match(englishUiSource(read('frontend/src/features/dialogs/create-app.tsx')), /openLabel=\{botChat \? 'Open chat' : 'Open project'\}/);
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /openBot: \(reference\?: SharedObjectReference \| null\) => \{ void openBot\(reference\); \},/);
+  assert.match(englishUiSource(store), /openBot: \(reference\?: SharedObjectReference \| null\) => \{ void openBot\(reference\); \},/);
   // B8: Ask for changes stages the change on the composer, as Share does.
-  assert.match(store, /if \(reference\) pendingShare = reference;/);
+  assert.match(englishUiSource(store), /if \(reference\) pendingShare = reference;/);
   for (const f of ['game-2d', 'game-3d', 'multimedia-social', 'social-productivity']) {
-    assert.match(read(`app-templates/${f}/public/index.html`), /To change this app, ask Homeroom bot: tap the Homeroom icon, then <strong class="font-semibold">Ask for a change<\/strong>\./, f);
+    assert.match(englishUiSource(read(`app-templates/${f}/public/index.html`)), /To change this app, ask Homeroom bot: tap the Homeroom icon, then <strong class="font-semibold">Ask for a change<\/strong>\./, f);
   }
 });
 

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2391: the general Discussion's "Replying to …" strip, reworked.
 //
 // It shared the sent-quote block's rules — an 11/12px chip, 4px corners,
@@ -47,7 +48,7 @@ function labelFor(replyDraft) {
     document: { getElementById: () => null },
     App: { user: { id: 1 } },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/group-chat.js'), 'utf8'), sandbox);
   const gc = sandbox.window.GroupChat;
   const published = [];

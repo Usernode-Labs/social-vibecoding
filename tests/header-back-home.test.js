@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Back/home buttons on secondary screens; a shared Home/Browse root header (#1569).
 //
 // ── What the bar looked like before ────────────────────────────────────
@@ -146,21 +148,21 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
 // ── 3. The glyphs ──────────────────────────────────────────────────────
 
 test('the anchor renders both glyphs and hides exactly one', () => {
-  assert.match(HEADER, /id="back-icon-arrow"\n\s+className=\{backArrow \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+  assert.match(englishUiSource(HEADER), /id="back-icon-arrow"\n\s+className=\{backArrow \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'the chevron shows on arrow');
   // NOT `!backArrow`. With three glyphs, "not the arrow" is two of them, so
   // each names its own mode — the same change public/js/app.js's
   // pre-hydration fallback made for the same reason.
-  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{mode === 'home' \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+  assert.match(englishUiSource(HEADER), /id="back-icon-home"\n\s+className=\{mode === 'home' \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'the house shows on home, and on nothing else');
-  assert.match(HEADER, /id="back-icon-close"\n\s+className=\{backClose \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+  assert.match(englishUiSource(HEADER), /id="back-icon-close"\n\s+className=\{backClose \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'and the ✕ inside a running app');
   // Both in the COLD DOCUMENT. Rendering only the active one would take an
   // id out of the shipped inventory whenever the initial mode is the other,
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
-  assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
+  assert.match(englishUiSource(HEADER), /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+  assert.match(englishUiSource(HEADER), /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
     'and the accessible name follows the glyph — three meanings, three names');
 });
 
@@ -247,7 +249,7 @@ function loadImprove(initial) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // The REAL store module, in its own scope, so `boardHref` below is the
   // function the header imports rather than a copy of it that can drift.
   // Its `createStore` is the stub above, which is also what the controller

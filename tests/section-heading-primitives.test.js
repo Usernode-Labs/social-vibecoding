@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // "A label over a group" has TWO spellings in this product, and the audit
 // (#2383 / request #2447) found six.
 //
@@ -151,12 +152,12 @@ test('the public-profile controls are a group of the Edit profile sheet, headed 
   // what matters is that it is that shared heading and no class string of its
   // own.
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
-  assert.match(sheet, /<Group title="Public page">/,
+  assert.match(englishUiSource(sheet), /<Group title="Public page">/,
     'the “Public page” heading is the sheet’s shared Group, not a hand-written <h2>');
   const view = read('frontend/src/features/profile/profile-view.tsx');
-  assert.doesNotMatch(view, /className="font-semibold text-base"/,
+  assert.doesNotMatch(englishUiSource(view), /className="font-semibold text-base"/,
     'the old hand-written heading class is gone');
-  assert.doesNotMatch(view, /title="Public profile"/, 'and Me carries no second copy');
+  assert.doesNotMatch(englishUiSource(view), /title="Public profile"/, 'and Me carries no second copy');
 });
 
 test('one site keeps its own treatment, deliberately', () => {

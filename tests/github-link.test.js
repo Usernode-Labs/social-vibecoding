@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // GitHub adapter for the provider-neutral social identity proof. The
 // database/state contract is covered in social-identity.test.js; this file
@@ -179,18 +180,21 @@ test('legacy GitHub attribution remains readable but no credential API exists', 
 });
 
 test('social identity routes own GitHub independently of MCP and preserve reviewable copy', () => {
-  assert.match(ROUTE_SRC, /router\.get\('\/api\/me\/github\/callback'/);
-  assert.match(ROUTE_SRC, /consumeOauthState\(pool/);
-  assert.match(ROUTE_SRC, /finishIdentityVerification\([\s\S]*pool, req\.user\.id, identity, pending\.intent/);
-  assert.match(ROUTE_SRC, /router\.post\('\/api\/me\/social-identities\/:provider\/replacement'/);
-  assert.match(ROUTE_SRC, /router\.delete\('\/api\/me\/social-identities\/:provider'/);
+  const ROUTE_SRCEnglish = englishUiSource(ROUTE_SRC);
+  const SETTINGS_SRCEnglish = englishUiSource(SETTINGS_SRC);
+  const SOCIAL_TSXEnglish = englishUiSource(SOCIAL_TSX);
+  assert.match(ROUTE_SRCEnglish, /router\.get\('\/api\/me\/github\/callback'/);
+  assert.match(ROUTE_SRCEnglish, /consumeOauthState\(pool/);
+  assert.match(ROUTE_SRCEnglish, /finishIdentityVerification\([\s\S]*pool, req\.user\.id, identity, pending\.intent/);
+  assert.match(ROUTE_SRCEnglish, /router\.post\('\/api\/me\/social-identities\/:provider\/replacement'/);
+  assert.match(ROUTE_SRCEnglish, /router\.delete\('\/api\/me\/social-identities\/:provider'/);
   // The two lines that make the claim reviewable. #1191 split them: the
   // "holds no token" sentence is decided by the module (it depends on the
   // link's `access`), and the audit link is markup, so it moved with the rest
   // of the block into features/settings/social-identity.tsx.
-  assert.match(SETTINGS_SRC, /holds no GitHub access token/);
-  assert.match(SOCIAL_TSX, /github\.com\/settings\/applications/);
-  assert.match(SOCIAL_TSX, /target="_blank"[\s\S]{0,80}?rel="noopener noreferrer"/,
+  assert.match(SETTINGS_SRCEnglish, /holds no GitHub access token/);
+  assert.match(SOCIAL_TSXEnglish, /github\.com\/settings\/applications/);
+  assert.match(SOCIAL_TSXEnglish, /target="_blank"[\s\S]{0,80}?rel="noopener noreferrer"/,
     'and it is still a top-level link — the shell is framed, github.com is not frameable');
 
   const html = shellMarkup();

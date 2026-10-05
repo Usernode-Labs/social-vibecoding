@@ -1,3 +1,5 @@
+const { loadTsx } = require('./lib/render-tsx');
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -35,7 +37,7 @@ function loginHarness(responses, { search = '', hash = '#login', timeout = false
     },
   };
   sandbox.window = sandbox;
-  vm.runInNewContext(AUTH, sandbox);
+  vm.runInNewContext(AUTH, withLanguage(sandbox));
   return { auth: sandbox.AuthScreens, requests, users, location, sandbox };
 }
 
@@ -123,9 +125,11 @@ const compiled = ts.transpileModule(fs.readFileSync(
   path.join(frontend, 'src/features/auth/session-confirmation.tsx'), 'utf8'
 ), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
 const mod = { exports: {} };
-vm.runInNewContext(compiled, {
+vm.runInNewContext(compiled, withLanguage({
   module: mod, exports: mod.exports,
   require(specifier) {
+    if (specifier === '../../lib/i18n/runtime') return withLanguage({}).PlatformI18n;
+    if (specifier === '../../lib/i18n/react') return loadTsx('frontend/src/lib/i18n/react.tsx');
     if (specifier === 'react') return react;
     if (specifier === 'react/jsx-runtime') return jsx;
     if (specifier === '@/components/ui/alert') return { alertVariants: () => 'notice' };
@@ -133,7 +137,7 @@ vm.runInNewContext(compiled, {
     if (specifier === './shared') return {};
     throw new Error(`Unexpected import: ${specifier}`);
   },
-});
+}));
 const { browserVersions, sessionConfirmationText, SessionConfirmationNotice } = mod.exports;
 
 test('the iPhone report identifies iOS and Chrome versions without copying the raw user agent', () => {

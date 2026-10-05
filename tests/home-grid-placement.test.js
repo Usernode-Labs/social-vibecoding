@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Home-screen FREE-FORM placement — the drag half of "put apps and widgets
 // anywhere". Replaces tests/home-drag-add.test.js, which pinned the flow
 // reorder model (canDropCard / classifyCardDrop / buildYoursOrder →
@@ -124,7 +125,7 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   installAppCard(sandbox);

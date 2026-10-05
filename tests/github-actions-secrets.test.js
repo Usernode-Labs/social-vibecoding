@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the read-only "GitHub Actions secrets (platform repo)" group:
 // github.listActionsSecrets() plus the merge/dedupe inside
 // platformSecretsView() (src/routes/apps.js).
@@ -315,15 +316,16 @@ test('the staging mock is gated on USERNODE_ENV and covers the annotation path',
 });
 
 test('the client renders presence only, and says why no value can be shown', () => {
-  assert.match(secretsUiJs, /source === 'github-actions'/);
-  assert.match(secretsUiJs, /Set on GitHub/);
-  assert.match(secretsUiJs, /never returns/,
+  const secretsUiJsEnglish = englishUiSource(secretsUiJs);
+  assert.match(secretsUiJsEnglish, /source === 'github-actions'/);
+  assert.match(secretsUiJsEnglish, /Set on GitHub/);
+  assert.match(secretsUiJsEnglish, /never returns/,
     'the UI must not imply a future reveal button');
-  assert.match(secretsUiJs, /Settings → Secrets and variables → Actions/,
+  assert.match(secretsUiJsEnglish, /Settings → Secrets and variables → Actions/,
     'and must say where the change actually happens');
-  assert.match(secretsUiJs, /state === 'unavailable'/, 'the fail-open line has a renderer');
-  assert.match(secretsUiJs, /No Actions secrets on this repo/,
+  assert.match(secretsUiJsEnglish, /state === 'unavailable'/, 'the fail-open line has a renderer');
+  assert.match(secretsUiJsEnglish, /No Actions secrets on this repo/,
     '"none" and "couldn\'t read them" are different answers');
-  assert.match(secretsUiJs, /gh\.state !== 'hidden'/,
+  assert.match(secretsUiJsEnglish, /gh\.state !== 'hidden'/,
     'a non-admin sees no group at all rather than an empty one');
 });

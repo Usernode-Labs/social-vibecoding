@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Two reports from the Homeroom bot's DM, filed together by the platform
 // admin and fixed together because they were one fault:
@@ -269,13 +271,13 @@ test('the service worker leaves a no-store Messages read to the network', () => 
   // What the fresh reads rely on. An ordinary read of the transcript races the
   // worker's offline copy; a no-store one is never intercepted at all.
   const handlers = {};
-  vm.runInNewContext(read('public/sw.js'), {
+  vm.runInNewContext(read('public/sw.js'), withLanguage({
     self: { location: { origin: ORIGIN }, addEventListener(name, fn) { handlers[name] = fn; } },
     URL, Headers, Response, Map, Set, Promise,
     caches: { open() { throw new Error('no cache in this test'); } },
     fetch() { throw new Error('no network in this test'); },
     setTimeout() {}, clearTimeout() {},
-  });
+  }));
   const intercepted = (cache) => {
     let responded = false;
     handlers.fetch({

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // test:changed: always (every route and client API path, for the Classic inventory; scripts/test-changed.js)
 'use strict';
 
@@ -15,7 +16,7 @@ const generator = require('../scripts/generate-global-chat-inventory.js');
 const declaredRoutes = generator.discoverRoutes();
 const clientRefs = generator.discoverClientReferences();
 const built = generator.buildInventory({ declaredRoutes, clientRefs });
-const committed = fs.readFileSync(generator.OUTPUT, 'utf8');
+const committed = englishUiSource(fs.readFileSync(generator.OUTPUT, 'utf8'));
 
 test('the generated Classic inventory is current and fully reviewed', () => {
   assert.deepEqual(generator.reviewFindings(built), []);
@@ -161,13 +162,13 @@ test('account deletion opens the private Settings form instead of collecting cre
 
 test('the reviewed first-version artifact enables the all-user experimental release gate', () => {
   assert.equal(inventory.parityReady, true);
-  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const packageJson = JSON.parse(englishUiSource(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')));
   assert.equal(packageJson.scripts['global-chat:inventory:check'],
     'node scripts/generate-global-chat-inventory.js --check');
   const shellSource = [
     path.join(ROOT, 'frontend', 'src', 'shell.tsx'),
     path.join(ROOT, 'public', 'index.html'),
-  ].filter(fs.existsSync).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  ].filter(fs.existsSync).map((file) => englishUiSource(fs.readFileSync(file, 'utf8'))).join('\n');
   assert.doesNotMatch(shellSource, /data-global-chat-switch/);
 });
 
@@ -177,10 +178,10 @@ test('reviewed route exemptions are keyed on registration shape, never on a line
   // the freshness check above with a diff that looks like noise. Exemptions
   // must name what the registration IS (an array of paths, a middleware
   // shadowing the concrete route below it), not where it currently sits.
-  const source = fs.readFileSync(
+  const source = englishUiSource(fs.readFileSync(
     path.join(ROOT, 'scripts/generate-global-chat-inventory.js'),
     'utf8',
-  );
+  ));
   const start = source.indexOf('const REVIEWED_ROUTE_EXEMPTIONS = [');
   assert.ok(start !== -1, 'REVIEWED_ROUTE_EXEMPTIONS must exist');
   const end = source.indexOf('\n];', start);
@@ -199,10 +200,10 @@ test('the committed inventory carries no line numbers, so moving a route is not 
   // that had each regenerated it). The generator keeps the line internal, for
   // declaration order and shadowed registrations only.
   assert.ok(inventory.routes.every((route) => !Object.hasOwn(route, 'line')), 'no route records its line');
-  const source = fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8');
+  const source = englishUiSource(fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8'));
   assert.match(source, /\[REGISTRATION\]: \{ line, pathCount: discovered\.length, shadowsLaterRoute: false \}/,
     'the line rides on the Symbol key JSON.stringify skips');
-  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/services/global-chat/classic-capabilities.js'), 'utf8'), /route\.line\b/,
+  assert.doesNotMatch(englishUiSource(fs.readFileSync(path.join(ROOT, 'src/services/global-chat/classic-capabilities.js'), 'utf8')), /route\.line\b/,
     'and nothing that reads the inventory expects one');
 });
 
@@ -216,7 +217,7 @@ test('the committed inventory carries no totals, so two changes that each add a 
   for (const key of topLevel.filter((name) => name !== 'schemaVersion')) {
     assert.ok(typeof inventory[key] !== 'number', `${key} is not a committed count`);
   }
-  const source = fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8');
+  const source = englishUiSource(fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8'));
   assert.match(source, /\[COUNTS\]: \{ mapped: counts\.mapped, reviewRequired: counts\.review_required \}/,
     'the counts the script reports ride on the Symbol key JSON.stringify skips');
   const readers = [
@@ -227,7 +228,7 @@ test('the committed inventory carries no totals, so two changes that each add a 
     'tests/global-chat-classic-capabilities.test.js',
   ];
   for (const file of readers) {
-    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /\binventory\.summary\b|classicInventory\.summary\b/,
+    assert.doesNotMatch(englishUiSource(fs.readFileSync(path.join(ROOT, file), 'utf8')), /\binventory\.summary\b|classicInventory\.summary\b/,
       `${file} does not read a total`);
   }
 });

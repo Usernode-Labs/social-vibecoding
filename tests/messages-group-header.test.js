@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA 2026-09-24 Q14: a group can be renamed, and its header counts right.
 //
@@ -24,27 +25,27 @@ const HEADER = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.ind
 
 test('Rename group is offered to whoever the server lets rename: the owner (canManage)', () => {
   // The server's own gate: an active group, the caller its owner and a member.
-  assert.match(SERVICE, /async function updateTitle[\s\S]*?cm\.status = 'member' AND cm\.role = 'owner'/);
-  assert.match(SERVICE, /canManage: row\.kind === 'group' && row\.my_role === 'owner' && row\.membership_status === 'member'/);
+  assert.match(englishUiSource(SERVICE), /async function updateTitle[\s\S]*?cm\.status = 'member' AND cm\.role = 'owner'/);
+  assert.match(englishUiSource(SERVICE), /canManage: row\.kind === 'group' && row\.my_role === 'owner' && row\.membership_status === 'member'/);
   // Merged with QA Q18 (the ⋯ is a keyboard menu): the rename row is a menuitem
   // that hands focus back to the ⋯ before the dialog opens.
-  assert.match(HEADER, /active\.kind === 'group' && active\.canManage\s*\? <button type="button" role="menuitem" data-rename-group="" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); void renameGroup\(\); \}\}>Rename group<\/button>\s*: null/);
+  assert.match(englishUiSource(HEADER), /active\.kind === 'group' && active\.canManage\s*\? <button type="button" role="menuitem" data-rename-group="" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); void renameGroup\(\); \}\}>Rename group<\/button>\s*: null/);
 });
 
 test('it is the kit’s one-field dialog, pre-filled with the current name and capped at the server’s 80', () => {
-  assert.match(HEADER, /ui\.prompt\(\{ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 \}\)/);
-  assert.match(HEADER, /const current = active\?\.title \|\| '';/);
-  assert.match(HEADER, /if \(next == null\) return;/, 'Cancel changes nothing');
-  assert.match(HEADER, /catch \(err\) \{ ui\.toast\?\.\(err instanceof Error \? err\.message : 'Couldn’t rename this group\.'\); \}/);
+  assert.match(englishUiSource(HEADER), /ui\.prompt\(\{ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 \}\)/);
+  assert.match(englishUiSource(HEADER), /const current = active\?\.title \|\| '';/);
+  assert.match(englishUiSource(HEADER), /if \(next == null\) return;/, 'Cancel changes nothing');
+  assert.match(englishUiSource(HEADER), /catch \(err\) \{ ui\.toast\?\.\(err instanceof Error \? err\.message : 'Couldn’t rename this group\.'\); \}/);
 });
 
 test('the header counts "1 member" and "N members", and an invitee reads the invitation, not "0 members"', () => {
-  assert.match(HEADER, /const count = \(n: number\) => `\$\{n\} \$\{n === 1 \? 'member' : 'members'\}`;/);
-  assert.doesNotMatch(HEADER, /\$\{active\.memberCount\} members/, 'no unconditional plural left');
-  assert.match(HEADER, /: invited\s*\? 'Invitation pending'/);
-  assert.match(HEADER, /\? `\$\{count\(active\.memberCount\)\}\$\{active\.myRole === 'owner' \? ' · you own this group' : ''\}`/);
+  assert.match(englishUiSource(HEADER), /const count = \(n: number\) => `\$\{n\} \$\{n === 1 \? 'member' : 'members'\}`;/);
+  assert.doesNotMatch(englishUiSource(HEADER), /\$\{active\.memberCount\} members/, 'no unconditional plural left');
+  assert.match(englishUiSource(HEADER), /: invited\s*\? 'Invitation pending'/);
+  assert.match(englishUiSource(HEADER), /\? `\$\{count\(active\.memberCount\)\}\$\{active\.myRole === 'owner' \? ' · you own this group' : ''\}`/);
   // The list row's member-count tag is not drawn for an invitee either.
-  assert.match(SCREEN, /conversation\.kind === 'group' && !invited \? <span className="messages-group-tag">/);
+  assert.match(englishUiSource(SCREEN), /conversation\.kind === 'group' && !invited \? <span className="messages-group-tag">/);
 });
 
 function harness(updateConversation) {

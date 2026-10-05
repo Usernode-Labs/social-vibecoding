@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // QA 2026-09-24 — Q4, Q13, Q15, Q18: menus, keyboard access and dialogs.
 //
 //   Q4   the proposal page's ⋯ opened and shut in the same click: the scroll
@@ -23,7 +25,7 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 function appView() {
   const sandbox = { console, addEventListener() {}, document: { addEventListener() {} } };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(read('public/js/app-view.js'), sandbox);
   return sandbox.AppView;
 }
@@ -179,7 +181,7 @@ function alertHarness() {
   prev.isConnected = true;
   doc.activeElement = prev;
   const frames = [];
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     document: doc,
     window: { addEventListener() {} },
     activePopover: null,
@@ -189,7 +191,7 @@ function alertHarness() {
     cancelAnimationFrame() {},
     setTimeout: (fn) => { fn(); return 0; },
     clearTimeout() {},
-  });
+  }));
   const section = (start) => { const at = NATIVE.indexOf(start); return NATIVE.slice(at, NATIVE.indexOf('\n  /* ', at)); };
   vm.runInContext(`${section('  var modalStack = []')}\n${section('  function alertDialog(options)')}\nthis.modalStack = modalStack;`, context);
   return { context, doc, prev, frames };
@@ -293,8 +295,8 @@ test('Q18: Skip to navigation is the first island in the shell and lands on the 
   const first = body.match(/<Island name="([A-Za-z]+)">/);
   assert.equal(first && first[1], 'SkipToNavigation');
   const link = read('frontend/src/features/nav/skip-link.tsx');
-  assert.match(link, /event\.preventDefault\(\);/, 'the fragment would route to a screen called "platform-tabs"');
-  assert.match(link, /nav\.querySelectorAll<HTMLElement>\('a\.platform-tab'\)/);
-  assert.match(link, /useVisibility\('platform-tabs', true\)/, 'hidden where the route has no rail');
-  assert.doesNotMatch(link, /\sid=/, 'no new id in the shell inventory');
+  assert.match(englishUiSource(link), /event\.preventDefault\(\);/, 'the fragment would route to a screen called "platform-tabs"');
+  assert.match(englishUiSource(link), /nav\.querySelectorAll<HTMLElement>\('a\.platform-tab'\)/);
+  assert.match(englishUiSource(link), /useVisibility\('platform-tabs', true\)/, 'hidden where the route has no rail');
+  assert.doesNotMatch(englishUiSource(link), /\sid=/, 'no new id in the shell inventory');
 });

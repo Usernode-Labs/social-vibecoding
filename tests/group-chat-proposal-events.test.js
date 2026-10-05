@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The general chat's proposal events and quiet card.
 //
 // ── What this pins ─────────────────────────────────────────────────────
@@ -305,7 +306,7 @@ function loadGroupChat(AppView, App) {
   };
   if (AppView) sandbox.AppView = AppView;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }

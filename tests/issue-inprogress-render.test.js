@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Rendering tests for the issue work-state feature (app-view.js):
 //
 //   1. issueChipsHtml — the reverse "#N" chip helper (sanitize / dedupe /
@@ -73,7 +74,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

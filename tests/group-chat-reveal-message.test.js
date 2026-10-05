@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // A bell row that names ONE message of an app's discussion — a mention, a
 // reply, a reaction, a saved message — opens the discussion ON that message
@@ -45,7 +47,7 @@ function setup({ pane = null } = {}) {
     requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
     setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox);
   const gc = sandbox.window.GroupChat;
   gc._react = () => ({ patchTranscriptMessage: (id, patch) => patches.push([id, patch.flash]) });

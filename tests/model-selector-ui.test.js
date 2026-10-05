@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // UI contract for the grouped model/key selector in the dev-chat composer.
 //
 // Same approach as openSession-streaming-reset.test.js: dev-chat.js is a
@@ -182,7 +183,7 @@ function makeHarness() {
     }),
   });
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 

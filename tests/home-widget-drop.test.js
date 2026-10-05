@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2894: a "Your apps" tile can be dragged INTO the open Homeroom widget
 // strip. #2892: an app added to the widget must not keep the tile's
 // held/selected state.
@@ -129,7 +130,7 @@ function makeHome({ strip = makeStrip(), cards = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   installGridStore(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);

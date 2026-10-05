@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1329: accepting an invitation from the notifications drawer on a phone used
 // to navigate to the app BEHIND the still-presented drawer. Nothing ever
 // dismissed it, so the user was stranded under a modal, mostly-empty near-white
@@ -135,7 +136,7 @@ function load({ touch = true, fetchImpl } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   sandbox.agoStamp = agoStamp;
   vm.runInContext(SRC, sandbox);
   const N = sandbox.Notifications;

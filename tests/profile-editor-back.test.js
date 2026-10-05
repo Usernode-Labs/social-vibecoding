@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA 2026-09-24 Q16: Back with the profile editor open.
 //
@@ -49,13 +50,13 @@ test('every close hands the claim back, as a navigating release', () => {
 
 test('only a dismissal keeps the draft; Cancel and Save are decisions', () => {
   const dismiss = PROFILE.slice(PROFILE.indexOf('  _dismissSheet({'), PROFILE.indexOf('  takeDraft() {'));
-  assert.match(dismiss, /Profile\._draft = keepDraft && typeof source === 'function' && user\.username/);
+  assert.match(englishUiSource(dismiss), /Profile\._draft = keepDraft && typeof source === 'function' && user\.username/);
   // The kit's backdrop / Escape keeps it, as Back does…
-  assert.match(SHEET, /if \(!adoption\) return;\s*adoption = null;\s*Profile\._dismissSheet\(\{ keepDraft: true \}\);/);
+  assert.match(englishUiSource(SHEET), /if \(!adoption\) return;\s*adoption = null;\s*Profile\._dismissSheet\(\{ keepDraft: true \}\);/);
   // …Cancel does not.
-  assert.match(SHEET, /onClick=\{\(\) => Profile\._dismissSheet\(\)\}\s*>\s*Cancel/);
+  assert.match(englishUiSource(SHEET), /onClick=\{\(\) => Profile\._dismissSheet\(\)\}\s*>\s*Cancel/);
   // A kept draft belongs to the account that typed it.
-  assert.match(PROFILE, /return draft && username && draft\.username === username \? draft : null;/);
+  assert.match(englishUiSource(PROFILE), /return draft && username && draft\.username === username \? draft : null;/);
 });
 
 test('the next open shows the kept draft, and without one the saved profile', () => {

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #3319 — "Keep sidebar open in apps": an opt-in, desktop-only preference
 // that keeps the rail docked beside a running app.
@@ -34,7 +36,7 @@ function harness({ stored = null, phone = false, throws = false } = {}) {
       setItem: (k, v) => store.set(k, String(v)),
       removeItem: (k) => store.delete(k),
     };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
     URL, URLSearchParams, console,
@@ -56,7 +58,7 @@ function harness({ stored = null, phone = false, throws = false } = {}) {
     matchMedia: () => ({ matches: !phone, addEventListener() {} }),
     localStorage,
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
-  });
+  }));
   context.window = context;
   vm.runInContext(appSource, context);
   const { App } = context;

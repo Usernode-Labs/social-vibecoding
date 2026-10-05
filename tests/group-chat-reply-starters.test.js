@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Reply chips over a project's group chat composer
 // (frontend/src/features/group-chat/reply-starters.tsx), for somebody who has
@@ -86,8 +87,8 @@ test('a tap fills the composer and focuses it, caret at the end; it never sends'
 
 test('drawn in the general chat composer bar, above the reply chip and the form', () => {
   const src = read('frontend/src/features/group-chat/general-chat.tsx');
-  assert.match(src, /import \{ ReplyStarters \} from '\.\/reply-starters';/);
-  assert.match(src, /<ReplyStarters \/>\s*<ComposerSlots scope="general" \/>\s*<ComposerForm/);
+  assert.match(englishUiSource(src), /import \{ ReplyStarters \} from '\.\/reply-starters';/);
+  assert.match(englishUiSource(src), /<ReplyStarters \/>\s*<ComposerSlots scope="general" \/>\s*<ComposerForm/);
   // Inside the branch that has a composer: a read-only view has neither.
   const readOnly = src.indexOf('data-gc-readonly-notice');
   assert.ok(readOnly > 0 && readOnly < src.indexOf('<ReplyStarters />'));
@@ -95,8 +96,8 @@ test('drawn in the general chat composer bar, above the reply chip and the form'
   const html = renderComponent('frontend/src/features/group-chat/general-chat.tsx', 'GeneralChat', {
     introAppName: null, readOnly: false, notice: null, maxLength: 8000,
   });
-  assert.doesNotMatch(html, /data-gc-reply-starters/);
-  assert.match(html, /id="gc-form"/);
+  assert.doesNotMatch(englishUiSource(html), /data-gc-reply-starters/);
+  assert.match(englishUiSource(html), /id="gc-form"/);
 });
 
 test('only a view published since the pane mounted counts, so another channel\'s rows never ask', () => {

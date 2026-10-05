@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Source pins for the landing page's persistent header + its two ways in:
 //   - the bar is the wordmark over the back disc and carries no CTA; the
 //     wordmark gives way to the open app's name, which is why #app-viewer
@@ -36,7 +37,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { shellMarkup } = require('./lib/shell-markup');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 // The landing screen crossed over to React in #1080 chunk C, so the pins that
 // used to read public/js/auth-screens.js read the component instead. Same

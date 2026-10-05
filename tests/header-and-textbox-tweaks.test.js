@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #1406 / #1408 — two small UI tweaks, of which ONE survives.
 //
 //   #1406  kept the improve button and the view selector alive on the other
@@ -106,9 +107,9 @@ test('both message text boxes use it, keyed on their own value', () => {
   // The dependency is the controlled value rather than an input listener: by
   // the time the effect runs React has re-rendered, so one measurement covers
   // typing, pasting, a clear on send and a draft restored on mount.
-  assert.match(COMPOSER, /useAutoGrow\(inputRef, value\)/);
-  assert.match(ROW, /useAutoGrow\(editRef, editValue\)/);
-  assert.match(ROW, /<textarea ref=\{editRef\} aria-label="Edit message"/);
+  assert.match(englishUiSource(COMPOSER), /useAutoGrow\(inputRef, value\)/);
+  assert.match(englishUiSource(ROW), /useAutoGrow\(editRef, editValue\)/);
+  assert.match(englishUiSource(ROW), /<textarea ref=\{editRef\} aria-label="Edit message"/);
 });
 
 test('a hand-dragged edit box is not undone by the next keystroke', () => {

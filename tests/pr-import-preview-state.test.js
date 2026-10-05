@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #866 — the Preview slot has THREE states on an imported proposal.
 //
 // A native proposal is promoted only after its staging preview is already up,
@@ -186,7 +187,7 @@ function makeAppView({ readOnly = false } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

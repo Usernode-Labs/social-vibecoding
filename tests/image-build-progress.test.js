@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Image build progress. The "build image" step used to sit for minutes with
 // nothing inside it. Now:
@@ -196,7 +198,7 @@ function makeAppView() {
     localStorage: { getItem: () => null, setItem() {} }, location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #1280: the notifications drawer's pinned "Saved" section.
 //
 // Two halves, both exercised against the SHIPPED source rather than a copy:
@@ -22,24 +23,24 @@ const express = require('express');
 const poolMod = require('../src/db/pool');
 
 const ROOT = path.join(__dirname, '..');
-const SRC = fs.readFileSync(
+const SRC = englishUiSource(fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-);
-const LIST_SRC = fs.readFileSync(
+));
+const LIST_SRC = englishUiSource(fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'notifications', 'notifications-list.tsx'),
   'utf8'
-);
-const STORE_SRC = fs.readFileSync(
+));
+const STORE_SRC = englishUiSource(fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'notifications', 'notifications-store.js'),
   'utf8'
-);
-const CHAT_SRC = fs.readFileSync(path.join(ROOT, 'public', 'js', 'group-chat.js'), 'utf8');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-const ICONS_SRC = fs.readFileSync(
+));
+const CHAT_SRC = englishUiSource(fs.readFileSync(path.join(ROOT, 'public', 'js', 'group-chat.js'), 'utf8'));
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+const ICONS_SRC = englishUiSource(fs.readFileSync(
   path.join(ROOT, 'frontend', '@', 'components', 'ui', 'icons.tsx'), 'utf8'
-);
-const SCHEMA = fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+));
+const SCHEMA = englishUiSource(fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8'));
 
 // ── the payload ─────────────────────────────────────────────────────────
 
@@ -191,16 +192,18 @@ test('saves are kept out of the notification feed proper', () => {
 });
 
 test('the section renders above the invites, and only when non-empty', () => {
+  const LIST_SRCEnglish = englishUiSource(LIST_SRC);
+  const STORE_SRCEnglish = englishUiSource(STORE_SRC);
   // Streamlined Concept: the pinned pair renders on the Notifications
   // SHEET now (notifications-sheet.tsx mounts <NotificationsPinnedSections/>
   // under the tabs); Saved still leads Invites.
-  const savedIdx = LIST_SRC.indexOf('id="notifications-saved"');
-  const invitesIdx = LIST_SRC.indexOf('id="notifications-invites"');
+  const savedIdx = LIST_SRCEnglish.indexOf('id="notifications-saved"');
+  const invitesIdx = LIST_SRCEnglish.indexOf('id="notifications-invites"');
   assert.ok(savedIdx > 0 && invitesIdx > savedIdx,
     'the saved section is the TOP pinned section');
-  assert.match(LIST_SRC, /saved\.length \? \([\s\S]{0,400}Saved\n/,
+  assert.match(englishUiSource(LIST_SRCEnglish), /saved\.length \? \([\s\S]{0,400}Saved\s*</,
     'the "Saved" header only renders when something is saved');
-  assert.match(STORE_SRC, /saved: null,/,
+  assert.match(englishUiSource(STORE_SRCEnglish), /saved: null,/,
     'the prerendered state is empty, so the SSG pass and hydration agree');
 });
 
@@ -231,12 +234,12 @@ test('the section is rendered on every refresh, not on open', () => {
 });
 
 test('unsaving is possible from the section as well as from the message', () => {
-  assert.match(SRC, /_unsave\(messageId\)/, 'the drawer has its own unsave path');
-  assert.match(SRC, /method: 'DELETE'/, 'it calls the same toggle endpoint');
-  assert.match(SRC, /GroupChat\._paintBookmark/,
+  assert.match(englishUiSource(SRC), /_unsave\(messageId\)/, 'the drawer has its own unsave path');
+  assert.match(englishUiSource(SRC), /method: 'DELETE'/, 'it calls the same toggle endpoint');
+  assert.match(englishUiSource(SRC), /GroupChat\._paintBookmark/,
     "unsaving in the drawer repaints the message's own button when that chat is open");
-  assert.match(LIST_SRC, /data-saved-unsave=/, 'the row carries a visible Unsave control');
-  assert.match(LIST_SRC, /label: 'Unsave'/, 'and a swipe action on touch');
+  assert.match(englishUiSource(LIST_SRC), /data-saved-unsave=/, 'the row carries a visible Unsave control');
+  assert.match(englishUiSource(LIST_SRC), /label: 'Unsave'/, 'and a swipe action on touch');
 });
 
 test('clicking a saved row opens the message rather than consuming it', () => {
@@ -257,7 +260,7 @@ test('clicking a saved row opens the message rather than consuming it', () => {
 
 test('the drawer can be opened by URL, so the section is screenshot-able', () => {
   assert.match(SRC, /shot !== 'notifications'/, '?shot=notifications opens the drawer');
-  const dapp = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
+  const dapp = JSON.parse(englishUiSource(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8')));
   const declared = (dapp.tests || []).filter((t) => /shot=notifications/.test(t.path || ''));
   assert.ok(declared.length >= 1,
     'a dapp.json test selects against the drawer this change adds a section to');
@@ -270,7 +273,7 @@ test('the drawer can be opened by URL, so the section is screenshot-able', () =>
 // renderer is gone (#1191): the transcript is React, and the button is
 // `<RowActions>` — one component, rendered by each of the three rows.
 test('every message kind carries the save button', () => {
-  const tsx = read('frontend/src/features/group-chat/transcript.tsx');
+  const tsx = englishUiSource(read('frontend/src/features/group-chat/transcript.tsx'));
   // #2387: a person's row carries the shared hover bar, whose Save is the
   // same toggle; the system and spec rows keep the module's header controls.
   const rows = [['MessageRow', /<MessageActions msg=\{msg\}/], ['SystemRow', /<RowActions msg=\{msg\}(?:\s|\/)/], ['SpecShareRow', /<RowActions msg=\{msg\}(?:\s|\/)/]];
@@ -303,7 +306,7 @@ test('the message button draws the shell’s own bookmark, not a second one', ()
   const chatCode = CHAT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   assert.doesNotMatch(chatCode, /_bookmarkSvg|_BOOKMARK_PATH/,
     'nor the renderer that drew it');
-  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  const row = englishUiSource(read('frontend/src/features/group-chat/transcript.tsx'));
   assert.match(row, /import \{[^}]*\bBookmarkIcon, BookmarkSolidIcon\b[^}]*\} from '@\/components\/ui\/icons'/,
     'the message button imports the glyph rather than inlining one');
   assert.match(LIST_SRC, /BookmarkSolidIcon/,
@@ -330,8 +333,8 @@ test('the mark is hollow when unsaved and solid when saved', () => {
     'an optimistic toggle patches the saved flag on the message');
   assert.doesNotMatch(paint[1], /innerHTML|classList|setAttribute/,
     'and does not write the button — the transcript is React-owned');
-  const row = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
+  const row = englishUiSource(fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8'));
   assert.match(row, /saved \? <BookmarkSolidIcon \/> : <BookmarkIcon/,
     'the component draws solid when saved and outline when not');
 });
@@ -350,7 +353,7 @@ test('the save button is available where react and edit are not', () => {
   assert.match(gates.slice(0, gates.indexOf('showReact:')), /!GroupChat\._readOnly\(\)/,
     'and so is edit');
 
-  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  const row = englishUiSource(read('frontend/src/features/group-chat/transcript.tsx'));
   assert.match(row, /aria-pressed=\{saved\}/, 'the toggle state is exposed, not just drawn');
 });
 

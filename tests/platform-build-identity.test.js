@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The document says which platform build it is.
 //
 // ── What was wrong ─────────────────────────────────────────────────────
@@ -162,7 +163,7 @@ function readerIn(metaContent) {
       },
     },
   };
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${src}\nvar __out = documentPlatformSha();`, ctx);
   return ctx.__out;
 }

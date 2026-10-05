@@ -1,3 +1,5 @@
+const { loadTsx } = require('./lib/render-tsx');
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -38,13 +40,15 @@ function loadAuthShared(window, fetchImpl) {
     fetch: fetchImpl,
     console: { warn() {} },
     require(specifier) {
+    if (specifier === '../../lib/i18n/runtime') return withLanguage({}).PlatformI18n;
+    if (specifier === '../../lib/i18n/react') return loadTsx('frontend/src/lib/i18n/react.tsx');
       if (specifier === '../../lib/legacy-dom') {
         return { useIsomorphicLayoutEffect() {} };
       }
       throw new Error(`unexpected auth shared import: ${specifier}`);
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(compiled, sandbox);
   return module.exports;
 }
@@ -196,7 +200,7 @@ function loadNativeChrome({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
 
   return {
@@ -715,7 +719,7 @@ test('App closes the realm synchronously before publishing either identity',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     vm.runInContext(appSource, sandbox);
     sandbox.App.loadVersion = () => order.push('load-version');
 
@@ -803,7 +807,7 @@ test('transient native recovery failure preserves replay metadata and permits re
 function recoveryReader(restore, responses) {
   const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   const start = appSource.indexOf('  async _fetchSession()');
   const end = appSource.indexOf('  async _fetchWebSession()', start);
   vm.runInContext(`Object.assign(App, {${appSource.slice(start, end)}});`, sandbox);

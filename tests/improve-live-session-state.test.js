@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1958 — the Improve panel's rows follow the live session store.
 //
 // App feedback triage 2026-09-10, row 44a: "improve sidebar update delay when
@@ -71,7 +72,7 @@ function load(answers) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SESSION_STATE, sandbox);
   const store = makeStoreStub({
     slug: 'demo', name: 'Demo app', open: false, working: false,

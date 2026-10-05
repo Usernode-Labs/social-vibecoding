@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // PWA offline-mode (#487) shell wiring: pins the contracts that keep the
 // offline boot complete and the manifest installable.
 //
@@ -43,7 +44,7 @@ const IMAGE_GENERATED_ASSETS = new Set([
 ]);
 
 function readPublic(rel) {
-  return fs.readFileSync(path.join(PUBLIC, rel), 'utf8');
+  return englishUiSource(fs.readFileSync(path.join(PUBLIC, rel), 'utf8'));
 }
 
 // Local script srcs + stylesheet hrefs referenced by an HTML shell page.
@@ -203,9 +204,9 @@ test('manifest.webmanifest is valid and installable', () => {
 
 test('the precached document names the platform, and does not guess a theme', () => {
   const html = readPublic('index.html');
-  const head = fs.readFileSync(
+  const head = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'head.html'), 'utf8'
-  );
+  ));
 
   // 1. THE NAME. Both the tab title and the header chip said "dApps" — the
   //    name this shell carried before the platform had one — until routing
@@ -219,10 +220,10 @@ test('the precached document names the platform, and does not guess a theme', ()
   const shipped = html.replace(/<!--[\s\S]*?-->/g, ' ');
   assert.doesNotMatch(shipped, /dApps/,
     'the cached document must not name the product something no other surface calls it');
-  const store = fs.readFileSync(
+  const store = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'header-title-store.js'),
     'utf8'
-  );
+  ));
   assert.match(store, /text: 'Homeroom'/,
     "the chip's INITIAL is what the prerender renders — they are one constant");
 
@@ -291,15 +292,15 @@ test('the React bundle registers the service worker at root scope', () => {
   // scope ('/sw.js', not '/js/sw.js') is what lets the SW control every
   // navigation — a scope regression only shows up as "offline boot stopped
   // working", long after the change.
-  const mod = fs.readFileSync(
+  const mod = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'lib', 'service-worker.ts'), 'utf8',
-  );
+  ));
   assert.match(mod, /serviceWorker/);
   assert.match(mod, /register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/);
 
-  const entry = fs.readFileSync(
+  const entry = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'main.tsx'), 'utf8',
-  );
+  ));
   assert.match(entry, /bootStep\('registerServiceWorker', registerServiceWorker\)/,
     'main.tsx must call registerServiceWorker() — nothing else does — and it '
     + 'goes through bootStep so a throw there cannot abort hydration (#1670)');
@@ -314,9 +315,9 @@ test('the offline engine kept window.Offline and its consumers', () => {
   // reach for this global, and app.js's ?shot=offline / ?shot=offline-signin
   // deep links depend on forceOffline() specifically — those captures are the
   // only way the offline UI can be photographed on a working network.
-  const mod = fs.readFileSync(
+  const mod = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'lib', 'offline.ts'), 'utf8',
-  );
+  ));
   assert.match(mod, /Offline: OfflineApi \}\)\.Offline = api/,
     'lib/offline.ts must install window.Offline');
   for (const member of ['isOffline', 'nudge', 'forceOffline', 'probe']) {
@@ -482,7 +483,7 @@ test('registerServiceWorker still registers at root scope when it can', () => {
 // Two halves, in two files, with nothing but this test holding them together.
 
 test('pull-to-refresh tells the worker before the screen reloads', () => {
-  const app = fs.readFileSync(path.join(PUBLIC, 'js/app.js'), 'utf8');
+  const app = englishUiSource(fs.readFileSync(path.join(PUBLIC, 'js/app.js'), 'utf8'));
   const fn = app.slice(app.indexOf('  _refreshOrReload(refresh) {'),
     app.indexOf('  _announceRefreshIntent()'));
   assert.ok(fn.length > 0, '_refreshOrReload located');
@@ -501,7 +502,7 @@ test('pull-to-refresh tells the worker before the screen reloads', () => {
 });
 
 test('the worker acts on refresh-intent and shuts the lane for a bounded window', () => {
-  const sw = fs.readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
+  const sw = englishUiSource(fs.readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8'));
   assert.match(sw, /if \(type === 'refresh-intent'\)/, 'the message is handled');
   assert.match(sw, /refreshIntentUntil = Date\.now\(\) \+ REFRESH_INTENT_WINDOW_MS/,
     'it arms a deadline rather than a flag somebody has to remember to clear');

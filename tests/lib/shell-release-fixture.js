@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./platform-language");
+
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -84,7 +86,7 @@ function harness(initial, caches = memoryCaches()) {
   function worker(release) {
     const handlers = {};
     const lifecycle = [];
-    vm.runInNewContext(release.read('/shell/worker.js').toString(), {
+    vm.runInNewContext(release.read('/shell/worker.js').toString(), withLanguage({
       self: { location: { origin: ORIGIN }, crypto: webcrypto, navigator: { locks },
         addEventListener: (name, handler) => { handlers[name] = handler; },
         skipWaiting: async () => { lifecycle.push('skipWaiting'); },
@@ -92,7 +94,7 @@ function harness(initial, caches = memoryCaches()) {
       },
       caches, fetch: fetcher, URL, Headers, Request, Response, AbortSignal,
       setTimeout, clearTimeout,
-    });
+    }));
     async function dispatch(name, extra = {}) {
       const waits = [];
       let result;

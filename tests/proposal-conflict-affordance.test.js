@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #386 gave the red affordance to 'failed' (an auto-resolve ran and gave
 // up). The silent-merge-failure fix extends it to 'conflict': that state is
 // written ONLY when a real merge attempt 405s at GitHub, and the
@@ -56,7 +57,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

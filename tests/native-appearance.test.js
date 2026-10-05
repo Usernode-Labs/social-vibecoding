@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The cold-launch white flash, and the two halves that fix it.
 //
 // The Homeroom Flutter shell paints a launch screen before this document
@@ -206,7 +207,7 @@ function loadNativeChrome({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return {
     calls,

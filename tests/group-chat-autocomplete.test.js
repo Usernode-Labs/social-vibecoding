@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The group chat composer's autocomplete menus — `@name` and
 // `#123` / `PR#123` — after #1191 made their contents React's, and the
 // `:shortcode` emoji menu that was React from its first row.
@@ -201,7 +202,7 @@ function loadMentionAutocomplete({ fetchImpl }) {
     clearTimeout: (id) => { if (id) timers[id - 1] = null; },
     Map, Set, RegExp, Date, Array, encodeURIComponent,
   };
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   const MA = vm.runInContext(`${src}\nMentionAutocomplete`, ctx);
   const shown = [];
   MA._render = () => { MA._open = true; shown.push(MA._items.slice()); };

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #394 / #437: the Mayor's post-spec wrap-up summary (a `mayor_reasoning`
 // event) must reach the live dev-chat over the GLOBAL WebSocket, not only the
@@ -102,7 +104,7 @@ function makeApp() {
   sandbox.WebSocket = function FakeWebSocket(url) { this.url = url; this.readyState = 1; };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox);
   const DevChat = makeDevChat();
   sandbox.DevChat = DevChat; // resolved as a free var at call time

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The change page as the Workshop's Needs-you item (task 497).
 //
 // A proposal's page used to read: the board card at full width; "About this
@@ -33,7 +34,7 @@ function context(user = { id: 42, username: 'Builder' }) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: { search: '', hash: '' }, URLSearchParams };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, p), 'utf8'), c);
   }

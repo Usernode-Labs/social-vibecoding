@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Discussion timestamps carry their date (#1808).
 //
 // Every transcript stamped a bare time of day, so a row read "02:41 PM"
@@ -67,7 +68,7 @@ function legacyStamp() {
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
   const body = src.slice(start + head.length, i);
-  return vm.runInNewContext(`(function (ts, now) {${body}})`);
+  return vm.runInNewContext(`(function (ts, now) {${body}})`, withLanguage());
 }
 
 const stampLegacy = legacyStamp();
@@ -89,7 +90,7 @@ function legacyRelStamp() {
     if (src[i] === '{') depth += 1;
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
-  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`);
+  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`, withLanguage());
 }
 
 const relStampLegacy = legacyRelStamp();

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The three screens that were still showing the WORD "Loading…".
 //
 // ── What they showed, and why it is worse than nothing ────────────────
@@ -210,56 +211,56 @@ const visible = (html) => html.replace(/<div class="sr-only" role="status">[^<]*
 
 test('challenges: the grid stands in for the CARDS, at the card’s own face', () => {
   const src = slot(CHALLENGES, 'function GridSkeleton(', 'function Grid({');
-  assert.match(src, /<SkeletonGroup label="Loading challenges">/, 'one group, one label');
-  assert.match(src, /<div className=\{GRID\}>/,
+  assert.match(englishUiSource(src), /<SkeletonGroup label="Loading challenges">/, 'one group, one label');
+  assert.match(englishUiSource(src), /<div className=\{GRID\}>/,
     'the pane’s own grid constant, so the placeholders stand in the columns the cards will');
-  assert.match(src, /className=\{CHALLENGE_CARD_FACE\}/,
+  assert.match(englishUiSource(src), /className=\{CHALLENGE_CARD_FACE\}/,
     'and the SHARED card’s face, exported from ./challenge-card.tsx rather than '
     + 'copied — a second copy goes wrong silently the first time the card moves');
-  assert.match(CHALLENGE_CARD, /export const CHALLENGE_CARD_FACE = /, 'which that file exports');
-  assert.match(CHALLENGE_CARD, /const CARD = CHALLENGE_CARD_FACE\n?\s*\+ ' cursor-pointer/,
+  assert.match(englishUiSource(CHALLENGE_CARD), /export const CHALLENGE_CARD_FACE = /, 'which that file exports');
+  assert.match(englishUiSource(CHALLENGE_CARD), /const CARD = CHALLENGE_CARD_FACE\n?\s*\+ ' cursor-pointer/,
     'and the real card is that face plus the affordances, so neither can drift');
   // The card's three parts, at their real sizes.
-  assert.match(src, /shape="block" className="h-20 w-20 rounded-2xl"/,
+  assert.match(englishUiSource(src), /shape="block" className="h-20 w-20 rounded-2xl"/,
     'the 5rem artwork tile — IconTile’s `xl`');
-  assert.match(src, /shape="block" className="h-9 w-full rounded-\[0\.6875rem\]"/,
+  assert.match(englishUiSource(src), /shape="block" className="h-9 w-full rounded-\[0\.6875rem\]"/,
     'and the rail at the card’s 36px height and 11px corners (RAIL_SIZE.md)');
-  assert.match(src, /<Skeleton shape="muted" className="h-\[5px\] w-full rounded-full" \/>/,
+  assert.match(englishUiSource(src), /<Skeleton shape="muted" className="h-\[5px\] w-full rounded-full" \/>/,
     'the season progress leads, as it does in the loaded grid: without it the '
     + 'whole grid jumps up by that block’s height when the payload lands');
 
   const html = visible(paneHtml({ grid: { kind: 'loading' } }));
-  assert.doesNotMatch(html, /Loading/, 'and no visible line of text is left');
-  assert.match(html, /animate-pulse/, 'the placeholders are drawn instead');
+  assert.doesNotMatch(englishUiSource(html), /Loading/, 'and no visible line of text is left');
+  assert.match(englishUiSource(html), /animate-pulse/, 'the placeholders are drawn instead');
 });
 
 test('challenges: the participant list stands in for the ENTRY ROW', () => {
   const src = slot(CHALLENGES, 'function EntriesSkeleton(', 'function Entries({');
-  assert.match(src, /<SkeletonGroup label="Loading participants" className="flex flex-col">/,
+  assert.match(englishUiSource(src), /<SkeletonGroup label="Loading participants" className="flex flex-col">/,
     'the list’s own column');
-  assert.match(src, /className=\{ENTRY_BOX\}/,
+  assert.match(englishUiSource(src), /className=\{ENTRY_BOX\}/,
     'at the real row’s box — the 44px minimum, the outdent and the padding');
-  assert.match(CHALLENGES, /const ENTRY_BOX = '-mx-2 flex min-h-11 /, 'which is that row’s, split off');
-  assert.match(CHALLENGES, /const ENTRY_ROW = `tc-se-entry \$\{ENTRY_BOX\} `/,
+  assert.match(englishUiSource(CHALLENGES), /const ENTRY_BOX = '-mx-2 flex min-h-11 /, 'which is that row’s, split off');
+  assert.match(englishUiSource(CHALLENGES), /const ENTRY_ROW = `tc-se-entry \$\{ENTRY_BOX\} `/,
     'and the row itself is still that box plus its hook and affordances');
 
   const html = visible(renderToHtml(createElement(loadTsx(CHALLENGES_PATH).DetailPage, { view: DETAIL })));
-  assert.doesNotMatch(html, /Loading/, 'no visible line of text');
-  assert.match(html, /animate-pulse/);
-  assert.doesNotMatch(html, /tc-se-entry/,
+  assert.doesNotMatch(englishUiSource(html), /Loading/, 'no visible line of text');
+  assert.match(englishUiSource(html), /animate-pulse/);
+  assert.doesNotMatch(englishUiSource(html), /tc-se-entry/,
     'and the placeholder does not claim the row’s selector hook');
 });
 
 test('challenges: the profile overlay stands in for the PANEL’s three parts', () => {
   const src = slot(CHALLENGES, 'function ProfileSkeleton(', 'function ProfileBody({');
-  assert.match(src, /<SkeletonGroup label="Loading the profile">/);
-  assert.match(src, /shape="block" className="h-5 w-40 mb-3"/, 'the name');
-  assert.match(src, /<div className="grid grid-cols-2 gap-2 mb-4">/,
+  assert.match(englishUiSource(src), /<SkeletonGroup label="Loading the profile">/);
+  assert.match(englishUiSource(src), /shape="block" className="h-5 w-40 mb-3"/, 'the name');
+  assert.match(englishUiSource(src), /<div className="grid grid-cols-2 gap-2 mb-4">/,
     'the stat grid’s own two columns and spacing');
 
   const html = visible(paneHtml({ profile: { kind: 'loading' } }));
-  assert.doesNotMatch(html, /Loading/, 'no visible line of text');
-  assert.match(html, /animate-pulse/);
+  assert.doesNotMatch(englishUiSource(html), /Loading/, 'no visible line of text');
+  assert.match(englishUiSource(html), /animate-pulse/);
 });
 
 test('challenges: all three loading branches hand off to a skeleton, and only those', () => {

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Regression test for issue #2938: tapping Send in a chat composer while an
 // attachment is still uploading shows "Still uploading, one moment…" above
 // the composer — and nothing ever took it down. The upload finished, the
@@ -53,7 +54,7 @@ function loadGroupChat() {
     Date, Math, JSON, Promise,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src + '\nglobalThis.__M = { GroupChat };', sandbox);
   const GroupChat = sandbox.__M.GroupChat;
 

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // "Use the bottom strip of the screen everywhere in the platform".
 //
 // The shell handled the ~34px strip above an iPhone's home indicator three
@@ -239,7 +240,7 @@ test('every top-level screen scroller carries platform-safe-scroll', () => {
   for (const id of SAFE_SCROLL_IDS) {
     // #auth-landing-scroll is inside the landing screen's interior, which
     // mounts on first reveal — so resolve against the markup the shell renders.
-    const m = new RegExp(`<(?:main|div) id="${id}"[^>]*>`).exec(shellMarkup());
+    const m = new RegExp(`<(?:main|div)\\b[^>]*\\bid="${id}"[^>]*>`).exec(shellMarkup());
     assert.ok(m, `#${id} is missing from the shell`);
     assert.match(m[0], /platform-safe-scroll/,
       `#${id} must reserve the home-indicator strip for its last row`);

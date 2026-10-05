@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend render tests for group-chat file attachments (#694): the per-kind
 // bubble row, hostile filename escaping, the file-only message, and the
 // _quoteFromRow "📎 filename" fallback.
@@ -67,7 +68,7 @@ function loadGroupChat() {
     Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src + '\nglobalThis.__M = { GroupChat };', sandbox);
   const { GroupChat } = sandbox.__M;
   GroupChat.appSlug = 'demo-app';

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1010: the "being applied" indicator on governance proposal cards.
 //
 // A deciding up-vote on a governance proposal runs the whole apply inside the
@@ -88,7 +89,7 @@ function makeSandbox({ fetchImpl } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   // Repaints are counted, not performed — there is no real DOM here.
@@ -624,11 +625,11 @@ function stagingMocks() {
   const ctx = { Date, Math, Number };
   return {
     gov: vm.runInNewContext(
-      `${slice('function stagingMockGovernance()')}; stagingMockGovernance()`, ctx
+      `${slice('function stagingMockGovernance()')}; stagingMockGovernance()`, withLanguage(ctx)
     ),
     issues: vm.runInNewContext(
       `${slice('function stagingMockIssues(repoUrl)')}; stagingMockIssues('https://github.com/acme/x')`,
-      ctx
+      withLanguage(ctx)
     ),
   };
 }

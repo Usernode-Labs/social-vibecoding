@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #1882: warming an app the finger is on must not be decided once, from a
 // status snapshot taken the first time the card was ever attached.
@@ -73,7 +75,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   installGridStore(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);

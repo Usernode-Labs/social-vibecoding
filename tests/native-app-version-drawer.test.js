@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1101: the hamburger footer requests the installed Flutter app's
 // version/build (for example 0.4.0/1223), distinguishes the platform version, and
 // never substitutes the currently-open dApp SHA.
@@ -102,7 +103,7 @@ function loadRenderer({
   // it did — same technique as tests/challenge-template-prefill.test.js.
   mod().nativeAppVersionStore.set({ value: '' });
   sandbox.nativeAppVersionStore = mod().nativeAppVersionStore;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(source.replace(/^import[^\n]*\n/m, ''), sandbox);
   sandbox.NativeAppVersion.init();
 

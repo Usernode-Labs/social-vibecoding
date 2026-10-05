@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Bug f of the navigation audit: the Leaderboard screen's bar title did not
 // follow its tabs.
 //
@@ -33,7 +35,7 @@ function realTitles() {
   const start = appJs.indexOf('  LEADERBOARD_TITLES: {');
   const end = appJs.indexOf('  _routeLeaderboard(', start);
   assert.ok(start > 0 && end > start, 'LEADERBOARD_TITLES and _leaderboardTitle located');
-  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`);
+  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`, withLanguage());
 }
 
 /** The real Leaderboard module, run as a script against a small DOM. */
@@ -60,7 +62,7 @@ function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null 
     fetch: async () => ({ ok: true, json: async () => ({ items: [] }) }),
   };
   ctx.window = ctx;
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   // The module is a plain object literal; only its trailing publish needs a
   // tweak to run as a script, and its store accessor reads `window`.
   const code = lbSrc.replace(/^export .*$/gm, '');
@@ -77,7 +79,7 @@ function recordingApp() {
 
 test('every address titles the bar with the label of the tab it shows', () => {
   const App = realTitles();
-  const labels = Object.fromEntries([...island.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
+  const labels = Object.fromEntries([...englishUiSource(island).matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]));
   assert.deepEqual(labels, { challenges: 'Challenges', kudos: 'Kudos', topochain: 'Standings', seasons: 'History' });
   for (const [key, label] of Object.entries(labels)) {

@@ -1,3 +1,5 @@
+const { loadTsx } = require('./lib/render-tsx');
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,17 +22,19 @@ const compiled = ts.transpileModule(source, {
   },
 }).outputText;
 const moduleForTest = { exports: {} };
-vm.runInNewContext(compiled, {
+vm.runInNewContext(compiled, withLanguage({
   module: moduleForTest,
   exports: moduleForTest.exports,
   require(specifier) {
+    if (specifier === '../../lib/i18n/runtime') return withLanguage({}).PlatformI18n;
+    if (specifier === '../../lib/i18n/react') return loadTsx('frontend/src/lib/i18n/react.tsx');
     if (specifier === 'react') return react;
     if (specifier === 'react/jsx-runtime') return jsx;
     if (specifier === '@/components/ui/button' ||
         specifier === '@/components/ui/dialog') return {};
     throw new Error(`Unexpected import: ${specifier}`);
   },
-});
+}));
 const { NativeLoginDetailsLink, nativeLoginDetailsText } = moduleForTest.exports;
 
 const details = {

@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2564: an empty "Your apps" says so.
 //
@@ -58,12 +61,12 @@ function renderGrid(patch) {
 
 test('the note is the exact sentence, from the shared constant', () => {
   const { NO_APPS_YET } = loadTsx(COPY);
-  assert.equal(NO_APPS_YET, SENTENCE, 'the wording is fixed copy, not a paraphrase');
+  assert.equal(NO_APPS_YET(), SENTENCE, 'the wording is fixed copy, not a paraphrase');
 
   const { AppsEmptyNote } = loadTsx(GRID);
   const html = renderToHtml(createElement(AppsEmptyNote, {}));
   assert.match(html, /data-home-apps-empty=""/);
-  assert.ok(html.includes(SENTENCE), `the note renders the sentence: ${html}`);
+  assert.ok(englishUiSource(html).includes(SENTENCE), `the note renders the sentence: ${html}`);
   assert.match(html, /col-span-full/, 'it spans the four columns of the canvas');
 });
 
@@ -171,7 +174,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   const gridStore = installGridStore(sandbox);
   installPanelsStore(sandbox);

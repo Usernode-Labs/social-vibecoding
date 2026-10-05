@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #1959 — the Improve panel says "Ready for your input" only when it is true.
 //
 // App feedback triage 2026-09-10, row 44b: change the pill from "Ready" to
@@ -96,14 +98,14 @@ test('the qualification is words, not a fourth state', () => {
   // tests/improve-session-spinner.test.js counts three branches of.
   const start = ROW_TSX.indexOf('function stateOf(');
   const body = ROW_TSX.slice(start, ROW_TSX.indexOf('\n}\n', start));
-  assert.match(body, /label: session\.awaitingInput \? 'Needs you' : 'Ready',/);
+  assert.match(englishUiSource(body), /label: session\.awaitingInput \? 'Needs you' : 'Ready',/);
   assert.equal((body.match(/bg-emerald-500\/15 text-emerald-700 dark:text-emerald-400/g) || []).length, 1,
     'both labels share the emerald pill');
   // The emerald tile badge that stood beside it was the row's static green
   // dot, and it is retired (#1946) — the tint above is the only emerald the
   // Ready state has left, and it comes with the word that explains it.
-  assert.doesNotMatch(body, /badge:/, 'no second renderer for the same state');
-  assert.doesNotMatch(body, /'Needs you'[\s\S]*?spinner: true/,
+  assert.doesNotMatch(englishUiSource(body), /badge:/, 'no second renderer for the same state');
+  assert.doesNotMatch(englishUiSource(body), /'Needs you'[\s\S]*?spinner: true/,
     'a waiting row never spins');
 });
 
@@ -140,7 +142,7 @@ function load(answers) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SESSION_STATE, sandbox);
   const store = makeStoreStub({
     slug: 'demo', name: 'Demo app', open: false, working: false,
@@ -279,11 +281,11 @@ test('a work order is never waiting, for the reason it is never busy', async () 
 test('one predicate feeds both surfaces', () => {
   const fn = CONTROLLER.slice(CONTROLLER.indexOf('function toRow('));
   const body = fn.slice(0, fn.indexOf('\n}\n'));
-  assert.match(body, /status: statusLabel\(session\)/);
-  assert.match(body, /awaitingInput: awaitsInput\(session\)/);
+  assert.match(englishUiSource(body), /status: statusLabel\(session\)/);
+  assert.match(englishUiSource(body), /awaitingInput: awaitsInput\(session\)/);
   const label = CONTROLLER.slice(CONTROLLER.indexOf('function statusLabel('));
-  assert.match(label.slice(0, label.indexOf('\n}\n')), /if \(awaitsInput\(session\)\) return 'Needs you';/);
+  assert.match(englishUiSource(label.slice(0, label.indexOf('\n}\n'))), /if \(awaitsInput\(session\)\) return 'Needs you';/);
   // …and the predicate defers to the LIVE busy accessor, not the payload flag.
   const pred = CONTROLLER.slice(CONTROLLER.indexOf('function awaitsInput('));
-  assert.match(pred.slice(0, pred.indexOf('\n}\n')), /liveBusy\(session\)\) return false/);
+  assert.match(englishUiSource(pred.slice(0, pred.indexOf('\n}\n'))), /liveBusy\(session\)\) return false/);
 });

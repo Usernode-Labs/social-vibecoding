@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The focused proposal view splits About into two labelled halves: the
 // user-facing summary, then the complete GitHub PR description behind a
 // collapsed "Technical details" disclosure. Compact cards keep using the
@@ -51,7 +52,7 @@ function makeAppView(renderMarkdown) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`,
     sandbox

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The made screen while Homeroom bot's plan waits for Build it
 // (frontend/src/features/first-session/made.tsx), who has joined through the
@@ -19,7 +20,7 @@ const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 const DIR = 'frontend/src/features/first-session';
 
 const PLAN = {
@@ -47,23 +48,23 @@ test('a plan waits for Build it when first_version carries one, read as the App 
 
 test('the plan is drawn under "Needs you", as the chat\'s own card, with what Build it does', () => {
   const { PlanSection, PLAN_LABEL, planNote } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(PLAN_LABEL, 'Needs you');
+  assert.equal(PLAN_LABEL(), 'Needs you');
   assert.equal(planNote('Plant Pal'), 'Homeroom bot starts building Plant Pal when you tap Build it.');
   const html = renderToHtml(createElement(PlanSection, {
     name: 'Plant Pal', plan: PLAN, onBuilt() {}, onGone() {}, onChange() {},
   }));
-  assert.match(html, /data-first-session-plan="open"/);
-  assert.match(html, />Needs you<\/p>/);
-  assert.match(html, /data-bot-plan="open"/);
-  assert.match(html, /Here’s my plan for Plant Pal:/);
-  assert.match(html, /<li>A list of your plants<\/li><li>A Today view<\/li>/);
-  assert.match(html, /How should it remind you\?/);
-  assert.match(html, /<span>In the app<\/span><span class="messages-bot-default">suggested<\/span>/);
-  assert.match(html, /data-bot-plan-build="">Build it<\/button>/);
-  assert.match(html, /data-bot-plan-change="">Change something<\/button>/);
-  assert.match(html, /Homeroom bot starts building Plant Pal when you tap Build it\./);
-  assert.match(html, /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab\'s surface of the card');
-  for (const words of [PLAN_LABEL, planNote('Plant Pal')]) assert.ok(!/—/.test(words), words);
+  assert.match(englishUiSource(html), /data-first-session-plan="open"/);
+  assert.match(englishUiSource(html), />Needs you<\/p>/);
+  assert.match(englishUiSource(html), /data-bot-plan="open"/);
+  assert.match(englishUiSource(html), /Here’s my plan for Plant Pal:/);
+  assert.match(englishUiSource(html), /<li>A list of your plants<\/li><li>A Today view<\/li>/);
+  assert.match(englishUiSource(html), /How should it remind you\?/);
+  assert.match(englishUiSource(html), /<span>In the app<\/span><span class="messages-bot-default">suggested<\/span>/);
+  assert.match(englishUiSource(html), /data-bot-plan-build="">Build it<\/button>/);
+  assert.match(englishUiSource(html), /data-bot-plan-change="">Change something<\/button>/);
+  assert.match(englishUiSource(html), /Homeroom bot starts building Plant Pal when you tap Build it\./);
+  assert.match(englishUiSource(html), /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab\'s surface of the card');
+  for (const words of [PLAN_LABEL(), planNote('Plant Pal')]) assert.ok(!/—/.test(words), words);
 });
 
 test('while the plan waits, the build\'s note says so instead of promising a message', () => {
@@ -80,22 +81,22 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
 
 test('Build it is the chat\'s own call, decided once; Change something is the App tab\'s', () => {
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /import \{ decideBotAction, MessagesApiError \} from '\.\.\/messages\/api';/);
-  assert.match(src, /import \{ PlanCardView \} from '\.\.\/messages\/bot-plan-view';/);
-  assert.match(src, /await decideBotAction\(plan\.actionId, 'build', answers\.map\(\(a\) => a \|\| ''\)\);/);
+  assert.match(englishUiSource(src), /import \{ decideBotAction, MessagesApiError \} from '\.\.\/messages\/api';/);
+  assert.match(englishUiSource(src), /import \{ PlanCardView \} from '\.\.\/messages\/bot-plan-view';/);
+  assert.match(englishUiSource(src), /await decideBotAction\(plan\.actionId, 'build', answers\.map\(\(a\) => a \|\| ''\)\);/);
   // Decided elsewhere already, or replaced: read the project again.
-  assert.match(src, /if \(err instanceof MessagesApiError && err\.status === 409\) \{ onGone\(\); return; \}/);
-  assert.match(src, /setError\('Couldn\\'t start building just now\. Try again\.'\);/);
+  assert.match(englishUiSource(src), /if \(err instanceof MessagesApiError && err\.status === 409\) \{ onGone\(\); return; \}/);
+  assert.match(englishUiSource(src), /setError\("Couldn't start building just now\. Try again\."\);/);
   // A plan built from here stays, chosen, with the answer each choice went with.
-  assert.match(src, /onBuilt\(plan, plan\.questions\.map\(\(q, i\) => answers\[i\] \|\| q\.answers\[0\] \|\| ''\)\);/);
-  assert.match(src, /<PlanCardView surface="app" appName=\{made\.name\} plan=\{chosen\.plan\} state="built" choices=\{chosen\.choices\} \/>/);
+  assert.match(englishUiSource(src), /onBuilt\(plan, plan\.questions\.map\(\(q, i\) => answers\[i\] \|\| q\.answers\[0\] \|\| ''\)\);/);
+  assert.match(englishUiSource(src), /<PlanCardView surface="app" appName=\{made\.name\} plan=\{chosen\.plan\} state="built" choices=\{chosen\.choices\} \/>/);
   // Drawn first: it is what waits on them, above the project card and the sketch.
   const plan = src.indexOf('<PlanSection\n');
   assert.ok(plan > 0 && plan < src.indexOf('<SketchCard made='), 'the plan comes before the project card');
-  assert.match(src, /onChange=\{\(\) => onChangePlan\(plan\.conversationId \?\? made\.conversationId, plan\.messageId\)\}/);
+  assert.match(englishUiSource(src), /onChange=\{\(\) => onChangePlan\(plan\.conversationId \?\? made\.conversationId, plan\.messageId\)\}/);
   // The endpoint the chat's api call reaches is the one the App tab posts to.
-  assert.match(read('frontend/src/features/messages/api.ts'), /request<unknown>\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{actionId\}`/);
-  assert.match(read('public/js/app-view.js'), /changeFirstVersionPlan\(_slug, conversationId, messageId\) \{/);
+  assert.match(englishUiSource(read('frontend/src/features/messages/api.ts')), /request<unknown>\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{actionId\}`/);
+  assert.match(englishUiSource(read('public/js/app-view.js')), /changeFirstVersionPlan\(_slug, conversationId, messageId\) \{/);
 });
 
 test('Change something leaves the first session for the chat, with the plan quoted', () => {
@@ -129,15 +130,15 @@ test('the invite line says who joined, once somebody has', () => {
   assert.equal(joinedLine({ member_count: 12, members: [maker, { username: 'a' }] }), '✓ 11 people joined.');
   const src = read(`${DIR}/made.tsx`);
   // Read only while an invite is out, and in place of "Invite sent" once somebody joined.
-  assert.match(src, /const community = useCommunity\(made\.slug, sent\);/);
-  assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
-  assert.match(src, /if \(!on\) return undefined;/);
-  assert.match(src, /\{joined \|\| `✓ Invite sent\$\{sentTo \? ` to \$\{sentTo\}` : ''\}\.`\}/);
+  assert.match(englishUiSource(src), /const community = useCommunity\(made\.slug, sent\);/);
+  assert.match(englishUiSource(src), /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
+  assert.match(englishUiSource(src), /if \(!on\) return undefined;/);
+  assert.match(englishUiSource(src), /\{joined \|\| `✓ Invite sent\$\{sentTo \? ` to \$\{sentTo\}` : ''\}\.`\}/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
-  assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);
-  assert.match(read('src/services/communities.js'), /ORDER BY \(m\.source = 'creator'\) DESC, m\.joined_at DESC, u\.id/);
-  assert.match(read('src/services/communities.js'), /AS member_count,/);
+  assert.match(englishUiSource(route), /router\.get\('\/api\/apps\/:slug\/community',/);
+  assert.match(englishUiSource(read('src/services/communities.js')), /ORDER BY \(m\.source = 'creator'\) DESC, m\.joined_at DESC, u\.id/);
+  assert.match(englishUiSource(read('src/services/communities.js')), /AS member_count,/);
 });
 
 test('the made screen renders with nothing read yet: no plan, the build\'s first line', () => {

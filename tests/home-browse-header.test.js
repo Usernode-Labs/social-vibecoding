@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The Home and Browse headers, executed end to end.
 //
@@ -74,7 +77,7 @@ function harness({ improveAvailable = true } = {}) {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(APP, sandbox);
   vm.runInContext(BROWSE, sandbox);
   const { App, Browse } = sandbox;
@@ -364,11 +367,11 @@ test('Home and Discover are reachable from the bar, on every platform screen', (
   // opening anything, and Home's plain click is still routed in place while
   // its href stays a real path so a modified click opens a tab.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
+  assert.match(englishUiSource(bar), /key: 'home' as const[\s\S]{0,400}href: '\/'/);
   // A press on the tab says so, and swaps like any other tab's (#2881).
-  assert.match(bar, /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(englishUiSource(bar), /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
+  assert.match(englishUiSource(bar), /key: 'discover' as const, label: 'Discover', href: '#apps'/);
   // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.doesNotMatch(menu, /id="switcher-row-/);
+  assert.doesNotMatch(englishUiSource(menu), /id="switcher-row-/);
 });

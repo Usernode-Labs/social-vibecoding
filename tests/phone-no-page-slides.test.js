@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2896, #2775 — on the phone a page or tab change SWAPS IN PLACE.
 //
@@ -29,7 +31,7 @@ function load({ wide }) {
     unNative: { toast() {}, transition(fn, opts) { asked.push(opts); fn(); } },
   };
   window.window = window;
-  const context = vm.createContext({ window, document: { addEventListener() {} }, console });
+  const context = vm.createContext(withLanguage({ window, document: { addEventListener() {} }, console }));
   vm.runInContext(read('public/js/platform-ui.js'), context);
   return { PlatformUI: window.PlatformUI, asked };
 }

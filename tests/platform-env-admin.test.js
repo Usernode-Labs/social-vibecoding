@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Wiring tests for the Platform variables surface — the platform app's own
 // secrets panel (src/routes/apps.js + public/js/app-secrets.js + the schema
 // and debug-access rules that back it).
@@ -38,17 +39,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const appsJs = fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8');
-const adminJs = fs.readFileSync(path.join(root, 'src/routes/admin.js'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
-const secretsJs = fs.readFileSync(path.join(root, 'frontend/src/features/dialogs/app-secrets-controller.js'), 'utf8');
-const schemaSql = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
+const appsJs = englishUiSource(fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8'));
+const adminJs = englishUiSource(fs.readFileSync(path.join(root, 'src/routes/admin.js'), 'utf8'));
+const consoleJs = englishUiSource(fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8'));
+const secretsJs = englishUiSource(fs.readFileSync(path.join(root, 'frontend/src/features/dialogs/app-secrets-controller.js'), 'utf8'));
+const schemaSql = englishUiSource(fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8'));
+const manifest = JSON.parse(englishUiSource(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8')));
 
 // Read as text rather than required: both modules pull in `pg`, and this
 // file is otherwise dependency-free.
-const debugAccessJs = fs.readFileSync(path.join(root, 'src/services/debug-access.js'), 'utf8');
-const eventsJs = fs.readFileSync(path.join(root, 'src/services/events.js'), 'utf8');
+const debugAccessJs = englishUiSource(fs.readFileSync(path.join(root, 'src/services/debug-access.js'), 'utf8'));
+const eventsJs = englishUiSource(fs.readFileSync(path.join(root, 'src/services/events.js'), 'utf8'));
 
 // Slice one route handler out of apps.js by its registration line.
 function route(method, pathExpr) {
@@ -139,7 +140,7 @@ test('both mutations take the shared admin advisory lock inside a transaction', 
 });
 
 test('the advisory lock id has one definition, shared by both callers', () => {
-  const locks = fs.readFileSync(path.join(root, 'src/services/advisory-locks.js'), 'utf8');
+  const locks = englishUiSource(fs.readFileSync(path.join(root, 'src/services/advisory-locks.js'), 'utf8'));
   assert.match(locks, /ADMIN_MUTATION_LOCK = 991001/);
   for (const [file, src] of [['apps.js', appsJs], ['admin.js', adminJs]]) {
     assert.match(src, /require\('\.\.\/services\/advisory-locks'\)/,
@@ -264,26 +265,29 @@ test('the console no longer carries a Platform variables section', () => {
 // ── Panel UI ──────────────────────────────────────────────────────────
 
 test('the panel says a change takes effect on the next deploy', () => {
-  assert.match(secretsJs, /applied by the platform.{1,2}s next deploy/,
+  const secretsJsEnglish = englishUiSource(secretsJs);
+  assert.match(secretsJsEnglish, /applied by the platform.{1,2}s next deploy/,
     'the single most surprising thing about this screen — a value set here is '
     + 'inert until the next deploy — has to be on the screen itself');
 });
 
 test('a private value is never rendered', () => {
-  assert.match(secretsJs, /never displayed/,
+  const secretsJsEnglish = englishUiSource(secretsJs);
+  assert.match(secretsJsEnglish, /never displayed/,
     'a private row shows a placeholder, not a value');
 });
 
 test('an unwritable row offers neither a direct nor a propose button', () => {
+  const secretsJsEnglish = englishUiSource(secretsJs);
   // The action branch grew a third case (a 'proposed' row links to its
   // declaration proposal), so this is the if/else form rather than the
   // original ternary — the invariant it protects is unchanged: an
   // unwritable row resolves to the empty string, i.e. no controls at all.
-  const row = secretsJs.slice(secretsJs.indexOf('renderRow(s, canWrite) {'));
+  const row = secretsJsEnglish.slice(secretsJsEnglish.indexOf('renderRow(s, canWrite) {'));
   assert.match(row.slice(0, 8000), /else if \(s\.unwritable\) \{\s*\n\s*actions = '';/,
     'both button groups are suppressed — a vote that cannot be honoured is '
     + 'worse than no button at all');
-  assert.match(secretsJs, /can't be edited here/,
+  assert.match(secretsJsEnglish, /can't be edited here/,
     'and the row says why');
 });
 
@@ -328,7 +332,7 @@ test('dapp.json has a rendered check for the panel, and the reader keeps it', ()
 });
 
 test('the panel is reachable from a URL so captures and checks can see it', () => {
-  const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
+  const appViewJs = englishUiSource(fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8'));
   assert.match(appViewJs, /shot === 'secrets' \|\| shot === 'secrets-new'/,
     'the panel is a modal — without a deep link the before/after screenshots '
     + 'would show the home feed instead of the changed screen');

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2570 — what each model is good for, what a change on it is expected to
 // cost, and what changes on it actually cost.
 //
@@ -407,7 +408,7 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   sandbox.addEventListener = () => {};
   sandbox.navigator = {};
   sandbox.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`,
     sandbox,

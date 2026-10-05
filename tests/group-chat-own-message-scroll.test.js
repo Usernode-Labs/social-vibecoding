@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2389: in an app's general Discussion, the message you just sent landed
 // under the fold. Two causes, both pinned here:
 //   1. the live append was batched by React, so `scrollToBottom()` on the next
@@ -20,7 +21,7 @@ function setup({ lockedToBottom }) {
     App: { user: { id: 7, username: 'evan' } },
     document: { getElementById: (id) => (id === 'gc-messages' ? {} : null) },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(read('public/js/group-chat.js'), sandbox);
   const gc = sandbox.window.GroupChat;
   gc._lockedToBottom = lockedToBottom;

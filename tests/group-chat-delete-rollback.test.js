@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Deleting a message in a project's chat when the delete does not go
 // through. The row turns into its "Message deleted" placeholder at once; a
 // REST delete that the server refuses, or whose fetch throws (offline), must
@@ -52,7 +53,7 @@ function loadGroupChat(fetchImpl) {
   sandbox.globalThis = sandbox;
   sandbox.Notifications = { items: [], refresh() {} };
   sandbox.UsernodeReact = { groupChat: { patchTranscriptMessage() {} } };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/group-chat.js')}\nglobalThis.__M = { GroupChat };`, sandbox);
   const { GroupChat } = sandbox.__M;
   GroupChat.appSlug = 'demo';

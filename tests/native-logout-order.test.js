@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -96,7 +97,7 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true, offl
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(settingsSource, sandbox);
   sandbox.Settings._clearSwApiCache = async () => { order.push('sw-cache'); };
   return {

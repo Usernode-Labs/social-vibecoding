@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1037: the draft card must say WHERE the issue will be filed, because
 // the tap is irreversible and the Mayor picks the destination from the
 // user's wording. An app-targeted card reads "Issue draft: <app>" with a
@@ -68,7 +69,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.renderMarkdown = (t) => String(t || '');

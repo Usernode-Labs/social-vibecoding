@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #1955: one "+" in the Messages composer, not two unlabelled icons.
 //
@@ -32,8 +33,8 @@ function rule(selector) {
 test('the composer offers ONE add control, not a paperclip and a tray', () => {
   const actions = COMPOSER.match(/className="messages-composer-action"/g) || [];
   assert.equal(actions.length, 1, 'exactly one round action button beside the field');
-  assert.match(COMPOSER, /aria-label="Add to message"/);
-  assert.match(COMPOSER, /<PlusIcon aria-hidden="true" \/>/, 'the trigger is the plus');
+  assert.match(englishUiSource(COMPOSER), /aria-label="Add to message"/);
+  assert.match(englishUiSource(COMPOSER), /<PlusIcon aria-hidden="true" \/>/, 'the trigger is the plus');
 });
 
 test('the trigger declares the menu it opens', () => {
@@ -48,10 +49,10 @@ test('the trigger declares the menu it opens', () => {
 test('both old actions survive, now as named rows', () => {
   // The icons are kept — they are what made the rows recognisable to anyone
   // who had learned the old bar — but each now carries its own word.
-  assert.match(COMPOSER, /<PaperClipIcon aria-hidden="true" \/>\s*<span>Attach files<\/span>/);
-  assert.match(COMPOSER, /<ArrowUpTrayIcon aria-hidden="true" \/>\s*<span>Share item<\/span>/);
-  assert.match(COMPOSER, /dialogs\?\.messagesShare\?\.open\(\)/, 'share still opens the same dialog');
-  assert.match(COMPOSER, /fileRef\.current\?\.click\(\)/, 'attach still opens the same file input');
+  assert.match(englishUiSource(COMPOSER), /<PaperClipIcon aria-hidden="true" \/>\s*<span>Attach files<\/span>/);
+  assert.match(englishUiSource(COMPOSER), /<ArrowUpTrayIcon aria-hidden="true" \/>\s*<span>Share item<\/span>/);
+  assert.match(englishUiSource(COMPOSER), /dialogs\?\.messagesShare\?\.open\(\)/, 'share still opens the same dialog');
+  assert.match(englishUiSource(COMPOSER), /fileRef\.current\?\.click\(\)/, 'attach still opens the same file input');
 });
 
 test('the attachment cap disables the ROW, never the whole control', () => {

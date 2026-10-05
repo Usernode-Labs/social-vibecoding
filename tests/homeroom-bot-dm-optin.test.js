@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3624: joining the Homeroom bot's DM yourself, from Settings -> Experimental.
 //
@@ -220,29 +221,29 @@ test('/api/auth/me reports whether the person is on the list', async () => {
 
 test('Settings -> Experimental has the switch, wired to the route, with a revert on failure', () => {
   const section = read('frontend/src/features/settings/sections/experimental.tsx');
-  assert.match(section, /<SwitchRow id="homeroom-bot-dm-enabled">/, 'the switch');
-  assert.match(section, /<StatusLine id="homeroom-bot-dm-status"/, 'and somewhere to say a join was refused');
-  assert.match(section, /The platform pays for its work for you, up to a weekly limit\./,
+  assert.match(englishUiSource(section), /<SwitchRow id="homeroom-bot-dm-enabled">/, 'the switch');
+  assert.match(englishUiSource(section), /<StatusLine id="homeroom-bot-dm-status"/, 'and somewhere to say a join was refused');
+  assert.match(englishUiSource(section), /The platform pays for its work for you, up to a weekly limit\./,
     'it says who pays, and that there is a limit');
 
   const settings = read('frontend/src/features/settings/settings.js');
-  assert.match(settings, /this\.state\.homeroomBotDm = !!j\.user\?\.homeroomBotDm;/, 'painted from /api/auth/me');
-  assert.match(settings, /_saveHomeroomBotDm\(e\.target\.checked\)/, 'saved on change, not on close');
+  assert.match(englishUiSource(settings), /this\.state\.homeroomBotDm = !!j\.user\?\.homeroomBotDm;/, 'painted from /api/auth/me');
+  assert.match(englishUiSource(settings), /_saveHomeroomBotDm\(e\.target\.checked\)/, 'saved on change, not on close');
   const save = settings.match(/async _saveHomeroomBotDm\([\s\S]*?\n    \},/);
   assert.ok(save, '_saveHomeroomBotDm must exist');
-  assert.match(save[0], /'\/api\/me\/homeroom-bot-dm'/, 'POSTs to the route');
-  assert.match(save[0], /toggle\.checked = !!this\.state\.homeroomBotDm/,
+  assert.match(englishUiSource(save[0]), /'\/api\/me\/homeroom-bot-dm'/, 'POSTs to the route');
+  assert.match(englishUiSource(save[0]), /toggle\.checked = !!this\.state\.homeroomBotDm/,
     'a refused join puts the switch back rather than leaving it lying');
-  assert.match(save[0], /return fail\(j\.error \|\| 'Failed to save\.'\)/, 'and shows the server\'s reason');
+  assert.match(englishUiSource(save[0]), /return fail\(j\.error \|\| 'Failed to save\.'\)/, 'and shows the server\'s reason');
   // The create dialog asks for a project description from App.user, so the
   // live object has to move with the switch in this same page load.
-  assert.match(save[0], /App\.user\.homeroomBotDm = !!enabled/);
+  assert.match(englishUiSource(save[0]), /App\.user\.homeroomBotDm = !!enabled/);
   const render = settings.match(/_renderExperimentalSection\(\) \{[\s\S]*?\n    \},/);
-  assert.match(render[0], /getElementById\('homeroom-bot-dm-enabled'\)/, 'every paint shows the stored value');
+  assert.match(englishUiSource(render[0]), /getElementById\('homeroom-bot-dm-enabled'\)/, 'every paint shows the stored value');
 
   const facade = read('frontend/src/features/settings/facade.js');
-  assert.match(facade, /homeroomBotDm: false,/, 'the facade\'s state has the same default');
-  assert.match(facade, /state\.homeroomBotDm = !!u\.homeroomBotDm;/);
+  assert.match(englishUiSource(facade), /homeroomBotDm: false,/, 'the facade\'s state has the same default');
+  assert.match(englishUiSource(facade), /state\.homeroomBotDm = !!u\.homeroomBotDm;/);
 });
 
 test('the pane renders the switch inside its label, with its status line shipping hidden', () => {
@@ -262,8 +263,8 @@ test('the pane renders the switch inside its label, with its status line shippin
 });
 
 test('somebody not on the list is told where to turn it on, plainly', () => {
-  assert.match(dm.NOT_ENABLED_TEXT, /turn on Homeroom bot in Settings, under Experimental/);
-  assert.doesNotMatch(dm.NOT_ENABLED_TEXT, /—/);
-  assert.match(read('frontend/src/features/settings/sections/experimental.tsx'),
+  assert.match(englishUiSource(dm.NOT_ENABLED_TEXT), /turn on Homeroom bot in Settings, under Experimental/);
+  assert.doesNotMatch(englishUiSource(dm.NOT_ENABLED_TEXT), /—/);
+  assert.match(englishUiSource(read('frontend/src/features/settings/sections/experimental.tsx')),
     /Homeroom bot \(build with it in Messages\)/, 'and the switch goes by the name the bot gives it');
 });

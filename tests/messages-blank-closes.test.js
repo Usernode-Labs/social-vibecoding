@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #1953: clicking the blank area of the conversation list (below the last
 // row) closes the open conversation. Only a click on the list container itself
@@ -23,9 +24,9 @@ test('the list container closes the open conversation on a click on itself', () 
 });
 
 test('closing goes through the store\'s own navigation', () => {
-  assert.match(SCREEN, /open as openConversation,/);
+  assert.match(englishUiSource(SCREEN), /open as openConversation,/);
   // open(null) routes to the bare #messages hash — the two-pane layout then
   // shows "Choose a conversation".
-  assert.match(STORE, /export function open\(conversationId\?: number \| null\): void \{[\s\S]*?: '#messages';/);
-  assert.match(SCREEN, /<h2>Choose a conversation<\/h2>/);
+  assert.match(englishUiSource(STORE), /export function open\(conversationId\?: number \| null\): void \{[\s\S]*?: '#messages';/);
+  assert.match(englishUiSource(SCREEN), /<h2>Choose a conversation<\/h2>/);
 });

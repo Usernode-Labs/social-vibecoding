@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Making a message findable in the bell, once the bell is where messages live.
 //
@@ -159,12 +160,12 @@ test('the Messages tab interleaves running sessions with its rows by time', () =
 
 test('the tab count sums collapsed rows, so it agrees with the bell', () => {
   assert.match(
-    SHEET_SRC,
+    englishUiSource(SHEET_SRC),
     /unread\.reduce\(\(sum, view\) => sum \+ \(view\.count \|\| 1\), 0\)/,
     'a collapsed row stands for `count` notifications; counting rows would say 1 where the '
     + 'badge says 4',
   );
-  assert.match(SHEET_SRC, /\{unreadCount \? `Unread \(\$\{unreadCount\}\)` : 'Unread'\}/);
+  assert.match(englishUiSource(SHEET_SRC), /\{unreadCount \? `Unread \(\$\{unreadCount\}\)` : 'Unread'\}/);
 });
 
 test('the Messages tab carries the way out to the full Messages screen', () => {

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Reactions on a group chat message: the pills under a row, and the unread
 // dot beside its name.
 //
@@ -165,7 +166,7 @@ function loadGroupChat({ notifications = [], messages = [] } = {}) {
   sandbox.UsernodeReact = {
     groupChat: { patchTranscriptMessage: (id, patch) => patches.push([id, patch]) },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/group-chat.js')}\nglobalThis.__M = { GroupChat };`, sandbox);
   const { GroupChat } = sandbox.__M;
   GroupChat.messages = messages;

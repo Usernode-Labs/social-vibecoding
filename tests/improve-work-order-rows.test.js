@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1417 — an open connector work order shows in the Improve panel.
 //
 // Between prepare_work and the moment an agent shares or submits, the person
@@ -61,7 +62,7 @@ function loadImproveController(fetch) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
   // flag, not the Improve panel's — that panel retired (#2718 review).

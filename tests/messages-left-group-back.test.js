@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA 2026-09-24 Q16: Leave group, then Back.
 //
@@ -119,9 +120,9 @@ test('Q16: a group listed again (invited back) opens normally', async () => {
 
 test('Q16: the pane offers the way out for a conversation that cannot come back', () => {
   // Left: plain text in the ordinary state colour, and the list.
-  assert.match(SCREEN,
+  assert.match(englishUiSource(SCREEN),
     /snap\.threadGone === 'left' \? <div className="messages-state" data-thread-gone="left"><p>You left this group\.<\/p><button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>Back to Messages<\/button><\/div>/);
   // A 404: the message stays, but Try again gives way to the list.
-  assert.match(SCREEN,
+  assert.match(englishUiSource(SCREEN),
     /snap\.threadGone === 'missing'\s*\? <button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>Back to Messages<\/button>\s*: <button type="button" onClick=\{\(\) => messagesController\.route\(conversationId\)\}>Try again<\/button>/);
 });

@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #1524 — signing out always ends on the PUBLIC LANDING page.
 //
 // ── What was wrong ─────────────────────────────────────────────────────
@@ -141,19 +143,19 @@ test('the two files agree on the one-shot advisory key', () => {
 });
 
 test('the advisory copy is unchanged, and carries no em dash', () => {
-  const copy = SETTINGS.match(/const NATIVE_SHUTDOWN_NOTICE =\s*\n\s*'([^']+)';/);
+  const copy = englishUiSource(SETTINGS).match(/const NATIVE_SHUTDOWN_NOTICE =\s*\n\s*'([^']+)';/);
   assert.ok(copy, 'the advisory is a named constant');
   assert.equal(copy[1],
     'Signed out. Close and reopen the app to finish shutting down Homeroom.');
   // User-facing copy: no em dash in any encoding.
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
+  const logout = SETTINGS.slice(englishUiSource(SETTINGS).indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const scopes = [
-    SETTINGS.slice(SETTINGS.indexOf('  const LANDING_URL'),
-      SETTINGS.indexOf('  const Settings = {')),
-    logout.slice(0, logout.indexOf('\n    },')),
+    SETTINGS.slice(englishUiSource(SETTINGS).indexOf('  const LANDING_URL'),
+      englishUiSource(SETTINGS).indexOf('  const Settings = {')),
+    logout.slice(0, englishUiSource(logout).indexOf('\n    },')),
   ];
   for (const src of scopes) {
-    const strings = src.match(/'[^'\n]*(\u2014|&mdash;|&#8212;|\\u2014)[^'\n]*'/g) || [];
+    const strings = englishUiSource(src).match(/'[^'\n]*(\u2014|&mdash;|&#8212;|\\u2014)[^'\n]*'/g) || [];
     assert.deepEqual(strings, []);
   }
 });
@@ -193,7 +195,7 @@ function drainIn(stored) {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`Object.assign(App, {${method(APP, '_drainLogoutNotice')}});`, sandbox);
   return { run: () => sandbox.App._drainLogoutNotice(), toasts };
 }

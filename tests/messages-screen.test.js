@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Frontend contract for #488. These assertions deliberately pin the seams
 // where a private, React-owned screen meets the classic hash router and REST
@@ -10,16 +11,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
+const read = (file) => englishUiSource(fs.readFileSync(path.join(ROOT, file), 'utf8'));
 
 const html = read('public/index.html');
 const app = read('public/js/app.js');
 const api = read('frontend/src/features/messages/api.ts');
 const store = read('frontend/src/features/messages/store.ts');
-const screen = read('frontend/src/features/messages/index.tsx');
-const composer = read('frontend/src/features/messages/composer.tsx');
-const row = read('frontend/src/features/messages/message-row.tsx');
-const markdown = read('frontend/src/features/messages/format.tsx');
+const screen = englishUiSource(read('frontend/src/features/messages/index.tsx'));
+const composer = englishUiSource(read('frontend/src/features/messages/composer.tsx'));
+const row = englishUiSource(read('frontend/src/features/messages/message-row.tsx'));
+const markdown = englishUiSource(read('frontend/src/features/messages/format.tsx'));
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -83,7 +84,7 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
   // The hub's channel card points here, not at the app view.
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/workshop/hub-cards.tsx')),
     /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
@@ -134,19 +135,22 @@ test('the conversation list loads only after auth and reconciles on reconnect', 
 });
 
 test('an invitation resolves metadata before deciding whether history may be fetched', () => {
-  const fn = store.slice(store.indexOf('export async function loadThread('),
-    store.indexOf('export async function loadOlder('));
+  const storeEnglish = englishUiSource(store);
+  const screenEnglish = englishUiSource(screen);
+  const apiEnglish = englishUiSource(api);
+  const fn = storeEnglish.slice(storeEnglish.indexOf('export async function loadThread('),
+    storeEnglish.indexOf('export async function loadOlder('));
   const detailAt = fn.indexOf('await api.getConversation(conversationId, read)');
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
   const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
-  assert.match(screen, /Accepting gives you access to the complete retained conversation history/);
-  assert.match(api, /if \(raw === null \|\| \(action === 'decline'/,
+  assert.match(englishUiSource(screenEnglish), /Accepting gives you access to the complete retained conversation history/);
+  assert.match(englishUiSource(apiEnglish), /if \(raw === null \|\| \(action === 'decline'/,
     'a declined invitation never normalizes a synthetic id=0 conversation');
-  assert.match(screen, /Decline &amp; block @\{requesterUser\.username\}/,
+  assert.match(englishUiSource(screenEnglish), /Decline & block @\$?\{requesterUser\.username\}/,
     'both direct and group invitations expose a pre-accept requester block action');
-  const block = screen.slice(screen.indexOf('async function declineAndBlock()'),
-    screen.indexOf('  return (', screen.indexOf('async function declineAndBlock()')));
+  const block = screenEnglish.slice(screenEnglish.indexOf('async function declineAndBlock()'),
+    screenEnglish.indexOf('  return (', screenEnglish.indexOf('async function declineAndBlock()')));
   const apiAt = block.indexOf('await api.setBlock(requesterId, true)');
   const purgeAt = block.indexOf('await finishDirectBlock(conversationId)');
   assert.ok(apiAt > -1 && apiAt < purgeAt,
@@ -218,7 +222,7 @@ test('composer and moderation payloads match the backend contracts', () => {
     'mention completion and insertion support hyphenated and other valid usernames');
   assert.match(api, /query\.trim\(\)\.slice\(0, 255\)[\s\S]{0,80}scope=messages/,
     'recipient search excludes users blocked in either direction');
-  const sharedReport = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dialogs/report.tsx'), 'utf8');
+  const sharedReport = englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend/src/features/dialogs/report.tsx'), 'utf8'));
   assert.match(row, /openReport\(\{ targetType: 'conversation_message'/);
   for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) assert.ok(sharedReport.includes(`['${reason}',`));
   assert.match(sharedReport, /maxLength=\{1000\}/);

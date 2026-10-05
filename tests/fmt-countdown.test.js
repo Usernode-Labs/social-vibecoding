@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the merge-window countdown formatter (app-view.js
 // AppView._fmtCountdown). #627: labels are two-unit and floor-rounded so
 // day-scale countdowns visibly tick down (~2d 5h) instead of sitting on a
@@ -46,7 +47,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }

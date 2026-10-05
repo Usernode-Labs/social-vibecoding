@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // What an item's page and the dev chat's session list read.
 //
 // Measured on production (the platform app): a proposal's own row was 265 KB,
@@ -170,7 +171,7 @@ function loadAppView({ fetchImpl } = {}) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
@@ -259,7 +260,7 @@ function loadDevChat(answer) {
     UsernodeReact: { devChat: { publishSessionList: (state) => { published = state; } } },
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`, sandbox);
   sandbox.AppView = { appData: { slug: 'demo' } };
   return { DevChat: sandbox.__DevChat, calls, published: () => JSON.parse(JSON.stringify(published)), sandbox };

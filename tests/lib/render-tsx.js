@@ -54,6 +54,18 @@ const fromFrontend = (spec) => require(require.resolve(spec, { paths: [FRONTEND]
  * included, which renderToStaticMarkup never runs.
  */
 function loadTsx(entry, { stubs = {} } = {}) {
+  // Legacy model modules share the facade published by the shell entry.
+  if (!globalThis.PlatformI18n && entry !== 'frontend/src/lib/i18n/runtime.ts') {
+    loadTsx('frontend/src/lib/i18n/runtime.ts');
+  }
+  // A hook-stepping fixture supplies its own React state/effect slots. Keep
+  // the language subscription outside those slots, just as its independently
+  // tested browser runtime is outside the component's business state.
+  if (stubs.react && !stubs['react-i18next']) {
+    stubs = { ...stubs, 'react-i18next': {
+      useTranslation: () => ({ t: globalThis.PlatformI18n.t }),
+    } };
+  }
   const esbuild = fromFrontend('esbuild');
   const result = esbuild.buildSync({
     entryPoints: [path.join(ROOT, entry)],

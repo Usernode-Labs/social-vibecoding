@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA sweep 2026-09-24, shared polish: the smaller Leaderboard, Profile,
 // Settings and notifications findings, each pinned where it lives.
@@ -29,15 +30,15 @@ test('Q34: the API key note has a space either side of the spend-limits link', (
   const html = renderToHtml(createElement(ApiKeySection));
   assert.match(html,
     /that level of access\. <a href="https:\/\/console\.anthropic\.com\/settings\/keys"[^>]*>Set tight spend limits<\/a> on the key itself for defense in depth\./);
-  const src = read('frontend/src/features/settings/sections/api-key.tsx');
+  const src = englishUiSource(read('frontend/src/features/settings/sections/api-key.tsx'));
   assert.doesNotMatch(src, /\{' '\}/, 'no whitespace-only child: it cannot survive hydration (React #418)');
 });
 
 test('Q32c: the standings line reads "done · View challenges", spaced both sides', () => {
-  const src = read('frontend/src/features/leaderboard/topochain-standings.tsx');
+  const src = englishUiSource(read('frontend/src/features/leaderboard/topochain-standings.tsx'));
   const line = src.slice(src.indexOf('function ChallengeLine('), src.indexOf('function Cell('));
-  assert.match(line, /`\$\{line\.done\} of \$\{line\.total\} challenges done `/, 'the space before the dot');
-  assert.match(line, /<span className="text-zinc-500 dark:text-zinc-500">\{'· '\}<\/span>\s*(\{\/\*[\s\S]*?\*\/\}\s*)?<button/,
+  assert.match(englishUiSource(line), /`\$\{line\.done\} of \$\{line\.total\} challenges done `/, 'the space before the dot');
+  assert.match(englishUiSource(line), /<span className="text-zinc-500 dark:text-zinc-500">\{'· '\}<\/span>\s*(\{\/\*[\s\S]*?\*\/\}\s*)?<button/,
     'and the space after it, inside the dot\'s own span');
 });
 
@@ -71,7 +72,7 @@ test('Q32c: My history names a proposal\'s kind in words, never the column value
 });
 
 test('Q30e: on a phone the Edit button drops under the name, lined up with it', () => {
-  const src = read('frontend/src/features/profile/profile-view.tsx');
+  const src = englishUiSource(read('frontend/src/features/profile/profile-view.tsx'));
   const at = src.indexOf('function IdentityCard(');
   const card = src.slice(at, src.indexOf('</Button>', at));
   assert.match(card, /<div className="flex flex-col gap-3 sm:flex-row sm:items-center">/,
@@ -94,11 +95,11 @@ test('Q30f: invites scroll with the sheet and fold past three behind "Show N mor
   assert.deepEqual(visibleInvites(list(5), true), { shown: list(5), hidden: 0 }, 'opened: all of them');
   assert.deepEqual(visibleInvites([], false), { shown: [], hidden: 0 });
 
-  const src = read('frontend/src/features/notifications/notifications-list.tsx');
-  assert.match(src, /<div id="notifications-invites" className="shrink-0">/,
+  const src = englishUiSource(read('frontend/src/features/notifications/notifications-list.tsx'));
+  assert.match(englishUiSource(src), /<div id="notifications-invites" className="shrink-0">/,
     'no scroller of its own inside the sheet\'s scroller (it was overflow-y-auto max-h-48)');
-  assert.match(src, /\{`Show \$\{hiddenInvites\} more \$\{hiddenInvites === 1 \? 'invite' : 'invites'\}`\}/);
-  assert.match(src, /const \[invitesOpen, setInvitesOpen\] = useState\(false\);/);
+  assert.match(englishUiSource(src), /\{`Show \$\{hiddenInvites\} more invites`\}/);
+  assert.match(englishUiSource(src), /const \[invitesOpen, setInvitesOpen\] = useState\(false\);/);
 });
 
 test('Q24: the open section\'s sheet runs to the bottom, like every sheet on the ladder', () => {
@@ -116,6 +117,6 @@ test('Q24: the open section\'s sheet runs to the bottom, like every sheet on the
   }
   // The sheet is still the lift's session plane, whose square foot is drawn
   // for exactly this: a sheet that runs off the bottom.
-  const island = read('frontend/src/features/settings/index.tsx');
+  const island = englishUiSource(read('frontend/src/features/settings/index.tsx'));
   assert.match(island, /<div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">/);
 });

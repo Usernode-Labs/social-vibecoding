@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 // #3757: "sometimes I'm at the bottom of my chat with homeroom bot dm, I send
 // a message, and I don't realize it has a new message because it doesn't
 // autoscroll down to the new message, even when I'm at / basically at the
@@ -254,19 +255,19 @@ test('useStickToBottom follows the scroller React draws, and the present with it
 // ── 3. The conversation uses it ─────────────────────────────────────────
 
 test('the conversation follows a reader who was at the bottom before the message arrived', () => {
-  assert.match(THREAD, /import \{ useStickToBottom \} from '\.\/stick-to-bottom';/);
-  assert.match(THREAD, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
+  assert.match(englishUiSource(THREAD), /import \{ useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(englishUiSource(THREAD), /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
     'the thread scroller is watched, and a linked window is not the present');
-  assert.match(THREAD, /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,
+  assert.match(englishUiSource(THREAD), /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,
     'the first draw, the reader\'s own send, or a reader who was at the bottom');
-  assert.doesNotMatch(THREAD, /el\.scrollHeight - el\.scrollTop - el\.clientHeight\) < 180/,
+  assert.doesNotMatch(englishUiSource(THREAD), /el\.scrollHeight - el\.scrollTop - el\.clientHeight\) < 180/,
     'no distance measured after the new rows are drawn');
   // Decided in a layout effect: before paint, and before a scroll event can
   // report the grown content.
-  assert.match(THREAD, /useIsomorphicLayoutEffect\(\(\) => \{\s*const el = scroller\.current;\s*const lastMessage = snap\.messages\.at\(-1\);/);
-  assert.match(THREAD, /previousLast\.current = null; initialScroll\.current = null; pinned\.current = true;/,
+  assert.match(englishUiSource(THREAD), /useIsomorphicLayoutEffect\(\(\) => \{\s*const el = scroller\.current;\s*const lastMessage = snap\.messages\.at\(-1\);/);
+  assert.match(englishUiSource(THREAD), /previousLast\.current = null; initialScroll\.current = null; pinned\.current = true;/,
     'another conversation opens at its newest line');
-  assert.match(THREAD, /shownFocus\.current = focusId;\s*previousLast\.current = last;\s*pinned\.current = false;/,
+  assert.match(englishUiSource(THREAD), /shownFocus\.current = focusId;\s*previousLast\.current = last;\s*pinned\.current = false;/,
     'a message link lands on its message, and late growth does not take it to the bottom');
-  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>Jump to present</);
+  assert.match(englishUiSource(THREAD), /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>Jump to present</);
 });

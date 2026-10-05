@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for the gesture-safe modal open path that fixes the
 // "Members & approvals does nothing" bug (and its follow-up, "drawer
 // closes but no panel").
@@ -134,7 +135,7 @@ function makeHarness(elements) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // Run the file AS-IS — do NOT grab `AppView` via the bareword binding.
   // We deliberately read it back off `window`, so these tests only pass if
   // app-view.js actually exposes `window.AppView = AppView` (the bug that
@@ -166,7 +167,7 @@ test('app-view.js exposes AppView on window (drawer handlers can reach it)', () 
     fetch: async () => ({ ok: true, json: async () => ({}) }), alert() {}, addEventListener() {}, localStorage: { getItem: () => null, setItem() {} },
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   vm.runInContext(MEMBERS_SRC, sandbox).init();
   assert.equal(typeof sandbox.window.AppView, 'object', 'window.AppView is set');

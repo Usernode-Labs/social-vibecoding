@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Wiring tests for the merge gate and the proposal-card display of the
 // platform-variables check (src/routes/votes.js, public/js/app-view.js,
 // src/services/visuals.js).
@@ -103,14 +104,14 @@ test('skipped renders nothing at all', () => {
 });
 
 test('a failing verdict names the missing keys and offers the fix in place', () => {
-  assert.match(detailFn, /missing/);
+  assert.match(englishUiSource(detailFn), /missing/);
   // The card only ever renders on a self-app proposal, so the viewer is
   // already on the app whose panel fixes this — open it rather than sending
   // them to a deep link (and a non-admin to a screen they can't act on).
-  assert.match(detailFn, /fn: 'openPlatformVariables'/,
+  assert.match(englishUiSource(detailFn), /fn: 'openPlatformVariables'/,
     'one click from the block to the panel is the difference between a '
     + '20-second fix and a hunt');
-  assert.match(detailFn, /'Set them now' : 'Propose a value'/,
+  assert.match(englishUiSource(detailFn), /'Set them now' : 'Propose a value'/,
     'both audiences get an action: admins set it, everyone else proposes it');
 });
 

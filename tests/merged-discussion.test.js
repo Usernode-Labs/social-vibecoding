@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #194 follow-up: the Completed (merged) proposal list becomes openable
 // and its discussion thread stays LIVE (editable composer, no read-only
 // lock) after merge. Covers the three app-view.js changes:
@@ -99,7 +100,7 @@ function makeAppView({ els = {}, thread = null } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Guaranteed quick-reply pills (#894).
 //
@@ -358,9 +359,9 @@ test('BANNED_GENERIC_PILLS covers every static pill the platform ships', () => {
   }
   // Client starter set (parsed out of the browser source — it can't be
   // required, which is exactly why drift needs asserting).
-  const starters = DEVCHAT_SRC.match(/STARTER_QUICK_REPLIES:\s*\[([\s\S]*?)\],/);
+  const starters = englishUiSource(DEVCHAT_SRC).match(/STARTER_QUICK_REPLIES:\s*\[([\s\S]*?)\],/);
   assert.ok(starters, 'found STARTER_QUICK_REPLIES');
-  for (const m of starters[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)) {
+  for (const m of englishUiSource(starters[1]).matchAll(/'((?:[^'\\]|\\.)*)'/g)) {
     const pill = m[1].replace(/\\'/g, "'");
     assert.ok(BANNED_GENERIC_PILLS.has(normalizePill(pill)),
       `starter pill ${JSON.stringify(pill)} must be on the banned list`);
@@ -458,7 +459,7 @@ test('client fallback strings match the server policy exactly', () => {
   // Two copies of the same wording (the browser cannot require the Node
   // module), so drift is the real hazard — assert them equal rather than
   // eyeballing them.
-  const m = DEVCHAT_SRC.match(/FALLBACK_QUICK_REPLIES:\s*(\{[\s\S]*?\n  \}),/);
+  const m = englishUiSource(DEVCHAT_SRC).match(/FALLBACK_QUICK_REPLIES:\s*(\{[\s\S]*?\n  \}),/);
   assert.ok(m, 'found DevChat.FALLBACK_QUICK_REPLIES');
   // eslint-disable-next-line no-eval
   const clientSets = eval(`(${m[1]})`);

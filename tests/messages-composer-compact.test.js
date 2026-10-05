@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3735: on a phone the message box is ONE compact line.
 //
@@ -105,11 +106,11 @@ test('the Messages card is one 44px line on a phone: 4px round a 36px row', () =
   // The "+" is inside its menu's wrapper; as a block that wrapper would set
   // the button on a text line, whose strut can be taller than the button.
   assert.equal(decls(MESSAGES, '.messages-composer-add').display, 'flex', 'the wrapper is exactly the button\'s height');
-  assert.match(COMPOSER, /<div className="messages-composer-add" ref=\{addRef\}>\s*<button type="button" className="messages-composer-action"/);
+  assert.match(englishUiSource(COMPOSER), /<div className="messages-composer-add" ref=\{addRef\}>\s*<button type="button" className="messages-composer-action"/);
   assert.equal(top + row + bottom, PHONE_LINE, 'the card is one 44px line');
   // A pill: the radius is half the line, and the send disc sits concentric
   // in its right-hand cap (its centre is the cap's centre).
-  assert.match(rule('.messages-composer-card'), /border-radius: 22px;/);
+  assert.match(englishUiSource(rule('.messages-composer-card')), /border-radius: 22px;/);
   assert.equal(right + px(send.width) / 2, PHONE_LINE / 2, 'the disc is centred in the cap');
   assert.ok(left >= right, 'the bare "+" keeps at least the disc\'s inset from the curve');
 });

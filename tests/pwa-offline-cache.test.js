@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Service-worker cache-durability + network-deadline contract (#1021).
 //
 // The reported bug had two independent causes and this file pins both:
@@ -143,7 +144,7 @@ test('upgrading the review-sort shell retires v36 assets and preserves offline s
 
   const handlers = {};
   const lifecycle = [];
-  vm.runInNewContext(SW_SRC, {
+  vm.runInNewContext(SW_SRC, withLanguage({
     self: {
       location: { origin: ORIGIN },
       addEventListener: (name, handler) => { handlers[name] = handler; },
@@ -154,7 +155,7 @@ test('upgrading the review-sort shell retires v36 assets and preserves offline s
     // Staging can serve an unstamped shell at these same asset URLs.
     fetch: async request => new Response(keyOf(request).endsWith('/shell/assets/shell.js')
       ? 'new compact sorting button' : 'new shell asset'),
-  });
+  }));
   for (const name of ['install', 'activate']) {
     let completed;
     handlers[name]({ waitUntil: promise => { completed = promise; } });

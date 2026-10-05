@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Remix: safe defaults. People see a fork as a "Remix" (their own copy); the
 // code, the route (POST /api/apps/:slug/fork) and every id keep "fork".
@@ -23,9 +24,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
-const DIALOG_SRC = read('frontend/src/features/dialogs/fork-app.tsx');
+const DIALOG_SRC = englishUiSource(read('frontend/src/features/dialogs/fork-app.tsx'));
 
 /** The #fork-modal subtree of the prerendered shell, as markup. */
 function forkModalHtml() {
@@ -75,36 +76,36 @@ test('the dialog says what a remix copies, what starts fresh and what it leaves 
 });
 
 test('the name field suggests "<App> (remix)" and a failed POST says so in plain words', () => {
-  assert.match(DIALOG_SRC, /`\$\{src\?\.name \|\| 'App'\} \(remix\)`/);
-  assert.match(DIALOG_SRC, /\{busy \? 'Remixing…' : 'Remix'\}/);
-  assert.match(DIALOG_SRC, /'Could not make your copy\.'/);
-  assert.match(DIALOG_SRC, /'Your copy is being made\. It will appear in your apps when it is ready\.'/);
-  assert.match(DIALOG_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(source\.slug\)\}\/fork`/,
+  assert.match(englishUiSource(DIALOG_SRC), /`\$\{src\?\.name \|\| 'App'\} \(remix\)`/);
+  assert.match(englishUiSource(DIALOG_SRC), /\{busy \? 'Remixing…' : 'Remix'\}/);
+  assert.match(englishUiSource(DIALOG_SRC), /'Could not make your copy\.'/);
+  assert.match(englishUiSource(DIALOG_SRC), /'Your copy is being made\. It will appear in your apps when it is ready\.'/);
+  assert.match(englishUiSource(DIALOG_SRC), /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(source\.slug\)\}\/fork`/,
     'the route keeps its name');
 });
 
 test('the allowance line names remixing among what shares it', () => {
-  const src = read('frontend/src/features/dialogs/app-allowance.tsx');
-  assert.match(src, /Creating, importing and remixing share this allowance\./);
-  assert.doesNotMatch(src, /importing and forking/);
+  const src = englishUiSource(read('frontend/src/features/dialogs/app-allowance.tsx'));
+  assert.match(englishUiSource(src), /Creating, importing and remixing share this allowance\./);
+  assert.doesNotMatch(englishUiSource(src), /importing and forking/);
 });
 
 test('the four doors say "Remix", and keep their ids and data attributes', () => {
-  const about = read('frontend/src/features/app-context/about-pane.tsx');
-  assert.match(about, /id="app-about-fork"[\s\S]{0,120}label="Remix"\s+sub="Make your own copy"/);
+  const about = englishUiSource(read('frontend/src/features/app-context/about-pane.tsx'));
+  assert.match(englishUiSource(about), /id="app-about-fork"[\s\S]{0,120}label="Remix"\s+sub="Make your own copy"/);
 
-  const plus = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(plus, /data-plus="fork"[\s\S]{0,140}title="Remix"\s+sub="Make your own copy"/);
+  const plus = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
+  assert.match(englishUiSource(plus), /<PlusRow title="Remix"\s+data-plus="fork"[\s\S]{0,240}sub="Make your own copy"/);
 
   const home = read('frontend/src/features/home/home.js');
-  assert.match(home, /key: 'fork',\s+label: 'Remix',\s+sub: 'Make your own copy',/,
+  assert.match(englishUiSource(home), /key: 'fork',\s+label: 'Remix',\s+sub: 'Make your own copy',/,
     'the card menu, which Discover\'s page draws its rows from too');
 
-  const detail = read('frontend/src/features/apps/browse-detail.tsx');
-  assert.match(detail, /subtitle=\{a\.sub \|\| undefined\}/, 'Discover shows the line under the label');
+  const detail = englishUiSource(read('frontend/src/features/apps/browse-detail.tsx'));
+  assert.match(englishUiSource(detail), /subtitle=\{a\.sub \|\| undefined\}/, 'Discover shows the line under the label');
 
   for (const [file, src] of [['about-pane', about], ['actions-row', plus], ['home', home]]) {
-    assert.doesNotMatch(src, /'Fork this app'|"Fork this app"/, `${file}: people never see "Fork this app"`);
+    assert.doesNotMatch(englishUiSource(src), /'Fork this app'|"Fork this app"/, `${file}: people never see "Fork this app"`);
   }
 });
 
@@ -116,7 +117,7 @@ test('lineage reads "Remixed from" wherever people see it', () => {
     'frontend/src/features/app-context/about-pane.tsx',
   ]) {
     const src = read(file);
-    assert.match(src, /Remixed from \$\{/, `${file} says Remixed from`);
-    assert.doesNotMatch(src, /[`"']Forked from|\bForked from \$\{/, `${file} no longer says Forked from`);
+    assert.match(englishUiSource(src), /Remixed from \$\{/, `${file} says Remixed from`);
+    assert.doesNotMatch(englishUiSource(src), /[`"']Forked from|\bForked from \$\{/, `${file} no longer says Forked from`);
   }
 });

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Homepage restructure: compact app cards + the "…" actions menu in
 // frontend/src/features/home/home.js.
 //
@@ -120,7 +121,7 @@ function makeHomeEnv(user) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.

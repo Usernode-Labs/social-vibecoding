@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The status bar over a surface with a tone of its own (#26).
 //
 // Inside the Homeroom app the status bar's clock and battery are drawn from
@@ -122,7 +123,7 @@ function boot(opts = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   if (opts.framed) sandbox.parent = { postMessage() {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return {
     sandbox,
@@ -338,7 +339,7 @@ function loadBridge({ dropped = [], timeoutScale = 0.001 } = {}) {
       sandbox.__usernodeResolve(request.id, true, null);
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(read('public', 'usernode-bridge.js'), sandbox);
   return { sandbox, posts, errors };
 }

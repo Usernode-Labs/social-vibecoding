@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B4: when the Homeroom bot rings, and what its notifications say.
 //
@@ -114,11 +115,12 @@ test('B4: the bell words each moment as the push does, under the bot\'s name, an
 });
 
 test('B4: the push and the bell keep one copy of the words', () => {
-  const server = fs.readFileSync(require.resolve('../src/services/mobile-push-policy.js'), 'utf8');
-  const client = fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8');
+  const server = englishUiSource(fs.readFileSync(require.resolve('../src/services/mobile-push-policy.js'), 'utf8'));
+  const client = englishUiSource(fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8'));
   const words = (src) => {
     const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
-    return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
+    return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l))
+      .map(line => line.replace(/: '((?:[^'\\]|\\.)*)',$/, (_, text) => ': ' + JSON.stringify(text.replace(/\\'/g, "'")) + ','));
   };
   assert.equal(words(server).length, 15);
   assert.deepEqual(words(client), words(server));
@@ -292,7 +294,7 @@ test('WP-F: a merged change is "live" only once the app answers on it, and a sto
   // Every token fits the detail's shape, which both readers parse.
   for (const [token] of MOMENT_WORDS) assert.match(token, /^hrbot:[a-z_]{1,20}:/);
   // The chat chip moves to Live after the app answers, not on the merge.
-  const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8'));
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
   assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run)'));
   assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);

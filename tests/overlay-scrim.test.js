@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -39,7 +40,7 @@ function harness(globals = {}, prepare = () => {}) {
     ...globals,
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/src/lib/overlay-scrim.js'), 'utf8').replace(/export /g, ''), sandbox);
   prepare({ surface, backdrop, paint, style });
   const detach = sandbox.attachOverlayScrim(surface, backdrop, paint);

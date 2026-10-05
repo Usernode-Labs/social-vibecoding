@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Regression test for issue #336: clicking inside an open inline editor
 // (.gc-edit) must NOT be misread as a tap-to-quote on the message row.
 //
@@ -123,7 +124,7 @@ function loadGroupChat() {
     Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src + '\nglobalThis.__M = { GroupChat };', sandbox);
   return sandbox.__M.GroupChat;
 }

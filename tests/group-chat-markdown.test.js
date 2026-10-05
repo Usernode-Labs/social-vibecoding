@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #328: markdown rendering for group-chat message bodies + the 8000-char
 // limit. Two concerns, two halves:
 //
@@ -164,7 +165,7 @@ function loadGroupChat(extra = {}) {
     ...extra,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     src + '\nglobalThis.__M = { GroupChat, renderMessageBody, renderWithMentions, '
       + 'tokenizeMentionsAndRefs, decorateMentionsAndRefs, GC_MAX_MESSAGE_LEN, document };',

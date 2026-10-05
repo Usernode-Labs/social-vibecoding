@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3624: the Homeroom bot in a DM, without a database.
 //
@@ -23,7 +24,7 @@ const dm = require('../src/services/homeroom-bot-dm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(root, p), 'utf8'));
 const DASH = /—/;
 
 // ── The question contract ────────────────────────────────────────────────
@@ -450,7 +451,7 @@ test('the create dialog sends the longer description, never with an import', () 
 });
 
 test('the short description is suggested for everyone making a project, and every description is filed', () => {
-  const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
+  const routes = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8'));
   const suggest = routes.slice(routes.indexOf("router.post('/api/apps/suggest-description'"), routes.indexOf("router.post('/api/apps', "));
   assert.match(suggest, /router\.post\('\/api\/apps\/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async/,
     'the limiter, then the same-origin guard, as before');
@@ -467,15 +468,15 @@ test('the short description is suggested for everyone making a project, and ever
   assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
   // The bot's live list and its wake are only for a first version it builds,
   // or a project somebody on the list made with nothing to build first.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8'));
   assert.match(src, /FROM homeroom_bot_first_versions WHERE bot_builds\s+UNION ALL\s+SELECT app_id, user_id, origin, created_at FROM homeroom_bot_dm_projects/);
   assert.match(src, /WHERE LOWER\(u\.username\) = ANY\(\$1::text\[\]\)/);
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
   // A sweep the bot's mode does not gate, on the leader.
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const server = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'));
   assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}setInterval\(runFirstRequestSweep, 5 \* 60 \* 1000\)\.unref\(\);/);
-  const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
+  const schema = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8'));
   assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
 });
 
@@ -634,16 +635,16 @@ test('the Messages client keeps the bot\'s mark and its question, which it build
 });
 
 test('the DM screen draws the bot\'s question and badge, and the reply bar names where a reply goes', () => {
-  const row = read('frontend/src/features/messages/message-row.tsx');
+  const row = englishUiSource(read('frontend/src/features/messages/message-row.tsx'));
   // B6: two questions at once draw their own card (./bot-plan.tsx) instead.
   // B7: nor does a change's ready card (./bot-ready.tsx), whose buttons are its own.
-  assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
-  assert.match(row, /messages-bot-badge/);
-  const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Your reply is posted on \$\{requestPlace\(reply\.metadata\.homeroomBot\)\}’s public discussion\./);
+  assert.match(englishUiSource(row), /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
+  assert.match(englishUiSource(row), /messages-bot-badge/);
+  const composer = englishUiSource(read('frontend/src/features/messages/composer.tsx'));
+  assert.match(englishUiSource(composer), /Your reply is posted on \$\{reply\.metadata\?\.homeroomBot \? requestPlace\(reply\.metadata\.homeroomBot\) : ''\}’s public discussion\./);
   const css = read('public/css/app.css');
   for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
-    assert.ok(css.includes(cls), cls);
+    assert.ok(englishUiSource(css).includes(cls), cls);
   }
 });
 
@@ -790,13 +791,13 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(text, /This needs a person to decide, so I haven't built it: It needs a new dependency\./);
   assert.match(text, /If you decide to go ahead \(or the group does\), reply to this message and say so, and I'll look at it again\.$/);
   assert.match(dm.dmText('followup_person', { reason: 'x' }, ctx), /so I've left it for the group: x$/);
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8'));
   assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
   assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
 });
 
 test('"typing" goes out before the answer starts, bounded', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  const src = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8'));
   const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));
   assert.ok(fn.indexOf('stop.ready') < fn.indexOf('await work()'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');

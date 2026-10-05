@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #1597 — an in-progress change in Improve spins the platform's arc.
 //
 // The report was about consistency, and it was right: everywhere else on the
@@ -34,7 +35,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', p), 'utf8'));
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');

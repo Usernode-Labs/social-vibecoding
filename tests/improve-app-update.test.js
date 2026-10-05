@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The Improve button follows the open app's own redeploy (task 446).
 //
 // Merging a change to an app rebuilt its production quietly: the only sign
@@ -72,7 +73,7 @@ function redeployHarness({ currentApp = 'demo', homeVisible = false, evicts } = 
     };
   }
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`App = { currentApp: ${JSON.stringify(currentApp)}, _isScreenVisible: () => ${homeVisible},\n${methods.join(',\n')} };`, sandbox);
   return { calls, App: sandbox.App };
 }
@@ -209,7 +210,7 @@ function controllerHarness(opts) {
     AppView: { reloadAppFrame: () => { calls.push(['reload-frame']); return true; } },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
   // flag, not the Improve panel's — that panel retired (#2718 review).

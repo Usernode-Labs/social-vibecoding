@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #47 "CI for proposals": the checks badge + per-test detail + pin rank on
 // the proposal card (app-view.js checksBadgeHtml / _checksDetailHtml /
 // _proposalPinRank). The badge mirrors check_state (passing/failing/
@@ -41,7 +42,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

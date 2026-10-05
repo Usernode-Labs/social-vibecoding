@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Refusals the chat socket answers to the sender, as public/js/group-chat.js
 // shows them.
 //
@@ -50,7 +51,7 @@ function loadGroupChat({ withToast = true } = {}) {
   sandbox.Notifications = { items: [], refresh() {} };
   sandbox.UsernodeReact = { groupChat: { patchTranscriptMessage() {} } };
   if (withToast) sandbox.PlatformUI = { toast: (text) => toasts.push(text) };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/group-chat.js')}\nglobalThis.__M = { GroupChat };`, sandbox);
   const { GroupChat } = sandbox.__M;
   GroupChat.appSlug = 'demo';

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Two Messages fixes filed together by the platform admin:
 //
@@ -192,23 +193,23 @@ test('#2907: no loading row over a visible thread, no "sending…", no busy send
 });
 
 test('#2905: report and block are one ⋯ menu on both transcripts', () => {
-  assert.doesNotMatch(TRANSCRIPT, />Report message<\/button> : null\}\s*\{onReportUser/,
+  assert.doesNotMatch(englishUiSource(TRANSCRIPT), />Report message<\/button> : null\}\s*\{onReportUser/,
     'no longer three text links in the row\'s action slot');
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
-  assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  assert.match(TRANSCRIPT, /label: 'Report message'[\s\S]*?label: `Block @\$\{msg\.username\}`/);
-  assert.doesNotMatch(TRANSCRIPT, /report-user|onReportUser|targetType: 'user'/,
+  assert.match(englishUiSource(TRANSCRIPT), /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
+  assert.match(englishUiSource(TRANSCRIPT), /label: 'Report message'[\s\S]*?label: `Block @\$\{msg\.username\}`/);
+  assert.doesNotMatch(englishUiSource(TRANSCRIPT), /report-user|onReportUser|targetType: 'user'/,
     'message menus offer one report action, targeting the message');
 
   // #2387: the ⋯ is the shared hover bar's (../message-actions/action-bar.tsx),
   // and it keeps the class and the popup role the declared checks select on.
-  assert.match(BAR, /moreClassName = 'messages-action-more'/);
-  assert.match(BAR, /className=\{`msgx-bar-icon \$\{moreClassName\}[^`]*`\}[\s\S]{0,160}aria-haspopup="menu"/);
-  assert.match(ROW, /<MessageActionBar[\s\S]*?onToggleMore=/);
-  assert.doesNotMatch(ROW, />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
-  assert.match(ROW, /openReport\(\{ targetType: 'conversation_message'/);
-  assert.doesNotMatch(ROW, /report-user|targetType: 'user'/,
+  assert.match(englishUiSource(BAR), /moreClassName = 'messages-action-more'/);
+  assert.match(englishUiSource(BAR), /className=\{`msgx-bar-icon \$\{moreClassName\}[^`]*`\}[\s\S]{0,160}aria-haspopup="menu"/);
+  assert.match(englishUiSource(ROW), /<MessageActionBar[\s\S]*?onToggleMore=/);
+  assert.doesNotMatch(englishUiSource(ROW), />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
+  assert.match(englishUiSource(ROW), /openReport\(\{ targetType: 'conversation_message'/);
+  assert.doesNotMatch(englishUiSource(ROW), /report-user|targetType: 'user'/,
     'private message menus also report only the message');
 });
 

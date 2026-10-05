@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // "Create an app" is the launcher grid's trailing TILE.
 //
@@ -166,7 +168,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   const gridStore = installGridStore(sandbox);
   installPanelsStore(sandbox);

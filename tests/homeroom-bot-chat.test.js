@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // B9: mention Homeroom bot in a project's group chat.
 //
@@ -64,28 +65,28 @@ test('B9: the room hands a mention over after it is stored, and only from the ma
 test('B9: the chip and the card', () => {
   const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   const chip = (status, extra = {}) => renderToHtml(createElement(BotStatusChip, { chip: { status, issueNumber: 4, sessionId: null, ...extra } }));
-  assert.match(chip('reading'), /data-bot-request="reading"[^>]*>.*👀.*Reading/);
-  assert.match(chip('building'), /🔨.*Building/);
-  assert.match(chip('live'), /✅.*Live/);
-  assert.match(chip('ready', { sessionId: 9 }), /<button[^>]*data-bot-request="ready"[^>]*>.*Try it/);
+  assert.match(englishUiSource(chip('reading')), /data-bot-request="reading"[^>]*>.*👀.*Reading/);
+  assert.match(englishUiSource(chip('building')), /🔨.*Building/);
+  assert.match(englishUiSource(chip('live')), /✅.*Live/);
+  assert.match(englishUiSource(chip('ready', { sessionId: 9 })), /<button[^>]*data-bot-request="ready"[^>]*>.*Try it/);
   assert.ok(!/<button/.test(chip('reading')), 'nobody but its asker taps Reading');
-  assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'building', issueNumber: 4, sessionId: null }, mine: true })), /<button/);
+  assert.match(englishUiSource(renderToHtml(createElement(BotStatusChip, { chip: { status: 'building', issueNumber: 4, sessionId: null }, mine: true }))), /<button/);
   assert.equal(cardWords({ kind: 'filed', title: 'Add a Sunday reminder', typicalMinutes: 8 }), 'Got it: Add a Sunday reminder. Usually about 8 minutes.');
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.');
   assert.equal(cardWords({ kind: 'question' }), 'I answer questions in our chat.');
   const unsure = renderToHtml(createElement(BotRequestCardView, { card: { messageId: 5, kind: 'unsure', title: 'Add tags', issueNumber: null } }));
-  assert.match(unsure, /Only you can see this/);
-  assert.match(unsure, /data-bot-request-action="file"><span>File it/);
-  assert.match(unsure, /data-bot-request-action="not-now"><span>Not now/);
+  assert.match(englishUiSource(unsure), /Only you can see this/);
+  assert.match(englishUiSource(unsure), /data-bot-request-action="file"><span>File it/);
+  assert.match(englishUiSource(unsure), /data-bot-request-action="not-now"><span>Not now/);
   const filed = renderToHtml(createElement(BotRequestCardView, { card: { messageId: 5, kind: 'filed', title: 'Add tags', issueNumber: 3 } }));
-  assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
+  assert.match(englishUiSource(filed), /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
-  assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: 'Make this a request'/);
+  assert.match(englishUiSource(row), /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
+  assert.match(englishUiSource(row), /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: 'Make this a request'/);
   const gc = read('public/js/group-chat.js');
-  assert.match(gc, /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
-  assert.match(gc, /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');
-  assert.match(read('public/js/app.js'), /case 'bot_request_card':\s*\/\/[^\n]*\n[^\n]*\n\s*window\.GroupChat\?\.applyBotRequestCard\?\.\(data\);/);
+  assert.match(englishUiSource(gc), /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
+  assert.match(englishUiSource(gc), /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');
+  assert.match(englishUiSource(read('public/js/app.js')), /case 'bot_request_card':\s*\/\/[^\n]*\n[^\n]*\n\s*window\.GroupChat\?\.applyBotRequestCard\?\.\(data\);/);
 });
 
 test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
