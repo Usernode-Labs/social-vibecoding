@@ -103,8 +103,8 @@
     if (!lines.length && !summary) return '';
 
     const label = lines.length && summary
-      ? 'Agent activity (' + lines.length + ' steps) and summary'
-      : (lines.length ? 'Agent activity (' + lines.length + ' steps)' : 'Agent summary');
+      ? globalThis.PlatformI18n.t("core:agent_activity_6be55cc8") + lines.length + globalThis.PlatformI18n.t("core:steps_and_summary_8ecfb144")
+      : (lines.length ? globalThis.PlatformI18n.t("core:agent_activity_6be55cc8") + lines.length + ' steps)' : globalThis.PlatformI18n.t("core:agent_summary_8351fe3f"));
 
     let body = '';
     if (lines.length) {
@@ -130,7 +130,7 @@
   function specPreviewHtml(msg) {
     const meta = (msg && msg.metadata) || {};
     if (typeof meta.specPreview !== 'string' || !meta.specPreview.trim()) return '';
-    const version = meta.specVersion != null ? 'Spec v' + meta.specVersion : 'Spec drafted';
+    const version = meta.specVersion != null ? globalThis.PlatformI18n.t("core:spec_v_6b86837a") + meta.specVersion : globalThis.PlatformI18n.t("core:spec_drafted_ac82459c");
     const lines = meta.specLines != null ? ' · ' + meta.specLines + ' lines' : '';
     return '<div class="st-spec-card">'
       + '<div class="st-spec-head">' + esc(version + lines) + '</div>'
@@ -160,7 +160,7 @@
     const openrouter = meta.agentBackend === 'codex_openrouter'
       || /^(?:Codex|OpenRouter)\b/i.test(text);
     return {
-      text: 'Coding agent is running' + text.slice(m[0].length),
+      text: globalThis.PlatformI18n.t("core:coding_agent_is_running_444dd814") + text.slice(m[0].length),
       caption: openrouter ? 'Homeroom \u00b7 OpenRouter' : 'Homeroom \u00b7 Claude',
     };
   }
@@ -210,12 +210,12 @@
     const ownerName = session.username || 'them';
 
     if (!messages.length) {
-      return '<div class="st-empty">This chat has no messages yet.</div>';
+      return `<div class="st-empty">${globalThis.PlatformI18n.htmlText("core:this_chat_has_no_messages_yet_791fdc1a")}</div>`;
     }
 
     let html = '';
     if (data.truncated) {
-      html += '<div class="st-truncated">Showing the most recent part of a long chat.'
+      html += `<div class="st-truncated">${globalThis.PlatformI18n.htmlText("core:showing_the_most_recent_part_of_a_long_chat_56ee1798")}`
         + ' earlier messages aren\'t included.</div>';
     }
     html += '<div class="st-timeline">';
@@ -242,10 +242,10 @@
     const count = Number(s.message_count);
     const n = Number.isFinite(count) && count > 0 ? count : null;
     if (opts && opts.expanded) {
-      return 'Agent session by ' + (s.username || 'them')
+      return globalThis.PlatformI18n.t("core:agent_session_by_75eb7ec8") + (s.username || 'them')
         + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '');
     }
-    return n ? 'Read the agent session (' + n + ' messages)' : 'Read the agent session';
+    return n ? globalThis.PlatformI18n.t("core:read_the_agent_session_a32ccf75") + n + ' messages)' : globalThis.PlatformI18n.t("core:read_the_agent_session_2e294c8a");
   }
 
   window.SessionTranscript = { renderHtml, headerText, _esc: esc };

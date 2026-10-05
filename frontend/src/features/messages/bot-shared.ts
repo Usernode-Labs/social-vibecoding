@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 import type { HomeroomBotJob } from './types';
 
 /*
@@ -14,7 +15,7 @@ type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVe
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {
-  if (job.firstVersion) return `${job.appName} first version`;
+  if (job.firstVersion) return tr("community:value1_first_version_4a4b9596", { value1: job.appName });
   return job.issueNumber ? `${job.appName} #${job.issueNumber}` : job.appName;
 }
 

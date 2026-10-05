@@ -99,7 +99,7 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * @returns {'Messages'|'Workshop'}
  */
 export function topicBackLabel(href) {
-  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
+  return typeof href === 'string' && href.startsWith('#messages') ? globalThis.PlatformI18n.t("core:messages_04d7b483") : globalThis.PlatformI18n.t("core:workshop_c0086f23");
 }
 
 /**

@@ -100,7 +100,7 @@ export function safeHref(url) {
 export function displayNameOf(user) {
   const u = user || {};
   const name = u.displayName ? String(u.displayName).trim() : '';
-  return name || (u.username ? `@${u.username}` : 'Your profile');
+  return name || (u.username ? `@${u.username}` : globalThis.PlatformI18n.t("account:your_profile_528d89ad"));
 }
 
 /**
@@ -137,9 +137,9 @@ export function relativeDate(iso, now = Date.now()) {
   if (days < 0) return null;
   if (days === 0) return 'today';
   if (days === 1) return 'yesterday';
-  if (days < 14) return `${days} days ago`;
+  if (days < 14) return globalThis.PlatformI18n.t("account:value1_days_ago_b6e2c57a", { value1: days });
   try {
-    return new Date(t).toLocaleDateString();
+    return new Date(t).toLocaleDateString(globalThis.PlatformI18n.getLanguage());
   } catch (_) {
     return null;
   }
@@ -154,7 +154,7 @@ export function breakdownRows(breakdown) {
   const rows = [];
   const pushEvent = (ev) => {
     if (!ev) return;
-    const name = (ev.event && ev.event.name) || ev.event_name || 'Event';
+    const name = (ev.event && ev.event.name) || ev.event_name || globalThis.PlatformI18n.t("account:event_4e1f49a9");
     rows.push({ label: name, points: ev.total_points });
   };
   if (breakdown.scope === 'event') {
@@ -167,7 +167,7 @@ export function breakdownRows(breakdown) {
     }
   }
   if (Number(breakdown.offchain_points || 0) > 0) {
-    rows.push({ label: 'Bonus points', points: breakdown.offchain_points });
+    rows.push({ get label() { return globalThis.PlatformI18n.t("account:bonus_points_244d63c2"); }, points: breakdown.offchain_points });
   }
   return rows;
 }
@@ -193,11 +193,11 @@ export function verifiedSocialLinksView(profile) {
     }
   };
   if (typeof links.github === 'string' && links.github) {
-    add('github', `Verified GitHub · ${links.github}`,
+    add('github', globalThis.PlatformI18n.t("account:verified_github_value1_8dea02db", { value1: links.github }),
       `https://github.com/${encodeURIComponent(links.github)}`);
   }
   if (typeof links.x === 'string' && links.x) {
-    add('x', `Verified X · @${links.x}`,
+    add('x', globalThis.PlatformI18n.t("account:verified_x_value1_2abd3514", { value1: links.x }),
       `https://x.com/${encodeURIComponent(links.x)}`);
   }
   return rows;
@@ -208,7 +208,7 @@ export function memberSinceLabel(iso) {
   const t = Date.parse(iso || '');
   if (!Number.isFinite(t)) return null;
   try {
-    return `Building since ${new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`;
+    return globalThis.PlatformI18n.t("account:building_since_value1_8ee439dd", { value1: new Date(t).toLocaleDateString(globalThis.PlatformI18n.getLanguage(), { month: 'long', year: 'numeric' }) });
   } catch (_) {
     return null;
   }
@@ -233,7 +233,7 @@ export function identityView(state) {
   const since = summary ? memberSinceLabel(summary.memberSince) : null;
   if (since) facts.push(since);
   const apps = summary ? Number(summary.apps) || 0 : 0;
-  if (apps > 0) facts.push(`${apps} app${apps === 1 ? '' : 's'}`);
+  if (apps > 0) facts.push(globalThis.PlatformI18n.t("account:count_apps_81d6b019", { count: apps }));
   return {
     avatarUrl: avatarUrlOf(state),
     initial: initialOf(u),
@@ -252,14 +252,14 @@ export function identityView(state) {
  */
 export function statsView(summary) {
   const has = !!summary;
-  const value = (n) => (has ? Number(n || 0).toLocaleString() : '–');
+  const value = (n) => (has ? Number(n || 0).toLocaleString(globalThis.PlatformI18n.getLanguage()) : '–');
   return [
-    { key: 'merged', value: value(summary && summary.merged), label: 'live' },
-    { key: 'kudos', value: value(summary && summary.kudos), label: 'kudos' },
+    { key: 'merged', value: value(summary && summary.merged), get label() { return globalThis.PlatformI18n.t("account:live_247610f4"); } },
+    { key: 'kudos', value: value(summary && summary.kudos), get label() { return globalThis.PlatformI18n.t("account:kudos_95f3e4b1"); } },
     {
       key: 'challenges',
       value: value(summary && summary.challenges && summary.challenges.done),
-      label: 'challenges',
+      get label() { return globalThis.PlatformI18n.t("account:challenges_6a580084"); },
     },
   ];
 }
@@ -277,14 +277,14 @@ export function moreRowsView(data) {
   const seasonName = r.season_name || (summary && summary.challenges && summary.challenges.season
     && summary.challenges.season.name) || null;
   if (seasonName) challenges.push(seasonName);
-  if (r.rank) challenges.push(`rank #${Number(r.rank)}`);
+  if (r.rank) challenges.push(globalThis.PlatformI18n.t("account:rank_value1_48ef0fa2", { value1: Number(r.rank) }));
   if (summary && summary.challenges && Number(summary.challenges.total) > 0) {
-    challenges.push(`${Number(summary.challenges.done || 0)} of ${Number(summary.challenges.total)} done`);
+    challenges.push(globalThis.PlatformI18n.t("account:value1_of_value2_done_a919e467", { value1: Number(summary.challenges.done || 0), value2: Number(summary.challenges.total) }));
   }
   const kudos = summary ? Number(summary.kudos) || 0 : null;
   return {
     challenges: challenges.length ? challenges.join(' · ') : null,
-    kudos: kudos == null ? null : `${kudos.toLocaleString()} received`,
+    kudos: kudos == null ? null : globalThis.PlatformI18n.t("account:value1_received_cae0d254", { value1: kudos.toLocaleString(globalThis.PlatformI18n.getLanguage()) }),
     changes: changesLine(summary),
     requests: requestsLine(d.requests),
     votes: votesLine(d.votes),
@@ -306,8 +306,8 @@ function changesLine(summary) {
   const parts = [];
   const merged = Number(summary.merged) || 0;
   const underway = Number(summary.inProgress) || 0;
-  if (merged) parts.push(`${merged.toLocaleString()} live`);
-  if (underway) parts.push(`${underway.toLocaleString()} in progress`);
+  if (merged) parts.push(globalThis.PlatformI18n.t("account:value1_live_2c4bcb92", { value1: merged.toLocaleString(globalThis.PlatformI18n.getLanguage()) }));
+  if (underway) parts.push(globalThis.PlatformI18n.t("account:value1_in_progress_c3dc00ec", { value1: underway.toLocaleString(globalThis.PlatformI18n.getLanguage()) }));
   return parts.length ? parts.join(' · ') : null;
 }
 
@@ -317,8 +317,8 @@ function requestsLine(requests) {
   const parts = [];
   const open = Number(requests.open) || 0;
   const done = Number(requests.done) || 0;
-  if (open) parts.push(`${open.toLocaleString()} open`);
-  if (done) parts.push(`${done.toLocaleString()} done`);
+  if (open) parts.push(globalThis.PlatformI18n.t("account:value1_open_be5cfbc4", { value1: open.toLocaleString(globalThis.PlatformI18n.getLanguage()) }));
+  if (done) parts.push(globalThis.PlatformI18n.t("account:value1_done_a42d1c1a", { value1: done.toLocaleString(globalThis.PlatformI18n.getLanguage()) }));
   return parts.length ? parts.join(' · ') : null;
 }
 
@@ -327,14 +327,14 @@ function votesLine(votes) {
   const item = votes && Array.isArray(votes.items) ? votes.items[0] : null;
   if (!item) return null;
   const title = voteTitle(item);
-  return title ? `Latest: ${title}` : null;
+  return title ? globalThis.PlatformI18n.t("account:latest_value1_6dd1d34a", { value1: title }) : null;
 }
 
 /** "1 request waiting". Friends are never counted (#2386), only requests to answer. */
 function friendsLine(friends) {
   const incoming = friends && Array.isArray(friends.incoming) ? friends.incoming.length : 0;
   if (!incoming) return null;
-  return `${incoming.toLocaleString()} ${incoming === 1 ? 'request' : 'requests'} waiting`;
+  return globalThis.PlatformI18n.t("account:value1_requests_waiting_cee3ef71", { value1: incoming.toLocaleString(globalThis.PlatformI18n.getLanguage()), count: incoming });
 }
 
 /** "4 sent · 1 counted", from GET /api/feedback/mine (#3186); "4 sent" while
@@ -344,22 +344,22 @@ function friendsLine(friends) {
 function feedbackLine(feedback) {
   if (!feedback || typeof feedback !== 'object' || !Number.isFinite(Number(feedback.sent))) return null;
   const sent = Number(feedback.sent) || 0;
-  if (sent === 0) return 'Nothing sent yet';
+  if (sent === 0) return globalThis.PlatformI18n.t("account:nothing_sent_yet_be270600");
   const counted = Number(feedback.counted) || 0;
   return counted
-    ? `${sent.toLocaleString()} sent · ${counted.toLocaleString()} counted`
-    : `${sent.toLocaleString()} sent`;
+    ? globalThis.PlatformI18n.t("account:value1_sent_value2_counted_f50066b2", { value1: sent.toLocaleString(globalThis.PlatformI18n.getLanguage()), value2: counted.toLocaleString(globalThis.PlatformI18n.getLanguage()) })
+    : globalThis.PlatformI18n.t("account:value1_sent_a61ccad7", { value1: sent.toLocaleString(globalThis.PlatformI18n.getLanguage()) });
 }
 
 /** A report's status as the list says it. Two, not three: see
  *  MY_FEEDBACK_SQL in src/routes/feedback.js for why there is no "reviewed". */
 const FEEDBACK_STATUS = {
   received: {
-    label: 'Received',
+    get label() { return globalThis.PlatformI18n.t("account:received_49f19bee"); },
     className: 'shrink-0 rounded-full bg-zinc-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-zinc-700 dark:text-zinc-300',
   },
   counted: {
-    label: 'Counted',
+    get label() { return globalThis.PlatformI18n.t("account:counted_c037c159"); },
     className: 'shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-emerald-700 dark:text-emerald-400',
   },
 };
@@ -383,18 +383,18 @@ export function feedbackListView(feedback, now = Date.now()) {
     const issue = Number(r.issueNumber);
     const slug = typeof r.appSlug === 'string' && APP_SLUG.test(r.appSlug) ? r.appSlug : null;
     const linked = !!slug && Number.isSafeInteger(issue) && issue > 0;
-    const meta = [r.appName ? String(r.appName) : (r.target === 'platform' ? 'Homeroom' : 'An app')];
-    if (linked) meta.push(`request #${issue}`);
+    const meta = [r.appName ? String(r.appName) : (r.target === 'platform' ? 'Homeroom' : globalThis.PlatformI18n.t("account:an_app_094f9581"))];
+    if (linked) meta.push(globalThis.PlatformI18n.t("account:request_value1_06eaf7b2", { value1: issue }));
     const when = mergedAgo(r.createdAt, now);
-    if (when) meta.push(`sent ${when}`);
+    if (when) meta.push(globalThis.PlatformI18n.t("account:sent_value1_f03445f4", { value1: when }));
     const points = Number(r.points);
     return {
       key: String(r.id),
-      title: r.title ? String(r.title) : 'Feedback',
+      title: r.title ? String(r.title) : globalThis.PlatformI18n.t("account:feedback_aac77df3"),
       meta: meta.join(' · '),
       status,
       statusLabel: status === 'counted' && points > 0
-        ? `${FEEDBACK_STATUS.counted.label} · ${points.toLocaleString()} pts`
+        ? globalThis.PlatformI18n.t("account:value1_value2_pts_88a74f2d", { value1: FEEDBACK_STATUS.counted.label, value2: points.toLocaleString(globalThis.PlatformI18n.getLanguage()) })
         : FEEDBACK_STATUS[status].label,
       statusClassName: FEEDBACK_STATUS[status].className,
       href: linked ? `#app/${encodeURIComponent(slug)}/dev/issues/${issue}` : null,
@@ -420,7 +420,7 @@ export function mergedAgo(iso, now = Date.now()) {
     ? { month: 'short', day: 'numeric' }
     : { month: 'short', day: 'numeric', year: 'numeric' };
   try {
-    return date.toLocaleDateString(undefined, opts);
+    return date.toLocaleDateString(globalThis.PlatformI18n.getLanguage(), opts);
   } catch (_) {
     return null;
   }
@@ -446,15 +446,15 @@ export function proposalsView(data, now = Date.now()) {
     const app = row.appName || row.appSlug;
     const when = mergedAgo(row.at, now);
     let where = when;
-    if (key === 'openForVote') where = 'waiting for approval';
-    else if (key === 'inProgress') where = 'in progress';
-    else if (key === 'closed') where = 'closed without going live';
+    if (key === 'openForVote') where = globalThis.PlatformI18n.t("account:waiting_for_approval_fbb059ed");
+    else if (key === 'inProgress') where = globalThis.PlatformI18n.t("account:in_progress_2b6b853c");
+    else if (key === 'closed') where = globalThis.PlatformI18n.t("account:closed_without_going_live_c9bb00e6");
     const slug = encodeURIComponent(row.appSlug);
     const id = Number(row.sessionId);
     return {
       key: String(row.sessionId),
       href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
-      title: row.title || 'Change',
+      title: row.title || globalThis.PlatformI18n.t("account:change_c0bf75bd"),
       meta: [app, where].filter(Boolean).join(' · '),
       // The project's own icon leads the row, so one list across every
       // project still reads project by project (#3364). In app-card.js's
@@ -471,9 +471,9 @@ export function proposalsView(data, now = Date.now()) {
   const underway = rowsOf('openForVote').concat(rowsOf('inProgress')).map(shape)
     .sort((x, y) => y.at - x.at);
   const sections = [
-    { key: 'inProgress', label: 'In progress', rows: underway },
-    { key: 'merged', label: 'Live', rows: rowsOf('merged').map(shape) },
-    { key: 'closed', label: 'Closed', rows: rowsOf('closed').map(shape) },
+    { key: 'inProgress', get label() { return globalThis.PlatformI18n.t("account:in_progress_c1f88e9d"); }, rows: underway },
+    { key: 'merged', get label() { return globalThis.PlatformI18n.t("account:live_b64ac05f"); }, rows: rowsOf('merged').map(shape) },
+    { key: 'closed', get label() { return globalThis.PlatformI18n.t("account:closed_c21ead06"); }, rows: rowsOf('closed').map(shape) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0 };
 }
@@ -481,8 +481,8 @@ export function proposalsView(data, now = Date.now()) {
 /** Where a request stands, as its line says it. See MY_REQUESTS_SQL in
  *  src/routes/profile.js for what each is read from. */
 const REQUEST_STATE = {
-  waiting: 'nobody on it yet',
-  underway: 'someone is on it',
+  get waiting() { return globalThis.PlatformI18n.t("account:nobody_on_it_yet_c8f5b98f"); },
+  get underway() { return globalThis.PlatformI18n.t("account:someone_is_on_it_8d4f89ad"); },
   shipped: 'live',
   closed: 'closed',
 };
@@ -502,14 +502,14 @@ export function requestsView(data) {
     return {
       key: `${r.appSlug || ''}#${r.number}`,
       href: slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${Number(r.number)}` : null,
-      title: r.title ? String(r.title) : `Request #${Number(r.number)}`,
-      meta: [r.appName || 'An app', REQUEST_STATE[state]].join(' · '),
+      title: r.title ? String(r.title) : globalThis.PlatformI18n.t("account:request_value1_8051e8ec", { value1: Number(r.number) }),
+      meta: [r.appName || globalThis.PlatformI18n.t("account:an_app_094f9581"), REQUEST_STATE[state]].join(' · '),
       done: state === 'shipped' || state === 'closed',
     };
   });
   const sections = [
-    { key: 'open', label: 'Open', rows: rows.filter((r) => !r.done) },
-    { key: 'done', label: 'Done', rows: rows.filter((r) => r.done) },
+    { key: 'open', get label() { return globalThis.PlatformI18n.t("account:open_ed077f3d"); }, rows: rows.filter((r) => !r.done) },
+    { key: 'done', get label() { return globalThis.PlatformI18n.t("account:done_11a6767d"); }, rows: rows.filter((r) => r.done) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0, truncated: !!data.truncated };
 }
@@ -518,10 +518,10 @@ export function requestsView(data) {
 function voteTitle(item) {
   if (item.type === 'pr_vote') {
     const pr = item.pr || {};
-    return pr.title ? String(pr.title) : (pr.number ? `Change #${Number(pr.number)}` : 'A change');
+    return pr.title ? String(pr.title) : (pr.number ? globalThis.PlatformI18n.t("account:change_value1_af98ae2d", { value1: Number(pr.number) }) : 'A change');
   }
   const issue = item.issue || {};
-  return issue.title ? String(issue.title) : 'A group decision';
+  return issue.title ? String(issue.title) : globalThis.PlatformI18n.t("account:a_group_decision_727c136f");
 }
 
 /** Whether the thing voted on is still being decided. */
@@ -556,8 +556,8 @@ export function votesView(data) {
       const slug = typeof app.slug === 'string' && APP_SLUG.test(app.slug) ? app.slug : null;
       const open = voteOpen(item);
       const vote = item.vote === 'yes' || item.vote === 'no' ? item.vote : null;
-      const meta = [app.name || app.slug || 'An app'];
-      if (vote) meta.push(`you voted ${vote}`);
+      const meta = [app.name || app.slug || globalThis.PlatformI18n.t("account:an_app_094f9581")];
+      if (vote) meta.push(globalThis.PlatformI18n.t("account:you_voted_value1_428ab661", { value1: vote }));
       if (!open) meta.push(voteOutcome(item));
       let href = null;
       if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
@@ -574,8 +574,8 @@ export function votesView(data) {
       };
     });
   const sections = [
-    { key: 'open', label: 'Still open', rows: rows.filter((r) => r.open) },
-    { key: 'decided', label: 'Decided', rows: rows.filter((r) => !r.open) },
+    { key: 'open', get label() { return globalThis.PlatformI18n.t("account:still_open_ccde2b49"); }, rows: rows.filter((r) => r.open) },
+    { key: 'decided', get label() { return globalThis.PlatformI18n.t("account:decided_30ba702e"); }, rows: rows.filter((r) => !r.open) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0, more: !!data.nextBefore };
 }
@@ -592,10 +592,10 @@ export function publicControlsView(state) {
     // #2787: the second line of the sheet's "Public profile" switch row, so it
     // says what the state MEANS rather than a bare "Published"/"Private".
     visibility: owner.moderationDisabled
-      ? 'Hidden by moderation'
+      ? globalThis.PlatformI18n.t("account:hidden_by_moderation_492abfb0")
       : owner.published
-        ? 'On: anyone with the link can view it, no account needed'
-        : 'Off: your profile has no public link',
+        ? globalThis.PlatformI18n.t("account:on_anyone_with_the_link_can_view_it_no_account_n_b8074167")
+        : globalThis.PlatformI18n.t("account:off_your_profile_has_no_public_link_eb0e1cf9"),
     visibilityClass: owner.moderationDisabled
       ? 'text-red-700 dark:text-red-400'
       : owner.published
@@ -622,7 +622,7 @@ function monthYear(iso) {
   const t = Date.parse(iso || '');
   if (!Number.isFinite(t)) return null;
   try {
-    return new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    return new Date(t).toLocaleDateString(globalThis.PlatformI18n.getLanguage(), { month: 'long', year: 'numeric' });
   } catch (_) {
     return null;
   }
@@ -667,15 +667,15 @@ export function friendsView(lists, now = Date.now()) {
       // Short, because the row also carries Accept and Decline: on a phone
       // the name and this line share what the two buttons leave.
       const when = mergedAgo(p.requestedAt, now);
-      return row(p, when ? `Asked ${when}` : 'Asked to be friends');
+      return row(p, when ? globalThis.PlatformI18n.t("account:asked_value1_b08984bc", { value1: when }) : globalThis.PlatformI18n.t("account:asked_to_be_friends_6593d38d"));
     }),
     friends: people(lists.friends).map((p) => {
       const since = monthYear(p.since);
-      return row(p, since ? `Friends since ${since}` : 'Friends');
+      return row(p, since ? globalThis.PlatformI18n.t("account:friends_since_value1_d3d2def7", { value1: since }) : globalThis.PlatformI18n.t("account:friends_bd104d1b"));
     }),
     outgoing: people(Array.isArray(lists.outgoing) ? lists.outgoing : []).map((p) => {
       const when = mergedAgo(p.requestedAt, now);
-      return row(p, when ? `Requested ${when}` : 'Requested');
+      return row(p, when ? globalThis.PlatformI18n.t("account:requested_value1_3afd2afa", { value1: when }) : globalThis.PlatformI18n.t("account:requested_2d9e2828"));
     }),
   };
 }
@@ -697,7 +697,7 @@ export function tokenView(ranking, revealed) {
     // builds up to nothing and reads as either a bug or a snub; the card
     // says so in words instead.
     empty: amount === 0,
-    amount: amount.toLocaleString(),
+    amount: amount.toLocaleString(globalThis.PlatformI18n.getLanguage()),
     revealed: !!revealed,
   };
 }

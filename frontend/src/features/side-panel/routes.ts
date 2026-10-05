@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * WHICH ADDRESSES OPEN BESIDE A RUNNING APP, and what the panel does with
  * each: where Back climbs to, what the header row calls it, and the address
@@ -270,15 +271,15 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
 }
 
 const KIND_TITLE: Record<PanelKind, string> = {
-  workshop: 'Workshop',
-  proposal: 'Proposal',
-  issue: 'Request',
-  change: 'Change',
-  'new-change': 'New change',
-  thread: 'Messages',
-  chat: 'Chat',
-  agent: 'Agent session',
-  messages: 'Messages',
+  get workshop() { return tr("core:workshop_c0086f23"); },
+  get proposal() { return tr("core:proposal_5d42766c"); },
+  get issue() { return tr("core:request_59f03d64"); },
+  get change() { return tr("core:change_c0bf75bd"); },
+  get 'new-change'() { return tr("core:new_change_1e986694"); },
+  get thread() { return tr("core:messages_04d7b483"); },
+  get chat() { return tr("core:chat_460b3a7d"); },
+  get agent() { return tr("core:agent_session_da3d3fb8"); },
+  get messages() { return tr("core:messages_04d7b483"); },
 };
 
 /** The pages whose title is their kind, whatever their header says. */

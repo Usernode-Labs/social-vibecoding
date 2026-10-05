@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 import { useSyncExternalStore } from 'react';
 
 import { navStore } from '../nav/nav-store.js';
@@ -203,7 +204,7 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   const user = typeof window !== 'undefined' ? window.App?.user : null;
   return {
     id: Number(user?.id) || 0,
-    username: typeof user?.username === 'string' ? user.username : 'You',
+    username: typeof user?.username === 'string' ? user.username : tr("community:you_08b04193"),
     avatarUrl: typeof user?.avatarUrl === 'string' ? user.avatarUrl : null,
   };
 }
@@ -218,9 +219,9 @@ function isAwaitingAcceptance(error: unknown): boolean {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
-    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
-    if (error.status === 404) return 'This conversation is no longer available.';
-    if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
+    if (isAwaitingAcceptance(error)) return tr("community:they_need_to_accept_your_message_request_before__b4e27f68");
+    if (error.status === 404) return tr("community:this_conversation_is_no_longer_available_07f8c47b");
+    if (error.status === 429) return tr("community:you_re_doing_that_too_quickly_try_again_in_a_mom_ce2ac38e");
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
@@ -341,7 +342,7 @@ function channelToHub(): boolean {
   if (!hub || !door) return false;
   // Only from this conversation's own address: a route that has already
   // moved on is not this redirect's to take.
-  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  if (!new RegExp(tr("community:messages_value1_02f1281f", { value1: conversationId })).test(window.location.hash)) return false;
   door(hub, {
     conversationId,
     threadRootId: state.route.threadRootId,
@@ -417,7 +418,7 @@ export async function loadConversations(force = false): Promise<void> {
       loadingList: false,
       listLoaded: true,
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, 'Couldn’t load your conversations.'),
+      error: errorMessage(error, tr("community:couldn_t_load_your_conversations_d915a35b")),
     });
     resolvePendingChannel();
   }
@@ -567,7 +568,7 @@ export async function loadThread(conversationId: number, force = false): Promise
       // stood in: no header or composer for a conversation that did not load.
       ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
-      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      threadError: errorMessage(error, tr("community:couldn_t_load_this_conversation_407fa735")),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
@@ -656,7 +657,7 @@ export async function loadNewer(): Promise<void> {
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last);
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, tr("community:couldn_t_load_newer_messages_e2d2f883")) });
   }
 }
 
@@ -683,7 +684,7 @@ export async function loadOlder(): Promise<void> {
       loadingOlder: false,
     });
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load older messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, tr("community:couldn_t_load_older_messages_e5f71ac8")) });
   }
 }
 
@@ -858,7 +859,7 @@ export async function loadDiscussion(slug: string): Promise<void> {
     }
     const data = await response.json().catch(() => null);
     const app = (data && (data.app || data)) || null;
-    if (!app || !app.slug) { errorCode = 'invalid_response'; throw new Error('No such app'); }
+    if (!app || !app.slug) { errorCode = 'invalid_response'; throw new Error(tr("community:no_such_app_f515f068")); }
     // A slower request for a thread the reader has already left must not
     // paint over the one they are looking at.
     if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
@@ -883,7 +884,7 @@ export async function loadDiscussion(slug: string): Promise<void> {
   } catch {
     if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     telemetry?.outcome?.(attemptId, 'failure', { errorCode });
-    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+    publish({ discussionContext: null, get discussionError() { return tr("community:this_discussion_could_not_be_opened_0c1d4eb6"); } });
   }
 }
 
@@ -1039,7 +1040,7 @@ export function syncChrome(): void {
   if (hub && !(isMobile() && state.route.threadRootId)) {
     app.setBackIcon?.('arrow', hub);
     app.setHeaderTitle?.(state.route.appSlug
-      ? state.discussionContext?.name || 'Channel'
+      ? state.discussionContext?.name || tr("community:channel_ce4683e7")
       : `#${chromeTitle(state.active)}`);
     return;
   }
@@ -1055,7 +1056,7 @@ export function syncChrome(): void {
     app.setBackIcon?.('arrow', state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`);
-    app.setHeaderTitle?.('Thread');
+    app.setHeaderTitle?.(tr("community:thread_5373c7f8"));
     return;
   }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
@@ -1066,9 +1067,9 @@ export function syncChrome(): void {
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
-      ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : chromeTitle(state.active))
-    : 'Messages');
+      ? state.discussionContext?.name || tr("community:discussion_5eb6cf64")
+      : state.route.agent ? tr("community:messages_04d7b483") : chromeTitle(state.active))
+    : tr("community:messages_04d7b483"));
 }
 
 /**
@@ -1078,11 +1079,11 @@ export function syncChrome(): void {
  * so it takes its requester's name instead, as its header and row do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
-  if (!active) return 'Messages';
+  if (!active) return tr("community:messages_04d7b483");
   if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
     return active.requester.username;
   }
-  return active.title || 'Messages';
+  return active.title || tr("community:messages_04d7b483");
 }
 
 /**
@@ -1293,13 +1294,13 @@ export async function renameConversation(title: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   const next = title.trim().replace(/\s+/g, ' ');
-  if (!next) throw new Error('A group needs a name.');
-  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (!next) throw new Error(tr("community:a_group_needs_a_name_b24f84c2"));
+  if (next.length > 80) throw new Error(tr("community:group_names_can_be_up_to_80_characters_f033d511"));
   if (next === state.active?.title) return;
   try {
     upsertConversation(await api.updateConversation(id, { title: next }));
   } catch (error) {
-    throw new Error(errorMessage(error, 'Couldn’t rename this group.'));
+    throw new Error(errorMessage(error, tr("community:couldn_t_rename_this_group_26ef0861")));
   }
 }
 
@@ -1438,7 +1439,7 @@ export async function tapBotAction(message: ConversationMessage, action: Homeroo
     return;
   }
   const actionId = message.metadata?.homeroomBot?.actionId;
-  if (!actionId) throw new Error('This choice has nothing to decide');
+  if (!actionId) throw new Error(tr("community:this_choice_has_nothing_to_decide_15ed3f9f"));
   await api.decideBotAction(actionId, action.id);
 }
 
@@ -1536,7 +1537,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     publish({
       online: !offline,
       messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
+      threadError: offline ? tr("community:message_queued_it_will_retry_when_you_reconnect_662214e9") : errorMessage(error, tr("community:your_message_wasn_t_sent_c8fd3251")),
     });
   }
 }
@@ -1570,7 +1571,7 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
         thread: {
           ...thread,
           messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, 'Your reply wasn’t sent.'),
+          error: errorMessage(error, tr("community:your_reply_wasn_t_sent_e8974b31")),
         },
       });
     }
@@ -1782,7 +1783,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
     publish({
-      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, tr("community:couldn_t_load_this_thread_7931a018")) } : null,
     });
   }
 }
@@ -1807,7 +1808,7 @@ export async function loadOlderReplies(): Promise<void> {
     });
   } catch (error) {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, tr("community:couldn_t_load_earlier_replies_611acb13")) } });
   }
 }
 

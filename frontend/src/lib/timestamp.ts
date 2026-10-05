@@ -1,3 +1,4 @@
+import { t as tr, getLanguage, relativeTime } from "./i18n/runtime";
 /**
  * One rule for "when was this said" (#1808).
  *
@@ -90,9 +91,10 @@ const FULL: Intl.DateTimeFormatOptions = {
  */
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function formatDate(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
+  key = `${getLanguage()}:${key}`;
   let formatter = formatters.get(key);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat(undefined, options);
+    formatter = new Intl.DateTimeFormat(getLanguage(), options);
     formatters.set(key, formatter);
   }
   return formatter.format(date);
@@ -191,10 +193,10 @@ export function agoStamp(
   if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
 
   const seconds = Math.max(0, Math.floor(elapsed / 1000));
-  if (seconds < 60) return { text: 'just now', title };
+  if (seconds < 60) return { get text() { return tr("core:just_now_7ddb44d8"); }, title };
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { text: `${minutes}m ago`, title };
+  if (minutes < 60) return { get text() { return relativeTime(-minutes, 'minute'); }, title };
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { text: `${hours}h ago`, title };
-  return { text: `${Math.floor(hours / 24)}d ago`, title };
+  if (hours < 24) return { get text() { return relativeTime(-hours, 'hour'); }, title };
+  return { get text() { return relativeTime(-Math.floor(hours / 24), 'day'); }, title };
 }

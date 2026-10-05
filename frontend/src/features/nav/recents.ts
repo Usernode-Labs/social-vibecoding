@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The desktop rail's Recents, as one list (#2802).
  *
@@ -202,7 +203,7 @@ export function buildRecents(input: {
     items.push({
       key: `agent:${item.id}`,
       kind: 'agent',
-      label: item.title || 'Untitled chat',
+      label: item.title || tr("core:untitled_chat_4d4e126c"),
       href: `#chat/${encodeURIComponent(item.id)}`,
       at: item.updatedAt || item.createdAt || null,
       unread: false,
@@ -215,7 +216,7 @@ export function buildRecents(input: {
     items.push({
       key: `agent-session:${item.id}`,
       kind: 'agent',
-      label: item.title || 'New session',
+      label: item.title || tr("core:new_session_cffdba22"),
       href: `#messages/agent/${item.id}`,
       at: item.lastActivityAt || item.createdAt || null,
       unread: false,
@@ -369,9 +370,9 @@ export interface RecentGroups {
 }
 
 export function recentDayLabel(daysAgo: number): string {
-  if (daysAgo <= 0) return 'Today';
-  if (daysAgo === 1) return 'Yesterday';
-  return `${daysAgo} days ago`;
+  if (daysAgo <= 0) return tr("core:today_2b065c7c");
+  if (daysAgo === 1) return tr("core:yesterday_56618125");
+  return tr("core:value1_days_ago_b6e2c57a", { value1: daysAgo });
 }
 
 function localMidnight(at: number): number {

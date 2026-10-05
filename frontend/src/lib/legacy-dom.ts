@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n/runtime";
 /**
  * Helpers for React islands that sit inside the legacy shell (#1078).
  *
@@ -116,9 +117,9 @@ export function useLegacyBridge(name: string, controller: unknown): void {
     const bridge = (host.UsernodeReact ||= {});
     bridge[name] = controller;
     // Anything the legacy side called before hydration is replayed in order.
-    const pending = bridge[`${name}:pending`];
+    const pending = bridge[tr("core:value1_pending_e35ab7ce", { value1: name })];
     if (Array.isArray(pending)) {
-      bridge[`${name}:pending`] = [];
+      bridge[tr("core:value1_pending_e35ab7ce", { value1: name })] = [];
       for (const [method, args] of pending as [string, unknown[]][]) {
         const fn = (controller as Record<string, unknown>)?.[method];
         if (typeof fn === 'function') {

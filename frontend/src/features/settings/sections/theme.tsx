@@ -1,3 +1,6 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * Settings → Theme: Light / Dark / System.
  *
@@ -47,9 +50,9 @@ const THEME_SEG_CLASS =
   'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
 
 const THEME_LABELS: Record<ThemeMode, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System',
+  get light() { return tr("settings:light_dbcd5e7b"); },
+  get dark() { return tr("settings:dark_60acc53f"); },
+  get system() { return tr("settings:system_6725e7bb"); },
 };
 
 /**
@@ -74,6 +77,7 @@ const THEME_LABELS: Record<ThemeMode, string> = {
  * changed while the viewer was elsewhere in Settings.
  */
 function ThemeControl() {
+  useUiLanguage();
   const [mode, setMode] = useState<ThemeMode | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
@@ -123,11 +127,10 @@ function ThemeControl() {
   );
 
   return (
-    <div
+    <Localized element={<div
       id="drawer-theme-track"
       ref={trackRef}
-      role="radiogroup"
-      aria-label="Theme"
+      role="radiogroup" aria-label={catalogText("settings:theme_efb52e71")}
       className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
     >
       {THEME_MODES.map((m) => (
@@ -147,7 +150,7 @@ function ThemeControl() {
         <span id="drawer-theme-caret">
         </span>
       </span>
-    </div>
+    </div>} messages={{"aria-label":"settings:theme_efb52e71"}} />
   );
 }
 
@@ -188,6 +191,7 @@ export function writeRailPinned(on: boolean): void {
  * turned it on. Re-read on every entry into this section, like the theme.
  */
 function RailPinnedRow() {
+  useUiLanguage();
   const [pinned, setPinned] = useState(false);
   const sync = useCallback(() => setPinned(readRailPinned()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
@@ -205,13 +209,9 @@ function RailPinnedRow() {
             setPinned(next);
           }}
         />
-        <span className="text-sm text-zinc-800 dark:text-zinc-200">
-          Keep sidebar open in apps
-        </span>
+        <span className="text-sm text-zinc-800 dark:text-zinc-200"><Message id="settings:keep_sidebar_open_in_apps_2706db12" /></span>
       </label>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.
-      </p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed"><Message id="settings:off_an_app_you_open_takes_the_whole_window_and_t_636cdcbe" /></p>
     </div>
   );
 }
@@ -220,9 +220,7 @@ export function ThemeSection() {
   return (
     <div data-settings-section="theme" className="hidden">
       <div id="settings-theme-section">
-        <SectionHeading title="Theme">
-          Light, dark, or follow your device. Applies everywhere on this browser.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:theme_efb52e71")}><Message id="settings:light_dark_or_follow_your_device_applies_everywh_8ded12ce" /></SectionHeading>} messages={{"title":"settings:theme_efb52e71"}} />
         <div className="max-w-xs">
           <ThemeControl />
         </div>

@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The contents of `#profile-root` (#1191 slice 6, conversion 1).
  *
@@ -102,9 +105,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           ink="neutral"
           className="self-start ml-[68px] sm:self-auto sm:ml-0"
           onClick={() => Profile.showEditSheet()}
-        >
-          Edit profile
-        </Button>
+        ><Message id="account:edit_profile_15c4aa13" /></Button>
       </div>
       {/*
           The bio is deliberately plain text, not markdown: React renders it as
@@ -132,7 +133,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
               key={chip.key}
               className={chip.className}
               href={chip.href}
-              {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+              {...(chip.external ? { target: '_blank', get rel() { return tr("account:noopener_noreferrer_ec0f84cc"); } } : {})}
             >
               {chip.label}
             </a>
@@ -176,7 +177,7 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
  */
 function ProfileSkeleton(): ReactNode {
   return (
-    <SkeletonGroup label="Loading your profile">
+    <Localized element={<SkeletonGroup label={catalogText("account:loading_your_profile_2b68cefc")}>
       <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
         <div className="flex items-center gap-3">
           <Skeleton shape="circle" className="w-14 h-14" />
@@ -210,11 +211,12 @@ function ProfileSkeleton(): ReactNode {
           ))}
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"account:loading_your_profile_2b68cefc"}} />
   );
 }
 
 export function ProfileRoot(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(profileStore);
   const view = buildProfileView(state);
 
@@ -225,31 +227,25 @@ export function ProfileRoot(): ReactNode {
   if (view.kind === 'signedOut') {
     return (
       <div className="py-12 text-center">
-        <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Sign in to see your profile.
-        </div>
+        <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-4"><Message id="account:sign_in_to_see_your_profile_1fbea324" /></div>
         <a
           className={
             'inline-flex items-center justify-center px-4 min-h-[44px] rounded-lg '
             + 'bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium'
           }
           href="#login"
-        >
-          Sign in
-        </a>
+        ><Message id="account:sign_in_bfd402b2" /></a>
       </div>
     );
   }
   if (view.kind === 'error') {
     return (
-      <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">
-        Could not load your profile. Check your connection and try again.
-      </div>
+      <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400"><Message id="account:could_not_load_your_profile_check_your_connectio_7390eade" /></div>
     );
   }
   if (view.kind === 'publicNotFound') {
     return (
-      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">This profile is unavailable.</div>
+      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400"><Message id="account:this_profile_is_unavailable_57fec0f9" /></div>
     );
   }
   if (view.kind === 'public') {

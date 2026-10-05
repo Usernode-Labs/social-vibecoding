@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * How a list of your communities is arranged, in one place (#3363).
  *
@@ -31,9 +32,9 @@ export type SectionedRow = {
  * in), one person.
  */
 export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string }> = [
-  { key: 'open', label: 'Public communities', noun: 'Public community' },
-  { key: 'invited', label: 'Private communities', noun: 'Private community' },
-  { key: 'solo', label: 'Just you', noun: 'Just you' },
+  { key: 'open', get label() { return tr("workshop:public_communities_2c25b65f"); }, get noun() { return tr("workshop:public_community_1cf36210"); } },
+  { key: 'invited', get label() { return tr("workshop:private_communities_fd724301"); }, get noun() { return tr("workshop:private_community_cbb6e031"); } },
+  { key: 'solo', get label() { return tr("workshop:just_you_aeed20a9"); }, get noun() { return tr("workshop:just_you_aeed20a9"); } },
 ];
 
 /** How many rows a section shows before "Show N more". */
@@ -56,8 +57,8 @@ export function sectionFold(total: number, limit: number): { shown: number; labe
   const shown = Math.min(total, Math.max(SECTION_LIMIT, limit));
   if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
   const hidden = total - shown;
-  if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
-  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+  if (!hidden) return { shown, get label() { return tr("workshop:show_fewer_255beb65"); }, next: SECTION_LIMIT };
+  return { shown, get label() { return tr("workshop:show_value1_more_398301a5", { value1: Math.min(hidden, SECTION_STEP) }); }, next: shown + SECTION_STEP };
 }
 
 /**
@@ -83,8 +84,8 @@ export function sectionFoldFrom(total: number, limit: number, floor: number): { 
   if (total <= floor) return { shown: total, label: null, next: floor };
   const shown = Math.min(total, Math.max(floor, limit));
   const hidden = total - shown;
-  if (!hidden) return { shown, label: 'Show fewer', next: floor };
-  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+  if (!hidden) return { shown, get label() { return tr("workshop:show_fewer_255beb65"); }, next: floor };
+  return { shown, get label() { return tr("workshop:show_value1_more_398301a5", { value1: Math.min(hidden, SECTION_STEP) }); }, next: shown + SECTION_STEP };
 }
 
 /**

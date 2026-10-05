@@ -102,7 +102,7 @@
   // boot instead: App.enterAnonymous reads this key once and toasts it.
   const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
   const NATIVE_SHUTDOWN_NOTICE =
-    'Signed out. Close and reopen the app to finish shutting down Homeroom.';
+    globalThis.PlatformI18n.t("settings:signed_out_close_and_reopen_the_app_to_finish_sh_31055a5a");
 
   // A successful native logout replaces the WebView, so nothing below it in
   // this document normally runs. This bounded net covers the case where the
@@ -256,25 +256,25 @@
       // Who you are and how you sign in, on one page, with Delete account at
       // its foot, apart from everything harmless above it (GitHub's and
       // Apple's placement: easy to find, never next to a routine control).
-      { key: 'profile', label: 'Profile', group: 'Account', page: 'account' },
-      { key: 'username', label: 'Username', group: 'Account', page: 'account' },
-      { key: 'email', label: 'Email & recovery', group: 'Account', page: 'account' },
-      { key: 'password', label: 'Password', group: 'Account', page: 'account' },
-      { key: 'delete-account', label: 'Delete account', group: 'Account', page: 'account' },
+      { key: 'profile', get label() { return globalThis.PlatformI18n.t("settings:profile_d696a35b"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, page: 'account' },
+      { key: 'username', get label() { return globalThis.PlatformI18n.t("settings:username_e3b89e9d"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, page: 'account' },
+      { key: 'email', get label() { return globalThis.PlatformI18n.t("settings:email_recovery_4ee4c511"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, page: 'account' },
+      { key: 'password', get label() { return globalThis.PlatformI18n.t("settings:password_e7cf3ef4"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, page: 'account' },
+      { key: 'delete-account', get label() { return globalThis.PlatformI18n.t("settings:delete_account_a2e20a33"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, page: 'account' },
       // GitHub and X, which decide the daily credits and can be shown on the
       // public page. They shared a pane with the chat connectors, which have
       // nothing to do with identity.
-      { key: 'linked-accounts', label: 'Linked accounts', group: 'Account' },
-      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
+      { key: 'linked-accounts', get label() { return globalThis.PlatformI18n.t("settings:linked_accounts_feda46a4"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); } },
+      { key: 'wallet', get label() { return globalThis.PlatformI18n.t("settings:homeroom_wallet_6e5f658a"); }, get group() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); }, gate: 'wallet-section' },
 
       // ── AI & building ───────────────────────────────────────────────────
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
       // session model — and the Anthropic key, the one you add when the
       // allowance runs out, comes last.
-      { key: 'usage', label: 'Usage', group: 'AI & building', page: 'ai' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & building', page: 'ai' },
-      { key: 'api-key', label: 'Anthropic API key', group: 'AI & building', page: 'ai' },
+      { key: 'usage', get label() { return globalThis.PlatformI18n.t("settings:usage_8d59829c"); }, group: 'AI & building', page: 'ai' },
+      { key: 'openrouter', get label() { return globalThis.PlatformI18n.t("settings:openrouter_eb70c3bc"); }, group: 'AI & building', page: 'ai' },
+      { key: 'api-key', get label() { return globalThis.PlatformI18n.t("settings:anthropic_api_key_97d1086e"); }, group: 'AI & building', page: 'ai' },
       // Everything about building from outside Homeroom: the chat connectors
       // (Claude, ChatGPT, Codex), the default hand-off they make possible, and
       // the CLI credentials. The out-of-credits card deep-links
@@ -282,12 +282,12 @@
       // (public/js/credit-options.js). Connectors leads because the page is
       // keyed by it: a page key that named a LATER part would open the page
       // scrolled past everything above that part.
-      { key: 'connectors', label: 'Connectors', group: 'AI & building', page: 'connectors' },
-      { key: 'build-venue', label: 'Where changes get built', group: 'AI & building', page: 'connectors' },
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'AI & building', page: 'connectors' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & building' },
-      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & building' },
-      { key: 'experimental', label: 'Experimental', group: 'AI & building' },
+      { key: 'connectors', get label() { return globalThis.PlatformI18n.t("settings:connectors_c3d2e79e"); }, group: 'AI & building', page: 'connectors' },
+      { key: 'build-venue', get label() { return globalThis.PlatformI18n.t("settings:where_changes_get_built_1664c33e"); }, group: 'AI & building', page: 'connectors' },
+      { key: 'cli', get label() { return globalThis.PlatformI18n.t("settings:cli_coding_agent_access_f5b96ef5"); }, group: 'AI & building', page: 'connectors' },
+      { key: 'agent-files', get label() { return globalThis.PlatformI18n.t("settings:agent_instructions_skills_7c5c7975"); }, group: 'AI & building' },
+      { key: 'global-chat', get label() { return globalThis.PlatformI18n.t("settings:global_chat_experimental_1dfd6900"); }, group: 'AI & building' },
+      { key: 'experimental', get label() { return globalThis.PlatformI18n.t("settings:experimental_3dc9f569"); }, group: 'AI & building' },
 
       // ── Preferences ─────────────────────────────────────────────────────
       // THE UI OVERHAUL moved Theme here out of the hamburger drawer. The
@@ -297,38 +297,38 @@
       // wrapper is empty and the page is Theme and the console switch. It had
       // a group of its own, which put an "Admin" heading directly above the
       // footer's own Admin block.
-      { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
-      { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
-      { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
-      { key: 'language', label: 'Language', group: 'Preferences' },
-      { key: 'alerts', label: 'Notifications', group: 'Preferences' },
+      { key: 'theme', get label() { return globalThis.PlatformI18n.t("settings:theme_efb52e71"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'theme' },
+      { key: 'dev-console', get label() { return globalThis.PlatformI18n.t("settings:developer_console_2ef15ac2"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'theme' },
+      { key: 'admin-preview', get label() { return globalThis.PlatformI18n.t("settings:admin_preview_a702a4e3"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'theme', gate: 'settings-admin-section' },
+      { key: 'language', get label() { return globalThis.PlatformI18n.t("settings:language_a4fe6526"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); } },
+      { key: 'alerts', get label() { return globalThis.PlatformI18n.t("settings:notifications_78801183"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); } },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
       // collapsed Advanced group, which hid two privacy controls from the
       // people they protect.
-      { key: 'app-permissions', label: 'App device permissions', group: 'Preferences', page: 'app-permissions' },
-      { key: 'app-ai', label: 'App AI permissions', group: 'Preferences', page: 'app-permissions' },
-      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences', page: 'app-permissions' },
+      { key: 'app-permissions', get label() { return globalThis.PlatformI18n.t("settings:app_device_permissions_bad62fc7"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'app-permissions' },
+      { key: 'app-ai', get label() { return globalThis.PlatformI18n.t("settings:app_ai_permissions_8be55dd9"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'app-permissions' },
+      { key: 'blocked-apps', get label() { return globalThis.PlatformI18n.t("settings:blocked_apps_adfc2938"); }, get group() { return globalThis.PlatformI18n.t("settings:preferences_66962f72"); }, page: 'app-permissions' },
 
       // ── Help & about ────────────────────────────────────────────────────
       // Panes you come to read or replay rather than configure. The welcome
       // tour's own Skip promises its row exists (#2255). About is last among
       // them — the Improve panel is where the same facts turn into something
       // to act on (a build in flight, a reload waiting). See sections/about.tsx.
-      { key: 'tour', label: 'Welcome tour', group: 'Help & about' },
-      { key: 'usernode', label: 'Homeroom app', group: 'Help & about', gate: 'settings-usernode-section' },
-      { key: 'about', label: 'About', group: 'Help & about' },
+      { key: 'tour', get label() { return globalThis.PlatformI18n.t("settings:welcome_tour_5155b987"); }, group: 'Help & about' },
+      { key: 'usernode', get label() { return globalThis.PlatformI18n.t("settings:homeroom_app_92077421"); }, group: 'Help & about', gate: 'settings-usernode-section' },
+      { key: 'about', get label() { return globalThis.PlatformI18n.t("settings:about_4efca0d1"); }, group: 'Help & about' },
     ],
 
     // The label of each page that holds more than one part. A page of one
     // part is labelled by that part; the label here is also the title the
     // phone's header shows inside the page.
     PAGES: {
-      account: 'Account',
-      ai: 'AI usage & models',
+      get account() { return globalThis.PlatformI18n.t("settings:account_7e1b0d56"); },
+      get ai() { return globalThis.PlatformI18n.t("settings:ai_usage_models_429f837f"); },
       connectors: 'Connectors & CLI',
-      theme: 'Appearance',
-      'app-permissions': 'App permissions',
+      get theme() { return globalThis.PlatformI18n.t("settings:appearance_3907fa7f"); },
+      get 'app-permissions'() { return globalThis.PlatformI18n.t("settings:app_permissions_7e07c5e7"); },
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own
@@ -336,31 +336,31 @@
     // type for a thing, not the words the pane uses for it.
     KEYWORDS: {
       profile: 'name display photo avatar picture bio public page',
-      username: 'handle rename at',
-      email: 'address verify verification recovery',
-      password: 'sign in login security',
-      'delete-account': 'close remove deactivate anonymise anonymize',
-      'linked-accounts': 'github x twitter social verified daily credits connect',
-      wallet: 'crypto link qr',
-      usage: 'allowance limit credits budget spend remaining weekly',
+      get username() { return globalThis.PlatformI18n.t("settings:handle_rename_at_946d3398"); },
+      get email() { return globalThis.PlatformI18n.t("settings:address_verify_verification_recovery_a5502b4d"); },
+      get password() { return globalThis.PlatformI18n.t("settings:sign_in_login_security_40de7fa2"); },
+      get 'delete-account'() { return globalThis.PlatformI18n.t("settings:close_remove_deactivate_anonymise_anonymize_cb07cd2e"); },
+      get 'linked-accounts'() { return globalThis.PlatformI18n.t("settings:github_x_twitter_social_verified_daily_credits_c_258ff933"); },
+      get wallet() { return globalThis.PlatformI18n.t("settings:crypto_link_qr_4c692491"); },
+      get usage() { return globalThis.PlatformI18n.t("settings:allowance_limit_credits_budget_spend_remaining_w_0adb04f2"); },
       'api-key': 'claude byok key sk-ant billing',
-      openrouter: 'model glm deepseek reasoning default coding agent key',
+      get openrouter() { return globalThis.PlatformI18n.t("settings:model_glm_deepseek_reasoning_default_coding_agen_0f8e1093"); },
       'build-venue': 'claude code codex hand off handoff default build',
       connectors: 'mcp claude chatgpt codex chat connector',
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
-      'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages',
-      theme: 'dark light mode appearance sidebar',
-      'dev-console': 'bug icon logs errors debug developer',
-      language: 'locale translate',
-      alerts: 'notifications sound push phone mute bell chime',
-      'app-permissions': 'camera microphone location screen device',
-      'app-ai': 'ai spending cap grants budget',
-      'blocked-apps': 'block hide unblock',
-      tour: 'walkthrough help onboarding',
-      usernode: 'mobile phone native diagnostics block production',
-      about: 'version build terms',
+      get 'global-chat'() { return globalThis.PlatformI18n.t("settings:model_cap_chat_e2314f06"); },
+      get experimental() { return globalThis.PlatformI18n.t("settings:beta_labs_progress_estimate_session_bridge_local_219943a6"); },
+      get theme() { return globalThis.PlatformI18n.t("settings:dark_light_mode_appearance_sidebar_f7de49fc"); },
+      get 'dev-console'() { return globalThis.PlatformI18n.t("settings:bug_icon_logs_errors_debug_developer_ba4aca35"); },
+      get language() { return globalThis.PlatformI18n.t("settings:locale_translate_fc923f36"); },
+      get alerts() { return globalThis.PlatformI18n.t("settings:notifications_sound_push_phone_mute_bell_chime_0df389bd"); },
+      get 'app-permissions'() { return globalThis.PlatformI18n.t("settings:camera_microphone_location_screen_device_3b79e8e8"); },
+      get 'app-ai'() { return globalThis.PlatformI18n.t("settings:ai_spending_cap_grants_budget_857b9506"); },
+      get 'blocked-apps'() { return globalThis.PlatformI18n.t("settings:block_hide_unblock_4ee95163"); },
+      get tour() { return globalThis.PlatformI18n.t("settings:walkthrough_help_onboarding_0a330344"); },
+      get usernode() { return globalThis.PlatformI18n.t("settings:mobile_phone_native_diagnostics_block_production_b303cf2b"); },
+      get about() { return globalThis.PlatformI18n.t("settings:version_build_terms_d83db505"); },
       'admin-preview': 'non-admin view as',
     },
 
@@ -436,8 +436,8 @@
           const field = document.getElementById('connector-url');
           return field ? field.value : null;
         },
-        successMessage: 'MCP server URL copied',
-        failureMessage: 'Could not copy the MCP server URL',
+        get successMessage() { return globalThis.PlatformI18n.t("settings:mcp_server_url_copied_149289b1"); },
+        get failureMessage() { return globalThis.PlatformI18n.t("settings:could_not_copy_the_mcp_server_url_6d0a55e7"); },
         selectOnFail: () => {
           const field = document.getElementById('connector-url');
           if (field) field.select();
@@ -455,11 +455,11 @@
       const RULE_BLOCKS = {
         'connector-allow-rules': {
           success: 'Copied. Paste it into ~/.claude/settings.json',
-          failure: 'Could not copy the allow rules',
+          get failure() { return globalThis.PlatformI18n.t("settings:could_not_copy_the_allow_rules_51bb60c2"); },
         },
         'connector-repo-allow-rules': {
           success: 'Copied. Commit it as .claude/settings.json in your app repo',
-          failure: 'Could not copy the allow rules',
+          get failure() { return globalThis.PlatformI18n.t("settings:could_not_copy_the_allow_rules_51bb60c2"); },
         },
       };
       for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
@@ -623,19 +623,19 @@
           alertsTest.disabled = true;
           if (status) {
             status.classList.remove('hidden');
-            status.textContent = 'Queueing test alert…';
+            status.textContent = globalThis.PlatformI18n.t("settings:queueing_test_alert_682578be");
           }
           try {
             const result = await DevAlerts.testAlert();
             if (!status) return;
             const pushStatus = result.queued
-              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
+              ? globalThis.PlatformI18n.t("settings:phone_push_queued_background_or_close_the_mobile_1a41bc7e")
               : result.reason === 'preference_disabled'
-                ? 'Phone push was not queued. Enable Agent sessions under Mobile push categories and try again.'
-                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+                ? globalThis.PlatformI18n.t("settings:phone_push_was_not_queued_enable_agent_sessions__a84eea9d")
+                : globalThis.PlatformI18n.t("settings:phone_push_was_not_queued_sign_in_on_your_phone__08615bef");
             let remaining = Math.ceil(result.delayMs / 1000);
             const render = () => {
-              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+              status.textContent = globalThis.PlatformI18n.t("settings:alert_in_value1_s_value2_stay_here_for_the_chime_4d1f636f", { value1: remaining, value2: pushStatus });
             };
             render();
             this._alertsTestTimer = setInterval(() => {
@@ -646,11 +646,11 @@
               }
               this._clearAlertsTestCountdown();
               status.textContent = result.queued
-                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
+                ? globalThis.PlatformI18n.t("settings:the_test_push_is_queued_for_delivery_check_your__ce2787f1")
                 : pushStatus;
             }, 1000);
           } catch (err) {
-            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+            if (status) status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_queue_the_test_push_please_try_again_237ab0ed");
           } finally {
             alertsTest.disabled = false;
           }
@@ -1162,7 +1162,7 @@
     _groupedSections() {
       const groups = [];
       for (const p of Settings._visiblePages()) {
-        const name = p.group || 'Other';
+        const name = p.group || globalThis.PlatformI18n.t("settings:other_f97e9da0");
         let g = groups.find((x) => x.name === name);
         if (!g) { g = { name, items: [] }; groups.push(g); }
         g.items.push(p);
@@ -1481,9 +1481,9 @@
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const p = Settings._visiblePages().find((x) => x.key === Settings._section);
-        App.setHeaderTitle(p ? p.label : 'Settings');
+        App.setHeaderTitle(p ? p.label : globalThis.PlatformI18n.t("settings:settings_74a883a0"));
       } else {
-        App.setHeaderTitle('Settings');
+        App.setHeaderTitle(globalThis.PlatformI18n.t("settings:settings_74a883a0"));
       }
     },
 
@@ -1579,7 +1579,7 @@
         });
       }
       if (status && agents.some((a) => a.demo)) {
-        status.textContent = 'Demo data: changes are not saved.';
+        status.textContent = globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930");
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -1593,11 +1593,11 @@
     // collapse into the one fact the row needs, which is whether there is a
     // lease to release at all.
     _localAgentView(agent) {
-      const app = agent.appName || agent.appSlug || 'an app';
+      const app = agent.appName || agent.appSlug || globalThis.PlatformI18n.t("settings:an_app_66e93a7c");
       return {
         leaseId: agent.leaseId || null,
         label: agent.label || null,
-        title: agent.label || 'Unnamed machine',
+        title: agent.label || globalThis.PlatformI18n.t("settings:unnamed_machine_06081018"),
         where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
         runtime: agent.runtime || 'claude-code',
         // #1808: the raw instant, NOT a formatted time. This was
@@ -1620,8 +1620,8 @@
     // case is a laptop that was closed or lost its network, and the whole
     // point is to get the session's turns back without waiting out the lease.
     async _detachLocalAgent(agent, button) {
-      const label = agent.label || 'this machine';
-      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.`)) return;
+      const label = agent.label || globalThis.PlatformI18n.t("settings:this_machine_e223809d");
+      if (!window.confirm(globalThis.PlatformI18n.t("settings:detach_value1_its_session_s_coding_turns_go_back_17c8e49c", { value1: label }))) return;
       const status = document.getElementById('settings-local-agents-status');
       button.disabled = true;
       try {
@@ -1631,12 +1631,12 @@
         });
         // 404 means it already went away (it detached itself, or the sweeper
         // expired it) — the user's intent is satisfied either way.
-        if (r.status !== 204 && r.status !== 404) throw new Error('Could not detach that machine.');
+        if (r.status !== 204 && r.status !== 404) throw new Error(globalThis.PlatformI18n.t("settings:could_not_detach_that_machine_6034c97c"));
         await this._renderLocalAgentsSection();
       } catch (err) {
         button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not detach that machine.';
+          status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_detach_that_machine_6034c97c");
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -1825,7 +1825,7 @@
           PlatformUI.toast(ok ? successMessage : failureMessage,
             ok ? {} : { error: true });
         }
-        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.textContent = ok ? globalThis.PlatformI18n.t("settings:copied_8d525e5f") : globalThis.PlatformI18n.t("settings:copy_failed_5b50e7a6");
         if (resetTimer) clearTimeout(resetTimer);
         resetTimer = setTimeout(() => {
           resetTimer = null;
@@ -1906,8 +1906,8 @@
       // it: the connector URL is a public endpoint and the authorisation
       // happens through OAuth inside the product, not in this link.
       const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
-        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
-        + ' Name it exactly "homeroom". Walk me through it one step at a time and tell me what to click.';
+        + globalThis.PlatformI18n.t("settings:and_it_uses_dynamic_client_registration_so_there_1f22ccd8")
+        + globalThis.PlatformI18n.t("settings:name_it_exactly_homeroom_walk_me_through_it_one__dff902bc");
       const chatLinks = [
         ['connector-open-claude', 'https://claude.ai/new?q='],
         ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
@@ -1949,10 +1949,10 @@
           section.classList.add('hidden');
           return;
         }
-        if (!response.ok) throw new Error('Could not load your connections.');
+        if (!response.ok) throw new Error(globalThis.PlatformI18n.t("settings:could_not_load_your_connections_18fb599b"));
         const data = await response.json();
         if (!data || !Array.isArray(data.connectors)) {
-          throw new Error('The connections response was invalid.');
+          throw new Error(globalThis.PlatformI18n.t("settings:the_connections_response_was_invalid_972f96a2"));
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
@@ -1961,7 +1961,7 @@
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
         this._publishConnectors({ phase: 'idle', connectors: [] });
-        status.textContent = err.message || 'Could not load your connections.';
+        status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_load_your_connections_18fb599b");
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       }
@@ -2025,13 +2025,13 @@
 
       let text;
       if (!shown) {
-        text = 'Homeroom has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+        text = globalThis.PlatformI18n.t("settings:homeroom_has_not_sent_you_this_tip_in_chat_yet_i_7d929cc0");
       } else {
         const when = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? new Date(hint.lastShownAt).toLocaleString()
+          ? new Date(hint.lastShownAt).toLocaleString(globalThis.PlatformI18n.getLanguage())
           : 'recently';
-        const times = shown === 1 ? 'once' : `${shown} times`;
-        text = `Homeroom sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
+        const times = shown === 1 ? 'once' : globalThis.PlatformI18n.t("settings:value1_times_6140f307", { value1: shown });
+        text = globalThis.PlatformI18n.t("settings:homeroom_sent_you_this_tip_in_chat_value1_in_the_70ec27b5", { value1: times, value2: days, value3: when });
         // Three different answers to "why am I not seeing it", and they are
         // not interchangeable: the budget is spent (comes back next week),
         // the hour since the last one has not passed (comes back shortly), or
@@ -2044,7 +2044,7 @@
           ? shownAt + cooldown * 60 * 1000
           : 0;
         if (cap && shown >= cap) {
-          text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
+          text += globalThis.PlatformI18n.t("settings:that_is_the_limit_of_value1_per_connection_per_v_c06cb72f", { value1: cap, value2: days });
         } else if (quietUntil > Date.now()) {
           // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
           // runs from the last tip, so one sent late in the evening puts the
@@ -2053,12 +2053,12 @@
           // and anything further out gets the whole stamp.
           const end = new Date(quietUntil);
           const deadline = end.toDateString() === new Date().toDateString()
-            ? `today at ${end.toLocaleTimeString()}`
-            : end.toLocaleString();
-          text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${deadline} will not carry it. One opened after that will.`;
+            ? globalThis.PlatformI18n.t("settings:today_at_value1_9a17d547", { value1: end.toLocaleTimeString(globalThis.PlatformI18n.getLanguage()) })
+            : end.toLocaleString(globalThis.PlatformI18n.getLanguage());
+          text += globalThis.PlatformI18n.t("settings:it_stays_quiet_for_value1_minutes_after_each_one_af1305d4", { value1: cooldown })
+            + globalThis.PlatformI18n.t("settings:value1_will_not_carry_it_one_opened_after_that_w_7db50018", { value1: deadline });
         } else {
-          text += 'Open a new conversation to see it again.';
+          text += globalThis.PlatformI18n.t("settings:open_a_new_conversation_to_see_it_again_2a2c7f84");
         }
       }
       line.textContent = text;
@@ -2086,15 +2086,15 @@
         phase: 'ready',
         connectors: connectors.map((connector) => {
           const connected = Number.isFinite(Date.parse(connector.connected_at))
-            ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
+            ? new Date(connector.connected_at).toLocaleString(globalThis.PlatformI18n.getLanguage()) : globalThis.PlatformI18n.t("settings:unknown_date_bced143d");
           const used = connector.last_used_at
             && Number.isFinite(Date.parse(connector.last_used_at))
-            ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
-            : ' · never used';
+            ? globalThis.PlatformI18n.t("settings:last_used_value1_8867dad3", { value1: new Date(connector.last_used_at).toLocaleString(globalThis.PlatformI18n.getLanguage()) })
+            : globalThis.PlatformI18n.t("settings:never_used_8a0057fc");
           return {
             id: String(connector.id),
-            title: connector.client_name || 'Connected client',
-            detail: `connected ${connected}${used}`,
+            title: connector.client_name || globalThis.PlatformI18n.t("settings:connected_client_0dd50071"),
+            detail: globalThis.PlatformI18n.t("settings:connected_value1_value2_10041a30", { value1: connected, value2: used }),
           };
         }),
       });
@@ -2110,18 +2110,18 @@
           cache: 'no-store',
         });
         if (!response.ok && response.status !== 404) {
-          throw new Error('Could not disconnect. Try again.');
+          throw new Error(globalThis.PlatformI18n.t("settings:could_not_disconnect_try_again_5662fa4b"));
         }
         await this._loadConnectors();
         if (status) {
-          status.textContent = 'Disconnected.';
+          status.textContent = globalThis.PlatformI18n.t("settings:disconnected_7fcdbd4a");
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
           status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect.';
+          status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_disconnect_975d7bac");
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2146,7 +2146,7 @@
       const section = document.getElementById('github-link-section');
       if (!section) return;
       this._publishSocialIdentity({
-        phase: 'loading', message: 'Loading…', tier: null, providers: [],
+        phase: 'loading', get message() { return globalThis.PlatformI18n.t("settings:loading_ba3bbbe1"); }, tier: null, providers: [],
       });
       try {
         const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
@@ -2157,10 +2157,10 @@
           section.classList.add('hidden');
           return;
         }
-        if (!response.ok) throw new Error(`Social identity request failed (${response.status})`);
+        if (!response.ok) throw new Error(globalThis.PlatformI18n.t("settings:social_identity_request_failed_value1_77815ad7", { value1: response.status }));
         const data = await response.json();
         if (!data || !data.providers || !data.entitlement) {
-          throw new Error('Invalid social identity response');
+          throw new Error(globalThis.PlatformI18n.t("settings:invalid_social_identity_response_b1dcbc60"));
         }
         section.classList.remove('hidden');
         // Keep the established property/method names: external-agent code
@@ -2171,7 +2171,7 @@
       } catch {
         this._publishSocialIdentity({
           phase: 'error',
-          message: 'Could not load social accounts. Try again shortly.',
+          get message() { return globalThis.PlatformI18n.t("settings:could_not_load_social_accounts_try_again_shortly_8c11d8b6"); },
           tier: null,
           providers: [],
         });
@@ -2251,7 +2251,7 @@
     // be a false promise with a Connect button under it.
     _socialIdentityMoney(cents) {
       const value = Math.max(0, Number(cents) || 0) / 100;
-      return `$${Number.isInteger(value) ? value : value.toFixed(2)} / day`;
+      return globalThis.PlatformI18n.t("settings:value1_day_e8b9a7c0", { value1: Number.isInteger(value) ? value : value.toFixed(2) });
     },
 
     _socialIdentityTierView(entitlement) {
@@ -2261,35 +2261,35 @@
         return {
           tone: 'warn',
           done: false,
-          title: 'Daily credits unavailable',
+          get title() { return globalThis.PlatformI18n.t("settings:daily_credits_unavailable_34d88d0b"); },
           amount: null,
-          note: 'We could not check your credits, so calls we pay for are paused. Your own API key still works.',
+          get note() { return globalThis.PlatformI18n.t("settings:we_could_not_check_your_credits_so_calls_we_pay__7d883cca"); },
         };
       }
       if (e.policy === 'legacy') {
         return {
           tone: 'plain',
           done: true,
-          title: 'Your credits',
+          get title() { return globalThis.PlatformI18n.t("settings:your_credits_0422797b"); },
           amount,
-          note: 'Your credits do not depend on a connected account yet.',
+          get note() { return globalThis.PlatformI18n.t("settings:your_credits_do_not_depend_on_a_connected_accoun_5fffe4b6"); },
         };
       }
       if (e.tier === 'override') {
         return {
           tone: 'plain',
           done: true,
-          title: 'Your credits',
+          get title() { return globalThis.PlatformI18n.t("settings:your_credits_0422797b"); },
           amount,
-          note: 'An administrator set this amount. A connected account does not change it.',
+          get note() { return globalThis.PlatformI18n.t("settings:an_administrator_set_this_amount_a_connected_acc_ed2bf45d"); },
         };
       }
       return {
         tone: 'plain',
         done: true,
-        title: 'Signed in',
+        get title() { return globalThis.PlatformI18n.t("settings:signed_in_ca566c89"); },
         amount: this._socialIdentityMoney(0),
-        note: 'Either one is enough. Connecting both does not add more.',
+        get note() { return globalThis.PlatformI18n.t("settings:either_one_is_enough_connecting_both_does_not_ad_56c6a818"); },
       };
     },
 
@@ -2326,17 +2326,17 @@
       if (link.reconnectRequired) {
         state = {
           tone: 'amber',
-          text: 'Linked for GitHub attribution. Reconnect once to count it toward daily credits.',
+          get text() { return globalThis.PlatformI18n.t("settings:linked_for_github_attribution_reconnect_once_to__1be5335f"); },
         };
       } else if (link.linked && tiered) {
-        state = { tone: 'muted', text: firstLinked ? '' : 'No extra credits' };
+        state = { tone: 'muted', text: firstLinked ? '' : globalThis.PlatformI18n.t("settings:no_extra_credits_51ae57ea") };
         amount = firstLinked ? unlock : null;
       } else if (link.linked) {
         state = { tone: 'muted', text: '' };
       } else if (link.available === false) {
-        state = { tone: 'muted', text: 'Not set up on this server.' };
+        state = { tone: 'muted', get text() { return globalThis.PlatformI18n.t("settings:not_set_up_on_this_server_c4806ac0"); } };
       } else {
-        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : 'Not connected.' };
+        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : globalThis.PlatformI18n.t("settings:not_connected_3b3d2796") };
         amount = tiered && entitlement.verificationRequired ? unlock : null;
       }
       const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
@@ -2364,23 +2364,23 @@
         // it is linked for attribution and not yet credit-eligible, which is
         // the distinction the amber state text spells out.
         badge: link.reconnectRequired
-          ? { text: 'Reconnect needed', tone: 'amber' }
-          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
+          ? { get text() { return globalThis.PlatformI18n.t("settings:reconnect_needed_2b0211b3"); }, tone: 'amber' }
+          : (link.linked ? { get text() { return globalThis.PlatformI18n.t("settings:connected_22965568"); }, tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          ? globalThis.PlatformI18n.t("settings:linked_value1_dac9750f", { value1: new Date(link.linkedAt).toLocaleString(globalThis.PlatformI18n.getLanguage()) })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
-            ? 'Homeroom holds no GitHub access token for your account.'
-            : 'Homeroom stores no X access token for your account.')
+            ? globalThis.PlatformI18n.t("settings:homeroom_holds_no_github_access_token_for_your_a_4aa9ad7d")
+            : globalThis.PlatformI18n.t("settings:homeroom_stores_no_x_access_token_for_your_accou_36b721ef"))
           : null,
         connect: offersConnect
           ? {
             // The row's own title already says which provider, so the
             // control is the verb alone; `name` keeps the long form for
             // the accessible name (see social-identity.tsx).
-            label: link.reconnectRequired ? 'Reconnect' : 'Connect',
+            label: link.reconnectRequired ? globalThis.PlatformI18n.t("settings:reconnect_bf8a9eab") : globalThis.PlatformI18n.t("settings:connect_1a2303ed"),
             // A demo fixture gets the control inert rather than absent: the
             // real flow would navigate straight out of the fixture.
             href: actionHref('connect'),
@@ -2388,10 +2388,10 @@
           }
           : null,
         refresh: link.linked && !link.reconnectRequired && link.available !== false
-          ? { label: 'Refresh handle', href: actionHref('refresh'), intent: 'refresh' }
+          ? { get label() { return globalThis.PlatformI18n.t("settings:refresh_handle_d0bc66fe"); }, href: actionHref('refresh'), intent: 'refresh' }
           : null,
         replace: link.linked && !link.reconnectRequired && link.available !== false
-          ? { label: 'Change account', href: actionHref('replace'), intent: 'replace' }
+          ? { get label() { return globalThis.PlatformI18n.t("settings:change_account_26639e78"); }, href: actionHref('replace'), intent: 'replace' }
           : null,
         visibility: link.linked && !link.reconnectRequired
           ? { checked: link.publicVisible !== false, disabled: !!demo }
@@ -2406,9 +2406,9 @@
           : null,
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
-          ? `Your last ${name} connection attempt didn't complete. `
+          ? globalThis.PlatformI18n.t("settings:your_last_value1_connection_attempt_didn_t_compl_d01aaec3", { value1: name })
             + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
-            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
+            + globalThis.PlatformI18n.t("settings:if_value1_reports_a_callback_or_redirect_address_e9aa09e2", { value1: name })
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
@@ -2426,20 +2426,20 @@
       const name = provider === 'github' ? 'GitHub' : 'X';
       let source;
       if (diagnostics.credentialSource === 'waitlist') {
-        source = `Reusing the waitlist ${name} app’s credentials.`;
+        source = globalThis.PlatformI18n.t("settings:reusing_the_waitlist_value1_app_s_credentials_09bcf31a", { value1: name });
       } else if (diagnostics.credentialSource === 'dedicated') {
         source = diagnostics.sameAppAsWaitlist
-          ? `Dedicated ${name} credentials, same app as the waitlist pair.`
-          : `Dedicated ${name} app credentials.`;
+          ? globalThis.PlatformI18n.t("settings:dedicated_value1_credentials_same_app_as_the_wai_d425372a", { value1: name })
+          : globalThis.PlatformI18n.t("settings:dedicated_value1_app_credentials_474da8b3", { value1: name });
       } else {
-        source = `No complete ${name} credential pair is configured.`;
+        source = globalThis.PlatformI18n.t("settings:no_complete_value1_credential_pair_is_configured_07d36e09", { value1: name });
       }
       return {
         provider,
         name,
         source,
         callbackUrl: diagnostics.callbackUrl || '',
-        warning: `If this address isn’t registered as a callback URI on the ${name} developer app, `
+        warning: globalThis.PlatformI18n.t("settings:if_this_address_isn_t_registered_as_a_callback_u_ee244571", { value1: name })
           + `${name} shows "Something went wrong" before sign-in and never redirects back here.`,
         demo: !!demo,
       };
@@ -2465,20 +2465,20 @@
       if (!result) return;
       const name = provider === 'x' ? 'X' : 'GitHub';
       const messages = {
-        linked: `${name} connected.`,
-        refreshed: `${name} handle refreshed.`,
-        confirm: `Another ${name} account was verified. Review the replacement below before anything changes.`,
-        in_use: `That ${name} account is already linked to another Homeroom account. Your current connection is unchanged.`,
-        different_account: `That is a different ${name} account. Use Change account instead; your current connection is unchanged.`,
-        conflict: `That ${name} account could not be used. Your current connection is unchanged.`,
-        denied: `${name} connection was cancelled.`,
+        linked: globalThis.PlatformI18n.t("settings:value1_connected_9504f2e5", { value1: name }),
+        refreshed: globalThis.PlatformI18n.t("settings:value1_handle_refreshed_e25229f0", { value1: name }),
+        confirm: globalThis.PlatformI18n.t("settings:another_value1_account_was_verified_review_the_r_2828ef50", { value1: name }),
+        in_use: globalThis.PlatformI18n.t("settings:that_value1_account_is_already_linked_to_another_9d60ce22", { value1: name }),
+        different_account: globalThis.PlatformI18n.t("settings:that_is_a_different_value1_account_use_change_ac_2e848c19", { value1: name }),
+        conflict: globalThis.PlatformI18n.t("settings:that_value1_account_could_not_be_used_your_curre_485a4d20", { value1: name }),
+        denied: globalThis.PlatformI18n.t("settings:value1_connection_was_cancelled_f1fce5eb", { value1: name }),
         // #3044: the provider bounced the trip before any sign-in page because
         // Homeroom's callback address is not the one registered on its OAuth
         // app. Not something the viewer did, and not fixed by retrying.
-        callback_mismatch: `${name} did not accept Homeroom’s callback address, so nothing changed. `
-          + `Ask an administrator to register this site’s callback URL (${window.location.origin}) on the ${name} OAuth app.`,
-        error: `${name} could not be connected. Try again.`,
-        account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
+        callback_mismatch: globalThis.PlatformI18n.t("settings:value1_did_not_accept_homeroom_s_callback_addres_f896bec8", { value1: name })
+          + globalThis.PlatformI18n.t("settings:ask_an_administrator_to_register_this_site_s_cal_ecfa5a84", { value1: window.location.origin, value2: name }),
+        get error() { return globalThis.PlatformI18n.t("settings:value1_could_not_be_connected_try_again_bf3932e0", { value1: name }); },
+        get account_mismatch() { return globalThis.PlatformI18n.t("settings:this_browser_is_signed_into_a_different_homeroom_0e49f5f5"); },
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
@@ -2492,9 +2492,9 @@
       const status = document.getElementById('github-link-status');
       const name = provider === 'x' ? 'X' : 'GitHub';
       const confirmed = await PlatformUI.confirm({
-        title: `Disconnect ${name}?`,
-        message: `This removes ${name} from your public profile and may change your daily credit eligibility.`,
-        confirmLabel: 'Disconnect',
+        get title() { return globalThis.PlatformI18n.t("settings:disconnect_value1_bfaedb4d", { value1: name }); },
+        get message() { return globalThis.PlatformI18n.t("settings:this_removes_value1_from_your_public_profile_and_7cd20b65", { value1: name }); },
+        get confirmLabel() { return globalThis.PlatformI18n.t("settings:disconnect_acfc5be7"); },
         danger: true,
       });
       if (!confirmed) return;
@@ -2505,12 +2505,12 @@
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error(`Could not disconnect ${name}.`);
+        if (!response.ok) throw new Error(globalThis.PlatformI18n.t("settings:could_not_disconnect_value1_d1a40299", { value1: name }));
         await this._refreshSocialIdentitySurfaces();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect this account.';
+          status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_disconnect_this_account_a968c528");
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2578,11 +2578,11 @@
         if (response.status === 404) {
           return;
         }
-        if (!response.ok) throw new Error('Could not load CLI credentials.');
+        if (!response.ok) throw new Error(globalThis.PlatformI18n.t("settings:could_not_load_cli_credentials_b21cbedc"));
         const data = await response.json();
         if (!data || !Array.isArray(data.tokens)
             || (data.next_cursor != null && typeof data.next_cursor !== 'string')) {
-          throw new Error('The credential list response was invalid.');
+          throw new Error(globalThis.PlatformI18n.t("settings:the_credential_list_response_was_invalid_291ebc36"));
         }
         section.classList.remove('hidden');
         this._cliTokens.push(...data.tokens);
@@ -2591,7 +2591,7 @@
       } catch (err) {
         if (loadId !== this._cliTokenLoadId) return;
         if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
-        status.textContent = err.message || 'Could not load CLI credentials.';
+        status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_load_cli_credentials_b21cbedc");
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       } finally {
@@ -2616,13 +2616,13 @@
         phase: 'ready',
         tokens: this._cliTokens.map((token) => {
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString() : 'unknown date';
+            ? new Date(token.created_at).toLocaleString(globalThis.PlatformI18n.getLanguage()) : globalThis.PlatformI18n.t("settings:unknown_date_bced143d");
           const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+            ? globalThis.PlatformI18n.t("settings:last_used_value1_8867dad3", { value1: new Date(token.last_used_at).toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : '';
           return {
             id: typeof token.id === 'string' ? token.id : null,
-            hint: typeof token.token_hint === 'string' ? token.token_hint : 'CLI credential',
-            detail: `${token.status || 'unknown'} · created ${created}${used}`,
+            hint: typeof token.token_hint === 'string' ? token.token_hint : globalThis.PlatformI18n.t("settings:cli_credential_fed39a0d"),
+            detail: globalThis.PlatformI18n.t("settings:value1_created_value2_value3_ba6d7069", { value1: token.status || globalThis.PlatformI18n.t("settings:message_b23a6a8439c0"), value2: created, value3: used }),
             revocable: token.status === 'valid'
               && typeof token.id === 'string' && !token.demo,
           };
@@ -2633,7 +2633,7 @@
       // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
-        status.textContent = 'Demo data: changes are not saved.';
+        status.textContent = globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930");
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -2646,16 +2646,16 @@
           method: 'DELETE',
           credentials: 'same-origin',
         });
-        if (response.status !== 204) throw new Error('Could not revoke the credential.');
+        if (response.status !== 204) throw new Error(globalThis.PlatformI18n.t("settings:could_not_revoke_the_credential_6d3c955f"));
         if (status) {
-          status.textContent = 'Credential revoked.';
+          status.textContent = globalThis.PlatformI18n.t("settings:credential_revoked_fa8d9935");
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
           status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
         await this._loadCliTokens(true);
       } catch (err) {
         if (status) {
-          status.textContent = err.message || 'Could not revoke the credential.';
+          status.textContent = err.message || globalThis.PlatformI18n.t("settings:could_not_revoke_the_credential_6d3c955f");
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2666,7 +2666,7 @@
     async _saveLocale(value) {
       const select = document.getElementById('settings-locale');
       const status = document.getElementById('settings-locale-status');
-      const language = window.PlatformI18n;
+      const language = globalThis.PlatformI18n;
       const request = this._localeSaveRequest = (this._localeSaveRequest || 0) + 1;
       const show = (key, failed = false) => {
         if (!status || request !== this._localeSaveRequest) return;
@@ -2720,16 +2720,16 @@
           body: JSON.stringify({ flow: value || null }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
+        if (!r.ok) return fail(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"));
         this.state.devFlowPreference = j.flow || null;
         if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
         if (status) {
-          status.textContent = '✓ Saved';
+          status.textContent = globalThis.PlatformI18n.t("settings:saved_45edcc20");
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
           status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }));
       }
     },
 
@@ -2753,12 +2753,12 @@
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
+          return fail(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"));
         }
         this.state.aiProgressEstimate = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }));
       }
     },
 
@@ -2786,7 +2786,7 @@
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
+          return fail(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"));
         }
         this.state.sessionBridgeEnabled = !!enabled;
         // The venue pickers read App.user, not Settings.state, so the live
@@ -2795,7 +2795,7 @@
         if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }));
       }
     },
 
@@ -2824,13 +2824,13 @@
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
+          return fail(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"));
         }
         this.state.homeroomBotDm = !!enabled;
         if (typeof App !== 'undefined' && App.user) App.user.homeroomBotDm = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }));
       }
     },
 
@@ -2903,18 +2903,18 @@
     },
 
     _setMobilePushPreferences(preferences) {
-      if (!Array.isArray(preferences)) throw new Error('Invalid preferences response.');
+      if (!Array.isArray(preferences)) throw new Error(globalThis.PlatformI18n.t("settings:invalid_preferences_response_6de55751"));
       const next = {};
       for (const preference of preferences) {
         if (!preference || typeof preference.key !== 'string'
             || typeof preference.enabled !== 'boolean') {
-          throw new Error('Invalid preferences response.');
+          throw new Error(globalThis.PlatformI18n.t("settings:invalid_preferences_response_6de55751"));
         }
         next[preference.key] = preference.enabled;
       }
       for (const row of this._mobilePushRows()) {
         if (typeof next[row.dataset.mobilePushCategory] !== 'boolean') {
-          throw new Error('Incomplete preferences response.');
+          throw new Error(globalThis.PlatformI18n.t("settings:incomplete_preferences_response_0886bd4d"));
         }
       }
       this._mobilePushPreferences = next;
@@ -2935,7 +2935,7 @@
         '#settings-mobile-push-preferences [data-mobile-push-status]'
       );
       if (!status) return;
-      status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
+      status.textContent = message || (disabled ? globalThis.PlatformI18n.t("settings:loading_mobile_push_preferences_21318fa1") : globalThis.PlatformI18n.t("settings:saved_to_your_account_de0e217a"));
       status.className = 'text-xs mt-3 ' + (error
         ? 'text-red-700 dark:text-red-400'
         : 'text-zinc-500 dark:text-zinc-400');
@@ -2944,7 +2944,7 @@
     async _loadMobilePushPreferences() {
       const token = ++this._mobilePushLoadToken;
       this._mobilePushLoading = true;
-      this._renderMobilePushPreferences('Loading mobile push preferences…');
+      this._renderMobilePushPreferences(globalThis.PlatformI18n.t("settings:loading_mobile_push_preferences_21318fa1"));
       try {
         const response = await fetch('/api/me/mobile-push-preferences', {
           credentials: 'same-origin',
@@ -2955,13 +2955,13 @@
         if (token !== this._mobilePushLoadToken) return;
         this._setMobilePushPreferences(body.preferences);
         this._mobilePushLoading = false;
-        this._renderMobilePushPreferences('Saved to your account.');
+        this._renderMobilePushPreferences(globalThis.PlatformI18n.t("settings:saved_to_your_account_de0e217a"));
       } catch (err) {
         if (token !== this._mobilePushLoadToken) return;
         this._mobilePushLoading = false;
         this._mobilePushPreferences = null;
         this._renderMobilePushPreferences(
-          `Could not load mobile push preferences: ${err.message}`, true
+          globalThis.PlatformI18n.t("settings:could_not_load_mobile_push_preferences_value1_eb4a3dbc", { value1: err.message }), true
         );
       }
     },
@@ -2988,12 +2988,12 @@
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
         this._setMobilePushPreferences(body.preferences);
         this._mobilePushSaving = false;
-        this._renderMobilePushPreferences('Saved to your account.');
+        this._renderMobilePushPreferences(globalThis.PlatformI18n.t("settings:saved_to_your_account_de0e217a"));
       } catch (err) {
         this._mobilePushPreferences[category] = previous;
         this._mobilePushSaving = false;
-        this._renderMobilePushPreferences(`Could not save: ${err.message}`, true);
-        if (window.PlatformUI) PlatformUI.toast('Could not save mobile push preferences');
+        this._renderMobilePushPreferences(globalThis.PlatformI18n.t("settings:could_not_save_value1_fbc8fcc2", { value1: err.message }), true);
+        if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:could_not_save_mobile_push_preferences_7c9cc454"));
       }
     },
 
@@ -3008,13 +3008,13 @@
         display.classList.remove('hidden');
         last4.textContent = this.state.keyLast4 || '••••';
         removeBtn.classList.remove('hidden');
-        input.placeholder = 'Paste a new key to replace';
-        saveBtn.textContent = 'Replace';
+        input.placeholder = globalThis.PlatformI18n.t("settings:paste_a_new_key_to_replace_8a347fdf");
+        saveBtn.textContent = globalThis.PlatformI18n.t("settings:replace_95e15439");
       } else {
         display.classList.add('hidden');
         removeBtn.classList.add('hidden');
-        input.placeholder = 'sk-ant-...';
-        saveBtn.textContent = 'Save';
+        input.placeholder = globalThis.PlatformI18n.t("settings:sk_ant_dda59792");
+        saveBtn.textContent = globalThis.PlatformI18n.t("settings:save_1509f561");
       }
     },
 
@@ -3034,13 +3034,13 @@
         document.getElementById('settings-spend-byok').textContent =
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
         document.getElementById('settings-spend-platform').textContent =
-          '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+          globalThis.PlatformI18n.t("core:value1_of_value2_4cb1b875", { value1: ((b.spentCents || 0) / 100).toFixed(2), value2: ((b.limitCents || 0) / 100).toFixed(2) });
         // #3230: the weekly reset in the viewer's own clock, UTC on hover.
         const reset = document.getElementById('settings-spend-reset');
         const RT = window.ResetTime;
         if (reset && RT) {
           const cadence = b.capWindow === 'daily' ? 'daily' : 'weekly';
-          reset.textContent = `Resets ${RT.resetWhen(cadence, { at: b.resetsAt })}.`;
+          reset.textContent = globalThis.PlatformI18n.t("settings:resets_value1_21e183c2", { value1: RT.resetWhen(cadence, { at: b.resetsAt }) });
           reset.title = RT.resetUtc(cadence, { at: b.resetsAt });
         }
         block.classList.remove('hidden');
@@ -3067,11 +3067,11 @@
         // When replacing but the user hit Save with an empty input,
         // that's almost certainly a misclick — treat as a no-op rather
         // than clearing the existing key.
-        this._setStatus('Paste an API key first.', 'error');
+        this._setStatus(globalThis.PlatformI18n.t("settings:paste_an_api_key_first_448710dc"), 'error');
         return;
       }
 
-      this._setStatus('Verifying with Anthropic…', 'info');
+      this._setStatus(globalThis.PlatformI18n.t("settings:verifying_with_anthropic_cabd4656"), 'info');
       saveBtn.disabled = true;
       removeBtn.disabled = true;
 
@@ -3084,20 +3084,20 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setStatus(j.error || 'Failed to save key.', 'error');
+          this._setStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_key_2ca6410d"), 'error');
           return;
         }
         this.state.hasApiKey = true;
         this.state.keyLast4 = j.keyLast4 || key.slice(-4);
         this._renderIndicator();
-        this._setStatus('Saved. Your chats now bill to your Anthropic account.', 'ok');
+        this._setStatus(globalThis.PlatformI18n.t("settings:saved_your_chats_now_bill_to_your_anthropic_acco_94373a53"), 'ok');
         input.value = '';
         this._renderBody();
         this._refreshSpend();
         // Settings is a screen now, not a modal — a successful save leaves
         // the success status visible in place instead of navigating away.
       } catch (err) {
-        this._setStatus(`Network error: ${err.message}`, 'error');
+        this._setStatus(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }), 'error');
       } finally {
         saveBtn.disabled = false;
         removeBtn.disabled = false;
@@ -3111,15 +3111,15 @@
       const heading = section.querySelector('h3');
       const intro = section.querySelector('p');
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
-      if (heading) heading.textContent = 'OpenRouter';
+      if (heading) heading.textContent = globalThis.PlatformI18n.t("settings:openrouter_eb70c3bc");
       if (intro) {
         // #3296: the one worker detail worth naming. The platform runs some
         // OpenRouter models in Claude Code, and the model list tags them; the
         // default runner stays unnamed, like every other implementation
         // detail. sections/openrouter.tsx renders this same text statically.
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = globalThis.PlatformI18n.t("settings:use_any_compatible_model_for_all_chat_and_coding_227eef10");
       }
-      if (modelLabel) modelLabel.textContent = 'OpenRouter model';
+      if (modelLabel) modelLabel.textContent = globalThis.PlatformI18n.t("settings:openrouter_model_dd24ac61");
     },
 
     _formatOpenRouterPrice(value) {
@@ -3135,34 +3135,34 @@
 
     _openRouterModelCostSummary(model) {
       const tier = {
-        free: 'Free',
-        low: 'Low cost',
-        medium: 'Medium cost',
-        high: 'High cost',
-        unknown: 'Price unavailable',
-      }[model?.costTier] || 'Price unavailable';
+        get free() { return globalThis.PlatformI18n.t("settings:free_f411a1fb"); },
+        get low() { return globalThis.PlatformI18n.t("settings:low_cost_607264ad"); },
+        get medium() { return globalThis.PlatformI18n.t("settings:medium_cost_7c196404"); },
+        get high() { return globalThis.PlatformI18n.t("settings:high_cost_d6d2e413"); },
+        get unknown() { return globalThis.PlatformI18n.t("settings:price_unavailable_6a9e657b"); },
+      }[model?.costTier] || globalThis.PlatformI18n.t("settings:price_unavailable_6a9e657b");
       const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
       const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
       if (!input && !output) return tier;
-      return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+      return globalThis.PlatformI18n.t("settings:value1_value2_m_input_value3_m_output_13d31257", { value1: tier, value2: input || '?', value3: output || '?' });
     },
 
     _openRouterModelOptionLabel(model) {
       const badges = [];
       if (model?.isFavorite) badges.push('★');
-      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.isRecommended) badges.push(globalThis.PlatformI18n.t("settings:recommended_d70604e8"));
       // #3296: the platform runs some OpenRouter models in Claude Code rather
       // than Codex. Only that exception is named; Codex is every other row.
-      if (model?.harness === 'claude') badges.push('Claude Code');
+      if (model?.harness === 'claude') badges.push(globalThis.PlatformI18n.t("settings:claude_code_246ef8c1"));
       if (model?.createdAt) {
         const age = Date.now() - Date.parse(model.createdAt);
-        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(globalThis.PlatformI18n.t("settings:new_18fdd549"));
       }
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
       const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
-      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      return `${model?.name || model?.id || globalThis.PlatformI18n.t("settings:unknown_model_38951853")}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
     },
 
     _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
@@ -3187,10 +3187,10 @@
       const refreshed = Date.parse(refreshedAt || '');
       if (!Number.isFinite(refreshed)) return '';
       const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-      if (seconds < 60) return 'Updated just now';
+      if (seconds < 60) return globalThis.PlatformI18n.t("settings:updated_just_now_c5cb2e53");
       const minutes = Math.round(seconds / 60);
-      if (minutes < 60) return `Updated ${minutes}m ago`;
-      return `Updated ${Math.round(minutes / 60)}h ago`;
+      if (minutes < 60) return globalThis.PlatformI18n.t("settings:updated_value1_m_ago_2da5a691", { value1: minutes });
+      return globalThis.PlatformI18n.t("settings:updated_value1_h_ago_fdacad77", { value1: Math.round(minutes / 60) });
     },
 
     _renderOpenRouterModelOptions() {
@@ -3223,13 +3223,13 @@
       select.disabled = visibleModels.length === 0;
       if (favoritesOnlyButton) {
         favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
-        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? globalThis.PlatformI18n.t("settings:favorites_68b313bd") : globalThis.PlatformI18n.t("settings:favorites_c2a2f40a");
       }
       if (meta) {
         const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
         meta.textContent = visibleModels.length
-          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
-          : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
+          ? globalThis.PlatformI18n.t("settings:value1_of_value2_models_value3_097ae2d7", { value1: visibleModels.length, value2: this._openRouterCatalogTotal || this._openRouterModels.length, value3: age ? ` · ${age}` : '' })
+          : globalThis.PlatformI18n.t("settings:no_models_match_clear_the_search_or_show_all_mod_0a6c4f43", { value1: age ? ` · ${age}` : '' });
       }
       this._syncOpenRouterModelDetails();
     },
@@ -3243,10 +3243,10 @@
       const option = Array.from(select?.options || []).find((item) => item.value === '');
       if (!option) return;
       const names = {
-        minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high',
+        get minimal() { return globalThis.PlatformI18n.t("settings:minimal_057b5de4"); }, get low() { return globalThis.PlatformI18n.t("settings:low_f793de20"); }, get medium() { return globalThis.PlatformI18n.t("settings:medium_8e588cd1"); }, get high() { return globalThis.PlatformI18n.t("settings:high_c4ebc6d4"); }, get xhigh() { return globalThis.PlatformI18n.t("settings:extra_high_70eb321d"); },
       };
       const name = names[String(effort || '')] || null;
-      option.textContent = name ? `Default (${name})` : 'Default';
+      option.textContent = name ? globalThis.PlatformI18n.t("settings:default_value1_03afaf7e", { value1: name }) : globalThis.PlatformI18n.t("settings:default_21b111cb");
     },
 
     _syncOpenRouterModelDetails() {
@@ -3256,7 +3256,7 @@
       const star = document.getElementById('settings-openrouter-star-model');
       const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
-        if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        if (select) select.title = globalThis.PlatformI18n.t("settings:models_are_sorted_by_average_input_output_price__8ea7846a");
         if (effort) effort.disabled = true;
         if (star) {
           star.disabled = true;
@@ -3272,24 +3272,24 @@
         star.textContent = model.isFavorite ? '★' : '☆';
         star.setAttribute('aria-pressed', String(model.isFavorite === true));
         const label = model.isFavorite
-          ? 'Remove selected model from favorites'
-          : 'Add selected model to favorites';
+          ? globalThis.PlatformI18n.t("settings:remove_selected_model_from_favorites_af86f296")
+          : globalThis.PlatformI18n.t("settings:add_selected_model_to_favorites_a079bd1c");
         star.setAttribute('aria-label', label);
         star.title = label;
       }
-      let compatibility = 'Not yet verified for repository coding.';
-      if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
+      let compatibility = globalThis.PlatformI18n.t("settings:not_yet_verified_for_repository_coding_58297943");
+      if (model.compatibility === 'verified') compatibility = globalThis.PlatformI18n.t("settings:verified_for_repository_coding_3e7a6d2a");
       else if (!model.meetsCodexMinimums) {
         compatibility = model.compatibilityNote
-          || 'This model may lack repository tools or enough context, so an OpenRouter turn may fail.';
+          || globalThis.PlatformI18n.t("settings:this_model_may_lack_repository_tools_or_enough_c_7726660c");
       }
-      if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+      if (select) select.title = globalThis.PlatformI18n.t("settings:value1_value2_actual_spend_depends_on_token_usag_ed219726", { value1: this._openRouterModelCostSummary(model), value2: compatibility });
       if (effort) {
         effort.disabled = model.supportsReasoning !== true;
         if (effort.disabled) effort.value = '';
         effort.title = effort.disabled
-          ? 'This model does not expose reasoning-effort controls.'
-          : 'How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.';
+          ? globalThis.PlatformI18n.t("settings:this_model_does_not_expose_reasoning_effort_cont_ee224d3d")
+          : globalThis.PlatformI18n.t("settings:how_long_this_model_thinks_before_it_answers_def_b8271769");
       }
     },
 
@@ -3341,24 +3341,24 @@
             // before that policy keeps its own limit until it is re-limited.
             const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
             const carries = managed.limitReset === 'weekly'
-              ? `carries the platform's ${amount} weekly allowance`
-              : `carries a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+              ? globalThis.PlatformI18n.t("settings:carries_the_platform_s_value1_weekly_allowance_727b8587", { value1: amount })
+              : globalThis.PlatformI18n.t("settings:carries_a_value1_value2_until_it_is_moved_to_the_3c26ce82", { value1: amount, value2: limitNoun(managed.limitReset) });
             const tail = managedLast4 ? ` (sk-or-…${managedLast4})` : '';
-            includedStatus.textContent = `Active${tail}. It ${carries}, and you may choose any available model.`;
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:active_value1_it_value2_and_you_may_choose_any_a_c17c84ca", { value1: tail, value2: carries });
           } else if (managed?.status === 'disabled') {
-            includedStatus.textContent = 'An admin has blocked this included key. Contact the platform admins if it should be enabled again.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:an_admin_has_blocked_this_included_key_contact_t_45ec7fb3");
           } else if (managed?.status === 'deleted') {
-            includedStatus.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:your_included_key_was_deleted_by_an_admin_includ_a443323b");
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            includedStatus.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:this_key_needs_admin_review_homeroom_did_not_ret_923657ec");
           } else if (!provisioning.available) {
-            includedStatus.textContent = 'Included keys are not configured by the platform administrator yet.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:included_keys_are_not_configured_by_the_platform_932b735f");
           } else if (provisioning.reason === 'no_allowance') {
-            includedStatus.textContent = 'Your account has no included weekly allowance right now, so there is no included key. You can add a personal OpenRouter key below.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:your_account_has_no_included_weekly_allowance_ri_f5756fb1");
           } else if (provisioning.reason === 'personal_key_configured') {
-            includedStatus.textContent = 'You are using your own OpenRouter key. Remove it to fall back to the included one.';
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:you_are_using_your_own_openrouter_key_remove_it__3a795bfd");
           } else {
-            includedStatus.textContent = `Your included key is being set up. It carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}; reopen this screen in a moment.`;
+            includedStatus.textContent = globalThis.PlatformI18n.t("settings:your_included_key_is_being_set_up_it_carries_the_a66b83cc", { value1: Number(provisioning.limitUsd || 0).toFixed(2), value2: limitNoun(provisioning.limitReset, 'allowance') });
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -3367,25 +3367,25 @@
           if (display) display.classList.remove('hidden');
           if (last4) last4.textContent = j.last4 || '••••';
           if (removeBtn) removeBtn.classList.toggle('hidden', managedOwnsCredential);
-          if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
-          if (saveBtn) saveBtn.textContent = 'Replace';
+          if (input) { input.placeholder = globalThis.PlatformI18n.t("settings:paste_a_new_key_to_replace_8a347fdf"); input.value = ''; }
+          if (saveBtn) saveBtn.textContent = globalThis.PlatformI18n.t("settings:replace_95e15439");
           if (info && (j.keyInfo || managed)) {
             info.classList.remove('hidden');
             const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
             const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            const owner = managedOwnsCredential ? 'Homeroom-managed' : 'Personal key';
+            const owner = managedOwnsCredential ? 'Homeroom-managed' : globalThis.PlatformI18n.t("settings:personal_key_e0ec7d23");
             // The stored managed-key cadence is authoritative; a personal
             // key's comes from OpenRouter's own key-info.
             const noun = limitNoun((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
             const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
-            info.textContent = lim ? `${owner} · ${label}: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
+            info.textContent = lim ? globalThis.PlatformI18n.t("settings:value1_value2_value3_remaining_value4_a5e43513", { value1: owner, value2: label, value3: lim, value4: rem }) : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
           if (display) display.classList.add('hidden');
           if (removeBtn) removeBtn.classList.add('hidden');
-          if (input) input.placeholder = 'sk-or-...';
-          if (saveBtn) saveBtn.textContent = 'Test & save';
+          if (input) input.placeholder = globalThis.PlatformI18n.t("settings:sk_or_51efae34");
+          if (saveBtn) saveBtn.textContent = globalThis.PlatformI18n.t("settings:test_save_634dbaab");
           if (info) info.classList.add('hidden');
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
@@ -3402,7 +3402,7 @@
           credentials: 'same-origin', cache: 'no-store',
         });
         const errorBody = r.ok ? null : await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
+        if (!r.ok) throw new Error(errorBody?.error || globalThis.PlatformI18n.t("settings:could_not_load_openrouter_models_50eb99bd"));
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
@@ -3445,15 +3445,15 @@
 
     async _refreshOpenRouterModelsNow() {
       const button = document.getElementById('settings-openrouter-refresh-models');
-      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
+      if (button) { button.disabled = true; button.textContent = globalThis.PlatformI18n.t("settings:refreshing_1c0def7b"); }
       this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
       try {
         await this._loadOpenRouterModels({ forceRefresh: true });
-        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:loaded_value1_current_openrouter_models_f7631c47", { value1: this._openRouterModels.length }), 'ok');
       } catch (err) {
-        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+        this._setOrStatus(err.message || globalThis.PlatformI18n.t("settings:could_not_refresh_openrouter_models_ad5f3aee"), 'error');
       } finally {
-        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+        if (button) { button.disabled = false; button.textContent = globalThis.PlatformI18n.t("settings:refresh_0e916101"); }
       }
     },
 
@@ -3472,14 +3472,14 @@
           body: JSON.stringify({ modelId: model.id, favorite }),
         });
         const body = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        if (!r.ok) throw new Error(body.error || globalThis.PlatformI18n.t("settings:could_not_update_that_favorite_288b961b"));
         model.isFavorite = favorite;
         this._renderOpenRouterModelOptions();
         this._setOrStatus(favorite
-          ? `${model.name || model.id} added to favorites.`
-          : `${model.name || model.id} removed from favorites.`, 'ok');
+          ? globalThis.PlatformI18n.t("settings:value1_added_to_favorites_01c10b67", { value1: model.name || model.id })
+          : globalThis.PlatformI18n.t("settings:value1_removed_from_favorites_3b784639", { value1: model.name || model.id }), 'ok');
       } catch (err) {
-        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        this._setOrStatus(err.message || globalThis.PlatformI18n.t("settings:could_not_update_that_favorite_288b961b"), 'error');
         if (button) button.disabled = false;
       }
     },
@@ -3488,9 +3488,9 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const key = input?.value?.trim();
-      if (!key) { this._setOrStatus('Paste an OpenRouter API key first.', 'error'); return; }
+      if (!key) { this._setOrStatus(globalThis.PlatformI18n.t("settings:paste_an_openrouter_api_key_first_9ccff907"), 'error'); return; }
       if (saveBtn) saveBtn.disabled = true;
-      this._setOrStatus('Verifying with OpenRouter…', 'info');
+      this._setOrStatus(globalThis.PlatformI18n.t("settings:verifying_with_openrouter_df6febc8"), 'info');
       try {
         const r = await fetch('/api/me/credentials/openrouter', {
           method: 'PUT', credentials: 'same-origin',
@@ -3498,13 +3498,13 @@
           body: JSON.stringify({ apiKey: key }),
         });
         const j = await r.json();
-        if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved, encrypted, and selected as your default coding agent.', 'ok');
+        if (!r.ok) { this._setOrStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_key_2ca6410d"), 'error'); return; }
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:saved_encrypted_and_selected_as_your_default_cod_9358f750"), 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
-        this._setOrStatus(`Network error: ${err.message}`, 'error');
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }), 'error');
       } finally {
         if (saveBtn) saveBtn.disabled = false;
       }
@@ -3516,9 +3516,9 @@
       try {
         const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
-        const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
-        this._setOrStatus('Key removed.' + note, 'ok');
+        if (!r.ok) { this._setOrStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_remove_key_4b33ea92"), 'error'); return; }
+        const note = j.defaultReset ? globalThis.PlatformI18n.t("settings:key_removed_your_default_agent_was_reset_to_clau_a5679221") : '';
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:key_removed_e1d3cae0") + note, 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
         this._openRouterSelectedModelId = '';
@@ -3527,7 +3527,7 @@
         this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
-        this._setOrStatus('Failed to remove key.', 'error');
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:failed_to_remove_key_4b33ea92"), 'error');
       } finally {
         if (removeBtn) removeBtn.disabled = false;
       }
@@ -3535,7 +3535,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
-      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
+      if (!model) { this._setOrStatus(globalThis.PlatformI18n.t("settings:choose_an_openrouter_model_first_eb5ba7eb"), 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
@@ -3551,9 +3551,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
         });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
-        this._setOrStatus('OpenRouter saved as your default session AI.', 'ok');
-      } catch { this._setOrStatus('Network error.', 'error'); }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"), 'error'); return; }
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:openrouter_saved_as_your_default_session_ai_cfa500b1"), 'ok');
+      } catch { this._setOrStatus(globalThis.PlatformI18n.t("settings:network_error_1bd8a2e6"), 'error'); }
     },
 
     async _saveClaudeDefault() {
@@ -3566,9 +3566,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ defaultBackend: 'claude_code' }),
         });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
-        this._setOrStatus('Claude Code is now your default coding agent.', 'ok');
-      } catch { this._setOrStatus('Network error.', 'error'); }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"), 'error'); return; }
+        this._setOrStatus(globalThis.PlatformI18n.t("settings:claude_code_is_now_your_default_coding_agent_9eab2f92"), 'ok');
+      } catch { this._setOrStatus(globalThis.PlatformI18n.t("settings:network_error_1bd8a2e6"), 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -3633,18 +3633,18 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
-      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus(globalThis.PlatformI18n.t("settings:new_password_must_be_at_least_8_characters_46d36027"), 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus(globalThis.PlatformI18n.t("settings:new_passwords_do_not_match_653fbc41"), 'error'); return; }
       if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
-        this._setCpStatus('Wallet signing is only available in the Homeroom app.', 'error');
+        this._setCpStatus(globalThis.PlatformI18n.t("settings:wallet_signing_is_only_available_in_the_homeroom_7a847aa1"), 'error');
         return;
       }
 
       btn.disabled = true;
-      this._setCpStatus('Verifying identity…', 'info');
+      this._setCpStatus(globalThis.PlatformI18n.t("settings:verifying_identity_258749e2"), 'info');
       try {
         const pubkey = this.state.usernodePubkey || (window.getNodeAddress ? await window.getNodeAddress() : null);
-        if (!pubkey) { this._setCpStatus('Could not read your wallet address.', 'error'); return; }
+        if (!pubkey) { this._setCpStatus(globalThis.PlatformI18n.t("settings:could_not_read_your_wallet_address_d3e2e848"), 'error'); return; }
 
         // Fresh single-use challenge from the shared wallet-check endpoint.
         const checkRes = await fetch('/api/auth/wallet-check', {
@@ -3655,7 +3655,7 @@
         });
         const checkData = await checkRes.json().catch(() => ({}));
         const challenge = checkData.challenge;
-        if (!challenge) { this._setCpStatus('Could not get a challenge from the server.', 'error'); return; }
+        if (!challenge) { this._setCpStatus(globalThis.PlatformI18n.t("settings:could_not_get_a_challenge_from_the_server_5cff7bdd"), 'error'); return; }
 
         const sig = await window.signMessage(challenge);
         const r = await fetch('/api/me/wallet-change-password', {
@@ -3665,15 +3665,15 @@
           body: JSON.stringify({ publicKey: sig.publicKey, challenge, signature: sig.signature, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        if (!r.ok) { this._setCpStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_change_password_bfaea7c8"), 'error'); return; }
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        this._setCpStatus(globalThis.PlatformI18n.t("settings:password_changed_a768c77b"), 'ok');
       } catch (err) {
         if (err && err.message && err.message.includes('denied')) {
-          this._setCpStatus('Signature request was denied.', 'error');
+          this._setCpStatus(globalThis.PlatformI18n.t("settings:signature_request_was_denied_1431f4c6"), 'error');
         } else {
-          this._setCpStatus(`Wallet change failed: ${err.message || err}`, 'error');
+          this._setCpStatus(globalThis.PlatformI18n.t("settings:wallet_change_failed_value1_6d5fe570", { value1: err.message || err }), 'error');
         }
       } finally {
         btn.disabled = false;
@@ -3709,8 +3709,8 @@
       const username = nameEl.value.trim();
       const currentPassword = pwEl.value;
 
-      if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
-      if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
+      if (!username) { this._setCuStatus(globalThis.PlatformI18n.t("settings:enter_a_new_username_355c82f8"), 'error'); return; }
+      if (!currentPassword) { this._setCuStatus(globalThis.PlatformI18n.t("settings:enter_your_current_password_cf4d205e"), 'error'); return; }
 
       // Everything that can throw goes INSIDE the try, so `finally` is the
       // only exit and the button cannot be stranded disabled under a
@@ -3727,7 +3727,7 @@
           body: JSON.stringify({ username, currentPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCuStatus(j.error || 'Failed to change username.', 'error'); return; }
+        if (!r.ok) { this._setCuStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_change_username_073750be"), 'error'); return; }
 
         nameEl.value = '';
         pwEl.value = '';
@@ -3746,12 +3746,12 @@
 
         this._setCuStatus(
           j.unchanged
-            ? 'That is already your username.'
-            : `You are now @${j.username}.`,
+            ? globalThis.PlatformI18n.t("settings:that_is_already_your_username_b33a96a4")
+            : globalThis.PlatformI18n.t("settings:you_are_now_value1_46b169bc", { value1: j.username }),
           'ok',
         );
       } catch (err) {
-        this._setCuStatus(`Network error: ${err.message}`, 'error');
+        this._setCuStatus(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }), 'error');
       } finally {
         btn.disabled = false;
       }
@@ -3766,9 +3766,9 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
-      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
-      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      if (!currentPassword) { this._setCpStatus(globalThis.PlatformI18n.t("settings:enter_your_current_password_cf4d205e"), 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus(globalThis.PlatformI18n.t("settings:new_password_must_be_at_least_8_characters_46d36027"), 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus(globalThis.PlatformI18n.t("settings:new_passwords_do_not_match_653fbc41"), 'error'); return; }
 
       btn.disabled = true;
       this._setCpStatus('Saving…', 'info');
@@ -3780,13 +3780,13 @@
           body: JSON.stringify({ currentPassword, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        if (!r.ok) { this._setCpStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_change_password_bfaea7c8"), 'error'); return; }
         currentEl.value = '';
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        this._setCpStatus(globalThis.PlatformI18n.t("settings:password_changed_a768c77b"), 'ok');
       } catch (err) {
-        this._setCpStatus(`Network error: ${err.message}`, 'error');
+        this._setCpStatus(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }), 'error');
       } finally {
         btn.disabled = false;
       }
@@ -3800,7 +3800,7 @@
         if (btn) btn.disabled = false;
         if (window.PlatformUI && PlatformUI.toast) {
           PlatformUI.toast(
-            'Could not sign out. Check your connection and try again.',
+            globalThis.PlatformI18n.t("settings:could_not_sign_out_check_your_connection_and_try_0632a485"),
             { error: true }
           );
         }
@@ -3971,14 +3971,14 @@
     },
 
     async remove() {
-      if (!await PlatformUI.confirm({ title: 'Remove your API key?', message: 'Future chats will fall back to the shared daily budget.', confirmLabel: 'Remove', danger: true })) return;
+      if (!await PlatformUI.confirm({ get title() { return globalThis.PlatformI18n.t("settings:remove_your_api_key_1ee469e4"); }, get message() { return globalThis.PlatformI18n.t("settings:future_chats_will_fall_back_to_the_shared_daily__cafee8d0"); }, get confirmLabel() { return globalThis.PlatformI18n.t("settings:remove_c3812fc4"); }, danger: true })) return;
       const removeBtn = document.getElementById('settings-remove');
       removeBtn.disabled = true;
       try {
         const r = await fetch('/api/me/api-key', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          this._setStatus(j.error || 'Failed to remove key.', 'error');
+          this._setStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_remove_key_4b33ea92"), 'error');
           return;
         }
         this.state.hasApiKey = false;
@@ -3989,7 +3989,7 @@
         this._setStatus('Removed.', 'ok');
         setTimeout(() => this.close(), 700);
       } catch (err) {
-        this._setStatus(`Network error: ${err.message}`, 'error');
+        this._setStatus(globalThis.PlatformI18n.t("settings:network_error_value1_28b4e24a", { value1: err.message }), 'error');
       } finally {
         removeBtn.disabled = false;
       }
@@ -4018,7 +4018,7 @@
       let grants = [];
       try {
         const r = await fetch('/api/me/llm-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
+        if (!r.ok) throw new Error(globalThis.PlatformI18n.t("settings:fetch_failed_e2c73a8f"));
         const j = await r.json();
         grants = j.grants || [];
       } catch {
@@ -4068,10 +4068,10 @@
 
     async _onGrantCapChange(appId, value) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       const cents = Math.round(parseFloat(value) * 100);
       if (!Number.isFinite(cents) || cents <= 0) {
-        status('Enter a valid cap (at least $0.01).', 'error');
+        status(globalThis.PlatformI18n.t("settings:enter_a_valid_cap_at_least_0_01_5eac2deb"), 'error');
         return;
       }
       try {
@@ -4082,17 +4082,17 @@
           body: JSON.stringify({ dailyCapCents: cents }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
-        status('Cap updated.', 'ok');
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_update_cap_7839e655"), 'error'); return; }
+        status(globalThis.PlatformI18n.t("settings:cap_updated_43414f3c"), 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
     async _onGrantByokChange(appId, checked) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'PATCH',
@@ -4101,15 +4101,15 @@
           body: JSON.stringify({ allowByok: checked }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to update.', 'error'); return; }
-        status(checked ? 'Spillover enabled.' : 'Spillover disabled.', 'ok');
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_update_9eac1d3f"), 'error'); return; }
+        status(checked ? globalThis.PlatformI18n.t("settings:spillover_enabled_88ee2719") : globalThis.PlatformI18n.t("settings:spillover_disabled_2195cfc4"), 'ok');
         // The checkbox is CONTROLLED by the store now, so the failure paths
         // above leave it showing the old value on their own — where the DOM
         // version had to flip `byokInput.checked` back by hand. On success the
         // re-render is what makes the new value stick.
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
         this._renderLlmGrants();
       }
     },
@@ -4117,23 +4117,23 @@
     async _onGrantRevoke(appId, appName) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
       const ok = await ConfirmModal.show({
-        title: `Revoke AI access for "${appName}"?`,
-        message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-        confirmLabel: 'Revoke',
+        get title() { return globalThis.PlatformI18n.t("settings:revoke_ai_access_for_value1_086f60a2", { value1: appName }); },
+        get message() { return globalThis.PlatformI18n.t("settings:its_next_ai_call_will_fail_immediately_the_app_c_920d8141"); },
+        get confirmLabel() { return globalThis.PlatformI18n.t("settings:revoke_87e6d00b"); },
         danger: true,
       });
       if (!ok) return;
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_revoke_1f13652b"), 'error'); return; }
         status('Revoked.', 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4152,7 +4152,7 @@
     // as the cap editor's errors are.
     async _onGrantReenable(grant) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(grant.appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(grant.appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       const post = (body) => fetch('/api/me/llm-grants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4174,7 +4174,7 @@
         status(atDefault ? `Re-enabled at the default $${cap.toFixed(2)} daily cap.` : 'Re-enabled.', 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4206,7 +4206,7 @@
       let grants = [];
       try {
         const r = await fetch('/api/me/permission-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
+        if (!r.ok) throw new Error(globalThis.PlatformI18n.t("settings:fetch_failed_e2c73a8f"));
         const j = await r.json();
         grants = j.grants || [];
       } catch {
@@ -4266,7 +4266,7 @@
       try {
         const r = await fetch('/api/me/notification-preferences' + (demo ? '?demo=1' : ''),
           { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
+        if (!r.ok) throw new Error(globalThis.PlatformI18n.t("settings:fetch_failed_e2c73a8f"));
         const j = await r.json();
         publish({
           phase: 'ready',
@@ -4298,11 +4298,11 @@
           body: JSON.stringify({ preferences: { [category]: enabled } }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to save.', 'error'); return; }
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_55ac3cfb"), 'error'); return; }
         status('Saved.', 'ok');
         this._renderNotificationPrefs();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4313,19 +4313,19 @@
     // default changes later. Writing the values would freeze them.
     async _onNotificationAppReset(appId, appSlug) {
       const status = (t, k) => this._setNotificationPrefsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
-      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
+      if (!appSlug) { status(globalThis.PlatformI18n.t("settings:this_app_could_not_be_identified_48efbb97"), 'error'); return; }
       try {
         const r = await fetch(
           `/api/apps/${encodeURIComponent(appSlug)}/notification-preferences`,
           { method: 'DELETE', credentials: 'same-origin' }
         );
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to reset.', 'error'); return; }
-        status('Following your defaults again.', 'ok');
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_reset_534cc8a2"), 'error'); return; }
+        status(globalThis.PlatformI18n.t("settings:following_your_defaults_again_79e4dcaa"), 'ok');
         this._renderNotificationPrefs();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4340,24 +4340,24 @@
     async _onPermissionRevoke(appId, capability) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
       const ok = await ConfirmModal.show({
-        title: 'Revoke this permission?',
-        message: 'The app loses it the next time it opens. It can ask you again later.',
-        confirmLabel: 'Revoke',
+        get title() { return globalThis.PlatformI18n.t("settings:revoke_this_permission_421e06bf"); },
+        get message() { return globalThis.PlatformI18n.t("settings:the_app_loses_it_the_next_time_it_opens_it_can_a_7c569ed0"); },
+        get confirmLabel() { return globalThis.PlatformI18n.t("settings:revoke_87e6d00b"); },
         danger: true,
       });
       if (!ok) return;
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       try {
         const r = await fetch(
           `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
           { method: 'DELETE', credentials: 'same-origin' }
         );
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-        status('Revoked. It stops the next time the app opens.', 'ok');
+        if (!r.ok) { status(j.error || globalThis.PlatformI18n.t("settings:failed_to_revoke_1f13652b"), 'error'); return; }
+        status(globalThis.PlatformI18n.t("settings:revoked_it_stops_the_next_time_the_app_opens_6720ad68"), 'ok');
         this._renderAppPermissions();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4373,10 +4373,10 @@
     // says what the click restores.
     async _onPermissionReenable(appId, appSlug, capability) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
-      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      if (!appSlug) { status(globalThis.PlatformI18n.t("settings:this_app_could_not_be_identified_48efbb97"), 'error'); return; }
       // The fabricated ?demo=1 rows name apps that do not exist, so the POST
       // would 404. Same guard the revoke path above has.
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info'); return; }
       try {
         const r = await fetch('/api/me/permission-grants', {
           method: 'POST',
@@ -4387,14 +4387,14 @@
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
           status(j.code === 'not_declared'
-            ? 'This app no longer asks for that permission.'
+            ? globalThis.PlatformI18n.t("settings:this_app_no_longer_asks_for_that_permission_1670cd76")
             : (j.error || 'Failed to re-enable.'), 'error');
           return;
         }
         status('Re-enabled. It applies the next time the app opens.', 'ok');
         this._renderAppPermissions();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4434,7 +4434,7 @@
         const file = input.files && input.files[0];
         if (!file) return;
         if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(`"${file.name}" is too large. The limit is 48 KB per file.`, 'error');
+          this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:value1_is_too_large_the_limit_is_48_kb_per_file_018a27ba", { value1: file.name }), 'error');
           return;
         }
         const reader = new FileReader();
@@ -4445,7 +4445,7 @@
           };
           this._showAgentFilesForm(file.name);
         };
-        reader.onerror = () => this._setAgentFilesStatus('Could not read that file.', 'error');
+        reader.onerror = () => this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:could_not_read_that_file_66cc390c"), 'error');
         reader.readAsText(file);
       });
 
@@ -4479,8 +4479,8 @@
       const descInput = document.getElementById('agent-files-desc');
       const kind = this._pendingAgentFile?.kind || 'instruction';
       title.textContent = kind === 'skill'
-        ? `New skill from "${filename}"`
-        : `New instruction file from "${filename}"`;
+        ? globalThis.PlatformI18n.t("settings:new_skill_from_value1_a7666cbe", { value1: filename })
+        : globalThis.PlatformI18n.t("settings:new_instruction_file_from_value1_07a97668", { value1: filename });
       nameInput.value = this._slugifyAgentFileName(filename);
       descWrap.classList.toggle('hidden', kind !== 'skill');
       descInput.value = '';
@@ -4498,13 +4498,13 @@
       const pending = this._pendingAgentFile;
       if (!pending) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info');
         this._hideAgentFilesForm();
         return;
       }
       const name = document.getElementById('agent-files-name').value.trim();
       if (!name) {
-        this._setAgentFilesStatus('Give the file a name.', 'error');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:give_the_file_a_name_3febfed6"), 'error');
         return;
       }
       const description = document.getElementById('agent-files-desc').value.trim();
@@ -4517,14 +4517,14 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setAgentFilesStatus(j.error || 'Failed to save the file.', 'error');
+          this._setAgentFilesStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_save_the_file_65aa9a34"), 'error');
           return;
         }
         this._hideAgentFilesForm();
-        this._setAgentFilesStatus(`Saved "${j.file?.name || name}". It applies from your next run.`, 'ok');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:saved_value1_it_applies_from_your_next_run_5b58abdd", { value1: j.file?.name || name }), 'ok');
         this._loadAgentFiles();
       } catch (err) {
-        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4537,7 +4537,7 @@
       let files = [];
       try {
         const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
+        if (!r.ok) throw new Error(globalThis.PlatformI18n.t("settings:fetch_failed_e2c73a8f"));
         const j = await r.json();
         files = j.files || [];
       } catch {
@@ -4564,14 +4564,14 @@
     // markup, this module owns the confirm dialog, the write and the reload.
     async _onAgentFileDelete(kind, name) {
       const ok = await ConfirmModal.show({
-        title: `Delete "${name}"?`,
-        message: 'The coding agent stops using it from your next run. This cannot be undone.',
-        confirmLabel: 'Delete',
+        get title() { return globalThis.PlatformI18n.t("settings:delete_value1_6c7e0193", { value1: name }); },
+        get message() { return globalThis.PlatformI18n.t("settings:the_coding_agent_stops_using_it_from_your_next_r_7f67889a"); },
+        get confirmLabel() { return globalThis.PlatformI18n.t("settings:delete_e2d0a549"); },
         danger: true,
       });
       if (!ok) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:demo_data_changes_are_not_saved_364f1930"), 'info');
         return;
       }
       try {
@@ -4582,11 +4582,11 @@
           body: JSON.stringify({ kind, name }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
-        this._setAgentFilesStatus(`Deleted "${name}".`, 'ok');
+        if (!r.ok) { this._setAgentFilesStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_delete_7e2e87f1"), 'error'); return; }
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:deleted_value1_49d5a596", { value1: name }), 'ok');
         this._loadAgentFiles();
       } catch (err) {
-        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+        this._setAgentFilesStatus(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4639,7 +4639,7 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setWalletStatus(j.error || 'Failed to start linking.', 'error');
+          this._setWalletStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_start_linking_455b3330"), 'error');
           btn.disabled = false;
           return;
         }
@@ -4663,7 +4663,7 @@
         this._startWalletCountdown();
         this._renderWalletSection();
       } catch (err) {
-        this._setWalletStatus('Network error: ' + err.message, 'error');
+        this._setWalletStatus(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
         btn.disabled = false;
       }
     },
@@ -4678,7 +4678,7 @@
             this.state.usernodePubkey = j.pubkey;
             this._stopWalletPolling();
             this._renderWalletSection();
-            this._setWalletStatus('Wallet linked!', 'ok');
+            this._setWalletStatus(globalThis.PlatformI18n.t("settings:wallet_linked_d90e1dc4"), 'ok');
           }
         } catch {}
       };
@@ -4700,12 +4700,12 @@
         const remaining = Math.max(0, this._walletExpiresAt - Date.now());
         if (remaining <= 0) {
           this._cancelWalletLink();
-          this._setWalletStatus('QR code expired. Try again.', 'error');
+          this._setWalletStatus(globalThis.PlatformI18n.t("settings:qr_code_expired_try_again_603d556d"), 'error');
           return;
         }
         const m = Math.floor(remaining / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
-        label.textContent = 'Expires in ' + m + ':' + String(s).padStart(2, '0');
+        label.textContent = globalThis.PlatformI18n.t("settings:expires_in_0ba8cea3") + m + ':' + String(s).padStart(2, '0');
       };
       tick();
       this._walletCountdownTimer = setInterval(tick, 1000);
@@ -4719,19 +4719,19 @@
     },
 
     async _unlinkWallet() {
-      if (!await PlatformUI.confirm({ title: 'Unlink your Homeroom wallet?', confirmLabel: 'Unlink', danger: true })) return;
+      if (!await PlatformUI.confirm({ get title() { return globalThis.PlatformI18n.t("settings:unlink_your_homeroom_wallet_dc7c8139"); }, get confirmLabel() { return globalThis.PlatformI18n.t("settings:unlink_b90108da"); }, danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          this._setWalletStatus(j.error || 'Failed to unlink.', 'error');
+          this._setWalletStatus(j.error || globalThis.PlatformI18n.t("settings:failed_to_unlink_df68c822"), 'error');
           return;
         }
         this.state.usernodePubkey = null;
         this._renderWalletSection();
-        this._setWalletStatus('Wallet unlinked.', 'ok');
+        this._setWalletStatus(globalThis.PlatformI18n.t("settings:wallet_unlinked_9c955cd9"), 'ok');
       } catch (err) {
-        this._setWalletStatus('Network error: ' + err.message, 'error');
+        this._setWalletStatus(globalThis.PlatformI18n.t("settings:network_error_c16d4022") + err.message, 'error');
       }
     },
 
@@ -4787,19 +4787,15 @@
     // handshake alike, which is exactly what made issue #978 impossible to
     // diagnose from the device.
     USERNODE_READ_ERROR_REASONS: {
-      'timeout': 'The Homeroom app didn’t respond in time. ' +
-        'It may still be starting up.',
-      'rejected': 'The Homeroom app reported an error.',
-      'probe-inconclusive': 'The Homeroom app hasn’t re-established ' +
-        'its secure connection for settings. Reopening the app usually ' +
-        'fixes this.',
-      'no-transport': 'This screen can’t reach the Homeroom app from here.',
-      'not-native': 'This screen can’t reach the Homeroom app from here.',
-      'page-changed': 'The request was cancelled because this page changed.',
-      'privileged-unavailable': 'The Homeroom app refused this screen’s ' +
-        'secure connection. See “Homeroom app: connection” below.',
+      get 'timeout'() { return globalThis.PlatformI18n.t("settings:the_homeroom_app_didn_t_respond_in_time_it_may_s_831a2fb6"); },
+      get 'rejected'() { return globalThis.PlatformI18n.t("settings:the_homeroom_app_reported_an_error_1d0b7e72"); },
+      get 'probe-inconclusive'() { return globalThis.PlatformI18n.t("settings:the_homeroom_app_hasn_t_re_established_its_secur_cbad4624"); },
+      get 'no-transport'() { return globalThis.PlatformI18n.t("settings:this_screen_can_t_reach_the_homeroom_app_from_he_6c093b9d"); },
+      get 'not-native'() { return globalThis.PlatformI18n.t("settings:this_screen_can_t_reach_the_homeroom_app_from_he_6c093b9d"); },
+      get 'page-changed'() { return globalThis.PlatformI18n.t("settings:the_request_was_cancelled_because_this_page_chan_b80faf3f"); },
+      get 'privileged-unavailable'() { return globalThis.PlatformI18n.t("settings:the_homeroom_app_refused_this_screen_s_secure_co_25aa701e"); },
     },
-    USERNODE_READ_ERROR_FALLBACK: 'The Homeroom app returned no settings.',
+    get USERNODE_READ_ERROR_FALLBACK() { return globalThis.PlatformI18n.t("settings:the_homeroom_app_returned_no_settings_37784f6a"); },
 
     // ── The connection panel ──────────────────────────────────────────
     //
@@ -4808,30 +4804,20 @@
     // way the report that prompted this was: force-close and reopen
     // FIRST, reinstall only if that doesn't clear it.
     PRIVILEGED_STATE_LABELS: {
-      'ready': 'Connected',
-      'blocked-frame': 'Refused',
-      'unsupported': 'Not in this app build',
-      'inconclusive': 'Unconfirmed',
-      'unattached': 'No answer',
-      'unknown': 'Not needed yet',
+      get 'ready'() { return globalThis.PlatformI18n.t("settings:connected_22965568"); },
+      get 'blocked-frame'() { return globalThis.PlatformI18n.t("settings:refused_66b87354"); },
+      get 'unsupported'() { return globalThis.PlatformI18n.t("settings:not_in_this_app_build_c05d68ab"); },
+      get 'inconclusive'() { return globalThis.PlatformI18n.t("settings:unconfirmed_3229d16c"); },
+      get 'unattached'() { return globalThis.PlatformI18n.t("settings:no_answer_7e49c68d"); },
+      get 'unknown'() { return globalThis.PlatformI18n.t("settings:not_needed_yet_f3ad7cf4"); },
     },
     PRIVILEGED_STATE_REASONS: {
-      'ready': 'This screen can manage the app’s settings.',
-      'blocked-frame': 'The app is refusing this screen’s secure ' +
-        'connection, so app settings and app sign-out can’t be ' +
-        'changed from here. Force-close the app and reopen it, which ' +
-        'usually re-establishes it. If it keeps happening, reinstalling ' +
-        'the app clears the stuck state.',
-      'unsupported': 'This app build predates the secure connection this ' +
-        'screen uses. Update the Homeroom app to manage its settings here.',
-      'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
-        'tell whether the secure connection is up. It may still be ' +
-        'starting, so try again in a moment.',
-      'unattached': 'The app never answered this screen’s secure ' +
-        'connection request. Force-close the app and reopen it; if that ' +
-        'doesn’t help, reinstalling the app clears the stuck state.',
-      'unknown': 'This screen hasn’t needed the app’s secure ' +
-        'connection yet.',
+      get 'ready'() { return globalThis.PlatformI18n.t("settings:this_screen_can_manage_the_app_s_settings_805d49b7"); },
+      get 'blocked-frame'() { return globalThis.PlatformI18n.t("settings:the_app_is_refusing_this_screen_s_secure_connect_9e92a4bf"); },
+      get 'unsupported'() { return globalThis.PlatformI18n.t("settings:this_app_build_predates_the_secure_connection_th_89697727"); },
+      get 'inconclusive'() { return globalThis.PlatformI18n.t("settings:the_app_hasn_t_answered_yet_so_we_can_t_tell_whe_a66334fb"); },
+      get 'unattached'() { return globalThis.PlatformI18n.t("settings:the_app_never_answered_this_screen_s_secure_conn_df1e0013"); },
+      get 'unknown'() { return globalThis.PlatformI18n.t("settings:this_screen_hasn_t_needed_the_app_s_secure_conne_612de212"); },
     },
 
     // Staging/screenshot hook: `?bridgediag=demo`, in the fragment query
@@ -4853,7 +4839,7 @@
         state: 'blocked-frame',
         code: 'privileged_frame_unauthorized',
         kind: 'privileged-unavailable',
-        message: 'Staging demo: privileged bridge is unavailable for this main frame',
+        get message() { return globalThis.PlatformI18n.t("settings:staging_demo_privileged_bridge_is_unavailable_fo_4214b616"); },
         at: 0,
         attempts: 3,
       },
@@ -4861,7 +4847,7 @@
         getSettingsState: {
           method: 'getSettingsState',
           kind: 'privileged-unavailable',
-          message: 'Staging demo: privileged bridge is unavailable for this main frame',
+          get message() { return globalThis.PlatformI18n.t("settings:staging_demo_privileged_bridge_is_unavailable_fo_4214b616"); },
           at: 0,
         },
       },
@@ -4903,7 +4889,7 @@
         state: 'ready',
         code: null,
         kind: null,
-        message: 'Staging demo: no seeded wallet is available for this account',
+        get message() { return globalThis.PlatformI18n.t("settings:staging_demo_no_seeded_wallet_is_available_for_t_4fd5641e"); },
         at: 0,
         attempts: 1,
       },
@@ -4995,7 +4981,7 @@
       readError: {
         method: 'getBridgeInfo',
         kind: 'timeout',
-        message: 'Staging demo: the capability probe did not answer',
+        get message() { return globalThis.PlatformI18n.t("settings:staging_demo_the_capability_probe_did_not_answer_c4831317"); },
         at: 0,
       },
       entries: [
@@ -5060,7 +5046,7 @@
     // than the shared helper because a diagnostics line elides nothing and
     // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(globalThis.PlatformI18n.getLanguage()); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -5099,30 +5085,30 @@
         try { return new Date(ms).toISOString(); } catch (_) { return String(ms); }
       };
       const lines = [
-        'Homeroom bridge diagnostics',
-        `collected: ${at(diag.collectedAt)}`,
-        `origin: ${diag.origin || 'unknown'}`,
-        `native: ${diag.isNative} topFrame: ${diag.isTopFrame} ` +
-          `relay: ${diag.usesIframeRelay} channel: ${diag.hasNativeChannel}`,
-        `bridge version: ${diag.bridgeVersion}`,
-        `app: ${diag.appVersion || 'unknown'} (${diag.buildNumber || '?'})`,
-        `capabilities: ${(diag.capabilities || []).join(', ') || 'none'}`,
-        `privileged state: ${diag.privileged.state}` +
-          (diag.privileged.code ? ` code: ${diag.privileged.code}` : '') +
-          (diag.privileged.kind ? ` kind: ${diag.privileged.kind}` : ''),
-        `privileged attempts: ${diag.privileged.attempts} ` +
-          `last: ${at(diag.privileged.at)}`,
+        globalThis.PlatformI18n.t("settings:homeroom_bridge_diagnostics_c4463115"),
+        globalThis.PlatformI18n.t("settings:collected_value1_37428f18", { value1: at(diag.collectedAt) }),
+        globalThis.PlatformI18n.t("settings:origin_value1_39955c32", { value1: diag.origin || globalThis.PlatformI18n.t("settings:message_b23a6a8439c0") }),
+        globalThis.PlatformI18n.t("settings:native_value1_topframe_value2_f85dc2f0", { value1: diag.isNative, value2: diag.isTopFrame }) +
+          globalThis.PlatformI18n.t("settings:relay_value1_channel_value2_4f36343b", { value1: diag.usesIframeRelay, value2: diag.hasNativeChannel }),
+        globalThis.PlatformI18n.t("settings:bridge_version_value1_e006514f", { value1: diag.bridgeVersion }),
+        globalThis.PlatformI18n.t("settings:app_value1_value2_3d4577fb", { value1: diag.appVersion || globalThis.PlatformI18n.t("settings:message_b23a6a8439c0"), value2: diag.buildNumber || '?' }),
+        globalThis.PlatformI18n.t("settings:capabilities_value1_c46d70d9", { value1: (diag.capabilities || []).join(', ') || globalThis.PlatformI18n.t("settings:message_140bedbf9c3f") }),
+        globalThis.PlatformI18n.t("settings:privileged_state_value1_2c912d7a", { value1: diag.privileged.state }) +
+          (diag.privileged.code ? globalThis.PlatformI18n.t("settings:code_value1_f9d508fd", { value1: diag.privileged.code }) : '') +
+          (diag.privileged.kind ? globalThis.PlatformI18n.t("settings:kind_value1_531b9156", { value1: diag.privileged.kind }) : ''),
+        globalThis.PlatformI18n.t("settings:privileged_attempts_value1_136a81ea", { value1: diag.privileged.attempts }) +
+          globalThis.PlatformI18n.t("settings:last_value1_62fb2447", { value1: at(diag.privileged.at) }),
       ];
       if (diag.privileged.message) {
-        lines.push(`privileged message: ${diag.privileged.message}`);
+        lines.push(globalThis.PlatformI18n.t("settings:privileged_message_value1_865bee77", { value1: diag.privileged.message }));
       }
       const methods = Object.keys(diag.lastErrors || {});
       lines.push(methods.length
-        ? 'last read errors:'
-        : 'last read errors: none');
+        ? globalThis.PlatformI18n.t("settings:last_read_errors_7fbdaa26")
+        : globalThis.PlatformI18n.t("settings:last_read_errors_none_f90ea298"));
       methods.forEach((method) => {
         const rec = diag.lastErrors[method];
-        lines.push(`  ${method}: ${rec.kind}, ${rec.message || 'no message'} ` +
+        lines.push(`  ${method}: ${rec.kind}, ${rec.message || globalThis.PlatformI18n.t("settings:no_message_20bb545a")} ` +
           `(${at(rec.at)})`);
       });
       const readiness = (window.SocialPush &&
@@ -5130,17 +5116,17 @@
         ? SocialPush.readinessState()
         : null;
       if (readiness) {
-        lines.push(`push readiness: ready=${readiness.ready} ` +
-          `attempts=${readiness.attempts} exhausted=${readiness.exhausted}` +
-          (readiness.lastError ? ` last=${readiness.lastError}` : ''));
+        lines.push(globalThis.PlatformI18n.t("settings:push_readiness_ready_value1_a9a86df3", { value1: readiness.ready }) +
+          globalThis.PlatformI18n.t("settings:attempts_value1_exhausted_value2_3e9ad721", { value1: readiness.attempts, value2: readiness.exhausted }) +
+          (readiness.lastError ? globalThis.PlatformI18n.t("settings:last_value1_b8001577", { value1: readiness.lastError }) : ''));
       }
       const session = (window.NativeChrome &&
         typeof NativeChrome.lastSessionFailure === 'function')
         ? NativeChrome.lastSessionFailure()
         : null;
       if (session) {
-        lines.push(`last session failure: ${session.stage}, ` +
-          `${session.message || 'no message'} (${at(session.at)})`);
+        lines.push(globalThis.PlatformI18n.t("settings:last_session_failure_value1_d013ca79", { value1: session.stage }) +
+          `${session.message || globalThis.PlatformI18n.t("settings:no_message_20bb545a")} (${at(session.at)})`);
       }
       return lines.join('\n');
     },
@@ -5362,8 +5348,7 @@
     // public/usernode-bridge.js.
     _nativeActionMessage(err, fallback) {
       if (err && err.usernodePrivileged === true) {
-        return 'The Homeroom app isn’t accepting changes from this ' +
-          'screen. Force-close and reopen the app, then try again.';
+        return globalThis.PlatformI18n.t("settings:the_homeroom_app_isn_t_accepting_changes_from_th_2b7bf898");
       }
       return fallback;
     },
@@ -5392,8 +5377,8 @@
       this._unNotifNotice = {
         tone: 'info',
         text: isAndroid
-          ? 'Opening the permission prompt…'
-          : 'Opening the notification prompt…',
+          ? globalThis.PlatformI18n.t("settings:opening_the_permission_prompt_64c1477f")
+          : globalThis.PlatformI18n.t("settings:opening_the_notification_prompt_729279cc"),
       };
       this._usernodeLoading = false;
       this._publishUsernode();
@@ -5422,8 +5407,7 @@
         // log the diagnostic error the real branches do.
         this._unNotifNotice = {
           tone: 'info',
-          text: 'This is a preview of the in-app row. The notification ' +
-            'permission itself lives in the Homeroom app.',
+          get text() { return globalThis.PlatformI18n.t("settings:this_is_a_preview_of_the_in_app_row_the_notifica_13054966"); },
         };
         return;
       }
@@ -5431,8 +5415,7 @@
         // Old bundle: fall back to the plain ask rather than refusing.
         if (!hasRequest) {
           this._unNotifDeadEnd('no-bridge', {
-            text: 'Notification permission is only available inside the ' +
-              'Homeroom app.',
+            get text() { return globalThis.PlatformI18n.t("settings:notification_permission_is_only_available_inside_e7162b45"); },
             settings: false,
           });
           return;
@@ -5457,7 +5440,7 @@
           // that resolves instantly and shows nothing.
           this._unNotifNotice = {
             tone: 'ok',
-            text: 'Notifications are already allowed for Homeroom.',
+            get text() { return globalThis.PlatformI18n.t("settings:notifications_are_already_allowed_for_homeroom_59a91e71"); },
           };
           return;
         }
@@ -5474,10 +5457,9 @@
       } catch (err) {
         this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
           text: err && err.usernodeNoAnswer
-            ? 'The Homeroom app didn’t respond to the permission request. ' +
-              'Force-close and reopen the app, then try again.'
+            ? globalThis.PlatformI18n.t("settings:the_homeroom_app_didn_t_respond_to_the_permissio_c14ed244")
             : this._nativeActionMessage(err,
-                'The permission request could not be started.'),
+                globalThis.PlatformI18n.t("settings:the_permission_request_could_not_be_started_7251d65f")),
           settings: this._unCanOpenNotifSettings === true,
           reason: err && err.message,
         });
@@ -5514,8 +5496,8 @@
         this._unNotifNotice = {
           tone: 'ok',
           text: isAndroid
-            ? 'Permission granted.'
-            : 'Notifications are now allowed for Homeroom.',
+            ? globalThis.PlatformI18n.t("settings:permission_granted_63895f3e")
+            : globalThis.PlatformI18n.t("settings:notifications_are_now_allowed_for_homeroom_29f715c7"),
         };
         this._usernodeLoading = false;
       this._publishUsernode();
@@ -5544,7 +5526,7 @@
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          const err = new Error('the Homeroom app did not answer in time');
+          const err = new Error(globalThis.PlatformI18n.t("settings:the_homeroom_app_did_not_answer_in_time_920d792b"));
           err.usernodeNoAnswer = true;
           reject(err);
         }, this._UN_NATIVE_ANSWER_MS);
@@ -5573,26 +5555,19 @@
     _notifDeadEndText(plan, isAndroid) {
       switch (plan.verdict) {
         case 'no-bridge':
-          return 'Notification permission is only available inside the ' +
-            'Homeroom app.';
+          return globalThis.PlatformI18n.t("settings:notification_permission_is_only_available_inside_e7162b45");
         case 'unsupported':
-          return 'This version of the Homeroom app can’t open the ' +
-            'notification prompt. Update the app from the App Store.';
+          return globalThis.PlatformI18n.t("settings:this_version_of_the_homeroom_app_can_t_open_the__d8939172");
         case 'settings':
           return isAndroid
-            ? 'Permission was denied. Allow notifications in the system ' +
-              'settings for Homeroom.'
-            : 'Notifications are turned off for Homeroom. iOS only shows ' +
-              'its prompt once, so this has to be changed in Settings › ' +
-              'Notifications › Homeroom.';
+            ? globalThis.PlatformI18n.t("settings:permission_was_denied_allow_notifications_in_the_6bececd1")
+            : globalThis.PlatformI18n.t("settings:notifications_are_turned_off_for_homeroom_ios_on_561ae5ff");
         case 'declined':
-          return 'Permission was not granted.';
+          return globalThis.PlatformI18n.t("settings:permission_was_not_granted_ea5e3780");
         case 'silent':
-          return 'The Homeroom app closed without showing the notification ' +
-            'prompt. Reopen the app and try again, or allow notifications ' +
-            'in Settings › Notifications › Homeroom.';
+          return globalThis.PlatformI18n.t("settings:the_homeroom_app_closed_without_showing_the_noti_975826ec");
         default:
-          return 'The notification prompt could not be opened.';
+          return globalThis.PlatformI18n.t("settings:the_notification_prompt_could_not_be_opened_36ea1087");
       }
     },
 
@@ -5600,14 +5575,13 @@
     // the next report of a dead tap comes with a line in the dev console
     // saying which branch swallowed it.
     _unNotifDeadEnd(kind, opts) {
-      const reason = (opts && opts.reason) || '(no reason recorded)';
+      const reason = (opts && opts.reason) || globalThis.PlatformI18n.t("settings:no_reason_recorded_e79ca98b");
       console.error(
         `[settings] notification permission dead end (${kind}): ${reason}`
       );
       this._unNotifNotice = {
         tone: 'warn',
-        text: (opts && opts.text) || 'The notification prompt could not be ' +
-          'opened.',
+        text: (opts && opts.text) || globalThis.PlatformI18n.t("settings:the_notification_prompt_could_not_be_opened_36ea1087"),
         settings: !!(opts && opts.settings),
       };
     },
@@ -5682,7 +5656,7 @@
           const body = await res.json().catch(() => ({}));
           if (res.status === 404) {
             // No published terms version — nothing to accept.
-            if (window.PlatformUI) PlatformUI.toast('No terms to review right now');
+            if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:no_terms_to_review_right_now_836ccd73"));
             return;
           }
           if (!res.ok || !body.success) {
@@ -5691,7 +5665,7 @@
           payload = body.data;
         } catch (err) {
           console.warn('[settings] terms fetch failed:', err);
-          if (window.PlatformUI) PlatformUI.toast('Could not load the terms');
+          if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:could_not_load_the_terms_d7d4499d"));
           return;
         }
       }
@@ -5707,19 +5681,18 @@
       };
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
-        payload.title || 'Terms'));
+        payload.title || globalThis.PlatformI18n.t("settings:terms_ede54899")));
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Please ' +
-          'read the full terms, then choose whether to accept.'));
+          globalThis.PlatformI18n.t("settings:reviewing_the_terms_is_part_of_joining_the_platf_2fc352b8")));
       }
       const meta = [];
-      if (payload.version) meta.push(`Version ${payload.version}`);
+      if (payload.version) meta.push(globalThis.PlatformI18n.t("settings:version_value1_d0f3aa75", { value1: payload.version }));
       if (payload.published_at) {
         try {
           meta.push('published ' +
-            new Date(payload.published_at).toLocaleDateString());
+            new Date(payload.published_at).toLocaleDateString(globalThis.PlatformI18n.getLanguage()));
         } catch (_) {}
       }
       if (meta.length) {
@@ -5729,10 +5702,10 @@
       if (payload.terms_link) {
         const a = el('a',
           'block text-sm text-violet-700 dark:text-violet-400 underline mb-3',
-          'Read the full terms');
+          globalThis.PlatformI18n.t("settings:read_the_full_terms_05e37a9b"));
         a.href = payload.terms_link;
         a.target = '_blank';
-        a.rel = 'noopener noreferrer';
+        a.rel = globalThis.PlatformI18n.t("settings:noopener_noreferrer_ec0f84cc");
         panel.appendChild(a);
       }
 
@@ -5744,11 +5717,11 @@
         ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
-        ? 'You accepted this version' +
+        ? globalThis.PlatformI18n.t("settings:you_accepted_this_version_aff9403e") +
           (payload.consent.responded_at
-            ? ' on ' + new Date(payload.consent.responded_at).toLocaleDateString()
+            ? ' on ' + new Date(payload.consent.responded_at).toLocaleDateString(globalThis.PlatformI18n.getLanguage())
             : '') + '.'
-        : 'You have not accepted this version yet.');
+        : globalThis.PlatformI18n.t("settings:you_have_not_accepted_this_version_yet_737bfca8"));
       panel.appendChild(statusEl);
 
       let sheet = null;
@@ -5780,17 +5753,17 @@
             onOk();
           } catch (err) {
             console.warn('[settings] terms consent failed:', err);
-            if (window.PlatformUI) PlatformUI.toast('Could not record your consent');
+            if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:could_not_record_your_consent_dd2f3591"));
             consentButtons.forEach((b) => { b.disabled = false; });
           }
         };
 
         const acceptBtn = el('button',
           'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 ' +
-          'text-sm font-medium text-white', 'Accept the terms');
+          'text-sm font-medium text-white', globalThis.PlatformI18n.t("settings:accept_the_terms_04ef5261"));
         acceptBtn.addEventListener('click', () => postConsent('accepted',
           () => {
-            if (window.PlatformUI) PlatformUI.toast('Terms accepted');
+            if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:terms_accepted_af982c8c"));
             if (typeof onAccepted === 'function') onAccepted();
           }));
         consentButtons.push(acceptBtn);
@@ -5804,12 +5777,12 @@
           const declineBtn = el('button',
             'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
             'px-4 py-2 mt-2 text-sm font-medium text-zinc-700 ' +
-            'dark:text-zinc-200', 'Decline');
+            'dark:text-zinc-200', globalThis.PlatformI18n.t("settings:decline_a2d285b3"));
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
                 PlatformUI.toast(
-                  'You can accept the terms later from your profile');
+                  globalThis.PlatformI18n.t("settings:you_can_accept_the_terms_later_from_your_profile_8757d0f9"));
               }
             }));
           consentButtons.push(declineBtn);
@@ -5819,7 +5792,7 @@
       if (!blocking) {
         const closeBtn = el('button',
           'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
-        'Close');
+        globalThis.PlatformI18n.t("settings:close_7d9eb7ac"));
         closeBtn.addEventListener('click', () => {
           if (sheet && sheet.dismiss) sheet.dismiss();
         });
@@ -5896,30 +5869,30 @@
         blockProduction: this._bpView(),
         privacy: s ? {
           facematch: {
-            label: 'Strict facematch',
+            get label() { return globalThis.PlatformI18n.t("settings:strict_facematch_db9e96be"); },
             checked: s.facematchStrict !== false,
             action: '_setFacematchStrict',
           },
           open: canOpenZkIdentity ? {
             id: 'settings-usernode-open-zk-identity',
-            label: 'Open ZK identity',
+            get label() { return globalThis.PlatformI18n.t("settings:open_zk_identity_fb902228"); },
             action: '_openZkIdentityScreen',
           } : null,
-          reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
+          reset: { get label() { return globalThis.PlatformI18n.t("settings:restart_zk_challenge_8444b0af"); }, action: '_resetZkChallenge', danger: true },
         } : null,
         widgetIcons: this._widgetIconsView(),
         diagnostics: {
           debugMode: s ? {
-            label: 'Debug mode', checked: s.debugMode === true, action: '_setDebugMode',
+            get label() { return globalThis.PlatformI18n.t("settings:debug_mode_166f2195"); }, checked: s.debugMode === true, action: '_setDebugMode',
           } : null,
           actions: [
-            { label: 'Device benchmark', action: '_openBenchmarkScreen' },
-            { label: 'HTTP debug logs', action: '_openHttpLogsScreen' },
+            { get label() { return globalThis.PlatformI18n.t("settings:device_benchmark_706d2708"); }, action: '_openBenchmarkScreen' },
+            { get label() { return globalThis.PlatformI18n.t("settings:http_debug_logs_2f45ced2"); }, action: '_openHttpLogsScreen' },
           ],
         },
         about: { notes: this._usernodeBuildNotes(), actions: [{
           label: (s && s.termsAccepted === false)
-            ? 'Review terms (not yet accepted)' : 'Terms',
+            ? globalThis.PlatformI18n.t("settings:review_terms_not_yet_accepted_cb5d7293") : globalThis.PlatformI18n.t("settings:terms_ede54899"),
           action: '_openTermsFromUsernode',
         }] },
         account: (s && s.authStatus !== 'authenticated') ? { rows: [], actions: [] } : null,
@@ -5931,9 +5904,9 @@
       const bi = (this._usernodeState && this._usernodeState.buildInfo) || {};
       const bits = [];
       if (bi.appVersion) {
-        bits.push(`App ${bi.appVersion}` + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+        bits.push(globalThis.PlatformI18n.t("settings:app_value1_3d48d7d8", { value1: bi.appVersion }) + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
       }
-      if (bi.nodeVersion) bits.push(`Node ${bi.nodeVersion}`);
+      if (bi.nodeVersion) bits.push(globalThis.PlatformI18n.t("settings:node_value1_bc3904a6", { value1: bi.nodeVersion }));
       if (bi.commitHash) bits.push(bi.commitHash);
       return bits.length ? [{ text: bits.join(' · '), tone: 'mono' }] : [];
     },
@@ -5944,19 +5917,19 @@
       const state = (diag.privileged && diag.privileged.state) || 'unknown';
       const bits = [];
       if (diag.appVersion) {
-        bits.push(`App ${diag.appVersion}` +
+        bits.push(globalThis.PlatformI18n.t("settings:app_value1_3d48d7d8", { value1: diag.appVersion }) +
           (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
       }
-      bits.push(`Bridge v${diag.bridgeVersion}`);
+      bits.push(globalThis.PlatformI18n.t("settings:bridge_v_value1_e110c6fa", { value1: diag.bridgeVersion }));
       const demo = !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo();
       return {
         demo: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
         row: {
-          label: 'Secure app connection',
+          get label() { return globalThis.PlatformI18n.t("settings:secure_app_connection_2feb90ba"); },
           ok: state === 'ready',
           text: state === 'ready'
             ? this.PRIVILEGED_STATE_LABELS.ready
-            : (this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable'),
+            : (this.PRIVILEGED_STATE_LABELS[state] || globalThis.PlatformI18n.t("settings:unavailable_ca184496")),
         },
         reason: this.PRIVILEGED_STATE_REASONS[state] ||
           this.PRIVILEGED_STATE_REASONS.unknown,
@@ -5974,7 +5947,7 @@
         // the one way in.
         walletRecovery: this._walletRecoveryAvailable() ? {
           id: 'settings-usernode-connect-wallet',
-          label: 'Connect existing wallet',
+          get label() { return globalThis.PlatformI18n.t("settings:connect_existing_wallet_0b6aca1e"); },
           action: '_openWalletRecovery',
           disabled: demo,
         } : null,
@@ -6007,17 +5980,17 @@
     // wallet is claimed, and the admission event above repaints this panel.
     _openWalletRecovery() {
       if (this._walletRecoveryDemo()) {
-        throw new Error('Staging demo: there is no session to recover here.');
+        throw new Error(globalThis.PlatformI18n.t("settings:staging_demo_there_is_no_session_to_recover_here_de2726f2"));
       }
       const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
       const dialog = dialogs && dialogs.walletRecovery;
       if (!dialog || typeof dialog.open !== 'function') {
-        throw new Error('Wallet recovery is not available on this screen.');
+        throw new Error(globalThis.PlatformI18n.t("settings:wallet_recovery_is_not_available_on_this_screen_a93ea447"));
       }
       const raw = window.App && App.user ? App.user.id : null;
       const userId = raw == null ? '' : String(raw);
       if (!/^[1-9][0-9]*$/.test(userId)) {
-        throw new Error('Sign in before connecting a wallet.');
+        throw new Error(globalThis.PlatformI18n.t("settings:sign_in_before_connecting_a_wallet_7959bdda"));
       }
       dialog.open({ userId });
     },
@@ -6048,24 +6021,24 @@
       return {
         kind: 'permissions',
         demo: !!this._unDemoMode(),
-        heading: 'Homeroom app: device permissions',
+        get heading() { return globalThis.PlatformI18n.t("settings:homeroom_app_device_permissions_68127650"); },
         description: isAndroid
-          ? 'Block production needs the app to wake your device at exact slot times.'
-          : 'Notifications let Homeroom alert you about node and account activity.',
+          ? globalThis.PlatformI18n.t("settings:block_production_needs_the_app_to_wake_your_devi_fae4d315")
+          : globalThis.PlatformI18n.t("settings:notifications_let_homeroom_alert_you_about_node__8e24f2de"),
         // The row IS the control. It used to be an inert div whose only
         // affordance was a chip below, rendered only when the (iOS-meaningless)
         // exactAlarmGranted boolean said "not granted" — so on a build
         // reporting it `true` there was nothing to tap at all.
         row: {
           id: 'settings-notif-row',
-          label: isAndroid ? 'Exact alarms' : 'Notifications',
+          label: isAndroid ? globalThis.PlatformI18n.t("settings:exact_alarms_b39f0e41") : globalThis.PlatformI18n.t("settings:notifications_78801183"),
           ok: notifOk,
-          text: notifOk ? 'Granted' : 'Not granted',
-          hint: isAndroid ? 'request permissions' : 'allow notifications',
+          text: notifOk ? globalThis.PlatformI18n.t("settings:granted_62026a42") : globalThis.PlatformI18n.t("settings:not_granted_352a5b4c"),
+          hint: isAndroid ? globalThis.PlatformI18n.t("settings:request_permissions_52480b6c") : globalThis.PlatformI18n.t("settings:allow_notifications_8637f38c"),
           action: '_requestUsernodePermissions',
         },
         button: notifOk ? null : {
-          label: isAndroid ? 'Request permissions' : 'Allow notifications',
+          label: isAndroid ? globalThis.PlatformI18n.t("settings:request_permissions_db910d2c") : globalThis.PlatformI18n.t("settings:allow_notifications_001559c8"),
           action: '_requestUsernodePermissions',
         },
         notice: n ? {
@@ -6075,14 +6048,14 @@
         } : null,
         android: isAndroid ? {
           row: {
-            label: 'Battery optimization',
+            get label() { return globalThis.PlatformI18n.t("settings:battery_optimization_e2c2b8ef"); },
             ok: perms.batteryOptDisabled === true,
-            text: perms.batteryOptDisabled === true ? 'Unrestricted' : 'Restricted',
+            text: perms.batteryOptDisabled === true ? globalThis.PlatformI18n.t("settings:unrestricted_ea72a231") : globalThis.PlatformI18n.t("settings:restricted_a00571bc"),
           },
           button: perms.batteryOptDisabled === true ? null : {
-            label: 'Open battery settings', action: '_openBatterySettings',
+            get label() { return globalThis.PlatformI18n.t("settings:open_battery_settings_3163b5dd"); }, action: '_openBatterySettings',
           },
-          device: perms.deviceManufacturer ? `Device: ${perms.deviceManufacturer}` : null,
+          device: perms.deviceManufacturer ? globalThis.PlatformI18n.t("settings:device_value1_2f4b7f85", { value1: perms.deviceManufacturer }) : null,
         } : null,
       };
     },
@@ -6110,26 +6083,24 @@
         return {
           kind: 'unavailable',
           reason: stuck
-            ? 'The Homeroom app isn’t accepting this screen’s secure ' +
-              'connection, so notifications can’t be set up. See “Homeroom ' +
-              'app: connection” above.'
+            ? globalThis.PlatformI18n.t("settings:the_homeroom_app_isn_t_accepting_this_screen_s_s_9b74ef87")
             : (admissionPending
               ? 'Finishing secure app sign-in before enabling notifications…'
-              : 'Notification settings are temporarily unavailable.'),
+              : globalThis.PlatformI18n.t("settings:notification_settings_are_temporarily_unavailabl_92460ef6")),
           failure: (failure && failure.message) || null,
           retry: !!(admissionPending && window.NativeChrome &&
             typeof NativeChrome.recoverSessionAdmission === 'function'),
         };
       }
-      let status = 'Off on this device.';
+      let status = globalThis.PlatformI18n.t("settings:off_on_this_device_78e679b9");
       if (state.deliveryActive) {
-        status = 'On. This device is registered for activity notifications.';
+        status = globalThis.PlatformI18n.t("settings:on_this_device_is_registered_for_activity_notifi_4555ec03");
       } else if (state.permissionStatus === 'denied') {
-        status = 'Notification permission is denied in the device settings.';
+        status = globalThis.PlatformI18n.t("settings:notification_permission_is_denied_in_the_device__7c0a8c1e");
       } else if (state.enabled && state.registrationStatus === 'registering') {
-        status = 'Enabling notifications…';
+        status = globalThis.PlatformI18n.t("settings:enabling_notifications_24721556");
       } else if (state.enabled) {
-        status = 'Enabled, but delivery is not active yet.';
+        status = globalThis.PlatformI18n.t("settings:enabled_but_delivery_is_not_active_yet_6ad33231");
       }
       return { kind: 'ready', enabled: !!state.enabled, status };
     },
@@ -6137,10 +6108,10 @@
     _bpView() {
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
-      if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
-      if (state.bp_released) return { kind: 'note', text: 'Released. Your node produces blocks when it wins slots.' };
-      if (state.bp_requested) return { kind: 'note', text: 'Request pending. You’ll start producing automatically once an admin releases your keys.' };
-      if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
+      if (!state) return { kind: 'note', get text() { return globalThis.PlatformI18n.t("settings:could_not_check_block_production_status_right_no_e64e7832"); } };
+      if (state.bp_released) return { kind: 'note', get text() { return globalThis.PlatformI18n.t("settings:released_your_node_produces_blocks_when_it_wins__adf35d7a"); } };
+      if (state.bp_requested) return { kind: 'note', get text() { return globalThis.PlatformI18n.t("settings:request_pending_you_ll_start_producing_automatic_077e16d0"); } };
+      if (!state.has_platform_access) return { kind: 'note', get text() { return globalThis.PlatformI18n.t("settings:available_once_your_account_has_platform_access_03256d37"); } };
       return { kind: 'ask' };
     },
 
@@ -6148,17 +6119,17 @@
       const diag = this._widgetIconDiagnostics();
       if (!diag) return null;
       const sending = diag.resolved === true
-        ? 'Light + dark pair'
+        ? globalThis.PlatformI18n.t("settings:light_dark_pair_fc06e4cb")
         : (diag.resolved === false
-          ? `Single face (${diag.scheme})`
-          : 'Undecided, single face for now');
+          ? globalThis.PlatformI18n.t("settings:single_face_value1_01e5c9b7", { value1: diag.scheme })
+          : globalThis.PlatformI18n.t("settings:undecided_single_face_for_now_2e8ab8ee"));
       const build = diag.build
         ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
         : 'unknown, the verdict is re-confirmed each time';
       const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
       const notes = [
-        { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
-        { text: `Last icon check: ${healedAt}` +
+        { get text() { return globalThis.PlatformI18n.t("settings:verdict_bound_to_app_version_value1_a893cb05", { value1: build }); }, tone: 'muted' },
+        { text: globalThis.PlatformI18n.t("settings:last_icon_check_value1_919fc939", { value1: healedAt }) +
           (diag.lastHealOutcome ? `: ${diag.lastHealOutcome}` : ''), tone: 'muted' },
       ];
       if (diag.readError) {
@@ -6172,25 +6143,25 @@
       return {
         demo: !!this._widgetIconsDemo(),
         rows: [
-          { id: 'settings-widget-mechanism-row', label: 'Widget shortcuts',
+          { id: 'settings-widget-mechanism-row', get label() { return globalThis.PlatformI18n.t("settings:widget_shortcuts_5f28cf1a"); },
             ok: diag.mechanism === 'widget',
-            text: diag.mechanism === 'widget' ? 'Available'
-              : (diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available') },
-          { id: 'settings-widget-registry-row', label: 'Pinned registry',
+            text: diag.mechanism === 'widget' ? globalThis.PlatformI18n.t("settings:available_e6744473")
+              : (diag.mechanism ? globalThis.PlatformI18n.t("settings:not_this_device_value1_9ef5a054", { value1: diag.mechanism }) : globalThis.PlatformI18n.t("settings:not_available_67a926f7")) },
+          { id: 'settings-widget-registry-row', get label() { return globalThis.PlatformI18n.t("settings:pinned_registry_c9ea4eb5"); },
             ok: diag.registryLoaded === true,
             text: diag.registryLoaded === true
-              ? `Loaded: ${diag.entries.length} pinned` : 'Could not be read' },
+              ? globalThis.PlatformI18n.t("settings:loaded_value1_pinned_b1b35924", { value1: diag.entries.length }) : globalThis.PlatformI18n.t("settings:could_not_be_read_51a02791") },
           // Tri-state, and the third state is the point: `has()` used to
           // collapse "couldn't say" into "no".
-          { id: 'settings-widget-capability-row', label: 'Dark icon capability',
+          { id: 'settings-widget-capability-row', get label() { return globalThis.PlatformI18n.t("settings:dark_icon_capability_a688ec86"); },
             ok: diag.capability === true,
-            text: diag.capability === true ? 'Advertised by the app'
-              : (diag.capability === false ? 'Not advertised' : 'The app couldn’t say') },
-          { id: 'settings-widget-verdict-row', label: 'Confirmed by the widget',
+            text: diag.capability === true ? globalThis.PlatformI18n.t("settings:advertised_by_the_app_ea028841")
+              : (diag.capability === false ? globalThis.PlatformI18n.t("settings:not_advertised_bbcd905d") : globalThis.PlatformI18n.t("settings:the_app_couldn_t_say_2b23bea4")) },
+          { id: 'settings-widget-verdict-row', get label() { return globalThis.PlatformI18n.t("settings:confirmed_by_the_widget_f36e9669"); },
             ok: diag.verdict === 'supported',
-            text: diag.verdict === 'supported' ? 'Stores both faces'
-              : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
-          { id: 'settings-widget-sending-row', label: 'Sending',
+            text: diag.verdict === 'supported' ? globalThis.PlatformI18n.t("settings:stores_both_faces_ef5d1b3d")
+              : (diag.verdict === 'unsupported' ? globalThis.PlatformI18n.t("settings:single_face_only_fe4f3ad5") : globalThis.PlatformI18n.t("settings:not_confirmed_yet_96584d78")) },
+          { id: 'settings-widget-sending-row', get label() { return globalThis.PlatformI18n.t("settings:sending_e595f17f"); },
             ok: diag.resolved === true, text: sending },
         ],
         notes,
@@ -6203,7 +6174,7 @@
     _widgetIconEntryViews(diag) {
       if (!diag.entries.length) {
         return [{ key: 'none', ok: true, name: '', note: '',
-          empty: 'No shortcuts are pinned to the widget.' }];
+          get empty() { return globalThis.PlatformI18n.t("settings:no_shortcuts_are_pinned_to_the_widget_30503d43"); } }];
       }
       const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
       return diag.entries.map((entry, i) => ({
@@ -6211,11 +6182,11 @@
         ok: entry.foreign ? true : (entry.hasIcon !== false && entry.matches),
         name: entry.name,
         note: entry.foreign
-          ? 'pinned by another app'
+          ? globalThis.PlatformI18n.t("settings:pinned_by_another_app_d419f6db")
           : (entry.unknownApp
-            ? 'app not loaded'
-            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`),
+            ? globalThis.PlatformI18n.t("settings:app_not_loaded_304cae45")
+            : globalThis.PlatformI18n.t("settings:icon_value1_dark_value2_0a4d2c56", { value1: flag(entry.hasIcon), value2: flag(entry.hasIconDark) }) +
+              globalThis.PlatformI18n.t("settings:sent_value1_f03445f4", { value1: entry.matches ? globalThis.PlatformI18n.t("settings:message_97b0560280ed") : globalThis.PlatformI18n.t("settings:message_a03f2386ae06") })),
         empty: null,
       }));
     },
@@ -6234,7 +6205,7 @@
       const ok = window.PlatformUI && PlatformUI.copyText
         ? await PlatformUI.copyText(text) : false;
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+        PlatformUI.toast(ok ? globalThis.PlatformI18n.t("settings:diagnostics_copied_2c8618c0") : globalThis.PlatformI18n.t("settings:could_not_copy_d5cb934f"),
           ok ? {} : { error: true });
       }
     },
@@ -6256,13 +6227,13 @@
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
     _openZkIdentityScreen() {
-      return this._openNativeScreen('zkIdentity', 'Could not open ZK identity');
+      return this._openNativeScreen('zkIdentity', globalThis.PlatformI18n.t("settings:could_not_open_zk_identity_23e1f16a"));
     },
     _openBenchmarkScreen() {
-      return this._openNativeScreen('benchmark', 'Could not open the benchmark');
+      return this._openNativeScreen('benchmark', globalThis.PlatformI18n.t("settings:could_not_open_the_benchmark_4c4308fa"));
     },
     _openHttpLogsScreen() {
-      return this._openNativeScreen('httpLogs', 'Could not open the logs');
+      return this._openNativeScreen('httpLogs', globalThis.PlatformI18n.t("settings:could_not_open_the_logs_e8ec5a4c"));
     },
     _openTermsFromUsernode() {
       return this.showTermsSheet(() => this._renderUsernodeSection());
@@ -6270,14 +6241,14 @@
 
     async _resetZkChallenge() {
       const ok = await PlatformUI.confirm({
-        title: 'Restart the ZK challenge?',
-        message: 'Your in-progress identity registration will be discarded.',
-        confirmLabel: 'Restart',
+        get title() { return globalThis.PlatformI18n.t("settings:restart_the_zk_challenge_0e089820"); },
+        get message() { return globalThis.PlatformI18n.t("settings:your_in_progress_identity_registration_will_be_d_4da2517c"); },
+        get confirmLabel() { return globalThis.PlatformI18n.t("settings:restart_6b983a81"); },
         danger: true,
       });
       if (!ok) return;
       await window.usernode.resetZkChallenge();
-      if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+      if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:challenge_state_reset_a73eb1a1"));
     },
 
     async _recheckWidgetIcons() {
@@ -6366,9 +6337,9 @@
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data || data.success === false) {
-          throw new Error((data && data.error) || 'Request failed');
+          throw new Error((data && data.error) || globalThis.PlatformI18n.t("settings:request_failed_cfce761b"));
         }
-        if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
+        if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("settings:request_sent_an_admin_will_release_your_keys_ac5d16ce"));
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
         // #2960: the Android "Set up your device" sheet (exact alarms +
@@ -6382,7 +6353,7 @@
           NativeChrome.maybeShowFirstRunPermissions({ force: true });
         }
       } catch (e) {
-        if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
+        if (window.PlatformUI) PlatformUI.toast(e.message || globalThis.PlatformI18n.t("settings:request_failed_cfce761b"), { error: true });
       }
     },
 
@@ -6431,3 +6402,8 @@
   // happens after the island's own markup is in the document, which is the
   // ordering every id-bound listener below depends on.
 })();
+
+// Recompute translated view models from cached data without resetting forms.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => { if (window.Settings?._open) { window.Settings._renderNav(); window.Settings._syncChrome(); } });
+}

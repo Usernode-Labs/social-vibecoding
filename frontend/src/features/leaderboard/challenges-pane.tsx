@@ -1,3 +1,7 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 // The Challenges pane's subtree — #1191 slice 6, conversion 7, and the last
 // of the Leaderboard screen's three innerHTML hosts to go.
 //
@@ -332,7 +336,7 @@ function Card({ view }: { view: CardView }): ReactNode {
  */
 function GridSkeleton(): ReactNode {
   return (
-    <SkeletonGroup label="Loading challenges">
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_challenges_57889351")}>
       <div className="flex flex-col gap-2 mb-4">
         <Skeleton className="w-40" />
         <Skeleton shape="muted" className="h-[5px] w-full rounded-full" />
@@ -351,7 +355,7 @@ function GridSkeleton(): ReactNode {
           </div>
         ))}
       </div>
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_challenges_57889351"}} />
   );
 }
 
@@ -362,7 +366,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   if (view.kind === 'loading') return <GridSkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center"><Message id="apps:no_challenges_for_this_event_yet_c41e3642" /></p>;
   }
   // The card's own threshold, so a count it would not draw never hides the note.
   const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;
@@ -378,9 +382,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         <button
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
-        >
-          Go to First challenges
-        </button>
+        ><Message id="apps:go_to_first_challenges_fca78871" /></button>
       ) : null}
       {/*
           Fragment, not a wrapping <div>: the two grids and the subheading
@@ -444,9 +446,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 function Cta({ view }: { view: CtaView }): ReactNode {
   if (view.kind === 'text') {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        {view.label} <span className="italic">(link unavailable)</span>
-      </p>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400"><RichMessage id="apps:sentence_50cbcb667143" values={{ value1: view.label }} components={[<span className="italic" />]} /></p>
     );
   }
   // `href` reached here only by passing TopochainChallenges.safeHref — an
@@ -480,7 +480,7 @@ const BP_BUTTON = `${CTA_LINK} disabled:cursor-wait`;
 function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode {
   if (view.step === 'checking') {
     return (
-      <p data-bp-step="checking" className={PROSE}>Checking your block-production status…</p>
+      <p data-bp-step="checking" className={PROSE}><Message id="apps:checking_your_block_production_status_74e131fc" /></p>
     );
   }
   if (view.step === 'account') {
@@ -547,21 +547,21 @@ function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode
  */
 function EntriesSkeleton(): ReactNode {
   return (
-    <SkeletonGroup label="Loading participants" className="flex flex-col">
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_participants_465f5114")} className="flex flex-col">
       {Array.from({ length: 3 }, (_, i) => (
         <div key={i} className={ENTRY_BOX}>
           <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
           <Skeleton shape="muted" className="w-16" />
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_participants_465f5114"}} />
   );
 }
 
 function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }): ReactNode {
   if (view.kind === 'loading') return <EntriesSkeleton />;
   if (view.kind === 'error') return <p className={PROSE}>{view.message}</p>;
-  if (view.kind === 'empty') return <p className={PROSE}>No participants yet.</p>;
+  if (view.kind === 'empty') return <p className={PROSE}><Message id="apps:no_participants_yet_8987d03b" /></p>;
   return (
     <>
       <ul className="flex flex-col">
@@ -580,7 +580,7 @@ function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }):
                 {/* The leading space lived between the two spans in the old
                     string; it is inside this one now, for the reason the header
                     gives. */}
-                {row.nonPodium ? <span className="font-normal text-zinc-500 dark:text-zinc-400"> (non-podium)</span> : null}
+                {row.nonPodium ? <span className="font-normal text-zinc-500 dark:text-zinc-400"><Message before={" "} id="apps:non_podium_ed04dd0b" /></span> : null}
               </span>
               <span className="shrink-0 tabular-nums text-zinc-700 dark:text-zinc-300">{row.points}</span>
             </button>
@@ -622,6 +622,7 @@ function PageSection({ heading, children }: { heading: string; children: string 
 // page is React's. The image is `object-contain` so a non-square upload fits
 // the 192px box instead of stretching.
 function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null }): ReactNode {
+  useUiLanguage();
   const art = resolveIllustration(slug, tone);
   const [failed, setFailed] = useState<string | null>(null);
   if (!art || failed === art.src) return null;
@@ -668,13 +669,11 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}
       {view.feedbackLink ? (
-        <a id="tc-se-feedback-mine" href="#profile?feedback" className={FEEDBACK_LINK}>
-          See your feedback
-        </a>
+        <a id="tc-se-feedback-mine" href="#profile?feedback" className={FEEDBACK_LINK}><Message id="apps:see_your_feedback_b474570b" /></a>
       ) : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
-      {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
-      {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
+      {view.requirements ? <PageSection heading={tr("core:requirements_e0cdd07f")}>{view.requirements}</PageSection> : null}
+      {view.scoring ? <PageSection heading={tr("core:scoring_9ea9bd21")}>{view.scoring}</PageSection> : null}
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <div className="flex items-baseline justify-between gap-3">
           {/* `mb-0`: this heading is an ITEM on a shared baseline with the
@@ -705,7 +704,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
  */
 function ProfileSkeleton(): ReactNode {
   return (
-    <SkeletonGroup label="Loading the profile">
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_the_profile_078e5640")}>
       <Skeleton shape="block" className="h-5 w-40 mb-3" />
       <div className="grid grid-cols-2 gap-2 mb-4">
         {Array.from({ length: 4 }, (_, i) => (
@@ -724,7 +723,7 @@ function ProfileSkeleton(): ReactNode {
           </div>
         ))}
       </div>
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_the_profile_078e5640"}} />
   );
 }
 
@@ -735,14 +734,14 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
     <>
       <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">{view.name}</h2>
       <div className="grid grid-cols-2 gap-2 text-xs mb-4">
-        {view.stats.map((s) => (
-          <div key={s.label}>
+        {view.stats.map((s, index) => (
+          <div key={index}>
             <span className="text-zinc-500 dark:text-zinc-400">{s.label}</span>
             <div className="font-mono">{s.value}</div>
           </div>
         ))}
       </div>
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1"><Message id="apps:activities_4d0076e6" /></div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
@@ -753,7 +752,7 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:no_activities_recorded_0aab8957" /></p>
       )}
     </>
   );
@@ -777,6 +776,7 @@ function scrollTarget(el: HTMLElement): HTMLElement | Window {
 }
 
 export function ChallengesPane(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(topochainChallengesStore) as {
     mounted: boolean;
     grid: GridView | null;
@@ -875,14 +875,13 @@ export function ChallengesPane(): ReactNode {
               <div className="flex-1 min-w-0">
                 <ProfileBody view={state.profile} />
               </div>
-              <button
+              <Localized element={<button
                 id="tc-se-profile-close"
-                className={`${CLOSE_X} shrink-0`}
-                aria-label="Close"
+                className={`${CLOSE_X} shrink-0`} aria-label={catalogText("apps:close_7d9eb7ac")}
                 onClick={() => controller()?.closeUserProfile()}
               >
                 {TIMES}
-              </button>
+              </button>} messages={{"aria-label":"apps:close_7d9eb7ac"}} />
             </div>
           ) : null}
         </div>

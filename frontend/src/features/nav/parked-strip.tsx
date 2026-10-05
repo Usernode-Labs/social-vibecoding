@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * #platform-parked — the app you left, one tap above the tab bar.
  *
@@ -134,6 +138,7 @@ function leaveAnimates(): boolean {
 }
 
 export function ParkedStrip() {
+  useUiLanguage();
   const ref = useRef<HTMLDivElement | null>(null);
   const { app } = useStoreState(parkedStore);
   // The bar's own answer, read the way the bar reads it. `true` is the
@@ -255,17 +260,17 @@ export function ParkedStrip() {
               <AppIconContent app={record} />
             </span>
             <span className="platform-parked-name">{shown.name}</span>
-            <span className="platform-parked-pill">Resume</span>
+            <span className="platform-parked-pill"><Message id="core:resume_d640c742" /></span>
           </a>
-          <button
+          <LocalizedDynamic element={<button
             id="platform-parked-forget"
             type="button"
             className="platform-parked-x"
-            aria-label={`Forget ${shown.name}`}
+            aria-label={tr("core:forget_value1_3f04ad43", { value1: shown.name })}
             onClick={() => forgetParked(app)}
           >
             <XIcon className="w-4 h-4" />
-          </button>
+          </button>} resolve={() => ({ get "aria-label"() { return tr("core:forget_value1_3f04ad43", { value1: shown.name }); } })} />
         </>
       ) : null}
     </div>

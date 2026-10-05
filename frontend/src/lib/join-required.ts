@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n/runtime";
 /**
  * Join, in place of a refusal (communities).
  *
@@ -88,10 +89,10 @@ export function registerJoinAnchor(slug: string, anchor: JoinAnchor): () => void
 async function askInDialog(body: JoinRequired, name: string): Promise<boolean> {
   const w = window as any;
   return !!(await w.ConfirmModal?.show?.({
-    title: `Join ${name}?`,
-    message: 'Members start changes, file requests, vote and chat here. Join to take part.',
-    confirmLabel: 'Join',
-    cancelLabel: 'Not now',
+    get title() { return tr("core:join_value1_b4f8b7c8", { value1: name }); },
+    get message() { return tr("core:members_start_changes_file_requests_vote_and_cha_9550d1e0"); },
+    get confirmLabel() { return tr("core:join_fd30fe68"); },
+    get cancelLabel() { return tr("core:not_now_a0e63d7c"); },
   }));
 }
 

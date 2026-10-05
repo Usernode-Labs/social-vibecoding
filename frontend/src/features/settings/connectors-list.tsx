@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#connectors-list` — the connected chat clients, as the only React writer
  * below that host.
@@ -32,12 +34,10 @@ function controller(): any {
 export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
   if (phase === 'idle') return null;
   // Bare text nodes, as the two `list.textContent = …` writes produced.
-  if (phase === 'loading') return <>Loading connections…</>;
+  if (phase === 'loading') return <><Message id="settings:loading_connections_8aa3f435" /></>;
   if (!connectors.length) {
     return (
-      <p className="px-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
-        No chat products connected yet.
-      </p>
+      <p className="px-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-400"><Message id="settings:no_chat_products_connected_yet_a0378105" /></p>
     );
   }
   // #2370: one grouped card, in the language the rest of the pane wears now
@@ -60,9 +60,7 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
               type="button"
               className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
-            >
-              Disconnect
-            </button>
+            ><Message id="settings:disconnect_acfc5be7" /></button>
           )}
         />
       ))}
@@ -71,5 +69,6 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
 }
 
 export function ConnectorsList() {
+  useUiLanguage();
   return <ConnectorsListView {...useStoreState<ConnectorsState>(connectorsStore)} />;
 }

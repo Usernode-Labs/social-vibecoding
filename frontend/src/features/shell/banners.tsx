@@ -1,3 +1,4 @@
+import { Message } from "../../lib/i18n/react";
 import { useRef } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -46,9 +47,7 @@ export function OfflineBanner() {
   useHiddenClass(ref, !visible);
 
   return (
-    <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      Reconnecting to Homeroom. Showing saved content
-    </Alert>
+    <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden><Message id="core:reconnecting_to_homeroom_showing_saved_content_eb9080d9" /></Alert>
   );
 }
 
@@ -86,7 +85,7 @@ export function ViewAsNonAdminBanner() {
       id="view-as-non-admin-banner"
       className="hidden bg-amber-500/15 text-amber-800 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"
     >
-      <span>Viewing as non-admin (admin UI hidden).</span>
+      <span><Message id="core:viewing_as_non_admin_admin_ui_hidden_f67268c8" /></span>
       <button
         id="view-as-non-admin-disable"
         className="underline hover:text-amber-600 dark:hover:text-amber-200"
@@ -94,9 +93,7 @@ export function ViewAsNonAdminBanner() {
           localStorage.removeItem('viewAsNonAdmin');
           window.location.reload();
         }}
-      >
-        Switch back
-      </button>
+      ><Message id="core:switch_back_fe080e0f" /></button>
     </div>
   );
 }

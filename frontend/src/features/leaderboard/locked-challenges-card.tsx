@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The challenges Getting started still hides, as one placeholder: a dashed
  * card the size of a challenge card with a hatched lock tile, how many there
@@ -44,7 +45,7 @@ const HINT = 'mt-0.5 line-clamp-2 text-[0.8125rem] leading-5 text-zinc-500 dark:
 /** "6 challenges unlock after Getting started". */
 export function lockedTitle(count: number): string {
   const n = Math.floor(Number(count) || 0);
-  return n === 1 ? '1 challenge unlocks after Getting started' : `${n} challenges unlock after Getting started`;
+  return n === 1 ? tr("apps:1_challenge_unlocks_after_getting_started_0ca7c51b") : tr("apps:value1_challenges_unlock_after_getting_started_63dabca3", { value1: n });
 }
 
 /**
@@ -56,11 +57,11 @@ export function lockedHint(count: number, names?: string[] | null): string {
   const n = Math.floor(Number(count) || 0);
   const shown = (Array.isArray(names) ? names : [])
     .map((s) => String(s == null ? '' : s).trim()).filter(Boolean).slice(0, Math.max(0, n));
-  if (!shown.length) return 'Finish Getting started on Home to see them';
+  if (!shown.length) return tr("apps:finish_getting_started_on_home_to_see_them_bddc84b2");
   const more = n - shown.length;
-  if (more > 0) return `${shown.join(', ')} and ${more} more`;
+  if (more > 0) return tr("apps:value1_and_value2_more_5cec6b8d", { value1: shown.join(', '), value2: more });
   if (shown.length === 1) return shown[0];
-  return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
+  return tr("apps:value1_and_value2_f4780f76", { value1: shown.slice(0, -1).join(', '), value2: shown[shown.length - 1] });
 }
 
 export function LockedChallengesCard({ count, names, className }: {

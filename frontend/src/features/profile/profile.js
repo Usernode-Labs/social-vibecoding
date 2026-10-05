@@ -157,10 +157,7 @@ const Profile = {
   // deliberately NOT staging-gated (an env-gated link would starve the
   // production-side "before" shot forever) and deliberately not visible to
   // ./profile-edit-sheet.tsx, which reads `_user()` and could save it.
-  LONG_BIO_SHOT:
-    'Staging demo bio: https://example.com/app/'
-    + 'a-very-long-unbroken-link-with-no-spaces-in-it-at-all/dev/proposals/1612'
-    + ' and ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe.',
+  get LONG_BIO_SHOT() { return globalThis.PlatformI18n.t("account:staging_demo_bio_https_example_com_app_a_very_lo_43e44590"); },
 
   isOpen() { return Profile._open; },
 
@@ -266,7 +263,7 @@ const Profile = {
     const body = await res.json();
     // The leaderboard API wraps every response in { success, data }.
     if (body && typeof body === 'object' && 'success' in body) {
-      if (body.success === false) throw new Error('API error');
+      if (body.success === false) throw new Error(globalThis.PlatformI18n.t("account:api_error_b2ff3a8f"));
       return body.data;
     }
     return body;
@@ -497,9 +494,9 @@ const Profile = {
     const absolute = new URL(href, location.origin).href;
     try {
       await navigator.clipboard.writeText(absolute);
-      profileStore.set({ publicStatus: 'Public link copied.' });
+      profileStore.set({ get publicStatus() { return globalThis.PlatformI18n.t("account:public_link_copied_4c1aed1a"); } });
     } catch (_) {
-      profileStore.set({ publicStatus: `Copy this link: ${absolute}` });
+      profileStore.set({ publicStatus: globalThis.PlatformI18n.t("account:copy_this_link_value1_b1987189", { value1: absolute }) });
     }
   },
 
@@ -516,17 +513,17 @@ const Profile = {
         body: JSON.stringify({ published }),
       });
       const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.error || 'Could not update publication.');
+      if (!res.ok) throw new Error(payload.error || globalThis.PlatformI18n.t("account:could_not_update_publication_c03ccf56"));
       if (Profile._data) Profile._data.ownerPublicProfile = payload;
       profileStore.set({ publishing: false, publicStatus: '' });
       Profile._render();
       if (window.PlatformUI) {
-        PlatformUI.toast(published ? 'Public profile published' : 'Public profile unpublished');
+        PlatformUI.toast(published ? globalThis.PlatformI18n.t("account:public_profile_published_ea99488c") : globalThis.PlatformI18n.t("account:public_profile_unpublished_7f6610d3"));
       }
     } catch (err) {
       profileStore.set({
         publishing: false,
-        publicStatus: (err && err.message) || 'Could not update publication.',
+        publicStatus: (err && err.message) || globalThis.PlatformI18n.t("account:could_not_update_publication_c03ccf56"),
       });
     }
   },
@@ -544,10 +541,10 @@ const Profile = {
           body: JSON.stringify({ reason, detail: detail || null }),
         }
       );
-      if (!res.ok) throw new Error('request failed');
-      return { ok: true, status: 'Report received.' };
+      if (!res.ok) throw new Error(globalThis.PlatformI18n.t("account:request_failed_fbbc1b5b"));
+      return { ok: true, get status() { return globalThis.PlatformI18n.t("account:report_received_abb3a4ca"); } };
     } catch (_) {
-      return { ok: false, status: 'Could not send the report. Try again.' };
+      return { ok: false, get status() { return globalThis.PlatformI18n.t("account:could_not_send_the_report_try_again_a954f943"); } };
     }
   },
 
@@ -774,7 +771,7 @@ const Profile = {
     const width = image.width;
     const height = image.height;
     if (image.close) image.close();
-    if (!(Math.min(width, height) > 0)) throw new Error('That image could not be read.');
+    if (!(Math.min(width, height) > 0)) throw new Error(globalThis.PlatformI18n.t("account:that_image_could_not_be_read_473b21eb"));
     // The editor closed while the file was decoding: there is nothing left
     // for the step to open over.
     if (!profileStore.get().sheetOpen) return;
@@ -940,7 +937,7 @@ const Profile = {
 
   _checkAvatarType(file) {
     if (!/^image\/(png|jpeg|webp)$/.test((file && file.type) || '')) {
-      throw new Error('Choose a PNG, JPEG or WebP image.');
+      throw new Error(globalThis.PlatformI18n.t("account:choose_a_png_jpeg_or_webp_image_4a867943"));
     }
   },
 
@@ -959,7 +956,7 @@ const Profile = {
     Profile._checkAvatarType(file);
     const bitmap = await Profile._decodeImage(file);
     const side = Math.min(bitmap.width, bitmap.height);
-    if (!side) throw new Error('That image could not be read.');
+    if (!side) throw new Error(globalThis.PlatformI18n.t("account:that_image_could_not_be_read_473b21eb"));
     const rect = crop
       ? sourceRect(crop, bitmap.width, bitmap.height)
       : {
@@ -973,7 +970,7 @@ const Profile = {
     canvas.width = target;
     canvas.height = target;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('That image could not be processed here.');
+    if (!ctx) throw new Error(globalThis.PlatformI18n.t("account:that_image_could_not_be_processed_here_8831689f"));
     ctx.drawImage(bitmap, rect.x, rect.y, rect.size, rect.size, 0, 0, target, target);
     if (bitmap.close) bitmap.close();
 
@@ -993,7 +990,7 @@ const Profile = {
       canvas = next;
       blob = await toBlob(canvas, 'image/jpeg', 0.85);
     }
-    if (!blob) throw new Error('That image could not be processed here.');
+    if (!blob) throw new Error(globalThis.PlatformI18n.t("account:that_image_could_not_be_processed_here_8831689f"));
     return blob;
   },
 
@@ -1015,7 +1012,7 @@ const Profile = {
       img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        reject(new Error('That image could not be read.'));
+        reject(new Error(globalThis.PlatformI18n.t("account:that_image_could_not_be_read_473b21eb")));
       };
       img.src = url;
     });
@@ -1037,7 +1034,7 @@ const Profile = {
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok) {
-          throw new Error((await Profile._errText(res)) || 'Could not remove the photo.');
+          throw new Error((await Profile._errText(res)) || globalThis.PlatformI18n.t("account:could_not_remove_the_photo_60fb665f"));
         }
       } else if (Profile._pendingAvatar) {
         const res = await fetch('/api/me/avatar', {
@@ -1047,7 +1044,7 @@ const Profile = {
           body: Profile._pendingAvatar,
         });
         if (!res.ok) {
-          throw new Error((await Profile._errText(res)) || 'Could not upload the photo.');
+          throw new Error((await Profile._errText(res)) || globalThis.PlatformI18n.t("account:could_not_upload_the_photo_33a052b3"));
         }
       }
 
@@ -1072,16 +1069,16 @@ const Profile = {
           // open with the user's other edits intact.
           if (pinned) return { fieldErrors };
         }
-        throw new Error((body && body.error) || 'Could not save your profile.');
+        throw new Error((body && body.error) || globalThis.PlatformI18n.t("account:could_not_save_your_profile_2453823b"));
       }
 
       await Profile._refreshUser();
       Profile._dismissSheet();
       Profile._render();
-      if (window.PlatformUI) PlatformUI.toast('Profile saved');
+      if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("account:profile_saved_ea278dbc"));
       return { ok: true };
     } catch (err) {
-      return { error: (err && err.message) || 'Could not save your profile.' };
+      return { error: (err && err.message) || globalThis.PlatformI18n.t("account:could_not_save_your_profile_2453823b") };
     }
   },
 

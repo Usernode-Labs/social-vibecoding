@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #platform-side-panel — the panel beside a running app, on a desktop-width
  * window. ./controller.ts carries the whole of why and how; this is its
@@ -87,6 +90,7 @@ const DISC = `inline-flex ${DISC_BOX}`;
 const BACK = `hidden ${DISC_BOX}`;
 
 export function SidePanel(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(sidePanelStore);
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
@@ -111,63 +115,56 @@ export function SidePanel(): ReactNode {
     >
       <SidePanelDivider panelRef={rootRef} shown={s.open && !!s.frameSrc} />
       <div className="side-panel-head flex items-center gap-2 shrink-0">
-        <Button
+        <Localized element={<Button
           id="side-panel-back"
           ref={backRef}
           type="button"
           variant="unstyled"
           size="icon"
           ink="none"
-          className={BACK}
-          aria-label="Back"
-          title="Back"
+          className={BACK} aria-label={catalogText("core:back_76900f1b")} title={catalogText("core:back_76900f1b")}
           onClick={() => controller.back()}
         >
           <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
-        </Button>
+        </Button>} messages={{"aria-label":"core:back_76900f1b","title":"core:back_76900f1b"}} />
         <h2
           id="side-panel-title"
           className="flex-1 min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-zinc-100"
         >
           {s.title}
         </h2>
-        <Button
+        <Localized element={<Button
           id="side-panel-expand"
           type="button"
           variant="unstyled"
           size="icon"
           ink="none"
-          className={DISC}
-          aria-label="Open full width, leaving the app"
-          title="Open full width"
+          className={DISC} aria-label={catalogText("core:open_full_width_leaving_the_app_68a05b96")} title={catalogText("core:open_full_width_7b6b61dc")}
           onClick={() => controller.expand()}
         >
           <ExpandIcon className="w-4 h-4" aria-hidden="true" />
-        </Button>
-        <Button
+        </Button>} messages={{"aria-label":"core:open_full_width_leaving_the_app_68a05b96","title":"core:open_full_width_7b6b61dc"}} />
+        <Localized element={<Button
           id="side-panel-close"
           type="button"
           variant="unstyled"
           size="icon"
           ink="none"
-          className={DISC}
-          aria-label="Close panel"
-          title="Close panel"
+          className={DISC} aria-label={catalogText("core:close_panel_a600b900")} title={catalogText("core:close_panel_a600b900")}
           onClick={() => controller.close()}
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
-        </Button>
+        </Button>} messages={{"aria-label":"core:close_panel_a600b900","title":"core:close_panel_a600b900"}} />
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {s.frameSrc ? (
-          <iframe
+          <Localized element={<iframe
             key={s.frameKey}
             ref={frameRef}
-            id="side-panel-frame"
-            title="Side panel"
+            id="side-panel-frame" title={catalogText("core:side_panel_c28cdd98")}
             src={s.frameSrc}
             className={s.loading ? 'side-panel-frame' : 'side-panel-frame side-panel-frame-ready'}
-          />
+          />} messages={{"title":"core:side_panel_c28cdd98"}} />
         ) : null}
         <div
           id="side-panel-loading"
@@ -204,6 +201,7 @@ function SidePanelDivider({
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
 }): ReactNode {
+  useUiLanguage();
   const [range, setRange] = useState<WidthRange | null>(null);
   const drag = useRef<{ id: number; startX: number; startW: number; width: number | null } | null>(null);
 
@@ -296,17 +294,15 @@ function SidePanelDivider({
   };
 
   return (
-    <div
+    <Localized element={<div
       id="side-panel-divider"
       className="side-panel-divider"
       role="separator"
       aria-orientation="vertical"
-      aria-controls="platform-side-panel"
-      aria-label="Resize panel"
+      aria-controls="platform-side-panel" aria-label={catalogText("core:resize_panel_c9fe271c")}
       aria-valuenow={range ? range.now : undefined}
       aria-valuemin={range ? range.min : undefined}
-      aria-valuemax={range ? range.max : undefined}
-      title="Drag to resize · double-click to reset"
+      aria-valuemax={range ? range.max : undefined} title={catalogText("core:drag_to_resize_double_click_to_reset_dc94eb66")}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -314,6 +310,6 @@ function SidePanelDivider({
       onPointerCancel={endDrag}
       onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
-    ></div>
+    ></div>} messages={{"aria-label":"core:resize_panel_c9fe271c","title":"core:drag_to_resize_double_click_to_reset_dc94eb66"}} />
   );
 }

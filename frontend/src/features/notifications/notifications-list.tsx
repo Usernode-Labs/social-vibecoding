@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * The pinned Saved + Invites sections of the Notifications screen — what is
  * left of the bell drawer's contents (#1191 slice 6, conversion 2) after the
@@ -144,7 +148,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     if (!touch || !el || !ui?.swipeActions) return;
     ui.swipeActions(el, {
       actions: [{
-        label: 'Unsave',
+        get label() { return tr("community:unsave_51883bd8"); },
         handler: () => controller()?._unsave(view.messageId),
       }],
     });
@@ -181,7 +185,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
               feature. */}
           <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
           <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
-          {' in '}
+          <Message id="community:in_2eb9d0d3" />
           <span>{view.appName}</span>
           {' · '}
           <time title={view.timeTitle}>{view.time}</time>
@@ -195,9 +199,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           e.stopPropagation();
           controller()?._unsave(view.messageId);
         }}
-      >
-        Unsave
-      </button>
+      ><Message id="community:unsave_51883bd8" /></button>
     </div>
   );
 }
@@ -216,11 +218,11 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
     ui.swipeActions(el, {
       actions: [
         {
-          label: 'Accept',
+          get label() { return tr("community:accept_89713b9c"); },
           handler: () => controller()?._acceptInvite(view.appId, view.slug, view.kind),
         },
         {
-          label: 'Decline',
+          get label() { return tr("community:decline_a2d285b3"); },
           destructive: true,
           handler: () => controller()?._declineInvite(view.appId, view.kind),
         },
@@ -266,9 +268,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             e.stopPropagation();
             controller()?._acceptInvite(view.appId, view.slug, view.kind);
           }}
-        >
-          Accept
-        </Button>
+        ><Message id="community:accept_89713b9c" /></Button>
         <button
           data-invite-decline={view.appId}
           data-invite-kind={view.kind}
@@ -277,9 +277,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             e.stopPropagation();
             controller()?._declineInvite(view.appId, view.kind);
           }}
-        >
-          Decline
-        </button>
+        ><Message id="community:decline_a2d285b3" /></button>
       </div>
       </div>
     </div>
@@ -317,6 +315,7 @@ export function visibleInvites<T>(invites: T[], expanded: boolean): { shown: T[]
  * duplication #1191 slice 6 existed to end.
  */
 export function NotificationsPinnedSections(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(notificationsStore) as {
     saved: SavedView[] | null;
     invites: InviteView[] | null;
@@ -337,9 +336,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
-          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Saved
-          </div>
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500"><Message id="community:saved_b5c120b3" /></div>
         ) : null}
         {saved.map((s) => (
           <Saved key={s.messageId} view={s} touch={state.touch} />
@@ -354,9 +351,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0">
         {invites.length ? (
-          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Invites
-          </div>
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500"><Message id="community:invites_f212a985" /></div>
         ) : null}
         {shownInvites.map((inv) => (
           <Invite key={`${inv.kind}:${inv.appId}`} view={inv} touch={state.touch} />
@@ -372,7 +367,7 @@ export function NotificationsPinnedSections(): ReactNode {
                 setInvitesOpen(true);
               }}
             >
-              {`Show ${hiddenInvites} more ${hiddenInvites === 1 ? 'invite' : 'invites'}`}
+              <LocalizedValue render={() => (tr("community:message_022310188e11", { value1: hiddenInvites, count: hiddenInvites }))} />
             </button>
           </div>
         ) : null}

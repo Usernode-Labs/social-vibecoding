@@ -41,7 +41,7 @@ export function endedLabel(iso, now = new Date()) {
     ? { month: 'long' }
     : { month: 'long', year: 'numeric' };
   try {
-    return `ended ${date.toLocaleDateString(undefined, opts)}`;
+    return globalThis.PlatformI18n.t("apps:ended_value1_92d6547f", { value1: date.toLocaleDateString(globalThis.PlatformI18n.getLanguage(), opts) });
   } catch (_) {
     return null;
   }
@@ -62,13 +62,13 @@ export function initialOf(name) {
 export function resultLine(season) {
   const parts = [];
   if (season.winner) {
-    parts.push(`${season.winner.name} won with ${Number(season.winner.points || 0).toLocaleString()} pts`);
+    parts.push(globalThis.PlatformI18n.t("apps:value1_won_with_value2_pts_658cf64f", { value1: season.winner.name, value2: Number(season.winner.points || 0).toLocaleString(globalThis.PlatformI18n.getLanguage()) }));
   } else {
-    parts.push('No winner was recorded');
+    parts.push(globalThis.PlatformI18n.t("apps:no_winner_was_recorded_5350b73b"));
   }
   const you = season.you;
-  if (you && you.rank) parts.push(`you finished #${you.rank}`);
-  else if (you) parts.push('you took part');
+  if (you && you.rank) parts.push(globalThis.PlatformI18n.t("apps:you_finished_value1_b842119a", { value1: you.rank }));
+  else if (you) parts.push(globalThis.PlatformI18n.t("apps:you_took_part_72cf40d6"));
   return parts.join(' · ');
 }
 
@@ -77,26 +77,26 @@ export function historyView(state, now = new Date()) {
   if (!state.mounted) return { kind: 'none' };
   if (state.status === 'loading') return { kind: 'loading' };
   if (state.status === 'error') {
-    return { kind: 'error', message: 'Couldn’t load past seasons. Try again later.' };
+    return { kind: 'error', get message() { return globalThis.PlatformI18n.t("apps:couldn_t_load_past_seasons_try_again_later_e10d7f6a"); } };
   }
   const seasons = Array.isArray(state.seasons) ? state.seasons : [];
   if (!seasons.length) {
     return {
       kind: 'empty',
-      message: 'No season has ended yet. When one does, its winners are listed here.',
+      get message() { return globalThis.PlatformI18n.t("apps:no_season_has_ended_yet_when_one_does_its_winner_c3902236"); },
     };
   }
   return {
     kind: 'seasons',
     seasons: seasons.map((s) => ({
       key: String(s.season_id),
-      name: String(s.name || 'Season'),
+      name: String(s.name || globalThis.PlatformI18n.t("apps:season_bad2b893")),
       ended: endedLabel(s.ends_at, now),
       winnerInitial: s.winner ? initialOf(s.winner.name) : null,
       line: resultLine(s),
       events: (Array.isArray(s.events) ? s.events : []).map((ev) => ({
         key: String(ev.id),
-        label: ev.winner ? `${ev.name} · ${ev.winner.name}` : `${ev.name} · no winner`,
+        label: ev.winner ? `${ev.name} · ${ev.winner.name}` : globalThis.PlatformI18n.t("apps:value1_no_winner_73b8fc1b", { value1: ev.name }),
       })),
     })),
   };

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { memo, useRef, useState } from 'react';
 
 import {
@@ -52,6 +56,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
  */
 
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
+  useUiLanguage();
   const image = attachment.contentType.startsWith('image/');
   const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
   // #3286: a plain tap opens the picture in the app's own viewer, which has
@@ -62,7 +67,7 @@ function Attachment({ attachment }: { attachment: ConversationMessage['attachmen
       {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
       {viewing ? <ImageViewer src={attachment.url} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
       <div className="min-w-0 flex-1"><a className="font-medium truncate block" href={attachment.url} download>{attachment.name}</a><span>{fileSize(attachment.size)}</span></div>
-      {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">Preview</a> : null}
+      {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer"><Message id="community:preview_324b134f" /></a> : null}
     </div>
   );
 }
@@ -100,6 +105,7 @@ export const MessageRow = memo(function MessageRow({
   /** The message a link pointed at — flashed once (#2387). */
   focused?: boolean;
 }) {
+  useUiLanguage();
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
@@ -128,7 +134,7 @@ export const MessageRow = memo(function MessageRow({
     if (!content || content === message.content) { setEditing(false); return; }
     setBusy(true); setNotice('');
     try { await edit(message.id, content); setEditing(false); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Your edit wasn’t saved.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:your_edit_wasn_t_saved_5897b50f")); }
     finally { setBusy(false); }
   }
 
@@ -137,7 +143,7 @@ export const MessageRow = memo(function MessageRow({
   async function toggle(emoji: string) {
     setPicker(null); setNotice('');
     try { await react(message.id, emoji); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update the reaction.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:couldn_t_update_the_reaction_af4f9cd0")); }
   }
 
   // A pick from the full picker ADDS the reaction (and makes it recent); it
@@ -151,42 +157,42 @@ export const MessageRow = memo(function MessageRow({
   async function save() {
     setNotice('');
     try { await toggleSaved(message.id); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update your saved messages.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:couldn_t_update_your_saved_messages_5f3dc26f")); }
   }
 
   async function blockSender() {
     if (mine || !message.sender.id) return;
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
     const ok = await confirmAction({
-      title: `Block ${senderName(message.sender)}?`,
-      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
-      confirmLabel: 'Block',
+      get title() { return tr("community:block_value1_04a7c0e9", { value1: senderName(message.sender) }); },
+      get message() { return tr("community:their_messages_in_shared_chats_and_app_discussio_2202f540"); },
+      get confirmLabel() { return tr("community:block_211d0bb8"); },
       danger: true,
     });
     if (!ok) return;
     setBusy(true); setNotice('');
     try { await setUserBlocked(message.sender.id, true); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:couldn_t_block_this_person_3b1a2797")); }
     finally { setBusy(false); }
   }
 
   async function remove() {
     const ok = await confirmAction({
-      title: 'Delete this message?',
-      message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
-      confirmLabel: 'Delete',
+      get title() { return tr("community:delete_this_message_8f6e2cda"); },
+      get message() { return tr("community:everyone_will_see_message_deleted_in_its_place_t_03e4f87d"); },
+      get confirmLabel() { return tr("community:delete_e2d0a549"); },
       danger: true,
     });
     if (!ok) return;
     setNotice('');
     try { await deleteMessage(message.id); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t delete this message.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:couldn_t_delete_this_message_ac227630")); }
   }
 
   async function unread() {
     setNotice('');
-    try { await markUnread(message.id); toast('Marked unread'); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t mark this unread.'); }
+    try { await markUnread(message.id); toast(tr("community:marked_unread_43523e7b")); }
+    catch (err) { setNotice(err instanceof Error ? err.message : tr("community:couldn_t_mark_this_unread_7dafe955")); }
   }
 
   function startEdit() { setEditValue(message.content); setEditing(true); }
@@ -194,33 +200,33 @@ export const MessageRow = memo(function MessageRow({
   // The ⋯ menu, by whose message it is and what kind of chat it sits in.
   const items: MenuItem[] = [];
   if (canThread) {
-    items.push({ key: 'thread', label: message.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => openThread(message.id) });
+    items.push({ key: 'thread', label: message.thread ? tr("community:view_thread_9c322305") : tr("community:reply_in_thread_a2367327"), icon: ThreadIcon, onSelect: () => openThread(message.id) });
   }
-  if (mine && message.content && live) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: startEdit });
+  if (mine && message.content && live) items.push({ key: 'edit', get label() { return tr("community:edit_message_9757ccd5"); }, icon: PencilSquareIcon, onSelect: startEdit });
   if (message.content) {
-    items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, 'Message text copied'); } });
+    items.push({ key: 'copy', get label() { return tr("community:copy_text_b0ac9cea"); }, icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, tr("community:message_text_copied_1ff13082")); } });
   }
   items.push({
-    key: 'link', label: 'Copy link to message', icon: LinkIcon,
-    onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), 'Link copied'); },
+    key: 'link', get label() { return tr("community:copy_link_to_message_fc091522"); }, icon: LinkIcon,
+    onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), tr("community:link_copied_d12860c2")); },
   });
-  if (!mine && !inThread) items.push({ key: 'unread', label: 'Mark unread', icon: EnvelopeIcon, onSelect: () => { void unread(); } });
+  if (!mine && !inThread) items.push({ key: 'unread', get label() { return tr("community:mark_unread_54b4e3f2"); }, icon: EnvelopeIcon, onSelect: () => { void unread(); } });
   if (mine) {
-    items.push({ key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
+    items.push({ key: 'delete', get label() { return tr("community:delete_message_87e7176a"); }, icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
   } else {
     items.push({
-      key: 'report', label: 'Report message', icon: FlagIcon, separated: true,
-      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from ${senderName(message.sender)}`, userId: message.sender.id }),
+      key: 'report', get label() { return tr("community:report_message_0a1e3c52"); }, icon: FlagIcon, separated: true,
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, get label() { return tr("community:message_from_value1_63fc2d77", { value1: senderName(message.sender) }); }, userId: message.sender.id }),
     });
     if (message.sender.id) {
-      items.push({ key: 'block', label: `Block ${senderName(message.sender)}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
+      items.push({ key: 'block', get label() { return tr("community:block_value1_8d3f3e35", { value1: senderName(message.sender) }); }, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
 
   // The phone's sheet: the bar's Reply and Save first, then the same menu.
   const sheetItems: MenuItem[] = [
-    { key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => setReply(scope, message) },
-    { key: 'save', label: message.saved ? 'Unsave' : 'Save', icon: message.saved ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => { void save(); } },
+    { key: 'reply', get label() { return tr("community:reply_c253f451"); }, icon: ReplyArrowIcon, onSelect: () => setReply(scope, message) },
+    { key: 'save', label: message.saved ? tr("community:unsave_51883bd8") : tr("community:save_1509f561"), icon: message.saved ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => { void save(); } },
     ...items,
   ];
 
@@ -241,12 +247,12 @@ export const MessageRow = memo(function MessageRow({
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
   const body = message.deleted ? (
-    <p className="messages-deleted">Message deleted</p>
+    <p className="messages-deleted"><Message id="community:message_deleted_7e94d4b9" /></p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p><LocalizedValue render={() => (message.reply?.deleted ? tr("community:message_deleted_7e94d4b9") : plainText(message.reply?.content || '') || tr("community:attachment_040d2b36"))} /></p></button> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+        <div className="messages-edit"><Localized element={<textarea ref={editRef} aria-label={catalogText("community:edit_message_9757ccd5")} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} />} messages={{"aria-label":"community:edit_message_9757ccd5"}} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}><Message id="community:save_1509f561" /></button><button type="button" onClick={() => setEditing(false)}><Message id="community:cancel_19766ed6" /></button></div></div>
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).
@@ -337,16 +343,16 @@ export const MessageRow = memo(function MessageRow({
   // NO "sending…" (#2907). A message in flight says so by being faded
   // (app.css), which changes no line's height; the word came and went in a
   // line of its own on a continuation row and moved the transcript twice.
-  const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}>edited</span> : null;
+  const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}><Message id="community:edited_1fb9f409" /></span> : null;
 
   // A send that failed says so under its text, with the two things to do
   // about it: send it again (the same idempotency key, so never twice) or
   // drop it. Its own line, not the header's: three more words beside the
   // name and time wrapped the header on a phone.
   const failedNote = message.failed ? <div className="messages-message-meta messages-message-failed-note" role="status">
-    <span className="text-red-700 dark:text-red-400">Not sent</span>
-    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>Retry</button> : null}
-    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
+    <span className="text-red-700 dark:text-red-400"><Message id="community:not_sent_cd5f943d" /></span>
+    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}><Message id="community:retry_942087cc" /></button> : null}
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}><Message id="community:discard_eb1a70e3" /></button> : null}
   </div> : null;
 
   return (
@@ -355,7 +361,7 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className="min-w-0 flex-1">
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender)}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender)}</span>{message.sender.bot ? <span className="messages-bot-badge"><Message id="community:ai_11fb682b" /></span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}

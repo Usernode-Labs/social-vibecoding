@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n/runtime";
 /**
  * Challenge illustrations: the one place that turns a template's
  * `illustration` slug into an image path and a tile tone.
@@ -55,17 +56,17 @@ interface IllustrationEntry {
 }
 
 export const ILLUSTRATIONS: Record<string, IllustrationEntry> = {
-  'try-three-apps': { label: 'Try three apps', tone: 'mint' },
-  'make-a-proposal': { label: 'Make a proposal on an app', tone: 'mint' },
-  'block-production': { label: 'Take part in block production', tone: 'mint' },
-  'ten-minutes-in-apps': { label: 'Spend ten minutes a week in apps', tone: 'blue' },
-  'proposal-accepted': { label: 'Get a proposal accepted', tone: 'purple' },
-  'useful-feedback': { label: 'Send useful feedback', tone: 'orange' },
-  'network-participation': { label: 'Turn on network participation', tone: 'orange' },
-  'identity-level-one': { label: 'Prove who you are: level one', tone: 'blue' },
-  'identity-level-two': { label: 'Prove who you are: level two', tone: 'orange' },
-  'connect-participants': { label: 'Connect with other participants', tone: 'mint' },
-  'invite-to-network': { label: 'Invite someone to the network', tone: 'blue' },
+  'try-three-apps': { get label() { return tr("core:try_three_apps_3b72d5bf"); }, tone: 'mint' },
+  'make-a-proposal': { get label() { return tr("core:make_a_proposal_on_an_app_7ea80f60"); }, tone: 'mint' },
+  'block-production': { get label() { return tr("core:take_part_in_block_production_98757687"); }, tone: 'mint' },
+  'ten-minutes-in-apps': { get label() { return tr("core:spend_ten_minutes_a_week_in_apps_2d2a02f2"); }, tone: 'blue' },
+  'proposal-accepted': { get label() { return tr("core:get_a_proposal_accepted_70cb262a"); }, tone: 'purple' },
+  'useful-feedback': { get label() { return tr("core:send_useful_feedback_c3bcbc19"); }, tone: 'orange' },
+  'network-participation': { get label() { return tr("core:turn_on_network_participation_5d047e01"); }, tone: 'orange' },
+  'identity-level-one': { get label() { return tr("core:prove_who_you_are_level_one_521eaa94"); }, tone: 'blue' },
+  'identity-level-two': { get label() { return tr("core:prove_who_you_are_level_two_da16989e"); }, tone: 'orange' },
+  'connect-participants': { get label() { return tr("core:connect_with_other_participants_9dc0fb1c"); }, tone: 'mint' },
+  'invite-to-network': { get label() { return tr("core:invite_someone_to_the_network_2b981a10"); }, tone: 'blue' },
 };
 
 export interface ResolvedIllustration {

@@ -1,3 +1,7 @@
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -213,14 +217,12 @@ function GuidedSetup({ id, href, product }: { id: string; href: string; product:
         rel="noopener noreferrer"
         className="flex min-h-[44px] w-full items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-4 text-[0.9375rem] font-semibold text-violet-700 dark:text-violet-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
       >
-        {`Ask ${product} to guide you`}
+        <LocalizedValue render={() => (tr("settings:ask_value1_to_guide_you_b132d0a2", { value1: product }))} />
       </a>
       <p className="mt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-        {`Opens a new ${product} chat with your connector details already filled in.`}
+        <LocalizedValue render={() => (tr("settings:opens_a_new_value1_chat_with_your_connector_deta_a2cee7e2", { value1: product }))} />
       </p>
-      <h5 className="mt-5 mb-3 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500">
-        Or follow the steps
-      </h5>
+      <h5 className="mt-5 mb-3 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500"><Message id="settings:or_follow_the_steps_8cef3762" /></h5>
     </>
   );
 }
@@ -236,9 +238,7 @@ export function ConnectorsSection() {
   return (
     <div data-settings-section="connectors" className="hidden">
       <div id="connectors-section">
-        <SectionHeading title="Connectors">
-          Work on your apps from a Claude or ChatGPT chat, without using your daily credits.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:connectors_c3d2e79e")}><Message id="settings:work_on_your_apps_from_a_claude_or_chatgpt_chat__33b9393e" /></SectionHeading>} messages={{"title":"settings:connectors_c3d2e79e"}} />
         {/*
             "MCP server URL", not "Connector URL" (#2370). The second was ours
             alone. The field this gets pasted into is labelled "Remote MCP
@@ -246,9 +246,7 @@ export function ConnectorsSection() {
             command is `codex mcp add` — so the label is the words the reader
             will be hunting for on the other side.
         */}
-        <Label className="mb-1" htmlFor="connector-url">
-          MCP server URL
-        </Label>
+        <Label className="mb-1" htmlFor="connector-url"><Message id="settings:mcp_server_url_4f5aff03" /></Label>
         <div className="flex gap-2 mb-2">
           {/*
               `mono` as a PROP, not className: this field writes `font-mono`
@@ -269,15 +267,12 @@ export function ConnectorsSection() {
               what makes that legible again (#1290). The min-heights are a
               no-op on desktop, where the button already measures ~38px.
           */}
-          <Button
+          <Localized element={<Button
             id="connector-url-copy"
             type="button"
             layout="shrink"
-            className="min-h-[44px] sm:min-h-[36px]"
-            aria-label="Copy the MCP server URL"
-          >
-            Copy
-          </Button>
+            className="min-h-[44px] sm:min-h-[36px]" aria-label={catalogText("settings:copy_the_mcp_server_url_c3c7a36a")}
+          ><Message id="settings:copy_e21f935f" /></Button>} messages={{"aria-label":"settings:copy_the_mcp_server_url_c3c7a36a"}} />
         </div>
         {/*
             What the address IS, for the reader who has never met "MCP". Opens
@@ -286,23 +281,15 @@ export function ConnectorsSection() {
             needs a second one.
         */}
         <details className="group/help">
-          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 px-1 text-[0.9375rem] font-medium text-violet-700 dark:text-violet-400">
-            How it works
-            <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/help:rotate-90" />
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 px-1 text-[0.9375rem] font-medium text-violet-700 dark:text-violet-400"><Message id="settings:how_it_works_9c870aa6" /><ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/help:rotate-90" />
           </summary>
           <div className="space-y-2 px-1 pb-2">
-            <p className={BODY}>
-              This is Homeroom&rsquo;s address for AI apps. MCP is the standard they use to connect.
-            </p>
-            <p className={BODY}>
-              Paste it into Claude, ChatGPT or another app that supports MCP. That app can then see your Homeroom apps, file requests and open proposals for you.
-            </p>
-            <p className={BODY}>
-              You need no password or key. The app opens a Homeroom page, and you approve it there.
-            </p>
+            <p className={BODY}><Message id="settings:this_is_homeroom_s_address_for_ai_apps_mcp_is_th_2abcc49c" /></p>
+            <p className={BODY}><Message id="settings:paste_it_into_claude_chatgpt_or_another_app_that_22e7a490" /></p>
+            <p className={BODY}><Message id="settings:you_need_no_password_or_key_the_app_opens_a_home_cf820b9c" /></p>
           </div>
         </details>
-        <h4 className={`${GROUP_LABEL} mt-4`}>Choose your app</h4>
+        <h4 className={`${GROUP_LABEL} mt-4`}><Message id="settings:choose_your_app_fc4d005d" /></h4>
         <GroupedList className="mx-0">
         {/*
             #1289: the one-line "Settings → Connectors, paste the URL" summary
@@ -320,7 +307,7 @@ export function ConnectorsSection() {
             these are pre-connection instructions, so the reader by
             definition hasn't told us which product they're in yet.
         */}
-        <Disclosure title="Claude.ai" hint="6 steps &middot; also sets up Claude Code">
+        <Localized element={<Disclosure title={catalogText("settings:claude_ai_bb601f44")} hint="6 steps &middot; also sets up Claude Code">
           {/*
               #1607: the walkthroughs below are six and seven steps, and the
               complaint was that reading them is the cost. These two links hand
@@ -362,9 +349,7 @@ export function ConnectorsSection() {
               who are ALREADY connected to this page for these rules, and nobody
               opens a row called "6 steps" to fix a prompt.
           */}
-          <h5 className="mt-5 px-3 pb-2 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500">
-            If you use Claude Code
-          </h5>
+          <h5 className="mt-5 px-3 pb-2 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500"><Message id="settings:if_you_use_claude_code_6c26af2f" /></h5>
           <div className="overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800">
           {/*
               #1218: the Name field in Claude.ai's "Add custom connector" dialog
@@ -380,11 +365,9 @@ export function ConnectorsSection() {
               existing connector keeps working and only a NEW one needs the
               name below.
           */}
-          <Disclosure nested title="Name it homeroom" hint="So the ready-made rules match">
-            <p className={BODY}>
-              Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Homeroom ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code> as well, so the capitalised form is safe. It also still covers <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, the names this connector went by before, so a connector you added earlier keeps working and there is nothing to redo. Anything else needs the rules rewritten, which the field under &ldquo;Stop the permission prompts&rdquo; does for you.
-            </p>
-          </Disclosure>
+          <Localized element={<Disclosure title={catalogText("settings:name_it_homeroom_42ff8871")} nested hint="So the ready-made rules match">
+            <p className={BODY}><RichMessage id="settings:sentence_cdbc93e8132c" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>]} /></p>
+          </Disclosure>} messages={{"title":"settings:name_it_homeroom_42ff8871"}} />
           {/*
               #1218 follow-up: the same three rules land in two different files
               depending on where Claude Code is running, and a single block
@@ -402,10 +385,8 @@ export function ConnectorsSection() {
               cannot classify — and a page whose script has not run yet — shows
               everything rather than nothing.
           */}
-          <Disclosure nested id="connector-prompt-help" title="Stop the permission prompts" hint="If Claude Code asks before every call">
-              <p className={`${BODY} mb-3`}>
-                Claude Code asks you to approve <em>every</em> connector call by default, including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
-              </p>
+          <Localized element={<Disclosure nested id="connector-prompt-help" title={catalogText("settings:stop_the_permission_prompts_19971518")} hint="If Claude Code asks before every call">
+              <p className={`${BODY} mb-3`}><RichMessage id="settings:sentence_76da5837840c" components={[<em />, <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>]} /></p>
               {/*
                   #1222 follow-up: the page used to present the blocks below with
                   no statement of whose job it is to apply them, and a reasonable
@@ -415,17 +396,11 @@ export function ConnectorsSection() {
                   can put them there. Saying so is not an apology; it is what
                   turns "why is this still asking me" into a task with an owner.
               */}
-              <p className={`${BODY} mb-3`}>
-                Homeroom cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either, which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
-              </p>
+              <p className={`${BODY} mb-3`}><Message id="settings:homeroom_cannot_switch_this_on_for_you_permissio_d1f0171e" /></p>
 
               <div id="connector-case-cc-local" className="mb-3">
-                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                  Claude Code on your own machine
-                </h5>
-                <p className={`${BODY} mb-2`}>
-                  Add this to your own <code className="font-mono text-zinc-600 dark:text-zinc-400">~/.claude/settings.json</code>. It is the only one of the three that covers <strong className="font-semibold text-zinc-600 dark:text-zinc-400">every</strong> repo at once, including repos Homeroom never made.
-                </p>
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1"><Message id="settings:claude_code_on_your_own_machine_2a8f58a3" /></h5>
+                <p className={`${BODY} mb-2`}><RichMessage id="settings:sentence_e77ef7973c26" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">~/.claude/settings.json</code>, <strong className="font-semibold text-zinc-600 dark:text-zinc-400" />]} /></p>
                 {/*
                     #1290: Copy lives in a header row ABOVE the block, not beside
                     it. Beside it, the button was a flex sibling of a twelve-line
@@ -439,65 +414,47 @@ export function ConnectorsSection() {
                     thing that distinguishes them.
                 */}
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">~/.claude/settings.json</span>
-                  <Button
+                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate"><Message id="settings:claude_settings_json_048ae0e8" /></span>
+                  <Localized element={<Button
                     id="connector-allow-rules-copy"
                     type="button"
                     layout="shrink"
                     variant="outline"
                     size="xsText"
                     ink="muted"
-                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                    aria-label="Copy the allow rules for your personal settings file"
-                  >
-                    Copy
-                  </Button>
+                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]" aria-label={catalogText("settings:copy_the_allow_rules_for_your_personal_settings__fd51b3f9")}
+                  ><Message id="settings:copy_e21f935f" /></Button>} messages={{"aria-label":"settings:copy_the_allow_rules_for_your_personal_settings__fd51b3f9"}} />
                 </div>
                 <pre id="connector-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
               </div>
 
               <div id="connector-case-cc-web" className="mb-3">
-                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                  Claude Code on the web
-                </h5>
-                <p className={`${BODY} mb-2`}>
-                  A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out, so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Homeroom writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
-                </p>
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1"><Message id="settings:claude_code_on_the_web_d6d69420" /></h5>
+                <p className={`${BODY} mb-2`}><RichMessage id="settings:sentence_216d4918b72b" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code>]} /></p>
                 {/* Same header row as the case above — see the note there. */}
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">.claude/settings.json</span>
-                  <Button
+                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate"><Message id="settings:claude_settings_json_f27ac6f3" /></span>
+                  <Localized element={<Button
                     id="connector-repo-allow-rules-copy"
                     type="button"
                     layout="shrink"
                     variant="outline"
                     size="xsText"
                     ink="muted"
-                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                    aria-label="Copy the allow rules to commit in your app repo"
-                  >
-                    Copy
-                  </Button>
+                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]" aria-label={catalogText("settings:copy_the_allow_rules_to_commit_in_your_app_repo_afed5d7b")}
+                  ><Message id="settings:copy_e21f935f" /></Button>} messages={{"aria-label":"settings:copy_the_allow_rules_to_commit_in_your_app_repo_afed5d7b"}} />
                 </div>
                 {/* `mb-2` was the flex row's; the trailing paragraph still needs it. */}
                 <pre id="connector-repo-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-2">{PERSONAL_ALLOW_RULES}</pre>
-                <p className={BODY}>
-                  Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled. If you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
-                </p>
+                <p className={BODY}><Message id="settings:claude_code_may_still_ask_you_to_trust_the_works_8e702718" /></p>
               </div>
 
               <div id="connector-case-chat" className="mb-3">
-                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                  Claude.ai chat, ChatGPT and Codex
-                </h5>
-                <p className={BODY}>
-                  Nothing to do. You approve the connector once when you connect it and it does not ask again per call. The two blocks above are Claude Code&rsquo;s file format and have no effect in those products.
-                </p>
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1"><Message id="settings:claude_ai_chat_chatgpt_and_codex_ee498996" /></h5>
+                <p className={BODY}><Message id="settings:nothing_to_do_you_approve_the_connector_once_whe_0224c499" /></p>
               </div>
 
-              <p className={BODY}>
-                Reads only. Anything that acts on your behalf (filing a request, opening or advancing a proposal) still asks every time, on purpose.
-              </p>
+              <p className={BODY}><Message id="settings:reads_only_anything_that_acts_on_your_behalf_fil_110d7bca" /></p>
               {/*
                   The blocks above cover `homeroom` and `Homeroom`, plus the
                   pre-rename `usernode` and `Usernode`. Any other spelling — a
@@ -517,28 +474,23 @@ export function ConnectorsSection() {
                   everyone and the only one that is right before script runs.
               */}
               <div className="mt-3">
-                <Label className="mb-1" htmlFor="connector-name-spelling">
-                  Connector registered under a different name?
-                </Label>
-                <p className={`${BODY} mb-2`}>
-                  Check what your tools are called in your session, the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
-                </p>
-                <Input
+                <Label className="mb-1" htmlFor="connector-name-spelling"><Message id="settings:connector_registered_under_a_different_name_e9f4b7d3" /></Label>
+                <p className={`${BODY} mb-2`}><Message after={" "} id="settings:check_what_your_tools_are_called_in_your_session_cf71ed97" /><code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code><Message after={" "} id="settings:if_it_is_not_9ae48f5c" /><code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code><Message before={" "} after={" "} id="settings:or_7175517a" /><code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code><Message id="settings:type_it_here_and_both_blocks_above_are_rewritten_0ef764f1" /></p>
+                <Localized element={<Input
                   id="connector-name-spelling"
                   type="text"
                   spellCheck="false"
                   width="flex"
-                  mono
-                  placeholder="homeroom"
-                />
+                  mono placeholder={catalogText("settings:homeroom_fc537467")}
+                />} messages={{"placeholder":"settings:homeroom_fc537467"}} />
               </div>
-          </Disclosure>
+          </Disclosure>} messages={{"title":"settings:stop_the_permission_prompts_19971518"}} />
           </div>
-        </Disclosure>
-        <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+        </Disclosure>} messages={{"title":"settings:claude_ai_bb601f44"}} />
+        <Localized element={<Disclosure title={catalogText("settings:chatgpt_50a41229")} hint="7 steps &middot; needs Developer mode">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
-        </Disclosure>
+        </Disclosure>} messages={{"title":"settings:chatgpt_50a41229"}} />
         {/*
             #1892: only the two chat products were covered, and the feedback
             was that Codex and "other agents" had nothing. Two more blocks,
@@ -571,17 +523,11 @@ export function ConnectorsSection() {
             tests/connector-setup-codex.test.js, so it cannot drift from what
             /mcp actually does.
         */}
-        <Disclosure id="connector-setup-codex" title="Codex" hint="3 steps &middot; in the terminal">
+        <Localized element={<Disclosure id="connector-setup-codex" title={catalogText("settings:codex_616efbe9")} hint="3 steps &middot; in the terminal">
             <ol className="space-y-2">
-              <SetupStep n={1} title="Add the server.">
-                From a terminal where Codex is installed, run the command below, or add the config entry below it to <code className="font-mono text-zinc-600 dark:text-zinc-400">~/.codex/config.toml</code> by hand, which is all the command does. Keep the name <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>: Codex prefixes the tools with the server name you give it, and it is the name the rest of this page assumes.
-              </SetupStep>
-              <SetupStep n={2} title="Sign in.">
-                Run <code className="font-mono text-zinc-600 dark:text-zinc-400">codex mcp login homeroom</code>. Codex opens your browser on Homeroom&rsquo;s consent page; approve it there and Codex keeps the token itself. There is no client ID or secret to enter. <code className="font-mono text-zinc-600 dark:text-zinc-400">codex mcp list</code> then shows the server, and the tools are there in your next Codex session.
-              </SetupStep>
-              <SetupStep n={3} title="Know the limit today.">
-                Codex takes that approval on a <code className="font-mono text-zinc-600 dark:text-zinc-400">127.0.0.1</code> callback, and the hosted Homeroom connector accepts sign-in callbacks only on Claude&rsquo;s and ChatGPT&rsquo;s own hosts, so on the hosted platform the sign-in is refused with <code className="font-mono text-zinc-600 dark:text-zinc-400">invalid_redirect_uri</code>. It works against a Homeroom you run yourself in local-development mode. A Codex session without the connector can still build a Homeroom work order: it pushes the branch, and the ChatGPT chat that holds the connector submits it.
-              </SetupStep>
+              <Localized element={<SetupStep n={1} title={catalogText("settings:add_the_server_29c1bdc4")}><RichMessage id="settings:sentence_8cf5dfc4330f" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">~/.codex/config.toml</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>]} /></SetupStep>} messages={{"title":"settings:add_the_server_29c1bdc4"}} />
+              <Localized element={<SetupStep n={2} title={catalogText("settings:sign_in_6c52846f")}><RichMessage id="settings:sentence_4c3aa9a74dc8" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">codex mcp login homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">codex mcp list</code>]} /></SetupStep>} messages={{"title":"settings:sign_in_6c52846f"}} />
+              <Localized element={<SetupStep n={3} title={catalogText("settings:know_the_limit_today_49a3a62c")}><RichMessage id="settings:sentence_24154f1b4aca" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">127.0.0.1</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">invalid_redirect_uri</code>]} /></SetupStep>} messages={{"title":"settings:know_the_limit_today_49a3a62c"}} />
             </ol>
             {/*
                 Below the list, not inside step 1: a <pre> is block content and
@@ -591,59 +537,43 @@ export function ConnectorsSection() {
             */}
             <div className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800">
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">terminal</span>
-                <Button
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate"><Message id="settings:terminal_4e686af7" /></span>
+                <Localized element={<Button
                   id="connector-codex-add-copy"
                   type="button"
                   layout="shrink"
                   variant="outline"
                   size="xsText"
                   ink="muted"
-                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                  aria-label="Copy the Codex command that adds the Homeroom server"
-                >
-                  Copy
-                </Button>
+                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]" aria-label={catalogText("settings:copy_the_codex_command_that_adds_the_homeroom_se_601d0cd4")}
+                ><Message id="settings:copy_e21f935f" /></Button>} messages={{"aria-label":"settings:copy_the_codex_command_that_adds_the_homeroom_se_601d0cd4"}} />
               </div>
               <pre id="connector-codex-add" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-3">{CODEX_ADD_COMMAND}</pre>
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">~/.codex/config.toml</span>
-                <Button
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate"><Message id="settings:codex_config_toml_d49eedb3" /></span>
+                <Localized element={<Button
                   id="connector-codex-config-copy"
                   type="button"
                   layout="shrink"
                   variant="outline"
                   size="xsText"
                   ink="muted"
-                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                  aria-label="Copy the Codex config.toml entry for the Homeroom server"
-                >
-                  Copy
-                </Button>
+                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]" aria-label={catalogText("settings:copy_the_codex_config_toml_entry_for_the_homeroo_69d9490c")}
+                ><Message id="settings:copy_e21f935f" /></Button>} messages={{"aria-label":"settings:copy_the_codex_config_toml_entry_for_the_homeroo_69d9490c"}} />
               </div>
               <pre id="connector-codex-config" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{CODEX_CONFIG_TOML}</pre>
             </div>
-        </Disclosure>
-        <Disclosure id="connector-setup-generic" title="Another agent" hint="4 steps &middot; any MCP client">
+        </Disclosure>} messages={{"title":"settings:codex_616efbe9"}} />
+        <Localized element={<Disclosure id="connector-setup-generic" title={catalogText("settings:another_agent_aa212b60")} hint="4 steps &middot; any MCP client">
             <ol className="space-y-2">
-              <SetupStep n={1} title="Give it the connector URL as a Streamable HTTP server.">
-                That is the URL in the field above: a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code> that takes JSON-RPC over POST. There is no SSE or stdio variant, and nothing to run on your own machine.
-              </SetupStep>
-              <SetupStep n={2} title="Let it discover OAuth.">
-                Auth is OAuth 2.1 with PKCE and dynamic client registration. A client finds the authorization server through <code className="font-mono text-zinc-600 dark:text-zinc-400">/.well-known/oauth-protected-resource/mcp</code> on the same origin, registers itself as a public client (no client ID or secret to enter), and asks for the scopes <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode:apps:read</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode:proposals:write</code>. You approve those once on Homeroom&rsquo;s consent page.
-              </SetupStep>
-              <SetupStep n={3} title="Check where its callback goes.">
-                Homeroom registers a client only if its OAuth callback is on <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.com</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">chatgpt.com</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">openai.com</code> (or a host the deployment&rsquo;s operator has added). A callback on localhost, which command-line clients use, is accepted only by a Homeroom running in local-development mode. A refused registration answers <code className="font-mono text-zinc-600 dark:text-zinc-400">invalid_redirect_uri</code>, and that is a limit on the platform side rather than something to fix in the client.
-              </SetupStep>
-              <SetupStep n={4} title="Name it homeroom and read your tool list.">
-                Tools arrive as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code> in most clients, or as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__claude_ai_homeroom__whoami</code> where the client namespaces by product. The part between the first and last <code className="font-mono text-zinc-600 dark:text-zinc-400">__</code> is the server name the permission rules are written for; if it is not one of the spellings they cover, type it into the field under Claude.ai &rarr; &ldquo;Stop the permission prompts&rdquo;. Have the agent call <code className="font-mono text-zinc-600 dark:text-zinc-400">get_connector_guidance</code> first: it returns the connector&rsquo;s full operating charter.
-              </SetupStep>
+              <Localized element={<SetupStep n={1} title={catalogText("settings:give_it_the_connector_url_as_a_streamable_http_s_e92952d7")}><RichMessage id="settings:sentence_66c2186340e3" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>]} /></SetupStep>} messages={{"title":"settings:give_it_the_connector_url_as_a_streamable_http_s_e92952d7"}} />
+              <Localized element={<SetupStep n={2} title={catalogText("settings:let_it_discover_oauth_5c8bd160")}><RichMessage id="settings:sentence_0c8a1a9348db" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">/.well-known/oauth-protected-resource/mcp</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode:apps:read</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode:proposals:write</code>]} /></SetupStep>} messages={{"title":"settings:let_it_discover_oauth_5c8bd160"}} />
+              <Localized element={<SetupStep n={3} title={catalogText("settings:check_where_its_callback_goes_f4cd31ec")}><Message after={" "} id="settings:homeroom_registers_a_client_only_if_its_oauth_ca_14795c48" /><code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.com</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">chatgpt.com</code><Message before={" "} after={" "} id="settings:or_7175517a" /><code className="font-mono text-zinc-600 dark:text-zinc-400">openai.com</code><Message before={" "} after={" "} id="settings:or_a_host_the_deployment_s_operator_has_added_a__11f5153a" /><code className="font-mono text-zinc-600 dark:text-zinc-400">invalid_redirect_uri</code><Message id="settings:and_that_is_a_limit_on_the_platform_side_rather__629e883f" /></SetupStep>} messages={{"title":"settings:check_where_its_callback_goes_f4cd31ec"}} />
+              <Localized element={<SetupStep n={4} title={catalogText("settings:name_it_homeroom_and_read_your_tool_list_3508e77e")}><RichMessage id="settings:sentence_9f46e2b2566b" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__claude_ai_homeroom__whoami</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">__</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">get_connector_guidance</code>]} /></SetupStep>} messages={{"title":"settings:name_it_homeroom_and_read_your_tool_list_3508e77e"}} />
             </ol>
-        </Disclosure>
+        </Disclosure>} messages={{"title":"settings:another_agent_aa212b60"}} />
         </GroupedList>
-        <p className={GROUP_NOTE}>
-          Whichever you use, approve the connection in the browser page that opens.
-        </p>
+        <p className={GROUP_NOTE}><Message id="settings:whichever_you_use_approve_the_connection_in_the__c45d7d44" /></p>
         {/*
             Read-only, and empty until Settings._renderConnectors() fills it:
             rendering it populated would mismatch hydration, and there is
@@ -656,9 +586,7 @@ export function ConnectorsSection() {
             reference, and dapp.json reads it as rendered text.
         */}
         <p id="connector-hint-status" className="hidden px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400"></p>
-        <h4 className={`${GROUP_LABEL} mt-6`}>
-          Connected
-        </h4>
+        <h4 className={`${GROUP_LABEL} mt-6`}><Message id="settings:connected_22965568" /></h4>
         <div id="connectors-list" className="space-y-2">
           <ConnectorsList />
         </div>
@@ -679,9 +607,7 @@ export function LinkedAccountsSection() {
   return (
     <div data-settings-section="linked-accounts" className="hidden">
       <div id="github-link-section">
-        <SectionHeading title="Linked accounts">
-          We pay for these credits, so a connected account helps us stop one person making many.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:linked_accounts_feda46a4")}><Message id="settings:we_pay_for_these_credits_so_a_connected_account__7c75a067" /></SectionHeading>} messages={{"title":"settings:linked_accounts_feda46a4"}} />
         <div id="github-link-body" className="space-y-2">
           <SocialIdentity />
         </div>
@@ -702,11 +628,7 @@ export function LinkedAccountsSection() {
             _socialIdentityTierView's `note`) and is absent where credits do
             not depend on a connected account at all.
         */}
-        <p id="github-link-scope" className={GROUP_NOTE}>
-          Homeroom asks for
-          <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{' no access to your repositories '}</strong>
-          and stores no provider token. Connecting confirms you control the account. It is not proof of unique humanity.
-        </p>
+        <p id="github-link-scope" className={GROUP_NOTE}><RichMessage id="settings:sentence_6873935fe23d" components={[<strong className="font-semibold text-zinc-600 dark:text-zinc-400" />]} /></p>
         <StatusLine id="github-link-status" size="xs" />
       </div>
     </div>
@@ -745,9 +667,7 @@ export function BuildVenueSection() {
           the thing you came to the page for.
       */}
       <div id="dev-flow-pref-section">
-        <SectionHeading title="Where changes get built">
-          Choose where Homeroom builds your changes, or let it ask each time.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:where_changes_get_built_1664c33e")}><Message id="settings:choose_where_homeroom_builds_your_changes_or_let_5a4dd746" /></SectionHeading>} messages={{"title":"settings:where_changes_get_built_1664c33e"}} />
         {/*
             A plain `<select>`, not `@/components/ui/select`: the primitive's
             `default` variant is the same field box but at `border-zinc-300`
@@ -760,17 +680,16 @@ export function BuildVenueSection() {
             deployment has no external flows — a deployment without them can
             still express "always build on Homeroom" vs "ask me".
         */}
-        <select
-          id="settings-dev-flow"
-          aria-label="Where changes get built"
+        <Localized element={<select
+          id="settings-dev-flow" aria-label={catalogText("settings:where_changes_get_built_1664c33e")}
           className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
           defaultValue=""
         >
-          <option value="">Ask me every time</option>
-          <option value="platform">Build on Homeroom</option>
-          <option value="claude-code">Claude Code (claude.ai/code)</option>
-          <option value="codex">Codex (chatgpt.com/codex)</option>
-        </select>
+          <option value=""><Message id="settings:ask_me_every_time_9a391560" /></option>
+          <option value="platform"><Message id="settings:build_on_homeroom_20450952" /></option>
+          <option value="claude-code"><Message id="settings:claude_code_claude_ai_code_591748ed" /></option>
+          <option value="codex"><Message id="settings:codex_chatgpt_com_codex_b4e103a2" /></option>
+        </select>} messages={{"aria-label":"settings:where_changes_get_built_1664c33e"}} />
         <div id="settings-dev-flow-status" className="text-xs mt-2 hidden"></div>
       </div>
     </div>

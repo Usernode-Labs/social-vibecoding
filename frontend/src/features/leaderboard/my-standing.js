@@ -26,7 +26,7 @@ export const REVEAL_KEY = 'sv:profile_tokens_revealed';
 // interval is server config the client never sees, hence "every few hours".
 // The standings pane's empty hint says the same sentence.
 export const STANDINGS_UPDATE_NOTE =
-  'Standings update every few hours; points from challenges you just finished appear at the next update.';
+  () => globalThis.PlatformI18n.t("apps:standings_update_every_few_hours_points_from_cha_59f9b6c4");
 
 export const myStandingStore = createStore({
   /** 'idle' | 'loading' | 'ready' | 'none' — `none` is signed out or no season. */
@@ -51,7 +51,7 @@ async function fetchData(path) {
   }
   const body = await res.json();
   if (body && typeof body === 'object' && 'success' in body) {
-    if (body.success === false) throw new Error('API error');
+    if (body.success === false) throw new Error(globalThis.PlatformI18n.t("apps:api_error_b2ff3a8f"));
     return body.data;
   }
   return body;
@@ -90,18 +90,18 @@ export function standingView(state) {
   const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
   if (standingIsEmpty(r) && pending <= 0) return null;
   return {
-    season: r.season_name || 'This season',
+    season: r.season_name || globalThis.PlatformI18n.t("apps:this_season_2f34b355"),
     sub: r.total_participants
-      ? `${Number(r.total_participants).toLocaleString()} taking part`
-      : 'Your standing',
+      ? globalThis.PlatformI18n.t("apps:value1_taking_part_16f8dbd2", { value1: Number(r.total_participants).toLocaleString(globalThis.PlatformI18n.getLanguage()) })
+      : globalThis.PlatformI18n.t("apps:your_standing_12e847da"),
     rank: r.rank ? `#${Number(r.rank)}` : '–',
-    detail: `${points.toLocaleString()} pts · you`,
-    pending: pending > 0 ? `${pending.toLocaleString()} pts earned, not in the standings yet` : null,
-    note: STANDINGS_UPDATE_NOTE,
+    detail: globalThis.PlatformI18n.t("apps:value1_pts_you_ce94bc4b", { value1: points.toLocaleString(globalThis.PlatformI18n.getLanguage()) }),
+    pending: pending > 0 ? globalThis.PlatformI18n.t("apps:value1_pts_earned_not_in_the_standings_yet_8e992f4c", { value1: pending.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : null,
+    note: STANDINGS_UPDATE_NOTE(),
     breakdown: breakdownRows(state.breakdown).map((row, i) => ({
       key: `${row.label}:${i}`,
       label: row.label,
-      points: `${Number(row.points || 0).toLocaleString()} pts`,
+      points: globalThis.PlatformI18n.t("apps:value1_pts_7157c665", { value1: Number(row.points || 0).toLocaleString(globalThis.PlatformI18n.getLanguage()) }),
     })),
     token: tokenView(r, state.revealed),
   };

@@ -1,41 +1,42 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-language-loading>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Connect Homeroom</title>
+  <title data-message="authorization:connect_homeroom_91812306">Connect Homeroom</title>
   <link rel="stylesheet" href="/css/connect-authorize.css">
+  <script src="/shell/assets/authorization-i18n.js" defer></script>
   <script src="/js/connect-authorize.js" defer></script>
 </head>
 <body>
   <main>
-    <h1>Connect Homeroom</h1>
+    <h1 data-message="authorization:connect_homeroom_91812306">Connect Homeroom</h1>
 
     <section id="entry">
-      <p id="entry-message">Start the connection from Claude or ChatGPT and
+      <p id="entry-message" data-message="authorization:start_the_connection_from_claude_or_chatgpt_and__b5786bc6">Start the connection from Claude or ChatGPT and
         the approval details will open here automatically.</p>
     </section>
 
     <section id="confirmation" hidden>
       <p id="intro"></p>
       <dl>
-        <dt>Requested by</dt><dd id="confirm-client"></dd>
+        <dt data-message="authorization:requested_by_9199a054">Requested by</dt><dd id="confirm-client"></dd>
         <!-- The redirect origin is the load-bearing fact on this page: a
              client NAME is chosen by whoever registered it, an origin is
              not. It is styled as the primary identity for that reason. -->
-        <dt>Sends you back to</dt><dd id="confirm-origin" class="origin"></dd>
-        <dt>Your account</dt><dd id="confirm-user"></dd>
+        <dt data-message="authorization:sends_you_back_to_0efcdc17">Sends you back to</dt><dd id="confirm-origin" class="origin"></dd>
+        <dt data-message="authorization:your_account_dbb5f637">Your account</dt><dd id="confirm-user"></dd>
       </dl>
 
-      <h2>This will be allowed to</h2>
+      <h2 data-message="authorization:this_will_be_allowed_to_bbac413e">This will be allowed to</h2>
       <ul id="confirm-scopes"></ul>
 
-      <p class="warning">Approve only if you just started this connection
+      <p class="warning" data-message="authorization:approve_only_if_you_just_started_this_connection_d70a27aa">Approve only if you just started this connection
         yourself from Claude or ChatGPT, and you recognise the address above.</p>
 
       <div class="actions">
-        <button id="approve" type="button">Allow</button>
-        <button id="reject" type="button" class="secondary">Cancel</button>
+        <button id="approve" type="button" data-message="authorization:allow_e213c161">Allow</button>
+        <button id="reject" type="button" class="secondary" data-message="authorization:cancel_19766ed6">Cancel</button>
       </div>
     </section>
 

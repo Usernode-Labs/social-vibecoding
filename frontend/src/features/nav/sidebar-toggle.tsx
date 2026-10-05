@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * #sidebar-toggle — collapse and expand the desktop rail.
  *
@@ -81,6 +84,7 @@ const TOGGLE_CLASS = 'platform-sidebar-toggle shrink-0 w-7 h-7 items-center just
   + ' hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]';
 
 export function SidebarToggle() {
+  useUiLanguage();
   // IT ALWAYS RENDERS, and app.css decides whether it is seen (#2718 review).
   //
   // This read `useVisibility('platform-tabs')` and returned null on a route
@@ -99,13 +103,13 @@ export function SidebarToggle() {
   const { railOpen, peek } = useStoreState(navStore);
 
   return (
-    <button
+    <LocalizedDynamic element={<button
       id="sidebar-toggle"
       type="button"
       className={TOGGLE_CLASS}
       aria-pressed={railOpen ? 'true' : 'false'}
       aria-controls="platform-tabs"
-      aria-label={railOpen ? 'Hide sidebar' : 'Show sidebar'}
+      aria-label={railOpen ? tr("core:hide_sidebar_d1db29eb") : tr("core:show_sidebar_9e8197ce")}
       // A PRESS ENDS ANY PEEK. Docking the rail makes the peek moot, and
       // left standing it would come straight back as an overlay the moment
       // the next press folded the rail under the same pointer.
@@ -117,6 +121,6 @@ export function SidebarToggle() {
       onPointerLeave={peek ? leavePeekByMouse : undefined}
     >
       <SidebarIcon className="w-5 h-5" />
-    </button>
+    </button>} resolve={() => ({ "aria-label": railOpen ? tr("core:hide_sidebar_d1db29eb") : tr("core:show_sidebar_9e8197ce") })} />
   );
 }

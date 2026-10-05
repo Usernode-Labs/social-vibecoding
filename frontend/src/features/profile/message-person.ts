@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * "Message" on a person's page: find or start the direct conversation with
  * them and open it (#messages/<id>).
@@ -42,20 +43,20 @@ export function exactMatch<T extends { username: string }>(users: T[], handle: s
 
 export async function messagePerson(username: string): Promise<MessagePersonResult> {
   const handle = String(username || '').trim().replace(/^@/, '');
-  if (!handle) return { ok: false, message: 'There is nobody here to message.' };
+  if (!handle) return { ok: false, get message() { return tr("account:there_is_nobody_here_to_message_6b33f4e3"); } };
   let user: { id: number; username: string } | null = null;
   try {
     user = exactMatch(await api.searchUsers(handle), handle);
   } catch {
-    return { ok: false, message: 'Couldn’t reach Messages. Check your connection and try again.' };
+    return { ok: false, get message() { return tr("account:couldn_t_reach_messages_check_your_connection_an_8e0f2e7f"); } };
   }
-  if (!user || !user.id) return { ok: false, message: `You can’t message @${handle}.` };
+  if (!user || !user.id) return { ok: false, get message() { return tr("account:you_can_t_message_value1_591d0cd5", { value1: handle }); } };
   try {
     await createDirect(user.id);
     return { ok: true };
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
-    if (status === 404) return { ok: false, message: `You can’t message @${handle} right now.` };
-    return { ok: false, message: 'Couldn’t start this conversation. Try again.' };
+    if (status === 404) return { ok: false, get message() { return tr("account:you_can_t_message_value1_right_now_cfefa0e3", { value1: handle }); } };
+    return { ok: false, get message() { return tr("account:couldn_t_start_this_conversation_try_again_bcea807c"); } };
   }
 }

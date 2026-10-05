@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "Friends" on your OWN profile (#2386) — private to you, and it says so.
  *
@@ -78,8 +81,8 @@ export function FriendsSection({
   heading?: boolean;
 }): ReactNode {
   return (
-    <section id="profile-friends" className="mt-2" aria-label="Friends, visible only to you">
-      {heading ? <SectionHeader>Friends</SectionHeader> : null}
+    <Localized element={<section id="profile-friends" className="mt-2" aria-label={catalogText("account:friends_visible_only_to_you_ea2294a3")}>
+      {heading ? <SectionHeader><Message id="account:friends_bd104d1b" /></SectionHeader> : null}
       {/* #3048: find people by username and add them right here. */}
       <FriendSearch lists={view} />
       {view.incoming.length ? (
@@ -105,9 +108,7 @@ export function FriendsSection({
                     disabled={pendingId === row.id}
                     className="disabled:opacity-60"
                     onClick={() => { void Profile.answerFriendRequest(row.id, true); }}
-                  >
-                    Accept
-                  </Button>
+                  ><Message id="account:accept_89713b9c" /></Button>
                   <Button
                     type="button"
                     size="sm"
@@ -117,9 +118,7 @@ export function FriendsSection({
                     disabled={pendingId === row.id}
                     className="disabled:opacity-60"
                     onClick={() => { void Profile.answerFriendRequest(row.id, false); }}
-                  >
-                    Decline
-                  </Button>
+                  ><Message id="account:decline_a2d285b3" /></Button>
                 </div>
               )}
             />
@@ -147,14 +146,14 @@ export function FriendsSection({
           id="profile-friends-empty"
           className={`rounded-2xl ${PLANE_FILL} p-4 text-center text-sm text-zinc-500 dark:text-zinc-400`}
         >
-          {view.loaded
-            ? 'No friends yet. Find someone by username above.'
-            : 'Your friends could not be loaded. Check your connection and try again.'}
+          <LocalizedValue render={() => (view.loaded
+            ? tr("account:no_friends_yet_find_someone_by_username_above_e40cba40")
+            : tr("account:your_friends_could_not_be_loaded_check_your_conn_c75a6a1a"))} />
         </div>
       )}
       {view.outgoing?.length ? (
         <>
-          <p className="px-4 pt-4 pb-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">Sent requests</p>
+          <p className="px-4 pt-4 pb-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400"><Message id="account:sent_requests_874d69d6" /></p>
           <GroupedList id="profile-friend-sent" className="mx-0" tone="plane">
             {view.outgoing.map((row) => (
               <ListRow
@@ -176,9 +175,7 @@ export function FriendsSection({
                     disabled={pendingId === row.id}
                     className="shrink-0 disabled:opacity-60"
                     onClick={() => { void Profile.cancelFriendRequest(row.id); }}
-                  >
-                    Cancel
-                  </Button>
+                  ><Message id="account:cancel_19766ed6" /></Button>
                 )}
               />
             ))}
@@ -188,9 +185,7 @@ export function FriendsSection({
       {status ? (
         <p role="alert" className="px-4 pt-2 text-sm text-red-700 dark:text-red-400">{status}</p>
       ) : null}
-      <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Only you can see your friends. Nobody else sees this list or how long it is.
-      </p>
-    </section>
+      <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:only_you_can_see_your_friends_nobody_else_sees_t_2c18fb7b" /></p>
+    </section>} messages={{"aria-label":"account:friends_visible_only_to_you_ea2294a3"}} />
   );
 }

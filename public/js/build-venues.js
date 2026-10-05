@@ -68,8 +68,8 @@
   };
 
   var GROUPS = [
-    { id: 'in-chat', label: 'In this chat' },
-    { id: 'elsewhere', label: 'Somewhere else' },
+    { id: 'in-chat', get label() { return globalThis.PlatformI18n.t("core:in_this_chat_9f8ea144"); } },
+    { id: 'elsewhere', get label() { return globalThis.PlatformI18n.t("core:somewhere_else_6fc42e1e"); } },
   ];
 
   function escapeHtml(value) {
@@ -99,7 +99,7 @@
   var VENUES = [
     {
       id: 'usernode-openrouter',
-      label: 'Homeroom · OpenRouter',
+      get label() { return globalThis.PlatformI18n.t("core:homeroom_openrouter_8e3c38ff"); },
       group: 'in-chat',
       mechanism: { kind: 'backend', backend: 'codex_openrouter' },
       // The OpenRouter backend is a flagged, allowlisted beta and needs a
@@ -109,22 +109,22 @@
       defaultable: true,
       chat: true,
       blurb: 'The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.',
-      cta: 'Use OpenRouter',
+      get cta() { return globalThis.PlatformI18n.t("core:use_openrouter_60ee6ab8"); },
     },
     {
       id: 'usernode-claude',
-      label: 'Homeroom · Claude',
+      get label() { return globalThis.PlatformI18n.t("core:homeroom_claude_512e3c8d"); },
       group: 'in-chat',
       mechanism: { kind: 'backend', backend: 'claude_code' },
       requires: null,
       defaultable: true,
       chat: true,
-      blurb: 'Homeroom runs the turns right here, on your daily Claude credits, or your own Anthropic key once they run out.',
-      cta: 'Use Claude',
+      get blurb() { return globalThis.PlatformI18n.t("core:homeroom_runs_the_turns_right_here_on_your_daily_e9653277"); },
+      get cta() { return globalThis.PlatformI18n.t("core:use_claude_02df3778"); },
     },
     {
       id: 'local',
-      label: 'Your computer · Homeroom session',
+      get label() { return globalThis.PlatformI18n.t("core:your_computer_homeroom_session_20ccf0bd"); },
       group: 'in-chat',
       mechanism: { kind: 'lease', hash: SETTINGS_HASHES.localTool },
       // TWO flags, both required (#1281). The deployment has to offer the
@@ -134,34 +134,34 @@
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
       defaultable: true,
       chat: true,
-      blurb: 'The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
-      cta: 'Set up the Homeroom CLI',
+      get blurb() { return globalThis.PlatformI18n.t("core:the_homeroom_cli_runs_this_session_s_turns_on_yo_2d7f4080"); },
+      get cta() { return globalThis.PlatformI18n.t("core:set_up_the_homeroom_cli_c372ae48"); },
     },
     {
       id: 'web-claude-code',
-      label: 'Claude Code on the web',
+      get label() { return globalThis.PlatformI18n.t("core:claude_code_on_the_web_d6d69420"); },
       group: 'elsewhere',
       mechanism: { kind: 'flow', flow: 'claude-code', hash: SETTINGS_HASHES.connector },
       requires: 'externalFlowsAvailable',
       defaultable: true,
       chat: false,
-      blurb: 'Homeroom writes the work order; Claude Code on the web builds it on your own Claude plan and pushes to your fork. Homeroom opens the pull request and imports it as a proposal. No credits, no API key.',
-      cta: 'Use Claude Code',
+      get blurb() { return globalThis.PlatformI18n.t("core:homeroom_writes_the_work_order_claude_code_on_th_bcfafe7c"); },
+      get cta() { return globalThis.PlatformI18n.t("core:use_claude_code_a718dfe3"); },
     },
     {
       id: 'web-codex',
-      label: 'Codex on the web',
+      get label() { return globalThis.PlatformI18n.t("core:codex_on_the_web_114daa2d"); },
       group: 'elsewhere',
       mechanism: { kind: 'flow', flow: 'codex', hash: SETTINGS_HASHES.connector },
       requires: 'externalFlowsAvailable',
       defaultable: true,
       chat: false,
       blurb: 'The same hand-off for Codex on the web and the ChatGPT plan you already pay for. Homeroom guides you through linking GitHub, forking and submitting.',
-      cta: 'Use Codex',
+      get cta() { return globalThis.PlatformI18n.t("core:use_codex_0574bcfa"); },
     },
     {
       id: 'own-tools-pr',
-      label: 'Your computer · your own tools',
+      get label() { return globalThis.PlatformI18n.t("core:your_computer_your_own_tools_2e3454ab"); },
       group: 'elsewhere',
       mechanism: { kind: 'import', hash: SETTINGS_HASHES.localTool },
       // Importing writes to the app's branches, so it is collaborator-only
@@ -170,8 +170,8 @@
       // Both exceptions, stated once. See the header.
       defaultable: false,
       chat: false,
-      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in with “Import Feature from a PR”.',
-      cta: 'How importing a PR works',
+      get blurb() { return globalThis.PlatformI18n.t("core:build_it_however_you_like_cursor_zed_vim_any_age_c784606e"); },
+      get cta() { return globalThis.PlatformI18n.t("core:how_importing_a_pr_works_570aa795"); },
     },
   ];
 
@@ -229,10 +229,10 @@
     if (!v || s.source !== 'cli_handoff' || s.localAgent
         || (s.buildVenue && venue(s.buildVenue))) return v;
     var label = s.externalAgent === 'codex' ? 'Codex'
-      : s.externalAgent === 'claude-code' ? 'Claude Code' : 'External agent';
+      : s.externalAgent === 'claude-code' ? globalThis.PlatformI18n.t("core:claude_code_246ef8c1") : globalThis.PlatformI18n.t("core:external_agent_41883df4");
     return Object.assign({}, v, {
       label: label,
-      blurb: 'Authored with ' + label + ' on your computer.',
+      blurb: globalThis.PlatformI18n.t("core:authored_with_f189f20a") + label + globalThis.PlatformI18n.t("core:on_your_computer_e4de983f"),
     });
   }
 
@@ -296,9 +296,9 @@
   }
 
   function webVerb(kind) {
-    if (kind === 'session') return 'Continue this session with ';
-    if (kind === 'proposal') return 'Continue this proposal with ';
-    return 'Start new work with ';
+    if (kind === 'session') return globalThis.PlatformI18n.t("core:continue_this_session_with_b7349cc0");
+    if (kind === 'proposal') return globalThis.PlatformI18n.t("core:continue_this_proposal_with_a5cb5b1b");
+    return globalThis.PlatformI18n.t("core:start_new_work_with_fd4536f1");
   }
 
   // The consequence sentence behind the verb. `paused` changes ONLY this
@@ -308,20 +308,13 @@
   function webNote(kind, paused) {
     if (kind === 'session') {
       return paused
-        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch, '
-          + 'the code lands on this session\'s branch, and its preview and checks catch up when you reopen the '
-          + 'session. The agent\'s own conversation happens there, not in this transcript.'
-        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch, '
-          + 'the code lands here, and its preview and checks rebuild. The agent\'s own conversation happens there, '
-          + 'not in this transcript.';
+        ? globalThis.PlatformI18n.t("core:it_starts_from_this_session_s_latest_commit_and__945420cd")
+        : globalThis.PlatformI18n.t("core:it_starts_from_this_session_s_latest_commit_and__047f7446");
     }
     if (kind === 'proposal') {
-      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal, submitting '
-        + 'clears the votes it has already collected and re-runs its checks. The agent\'s own conversation happens '
-        + 'there, not in this transcript.';
+      return globalThis.PlatformI18n.t("core:it_starts_from_this_proposal_s_latest_commit_and_737002fd");
     }
-    return 'Homeroom prepares a task for the web agent; what it builds comes back as its own proposal, not as more '
-      + 'turns in this session.';
+    return globalThis.PlatformI18n.t("core:homeroom_prepares_a_task_for_the_web_agent_what__a790046e");
   }
 
   // What picking this venue does to THIS chat, in one clause. The
@@ -333,17 +326,17 @@
     var s = state || {};
     if (id === 'own-tools-pr') {
       if (mode === 'switch') {
-        return 'Starts separate work. This chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.';
+        return globalThis.PlatformI18n.t("core:starts_separate_work_this_chat_stays_where_it_is_2bf4cfa3");
       }
       if (mode === 'blocked') {
-        return 'Costs no credits: you build it yourself and import the pull request. There is no Homeroom chat for this one, and it can’t be your default.';
+        return globalThis.PlatformI18n.t("core:costs_no_credits_you_build_it_yourself_and_impor_99da23ad");
       }
-      return 'No Homeroom chat for this one. You build it, then import the pull request. It can’t be your default.';
+      return globalThis.PlatformI18n.t("core:no_homeroom_chat_for_this_one_you_build_it_then__ae68e1c0");
     }
     if (v.group === 'in-chat') {
       return mode === 'switch'
-        ? 'Keeps this chat, this branch and this proposal. Only where the turns run changes.'
-        : 'The work happens in this chat.';
+        ? globalThis.PlatformI18n.t("core:keeps_this_chat_this_branch_and_this_proposal_on_274731bf")
+        : globalThis.PlatformI18n.t("core:the_work_happens_in_this_chat_5719699d");
     }
     // Web hand-off: what it does depends on where this session is, which
     // is the whole of #1071.
@@ -366,7 +359,7 @@
     if (v.group === 'elsewhere' && v.mechanism.kind === 'flow') {
       return webVerb(webTargetKind(state || {})) + v.label;
     }
-    return 'Move to ' + v.label;
+    return globalThis.PlatformI18n.t("core:move_to_8e23a49a") + v.label;
   }
 
   // The offered rows, filtered and in group order. `state`:
@@ -427,7 +420,7 @@
       if (mode === 'blocked' && v.id === 'usernode-claude') {
         out.unavailable = true;
         out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
+          || globalThis.PlatformI18n.t("core:today_s_ai_credits_are_spent_they_reset_a984aa86") + dailyResetWhen() + '.';
       }
       return out;
     });
@@ -503,8 +496,8 @@
   var FALLBACK_NOTES = {
     // #2568 retired `not_in_beta` with the gradual-rollout allowlist: there
     // is no limited beta to be outside of any more.
-    flag_off: 'Your default is Homeroom · OpenRouter, but this deployment has it turned off, so this session is building in Homeroom · Claude.',
-    model_unavailable: 'Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.',
+    get flag_off() { return globalThis.PlatformI18n.t("core:your_default_is_homeroom_openrouter_but_this_dep_da88610c"); },
+    get model_unavailable() { return globalThis.PlatformI18n.t("core:your_default_is_homeroom_openrouter_but_no_model_e8a137c8"); },
     no_credential: 'Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.',
   };
 
@@ -512,7 +505,7 @@
   // the bundle's window.ResetTime, or the UTC boundary where it is absent.
   function dailyResetWhen() {
     var RT = typeof window !== 'undefined' && window.ResetTime;
-    return RT ? RT.resetWhen('daily') : 'at midnight UTC';
+    return RT ? RT.resetWhen('daily') : globalThis.PlatformI18n.t("core:at_midnight_utc_85c316cd");
   }
 
   // hasOwnProperty, not a bare lookup: `reason` arrives on the 201 body, so
@@ -566,30 +559,30 @@
   var CHOICES = [
     {
       id: 'on-platform',
-      label: 'On-Platform',
+      get label() { return globalThis.PlatformI18n.t("core:on_platform_604d2fcb"); },
       icon: 'home',
       venue: null,
       matches: ['usernode-claude', 'usernode-openrouter'],
       requires: null,
-      blurb: 'Homeroom runs the turns right here, in this chat, on your daily AI credits or your own key once they run out.',
+      get blurb() { return globalThis.PlatformI18n.t("core:homeroom_runs_the_turns_right_here_in_this_chat__03c19bf6"); },
     },
     {
       id: 'web-agent',
-      label: 'Claude or Codex WebUI',
+      get label() { return globalThis.PlatformI18n.t("core:claude_or_codex_webui_17f1bb5b"); },
       icon: 'globe',
       venue: 'web-claude-code',
       matches: ['web-claude-code', 'web-codex'],
       requires: 'externalFlowsAvailable',
-      blurb: 'Homeroom writes the work order and Claude Code or Codex builds it on the plan you already pay for, then pushes back here. You pick which of the two on the next screen.',
+      get blurb() { return globalThis.PlatformI18n.t("core:homeroom_writes_the_work_order_and_claude_code_o_64cda332"); },
     },
     {
       id: 'own-tools',
-      label: 'Your Own Developer Tooling',
+      get label() { return globalThis.PlatformI18n.t("core:your_own_developer_tooling_9d3d0d0d"); },
       icon: 'terminal',
       venue: 'own-tools-pr',
       matches: ['own-tools-pr'],
       requires: 'canCollaborate',
-      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in.',
+      get blurb() { return globalThis.PlatformI18n.t("core:build_it_however_you_like_cursor_zed_vim_any_age_8c216d92"); },
     },
     {
       // Last on purpose, and absent unless the deployment offers the CLI
@@ -597,12 +590,12 @@
       // installed before it can do anything, so it is the rare answer
       // rather than a peer of the other three.
       id: 'cli-bridge',
-      label: 'Local CLI Bridge',
+      get label() { return globalThis.PlatformI18n.t("core:local_cli_bridge_3657732f"); },
       icon: 'link',
       venue: 'local',
       matches: ['local'],
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
-      blurb: 'The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
+      get blurb() { return globalThis.PlatformI18n.t("core:the_homeroom_cli_runs_this_session_s_turns_on_yo_2d7f4080"); },
     },
   ];
 
@@ -660,7 +653,7 @@
       if (mode === 'blocked' && c.id === 'on-platform') {
         out.unavailable = true;
         out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
+          || globalThis.PlatformI18n.t("core:today_s_ai_credits_are_spent_they_reset_a984aa86") + dailyResetWhen() + '.';
       }
       return out;
     });
@@ -699,7 +692,7 @@
         // Never BOTH: "On-Platform ✓ (unavailable)" tells you that you are
         // here and that you cannot be, in one breath. When a row is
         // refusing you, that is the only thing it has to say.
-        label: row.label + (row.unavailable ? ' (unavailable)' : (row.current ? ' ✓' : '')),
+        label: row.label + (row.unavailable ? globalThis.PlatformI18n.t("core:unavailable_33455858") : (row.current ? ' ✓' : '')),
         // #1348: the kit draws the glyph from its own set, in the row's own
         // colour. A name it does not know draws nothing rather than
         // throwing, so a row is never worse than it was without one.
@@ -717,7 +710,7 @@
 
     return kit.menu({
       anchorEl: o.anchorEl || undefined,
-      title: 'Where do you want to work on this?',
+      get title() { return globalThis.PlatformI18n.t("core:where_do_you_want_to_work_on_this_d3cb6ca6"); },
       items: actions,
     });
   }

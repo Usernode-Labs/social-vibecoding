@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#profile-friends-sheet` — Friends, as a card over Me (UI overhaul).
  *
@@ -73,17 +74,16 @@ export function FriendsSheet({ view, pendingId, status }: {
     <div id="profile-friends-root" ref={rootRef} className={ROOT_CLASS}>
       <div id="profile-friends-sheet" ref={panelRef} className={CARD_CLASS}>
         <div className="flex items-center justify-between gap-3 pt-3">
-          <h2 className="text-lg font-bold">Friends</h2>
-          <Button
+          <h2 className="text-lg font-bold"><Message id="account:friends_bd104d1b" /></h2>
+          <Localized element={<Button
             id="profile-friends-close"
             variant="neutral"
             size="sm"
-            ink="neutral"
-            aria-label="Close friends"
+            ink="neutral" aria-label={catalogText("account:close_friends_64e9cddb")}
             onClick={() => Profile._dismissFriends()}
           >
             {TIMES}
-          </Button>
+          </Button>} messages={{"aria-label":"account:close_friends_64e9cddb"}} />
         </div>
         <FriendsSection view={view} pendingId={pendingId} status={status} heading={false} />
       </div>

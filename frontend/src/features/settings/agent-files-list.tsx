@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#agent-files-instructions-list` / `#agent-files-skills-list` — the agent
  * instructions and skills rows, as the only React writer below either host.
@@ -56,6 +60,7 @@ export function agentFileContentId(kind: string, name: string): string {
 }
 
 function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   // A failed load is DISPLAYED like a successful one — the message goes in the
@@ -77,10 +82,10 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
         + (demo ? '&demo=1' : '');
       const r = await fetch(`/api/me/agent-files/content?${qs}`, { credentials: 'same-origin' });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || 'fetch failed');
+      if (!r.ok) throw new Error(j.error || tr("settings:fetch_failed_e2c73a8f"));
       setContent(j.file?.content || '(empty)');
     } catch (err) {
-      setContent('Failed to load: ' + (err as Error).message);
+      setContent(tr("settings:failed_to_load_78b4d5ba") + (err as Error).message);
       setFailed(true);
     }
   };
@@ -90,27 +95,25 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">{file.name}</span>
         <span className="shrink-0 flex items-center gap-2">
-          <span className="text-zinc-500 dark:text-zinc-500">{`${file.kb} KB`}</span>
+          <span className="text-zinc-500 dark:text-zinc-500"><LocalizedValue render={() => (tr("settings:value1_kb_75f92af0", { value1: file.kb }))} /></span>
           <button
             type="button"
             data-role="view"
             className="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 font-medium touch-target-32"
             aria-expanded={open}
             aria-controls={contentId}
-            aria-label={`${open ? 'Hide' : 'View'} ${file.name}`}
+            aria-label={`${open ? tr("settings:hide_ac20a57b") : tr("settings:view_dcc839a4")} ${file.name}`}
             onClick={() => { void toggle(); }}
           >
-            {open ? 'Hide' : 'View'}
+            <LocalizedValue render={() => (open ? tr("settings:hide_ac20a57b") : tr("settings:view_dcc839a4"))} />
           </button>
-          <button
+          <LocalizedDynamic element={<button
             type="button"
             data-role="delete"
             className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium touch-target-32"
-            aria-label={`Delete ${file.name}`}
+            aria-label={tr("settings:delete_value1_264fa406", { value1: file.name })}
             onClick={() => { void controller()?._onAgentFileDelete?.(file.kind, file.name); }}
-          >
-            Delete
-          </button>
+          ><Message id="settings:delete_e2d0a549" /></button>} resolve={() => ({ get "aria-label"() { return tr("settings:delete_value1_264fa406", { value1: file.name }); } })} />
         </span>
       </div>
       {file.description ? (
@@ -135,17 +138,18 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
  * the empty line says) is data.
  */
 export function AgentFilesList({ kind, empty }: { kind: string; empty: string }) {
+  useUiLanguage();
   const state = useStoreState(agentFilesStore);
   if (state.phase === 'idle') return null;
   // The loading and error lines belong to the INSTRUCTIONS host only, exactly
   // as they did before: one fetch feeds both lists, and saying "Loading…"
   // twice for one request reads as two requests.
   if (state.phase === 'loading') {
-    return kind === 'instruction' ? <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null;
+    return kind === 'instruction' ? <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:loading_ba3bbbe1" /></p> : null;
   }
   if (state.phase === 'error') {
     return kind === 'instruction'
-      ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load your agent files.</p>
+      ? <p className="text-xs text-red-700 dark:text-red-400"><Message id="settings:failed_to_load_your_agent_files_09624deb" /></p>
       : null;
   }
   const files = state.files.filter((f) => f.kind === kind);

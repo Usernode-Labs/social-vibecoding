@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { useCallback, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
@@ -56,6 +58,7 @@ function Avatar({ user }: { user: ProfileUser | null }) {
 }
 
 export function ProfileSection() {
+  useUiLanguage();
   const [user, setUser] = useState<ProfileUser | null>(null);
   const sync = useCallback(() => setUser(readUser()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
@@ -69,9 +72,7 @@ export function ProfileSection() {
   return (
     <div data-settings-section="profile" className="hidden">
       <div id="settings-profile-section">
-        <SectionHeading title="Profile">
-          Your name, photo and bio, and whether your public page is on.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:profile_d696a35b")}><Message id="settings:your_name_photo_and_bio_and_whether_your_public__a271f044" /></SectionHeading>} messages={{"title":"settings:profile_d696a35b"}} />
         <a
           id="settings-profile-card"
           href="#profile?edit"
@@ -86,7 +87,7 @@ export function ProfileSection() {
               <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
             ) : null}
           </span>
-          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">Edit profile</span>
+          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0"><Message id="settings:edit_profile_15c4aa13" /></span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
       </div>

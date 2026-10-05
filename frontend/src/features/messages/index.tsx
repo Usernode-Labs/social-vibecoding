@@ -1,3 +1,9 @@
+import { getLanguage } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { openReport } from '../dialogs/report';
 import {
   memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
@@ -180,12 +186,12 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">AI</span> : null}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge"><Message id="community:ai_11fb682b" /></span> : null}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? `${conversation.kind === 'direct' ? 'Message request' : 'Group invitation'} · Tap to review` : conversation.latestSummary || 'No messages yet'}</span>
-          {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}><LocalizedValue render={() => (invited ? tr("community:value1_tap_to_review_ce8274cc", { value1: conversation.kind === 'direct' ? tr("community:message_request_2de564f2") : tr("community:group_invitation_3733873c") }) : conversation.latestSummary || tr("community:no_messages_yet_f42e0f66"))} /></span>
+          {conversation.unreadCount > 0 ? <LocalizedDynamic element={<span className="messages-unread" aria-label={tr("community:value1_unread_1e87d0d9", { value1: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span>} resolve={() => ({ get "aria-label"() { return tr("community:value1_unread_1e87d0d9", { value1: conversation.unreadCount }); } })} /> : null}
         </div>
       </div>
     </a>
@@ -205,9 +211,7 @@ function KindPill({ kind }: { kind: 'agent' }) {
   // Only an agent wears one now (#2783): the channels have a section of
   // their own, headed, so an "App" pill on each of them said it twice.
   return (
-    <span className="messages-kind-pill" data-kind={kind}>
-      Agent
-    </span>
+    <span className="messages-kind-pill" data-kind={kind}><Message id="community:agent_11b39c93" /></span>
   );
 }
 
@@ -245,11 +249,11 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {conversation.latestSummary
+            <LocalizedValue render={() => (conversation.latestSummary
               ? (by ? `@${by}: ${conversation.latestSummary}` : conversation.latestSummary)
-              : 'Everyone on Homeroom'}
+              : tr("community:everyone_on_homeroom_7af179f4"))} />
           </span>
-          {unread ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          {unread ? <LocalizedDynamic element={<span className="messages-unread" aria-label={tr("community:value1_unread_1e87d0d9", { value1: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span>} resolve={() => ({ get "aria-label"() { return tr("community:value1_unread_1e87d0d9", { value1: conversation.unreadCount }); } })} /> : null}
         </div>
       </div>
     </a>
@@ -305,11 +309,11 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {discussion.lastMessage
+            <LocalizedValue render={() => (discussion.lastMessage
               ? (discussion.lastBy ? `@${discussion.lastBy}: ${plainText(discussion.lastMessage)}` : plainText(discussion.lastMessage))
-              : 'No messages yet'}
+              : tr("community:no_messages_yet_f42e0f66"))} />
           </span>
-          {unread ? <span className="messages-unread" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span> : null}
+          {unread ? <LocalizedDynamic element={<span className="messages-unread" aria-label={tr("community:value1_unread_1e87d0d9", { value1: unread })}>{unread > 99 ? '99+' : unread}</span>} resolve={() => ({ get "aria-label"() { return tr("community:value1_unread_1e87d0d9", { value1: unread }); } })} /> : null}
         </div>
       </div>
     </a>
@@ -343,6 +347,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
  * heavier gesture.
  */
 const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
+  useUiLanguage();
   const at = chat.updatedAt || chat.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const [confirming, setConfirming] = useState(false);
@@ -355,29 +360,27 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
       await removeGlobalChatThread(chat.id);
     } catch {
       setRemoving(false);
-      window.PlatformUI?.toast?.('Could not delete this chat.');
+      window.PlatformUI?.toast?.(tr("community:could_not_delete_this_chat_54945b07"));
     }
   }
 
   if (confirming) {
     return (
       <div className="messages-conversation-row messages-row-confirm" data-inbox-agent={chat.id}>
-        <span className="min-w-0 flex-1">Delete this chat?</span>
+        <span className="min-w-0 flex-1"><Message id="community:delete_this_chat_848dad9b" /></span>
         <button
           type="button"
           className="messages-row-confirm-cancel"
           disabled={removing}
           onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </button>
+        ><Message id="community:cancel_19766ed6" /></button>
         <button
           type="button"
           className="messages-row-confirm-delete"
           disabled={removing}
           onClick={() => void remove()}
         >
-          {removing ? 'Deleting…' : 'Delete'}
+          <LocalizedValue render={() => (removing ? tr("community:deleting_43b5894c") : tr("community:delete_e2d0a549"))} />
         </button>
       </div>
     );
@@ -403,27 +406,27 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
-          <span className="messages-row-name">{chat.title || 'Untitled chat'}<KindPill kind="agent" /></span>
+          <span className="messages-row-name"><LocalizedValue render={() => (chat.title || tr("community:untitled_chat_4d4e126c"))} /><KindPill kind="agent" /></span>
           {activity
             ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
             : null}
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {chat.busy ? 'Working…' : (chat.summary || 'No messages yet')}
+            <LocalizedValue render={() => (chat.busy ? tr("community:working_5474eef8") : (chat.summary || tr("community:no_messages_yet_f42e0f66")))} />
           </span>
         </div>
       </div>
       {/* Inside the anchor, so it rides the row's own layout — and it stops
           the navigation itself, the way the Discover row's Add button does. */}
-      <button
+      <LocalizedDynamic element={<button
         type="button"
         className="messages-row-delete"
-        aria-label={`Delete ${chat.title || 'this chat'}`}
+        aria-label={tr("community:delete_value1_264fa406", { value1: chat.title || tr("community:message_c5a27d91fed8") })}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirming(true); }}
       >
         <DraftTrashIcon className="w-4 h-4" aria-hidden="true" />
-      </button>
+      </button>} resolve={() => ({ get "aria-label"() { return tr("community:delete_value1_264fa406", { value1: chat.title || tr("community:this_chat_c5a27d91") }); } })} />
     </a>
   );
 });
@@ -510,8 +513,8 @@ const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { ses
 function InboxFilters({ filter }: { filter: InboxFilter }) {
   return (
     <div id="messages-filters" className="messages-filters">
-      <div className="messages-filter-track" role="group" aria-label="Show">
-        {INBOX_FILTERS.map(([key, label]) => (
+      <Localized element={<div className="messages-filter-track" role="group" aria-label={catalogText("community:show_0df6f1ca")}>
+        {INBOX_FILTERS().map(([key, label]) => (
           <button
             key={key}
             id={`messages-filter-${key}`}
@@ -524,7 +527,7 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
             {label}
           </button>
         ))}
-      </div>
+      </div>} messages={{"aria-label":"community:show_0df6f1ca"}} />
       <NewMessageButton />
     </div>
   );
@@ -536,14 +539,14 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
  * building it yourself, then people.
  */
 const NEW_CHOICES = [
-  { key: 'bot', label: 'Homeroom bot', hint: 'Make an app or ask for a change' },
+  { key: 'bot', get label() { return tr("community:homeroom_bot_dbcdaf67"); }, get hint() { return tr("community:make_an_app_or_ask_for_a_change_8a212fe9"); } },
   // #2779: a conversation with the Mayor that works on any app, so there is
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:
   // named for what it is beside Homeroom bot, building it yourself.
-  { key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' },
-  { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
-  { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
+  { key: 'agent', get label() { return tr("community:build_it_yourself_72369f88"); }, get hint() { return tr("community:plan_and_build_a_change_with_a_coding_agent_25ff6d91"); } },
+  { key: 'direct', get label() { return tr("community:direct_message_cd3e1605"); }, get hint() { return tr("community:talk_to_one_person_3e2fc650"); } },
+  { key: 'group', get label() { return tr("community:group_chat_28c7d3f8"); }, get hint() { return tr("community:bring_a_few_people_together_aef2cce1"); } },
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
@@ -582,6 +585,7 @@ function startNew(choice: NewChoice) {
  * it is portalled to the end of <body>, so Tab walked the whole page first.
  */
 function NewMessageButton() {
+  useUiLanguage();
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -612,26 +616,23 @@ function NewMessageButton() {
 
   return (
     <>
-      <button
+      <Localized element={<button
         ref={btnRef}
         type="button"
         id="messages-new"
         className="messages-new-btn"
         aria-haspopup="menu"
-        aria-expanded={open ? 'true' : 'false'}
-        aria-label="New message"
-        title="New message"
+        aria-expanded={open ? 'true' : 'false'} aria-label={catalogText("community:new_message_78f5975a")} title={catalogText("community:new_message_78f5975a")}
         onClick={toggle}
       >
         <PlusIcon aria-hidden="true" />
-      </button>
+      </button>} messages={{"aria-label":"community:new_message_78f5975a","title":"community:new_message_78f5975a"}} />
       {open && pos ? createPortal(
-        <div
+        <Localized element={<div
           ref={popRef}
           id="messages-new-menu"
           className="messages-new-pop"
-          role="menu"
-          aria-label="Start a new conversation"
+          role="menu" aria-label={catalogText("community:start_a_new_conversation_beae8c13")}
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={menuKeys.onKeyDown}
@@ -655,7 +656,7 @@ function NewMessageButton() {
               </span>
             </button>
           ))}
-        </div>,
+        </div>} messages={{"aria-label":"community:start_a_new_conversation_beae8c13"}} />,
         document.body,
       ) : null}
     </>
@@ -664,8 +665,8 @@ function NewMessageButton() {
 
 /** The heading over each part of the list (#2783). */
 const SECTION_LABELS: Record<InboxSection, string> = {
-  chats: 'Chats',
-  channels: 'Channels',
+  get chats() { return tr("community:chats_ef5b4049"); },
+  get channels() { return tr("community:channels_4c8906cf"); },
 };
 
 /**
@@ -705,7 +706,7 @@ function inboxMatches(text: string | null | undefined, query: string): boolean {
  */
 function ConversationRowSkeleton() {
   return (
-    <SkeletonGroup label="Loading conversations">
+    <Localized element={<SkeletonGroup label={catalogText("community:loading_conversations_8d384c50")}>
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="messages-conversation-row">
           {/* The `lg` square UserAvatar's 44px box. */}
@@ -722,11 +723,12 @@ function ConversationRowSkeleton() {
           </div>
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"community:loading_conversations_8d384c50"}} />
   );
 }
 
 function ConversationList() {
+  const language = useUiLanguage();
   const snap = useMessagesSnapshot();
   // Agent chats come from the chat's OWN store (#2718): that list is already
   // loaded, merged on every thread event and invalidated by the chat itself,
@@ -772,7 +774,7 @@ function ConversationList() {
     ? [...(improve.sessions || []), ...(improve.otherSessions || [])]
       .filter((row) => !row.agentSessionId)
       .map(inboxSessionView)
-    : []), [mounted, improve.sessions, improve.otherSessions]);
+    : []), [mounted, improve.sessions, improve.otherSessions, language]);
   // Agent sessions (#2779), from their own store and, like the sessions
   // above, only after mount. Listed whatever the flag says: turning it off
   // never hides a conversation that already exists. The list alone: a reply
@@ -795,7 +797,7 @@ function ConversationList() {
     sessions,
     mayors,
     filter: snap.filter,
-  }), [snap.conversations, snap.discussions, agents, sessions, mayors, snap.filter]);
+  }), [snap.conversations, snap.discussions, agents, sessions, mayors, snap.filter, language]);
   const byMayor = useMemo(() => new Map(mayors.map((item) => [String(item.id), item])), [mayors]);
   const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
   const byApp = useMemo(() => new Map(snap.discussions.map((item) => [item.slug, item])), [snap.discussions]);
@@ -855,12 +857,12 @@ function ConversationList() {
       <span className="messages-more-channels-glyph" aria-hidden="true">
         <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
       </span>
-      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
+      <span><LocalizedValue render={() => (snap.showMoreChannels ? tr("community:show_less_94ea9b1d") : tr("community:show_value1_more_398301a5", { value1: moreEntries.length }))} /></span>
     </button>
   ) : null;
 
   return (
-    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <Localized element={<section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={catalogText("community:conversations_1d432f58")}>
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -870,18 +872,16 @@ function ConversationList() {
           rows and holds three kinds of thing needs a way to name one. */}
       <div className="messages-search">
         <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
-        <input
+        <Localized element={<input
           id="messages-search"
           type="search"
-          className="messages-search-input"
-          placeholder="Search messages…"
-          aria-label="Search messages"
+          className="messages-search-input" placeholder={catalogText("community:search_messages_cd889ff4")} aria-label={catalogText("community:search_messages_ddf0602b")}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-        />
+        />} messages={{"placeholder":"community:search_messages_cd889ff4","aria-label":"community:search_messages_ddf0602b"}} />
       </div>
       <InboxFilters filter={snap.filter} />
-      {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
+      {!snap.online ? <div className="messages-network-banner"><Message id="community:offline_queued_messages_retry_when_you_reconnect_48dfe96c" /></div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
           would in a desktop mail client. Only the list itself counts
@@ -896,22 +896,22 @@ function ConversationList() {
         }}
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
-        {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
+        {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}><Message id="community:try_again_d8b8392e" /></button></div> : null}
         {/* THE EMPTY STATE IS STILL THE CONVERSATIONS', and that is the
             correct reading: "no messages yet" offers to start one, which is
             an answer about people. An inbox that is empty only because a
             FILTER is narrow says something else, below. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
-          ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div>
+          ? <div className="messages-empty"><h3><Message id="community:no_messages_yet_f42e0f66" /></h3><p><Message id="community:start_a_direct_conversation_or_bring_a_group_tog_209d9097" /></p><button type="button" onClick={() => openDialog('messagesCreate')}><Message id="community:new_conversation_396c946f" /></button></div>
           : null}
         {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
-          ? <div id="messages-filter-empty" className="messages-state"><p>Nothing here under this filter.</p></div>
+          ? <div id="messages-filter-empty" className="messages-state"><p><Message id="community:nothing_here_under_this_filter_e73baf0a" /></p></div>
           : null}
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
-          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{deferredQuery.trim()}”.</p></div>
+          ? <div id="messages-search-empty" className="messages-state"><p><Message id="community:no_messages_match_f9db90d0" />{deferredQuery.trim()}”.</p></div>
           : null}
         {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
             chats on one clock, then the channels — and returns DESCRIPTORS
@@ -953,7 +953,7 @@ function ConversationList() {
         })}
         {moreToggle && !shown.some((entry) => entry.section === 'channels') && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
-    </section>
+    </section>} messages={{"aria-label":"community:conversations_1d432f58"}} />
   );
 
   function inboxRow(entry: { kind: string; key: string }) {
@@ -996,6 +996,7 @@ function ConversationList() {
 }
 
 function InvitationBanner() {
+  useUiLanguage();
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [busy, setBusy] = useState(false);
@@ -1003,11 +1004,11 @@ function InvitationBanner() {
   if (!active || active.membershipStatus !== 'invited') return null;
   const conversationId = active.id;
   const requesterUser = active.requester;
-  const requester = requesterUser?.username ? `@${requesterUser.username}` : 'Someone';
+  const requester = requesterUser?.username ? `@${requesterUser.username}` : tr("community:someone_864c855e");
   async function answer(action: 'accept' | 'decline') {
     setBusy(true); setError('');
     try { await respond(action); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t update this invitation.'); }
+    catch (err) { setError(err instanceof Error ? err.message : tr("community:couldn_t_update_this_invitation_831e6ac8")); }
     finally { setBusy(false); }
   }
   async function declineAndBlock() {
@@ -1021,16 +1022,16 @@ function InvitationBanner() {
       await api.setBlock(requesterId, true);
       await finishDirectBlock(conversationId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t decline and block this requester.');
+      setError(err instanceof Error ? err.message : tr("community:couldn_t_decline_and_block_this_requester_8a88ced0"));
     } finally { setBusy(false); }
   }
   return (
     <div className="messages-invitation">
-      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? 'Message request' : 'Group invitation'}</strong><p>{requester} invited you. Accepting gives you access to the complete retained conversation history.</p>{error ? <span role="alert">{error}</span> : null}</div>
+      <div className="min-w-0 flex-1"><strong><LocalizedValue render={() => (active.kind === 'direct' ? tr("community:message_request_2de564f2") : tr("community:group_invitation_3733873c"))} /></strong><p><RichMessage id="community:sentence_9f4e9b5d2fc9" values={{ value1: requester }} /></p>{error ? <span role="alert">{error}</span> : null}</div>
       <div className="messages-invite-actions">
-        <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline">Decline</button>
-        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">Decline &amp; block @{requesterUser.username}</button> : null}
-        <button type="button" disabled={busy} onClick={() => void answer('accept')} className="messages-invite-accept">Accept</button>
+        <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline"><Message id="community:decline_a2d285b3" /></button>
+        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block"><RichMessage id="community:sentence_aa1c7b6ae7d5" values={{ value1: requesterUser.username }} /></button> : null}
+        <button type="button" disabled={busy} onClick={() => void answer('accept')} className="messages-invite-accept"><Message id="community:accept_89713b9c" /></button>
       </div>
     </div>
   );
@@ -1068,7 +1069,7 @@ function FullWidthToggle() {
   // A channel is always full width (see the layout's note), so a toggle for
   // a list it never shows would do nothing.
   if (snap.route.appSlug || (snap.active?.kind === 'channel' && snap.active.id === snap.route.conversationId)) return null;
-  const label = collapsed ? 'Show the conversation list' : 'Full width';
+  const label = collapsed ? tr("community:show_the_conversation_list_08d92ce7") : tr("community:full_width_d34008d2");
   return (
     <button
       type="button"
@@ -1093,6 +1094,7 @@ function FullWidthToggle() {
  * list, and like the hub's own pages it says so in the page (#3407).
  */
 function ThreadHeader() {
+  useUiLanguage();
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [menu, setMenu] = useState(false);
@@ -1125,9 +1127,9 @@ function ThreadHeader() {
     // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
     // browser's, which some webview hosts suppress.
     const ok = await confirmAction({
-      title: `Block ${senderName(peer)}?`,
-      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
-      confirmLabel: 'Block',
+      get title() { return tr("community:block_value1_04a7c0e9", { value1: senderName(peer) }); },
+      get message() { return tr("community:their_messages_in_shared_chats_and_app_discussio_2202f540"); },
+      get confirmLabel() { return tr("community:block_211d0bb8"); },
       danger: true,
     });
     if (!ok) return;
@@ -1135,7 +1137,7 @@ function ThreadHeader() {
     if (!conversationId) return;
     setBusy(true);
     try { await setUserBlocked(peer.id, true); }
-    catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
+    catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : tr("community:couldn_t_block_this_user_e400a5f2")); }
     finally { setBusy(false); setMenu(false); }
   }
   // QA 2026-09-24 Q14: rename, for whoever the server lets rename — the
@@ -1151,10 +1153,10 @@ function ThreadHeader() {
       toast?: (message: string) => void;
     };
     if (!ui?.prompt) return;
-    const next = await ui.prompt({ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 });
+    const next = await ui.prompt({ get title() { return tr("community:rename_group_98d254a3"); }, value: current, get placeholder() { return tr("community:group_name_762ebb70"); }, get confirmLabel() { return tr("community:save_1509f561"); }, maxLength: 80 });
     if (next == null) return;
     try { await renameConversation(next); }
-    catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
+    catch (err) { ui.toast?.(err instanceof Error ? err.message : tr("community:couldn_t_rename_this_group_26ef0861")); }
   }
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
@@ -1170,12 +1172,12 @@ function ThreadHeader() {
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `The Homeroom community's channel · ${count(active.memberCount)}`
+    ? tr("community:the_homeroom_community_s_channel_value1_0696bbfa", { value1: count(active.memberCount) })
     : invited
-      ? 'Invitation pending'
+      ? tr("community:invitation_pending_e49a7342")
       : active.kind === 'group'
-        ? `${count(active.memberCount)}${active.myRole === 'owner' ? ' · you own this group' : ''}`
-        : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
+        ? `${count(active.memberCount)}${active.myRole === 'owner' ? tr("community:you_own_this_group_65050cc1") : ''}`
+        : active.awaitingAcceptance ? tr("community:request_pending_bc26ab4d") : tr("community:direct_message_cd3e1605");
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1187,27 +1189,27 @@ function ThreadHeader() {
         className="min-w-0 text-left flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">AI</span> : null}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge"><Message id="community:ai_11fb682b" /></span> : null}</div>
         {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
-      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
+      {active.kind === 'group' ? <Localized element={<button aria-label={catalogText("community:group_members_dd0fd917")} title={catalogText("community:group_members_dd0fd917")} type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action"><UserGroupIcon aria-hidden="true" /></button>} messages={{"aria-label":"community:group_members_dd0fd917","title":"community:group_members_dd0fd917"}} /> : null}
       {botDm ? <BotWorkButton /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
-        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        <Localized element={<button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={catalogText("community:conversation_actions_ef3683c4")} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>} messages={{"aria-label":"community:conversation_actions_ef3683c4"}} />
         {menu ? (
-          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+          <Localized element={<div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={catalogText("community:conversation_actions_ef3683c4")} onKeyDown={menuKeys.onKeyDown}>
             {active.kind === 'group' && active.canManage
-              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>Rename group</button>
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}><Message id="community:rename_group_98d254a3" /></button>
               : null}
             {active.kind === 'group'
-              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}><Message id="community:members_invitations_781b3b21" /></button>
               : active.kind === 'direct'
-                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block {senderName(peer)}</button>
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400"><Message after={" "} id="community:block_211d0bb8" />{senderName(peer)}</button>
                 : null}
-            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer), userId: peer.id }); }}>Report user</button> : null}
-            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
-          </div>
+            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer), userId: peer.id }); }}><Message id="community:report_user_82016f1f" /></button> : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}><Message id="community:refresh_conversation_889bdee4" /></button>
+          </div>} messages={{"aria-label":"community:conversation_actions_ef3683c4"}} />
         ) : null}
       </div>
     </header>
@@ -1234,11 +1236,11 @@ function dayLabel(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   if (Number.isNaN(date.getTime())) return '';
   const today = new Date();
-  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === today.toDateString()) return tr("community:today_2b065c7c");
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return date.toLocaleDateString(undefined, date.getFullYear() === today.getFullYear()
+  if (date.toDateString() === yesterday.toDateString()) return tr("community:yesterday_56618125");
+  return date.toLocaleDateString(getLanguage(), date.getFullYear() === today.getFullYear()
     ? { month: 'short', day: 'numeric' }
     : { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -1331,8 +1333,8 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   if (snap.discussionError) {
     return (
       <section className="flex messages-thread-pane messages-no-selection" aria-label={name}>
-        <h2>This discussion could not be opened.</h2>
-        <p>It may have been removed, or you may not be a member of that app.</p>
+        <h2><Message id="community:this_discussion_could_not_be_opened_0c1d4eb6" /></h2>
+        <p><Message id="community:it_may_have_been_removed_or_you_may_not_be_a_mem_794d824a" /></p>
       </section>
     );
   }
@@ -1360,9 +1362,9 @@ function AppDiscussionThread({ slug }: { slug: string }) {
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">
-            {archived
-              ? 'Earlier project discussion · read-only'
-              : `${handle ? `#${handle} · ` : ''}Everyone building this project`}
+            <LocalizedValue render={() => (archived
+              ? tr("community:earlier_project_discussion_read_only_ea2d0ed7")
+              : tr("community:value1_everyone_building_this_project_4725d0de", { value1: handle ? `#${handle} · ` : '' }))} />
           </span>
         </span>
         <FullWidthToggle />
@@ -1432,13 +1434,12 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
     if (shown && !held) void openAgentSession({ id, host: 'messages' });
   }, [shown, held, id]);
   return (
-    <section
+    <Localized element={<section aria-label={catalogText("community:agent_session_da3d3fb8")}
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
-      aria-label="Agent session"
       data-agent-session-thread={id}
     >
       <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
-    </section>
+    </section>} messages={{"aria-label":"community:agent_session_da3d3fb8"}} />
   );
 }
 
@@ -1455,9 +1456,9 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
   const change = session.activeChange;
   const mark = agentActivity(session);
   const status = change
-    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
-      change.status === 'promoted' ? 'Waiting for approval' : change.status === 'merged' ? 'Live' : 'In progress'}`
-    : 'No active change';
+    ? `${change.title || (change.prNumber ? tr("community:pr_value1_e1d02dd7", { value1: change.prNumber }) : tr("community:change_value1_2c7346eb", { value1: change.id }))} · ${
+      change.status === 'promoted' ? tr("community:waiting_for_approval_10c5739b") : change.status === 'merged' ? tr("community:live_b64ac05f") : tr("community:in_progress_c1f88e9d")}`
+    : tr("community:no_active_change_4a394283");
   return (
     <a
       href={href}
@@ -1479,7 +1480,7 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
-          <span className="messages-row-name">{session.title || 'New session'}</span>
+          <span className="messages-row-name"><LocalizedValue render={() => (session.title || tr("community:new_session_cffdba22"))} /></span>
           {mark ? <span className="sr-only">{`, ${ACTIVITY_LABEL[mark].toLowerCase()}`}</span> : null}
           {activity
             ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
@@ -1487,7 +1488,7 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
+            <LocalizedValue render={() => (session.busy ? tr("community:working_5474eef8") : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`)} />
           </span>
         </div>
       </div>
@@ -1504,13 +1505,12 @@ function AgentChatThread({ id }: { id: string }) {
     };
   }, [id]);
   return (
-    <section
+    <Localized element={<section aria-label={catalogText("community:agent_chat_3b662892")}
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
-      aria-label="Agent chat"
       data-agent-chat={id}
     >
       <GlobalChatPanel embedded headerAction={<FullWidthToggle />} />
-    </section>
+    </section>} messages={{"aria-label":"community:agent_chat_3b662892"}} />
   );
 }
 
@@ -1542,6 +1542,7 @@ function AgentChatThread({ id }: { id: string }) {
  * instead — says so here, with the full-view link to try the app itself.
  */
 function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
+  useUiLanguage();
   const host = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const full = fullScreenAddress({ kind: 'session', slug, id });
@@ -1572,26 +1573,25 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
   }, [slug, id]);
 
   return (
-    <section
-      className="flex messages-thread-pane messages-thread-session"
-      aria-label="Agent session"
+    <Localized element={<section
+      className="flex messages-thread-pane messages-thread-session" aria-label={catalogText("community:agent_session_da3d3fb8")}
       data-agent-session={`${slug}/${id}`}
     >
       <div className="messages-session-bar">
-        <a className="messages-session-full" href={full}>Open full view</a>
+        <a className="messages-session-full" href={full}><Message id="community:open_full_view_229fbeec" /></a>
         <FullWidthToggle />
       </div>
       {phase === 'unavailable' ? (
         <div className="messages-state messages-state-error">
-          <p>This session could not be opened here.</p>
-          <a href={full}>Open it in the app</a>
+          <p><Message id="community:this_session_could_not_be_opened_here_20246e7f" /></p>
+          <a href={full}><Message id="community:open_it_in_the_app_9c6e2aa6" /></a>
         </div>
       ) : null}
       {phase === 'loading' ? (
-        <div className="messages-state"><span className="messages-spinner" />Loading session…</div>
+        <div className="messages-state"><span className="messages-spinner" /><Message id="community:loading_session_3d3c04cb" /></div>
       ) : null}
       <div ref={host} className="messages-session-host flex-1 min-h-0" hidden={phase === 'unavailable'} />
-    </section>
+    </section>} messages={{"aria-label":"community:agent_session_da3d3fb8"}} />
   );
 }
 
@@ -1603,6 +1603,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  * which — so the ids its rows carry are never on the page twice.
  */
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
+  useUiLanguage();
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1681,7 +1682,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // draws no second copy of it; and the page's copy draws nothing once
   // Messages has taken the store back.
   if (!!snap.route.embedded !== embedded) {
-    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2></section>;
+    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2><Message id="community:choose_a_conversation_df2ea2bc" /></h2></section>;
   }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
@@ -1690,7 +1691,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const { slug, id } = snap.route.agent;
     return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
   }
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats open here. A community's channel is on its hub, under Communities.</p></section>;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2><Message id="community:choose_a_conversation_df2ea2bc" /></h2><p><Message id="community:your_chats_open_here_a_community_s_channel_is_on_e76e96dd" /></p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
   // safe-area test pins. It no longer changes the rows' shape: every kind is
@@ -1760,14 +1761,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       const hidden = length - 1;
       rows.push(
         <div key={`more-${runKey}`} className="messages-card-run">
-          <button
+          <LocalizedDynamic element={<button
             type="button"
             className="messages-card-run-more"
             data-card-run-more={hidden}
             aria-expanded="false"
-            aria-label={`Show ${hidden} more ${hidden === 1 ? 'card' : 'cards'}`}
+            aria-label={tr("community:message_aea4cec7f85d", { value1: hidden, count: hidden })}
             onClick={() => setExpandedRuns((open) => new Set(open).add(runKey))}
-          >{cardRunLabel(hidden)}</button>
+          >{cardRunLabel(hidden)}</button>} resolve={() => ({ get "aria-label"() { return tr("community:message_aea4cec7f85d", { value1: hidden, count: hidden }); } })} />
         </div>,
       );
       // The row after the fold always carries its own name: drawn as a
@@ -1777,7 +1778,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     }
   }
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
+    <LocalizedDynamic element={<section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || tr("community:conversation_ccca1817")}>
       {embedded ? null : <ThreadHeader />}
       {/* #3692: the bot's activity panel drops over the transcript from under its header. */}
       {botDm && !embedded ? <BotWorkPanel /> : null}
@@ -1796,29 +1797,29 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
-        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
+        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" /><Message id="community:loading_messages_3a496d42" /></div> : null}
         {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
             way out, not a Try again that reads the same answer. Leaving it
             here is said plainly, in the ordinary state colour: it is what
             the viewer asked for, not an error. */}
-        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>You left this group.</p><button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button></div> : null}
+        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p><Message id="community:you_left_this_group_b4d42394" /></p><button type="button" onClick={() => messagesController.open(null)}><Message id="community:back_to_messages_b37d7879" /></button></div> : null}
         {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
-          ? <button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button>
-          : <button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button>}</div> : null}
-        {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
-        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
+          ? <button type="button" onClick={() => messagesController.open(null)}><Message id="community:back_to_messages_b37d7879" /></button>
+          : <button type="button" onClick={() => messagesController.route(conversationId)}><Message id="community:try_again_d8b8392e" /></button>}</div> : null}
+        {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p><Message id="community:no_messages_yet_say_hello_55d6da42" /></p></div> : null}
+        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older"><LocalizedValue render={() => (snap.loadingOlder ? tr("community:loading_ba3bbbe1") : tr("community:load_earlier_messages_33fd46b9"))} /></button></div> : null}
         {rows}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
           <div className="messages-newer">
-            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
-            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>Jump to present</button>
+            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}><LocalizedValue render={() => (snap.loadingOlder ? tr("community:loading_ba3bbbe1") : tr("community:load_newer_messages_dc294d6b"))} /></button>
+            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}><Message id="community:jump_to_present_91330b6f" /></button>
           </div>
         ) : null}
       </div>
-      <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
+      <div className="messages-typing" aria-live="polite"><LocalizedValue render={() => (typing.length === 1 ? tr("community:value1_is_typing_eb59b2e3", { value1: typing[0] }) : typing.length > 1 ? tr("community:value1_are_typing_9fba80d4", { value1: typing.slice(0, 2).join(', ') }) : '')} /></div>
       <MessageComposer />
-    </section>
+    </section>} resolve={() => ({ "aria-label": snap.active?.title || tr("community:conversation_ccca1817") })} />
   );
 }
 
@@ -1892,25 +1893,25 @@ function ReplyThreadPanel() {
   const replies = thread?.messages || [];
   let previous: ConversationMessage | null = null;
   return (
-    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label="Thread" data-reply-thread={rootId}>
+    <Localized element={<aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={catalogText("community:thread_5373c7f8")} data-reply-thread={rootId}>
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
-          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-name"><Message id="community:thread_5373c7f8" /></div>
           {where ? <div className="messages-thread-sub">{where}</div> : null}
         </div>
-        <button type="button" className="messages-thread-action" aria-label="Close thread" title="Close thread" onClick={() => closeThread()}>
+        <Localized element={<button aria-label={catalogText("community:close_thread_5110caa6")} title={catalogText("community:close_thread_5110caa6")} type="button" className="messages-thread-action" onClick={() => closeThread()}>
           <XIcon aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"community:close_thread_5110caa6","title":"community:close_thread_5110caa6"}} />
       </header>
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
         <div className="messages-reply-count" aria-hidden={!replies.length}>
-          <span>{replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? 'Loading replies…' : 'No replies yet'}</span>
+          <span><LocalizedValue render={() => (replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? tr("community:loading_replies_90fa2cf3") : tr("community:no_replies_yet_c106d94d"))} /></span>
         </div>
-        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? 'Loading…' : 'Load earlier replies'}</button></div> : null}
-        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>Try again</button></div> : null}
+        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older"><LocalizedValue render={() => (thread.loading ? tr("community:loading_ba3bbbe1") : tr("community:load_earlier_replies_ce2528d4"))} /></button></div> : null}
+        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}><Message id="community:try_again_d8b8392e" /></button></div> : null}
         {replies.map((message) => {
           const grouped = !!previous && !previous.failed && !message.failed
             && groupsWithPrevious(
@@ -1922,7 +1923,7 @@ function ReplyThreadPanel() {
         })}
       </div>
       <MessageComposer threadRootId={rootId} />
-    </aside>
+    </aside>} messages={{"aria-label":"community:thread_5373c7f8"}} />
   );
 }
 
@@ -1951,9 +1952,9 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
       readOnly={ready ? context.readOnly : true}
       where={handle ? `#${handle}` : (ready ? context.name : slug)}
       close={(
-        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
+        <Localized element={<a className="messages-thread-action" href={back} aria-label={catalogText("community:close_thread_5110caa6")} title={catalogText("community:close_thread_5110caa6")}>
           <XIcon aria-hidden="true" />
-        </a>
+        </a>} messages={{"aria-label":"community:close_thread_5110caa6","title":"community:close_thread_5110caa6"}} />
       )}
     />
   );
@@ -1993,8 +1994,8 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
         container: el,
         fullHeight: true,
         readOnly,
-        placeholder: 'Reply in thread…',
-        notice: 'Only members of this app can reply here.',
+        get placeholder() { return tr("community:reply_in_thread_5f4ecc1c"); },
+        get notice() { return tr("community:only_members_of_this_app_can_reply_here_3f1490d8"); },
       });
     };
     timer = window.setTimeout(mount, 0);
@@ -2008,10 +2009,10 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
     };
   }, [slug, rootId, ready, readOnly]);
   return (
-    <aside className="messages-reply-pane messages-reply-pane-app" aria-label="Thread" data-reply-thread={rootId}>
+    <Localized element={<aside className="messages-reply-pane messages-reply-pane-app" aria-label={catalogText("community:thread_5373c7f8")} data-reply-thread={rootId}>
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
-          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-name"><Message id="community:thread_5373c7f8" /></div>
           <div className="messages-thread-sub">{where}</div>
         </div>
         {close}
@@ -2019,7 +2020,7 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
       {/* The host's class string is constant and its subtree is the group
           chat's — the one-owner rule, satisfied at this boundary. */}
       <div ref={host} className="messages-reply-host flex-1 min-h-0" />
-    </aside>
+    </aside>} messages={{"aria-label":"community:thread_5373c7f8"}} />
   );
 }
 

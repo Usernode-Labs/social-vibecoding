@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * A CHANNEL'S WAY BACK TO ITS HUB (#3407). A channel is a level inside its
  * community's hub (the hub's Channel card is its door), so its pane leads
@@ -75,7 +76,7 @@ export function subscribePlatformSlug(onChange: () => void): () => void {
  */
 export function generalHubBack(slug: string | null): { label: string; onBack: () => void } {
   return {
-    label: slug ? 'Homeroom' : 'Communities',
+    label: slug ? tr("community:homeroom_c9149977") : tr("community:communities_c864f329"),
     onBack: () => openChannelHub(slug),
   };
 }

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * The Message button on a person's page — `#profile/<name>` and
  * `#leaderboard/users/<name>` — as the prototype draws it: a small filled
@@ -14,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { messagePerson } from './message-person';
 
 export function MessageButton({ username }: { username: string }): ReactNode {
+  useUiLanguage();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const alive = useRef(true);
@@ -42,18 +47,16 @@ export function MessageButton({ username }: { username: string }): ReactNode {
 
   return (
     <div className="relative shrink-0">
-      <Button
+      <LocalizedDynamic element={<Button
         type="button"
         size="sm"
         data-message-person={username}
-        aria-label={`Message @${username}`}
+        aria-label={tr("account:message_value1_f9b57405", { value1: username })}
         disabled={pending}
         aria-busy={pending}
         className="disabled:opacity-60"
         onClick={() => { void start(); }}
-      >
-        Message
-      </Button>
+      ><Message id="account:message_2f77668a" /></Button>} resolve={() => ({ get "aria-label"() { return tr("account:message_value1_f9b57405", { value1: username }); } })} />
       {/*
           Out of the flow, under the button, so the card's name and bio keep
           their width: the button sits in the card's name row.

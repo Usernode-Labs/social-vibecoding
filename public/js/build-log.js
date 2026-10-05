@@ -17,12 +17,12 @@ const BuildLog = {
   // Human labels for the pipeline step that failed.
   stageLabel(stage) {
     switch (stage) {
-      case 'clone': return 'Cloning the repository';
-      case 'build': return 'Building the Docker image';
-      case 'start': return 'Starting the container';
-      case 'healthcheck': return 'Waiting for the health check';
-      case 'timeout': return 'Timed out';
-      default: return 'Deploying';
+      case 'clone': return globalThis.PlatformI18n.t("core:cloning_the_repository_10658ff8");
+      case 'build': return globalThis.PlatformI18n.t("core:building_the_docker_image_560eebbf");
+      case 'start': return globalThis.PlatformI18n.t("core:starting_the_container_620c3de1");
+      case 'healthcheck': return globalThis.PlatformI18n.t("core:waiting_for_the_health_check_3cb362ec");
+      case 'timeout': return globalThis.PlatformI18n.t("core:timed_out_9718cc76");
+      default: return globalThis.PlatformI18n.t("core:deploying_4338bdb0");
     }
   },
 
@@ -48,21 +48,19 @@ const BuildLog = {
     if (!failure) {
       bodyHtml = `
         <p class="text-sm text-zinc-500 dark:text-zinc-400">
-          No build failure detail is recorded for this app. Failures that
-          happened before this feature shipped weren't captured. Retry the
-          deploy to record a fresh log.
+          ${globalThis.PlatformI18n.htmlText("core:no_build_failure_detail_is_recorded_for_this_app_d3afd898")}
         </p>`;
     } else {
       const when = failure.at ? new Date(failure.at) : null;
-      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : null;
+      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(globalThis.PlatformI18n.getLanguage()) : null;
       const whenRel = whenAbs ? blRelTime(failure.at) : null;
       const metaBits = [];
-      metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">Failed step:</span> ${blEscape(BuildLog.stageLabel(failure.stage))}`);
+      metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">${globalThis.PlatformI18n.htmlText("core:failed_step_0ed199f7")}</span> ${blEscape(BuildLog.stageLabel(failure.stage))}`);
       if (whenAbs) {
-        metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">When:</span> ${blEscape(whenRel ? `${whenRel} (${whenAbs})` : whenAbs)}`);
+        metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">${globalThis.PlatformI18n.htmlText("core:when_4bff21fc")}</span> ${blEscape(whenRel ? `${whenRel} (${whenAbs})` : whenAbs)}`);
       }
       if (failure.sha) {
-        metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">Commit:</span> <span class="font-mono">${blEscape(String(failure.sha).slice(0, 7))}</span>`);
+        metaBits.push(`<span class="font-medium text-zinc-700 dark:text-zinc-200">${globalThis.PlatformI18n.htmlText("core:commit_84da95ea")}</span> <span class="font-mono">${blEscape(String(failure.sha).slice(0, 7))}</span>`);
       }
       const logText = String(failure.log || '').trim();
       bodyHtml = `
@@ -72,7 +70,7 @@ const BuildLog = {
         <p class="mt-2 text-sm font-mono text-red-700 break-words dark:text-red-400">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
         ${logText
           ? `<pre id="build-log-pre" class="mt-3 max-h-72 overflow-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">${blEscape(logText)}</pre>`
-          : '<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">No log output was captured for this failure.</p>'}
+          : `<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_log_output_was_captured_for_this_failure_f3d70ce9")}</p>`}
       `;
     }
 
@@ -83,20 +81,20 @@ const BuildLog = {
       <div class="w-full max-w-2xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl flex flex-col max-h-[85vh]">
         <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
           <div class="min-w-0">
-            <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">Build log</h2>
+            <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">${globalThis.PlatformI18n.htmlText("core:build_log_91d9414a")}</h2>
             <p class="text-xs text-zinc-500 dark:text-zinc-400 font-mono truncate">${blEscape(slug)}</p>
           </div>
-          <button id="build-log-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">
+          <button id="build-log-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="${globalThis.PlatformI18n.htmlText("core:close_7d9eb7ac")}">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
         <div class="px-4 py-3 overflow-y-auto">${bodyHtml}</div>
         <div class="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">
           ${failure && String(failure.log || '').trim()
-            ? '<button id="build-log-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">Copy log</button>'
+            ? `<button id="build-log-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">${globalThis.PlatformI18n.htmlText("core:copy_log_99d7297a")}</button>`
             : ''}
           ${canRetry
-            ? '<button id="build-log-retry" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white">Retry deploy</button>'
+            ? `<button id="build-log-retry" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white">${globalThis.PlatformI18n.htmlText("core:retry_deploy_19f848b7")}</button>`
             : ''}
         </div>
       </div>`;
@@ -147,11 +145,11 @@ const BuildLog = {
         ].filter((l) => l !== null).join('\n');
         try {
           await navigator.clipboard.writeText(text);
-          copyBtn.textContent = 'Copied!';
+          copyBtn.textContent = globalThis.PlatformI18n.t("core:copied_ea61bc15");
         } catch {
-          copyBtn.textContent = 'Copy failed';
+          copyBtn.textContent = globalThis.PlatformI18n.t("core:copy_failed_5b50e7a6");
         }
-        setTimeout(() => { copyBtn.textContent = 'Copy log'; }, 1500);
+        setTimeout(() => { copyBtn.textContent = globalThis.PlatformI18n.t("core:copy_log_99d7297a"); }, 1500);
       });
     }
 
@@ -159,19 +157,19 @@ const BuildLog = {
     if (retryBtn) {
       retryBtn.addEventListener('click', async () => {
         retryBtn.disabled = true;
-        retryBtn.textContent = 'Retrying…';
+        retryBtn.textContent = globalThis.PlatformI18n.t("core:retrying_a16c8b1c");
         try {
           const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            PlatformUI.toast(data.error || `Retry failed (HTTP ${res.status})`);
+            PlatformUI.toast(data.error || globalThis.PlatformI18n.t("core:retry_failed_http_value1_877e8360", { value1: res.status }));
             retryBtn.disabled = false;
-            retryBtn.textContent = 'Retry deploy';
+            retryBtn.textContent = globalThis.PlatformI18n.t("core:retry_deploy_19f848b7");
             return;
           }
         } catch {
           retryBtn.disabled = false;
-          retryBtn.textContent = 'Retry deploy';
+          retryBtn.textContent = globalThis.PlatformI18n.t("core:retry_deploy_19f848b7");
           return;
         }
         BuildLog.close();
@@ -218,11 +216,11 @@ function blRelTime(iso) {
   const t = new Date(iso);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  return `${Math.floor(seconds / (86400 * 30))}mo ago`;
+  if (seconds < 60) return globalThis.PlatformI18n.t("core:just_now_7ddb44d8");
+  if (seconds < 3600) return globalThis.PlatformI18n.t("core:value1_m_ago_28f5747c", { value1: Math.floor(seconds / 60) });
+  if (seconds < 86400) return globalThis.PlatformI18n.t("core:value1_h_ago_51452941", { value1: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return globalThis.PlatformI18n.t("core:value1_d_ago_0dc906ea", { value1: Math.floor(seconds / 86400) });
+  return globalThis.PlatformI18n.t("core:value1_mo_ago_9a0a3ce4", { value1: Math.floor(seconds / (86400 * 30)) });
 }
 
 window.BuildLog = BuildLog;

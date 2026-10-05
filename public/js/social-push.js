@@ -128,7 +128,7 @@
         }
         const info = await NativeChrome.getInfo();
         if (info && info.degraded === true) {
-          throw new Error('Native bridge capability probe was inconclusive');
+          throw new Error(globalThis.PlatformI18n.t("core:native_bridge_capability_probe_was_inconclusive_57d2b6eb"));
         }
         const capabilities = Array.isArray(info && info.capabilities)
           ? info.capabilities
@@ -245,7 +245,7 @@
 
     async setEnabled(enabled) {
       if (!await SocialPush.isSupported()) {
-        throw new Error('Activity notifications are not supported by this app build');
+        throw new Error(globalThis.PlatformI18n.t("core:activity_notifications_are_not_supported_by_this_5003a51d"));
       }
       if (!SocialPush._sessionAdmitted()) {
         throw new Error('Secure app sign-in is still finishing. Try again shortly');
@@ -253,10 +253,10 @@
       const generation = SocialPush._admissionGeneration;
       const value = await window.usernode.setSocialPushEnabled(enabled === true);
       if (generation !== SocialPush._admissionGeneration) {
-        throw new Error('The native session changed while updating notifications');
+        throw new Error(globalThis.PlatformI18n.t("core:the_native_session_changed_while_updating_notifi_d9aab083"));
       }
       const state = SocialPush._applyState(value);
-      if (!state) throw new Error('The app returned an invalid notification state');
+      if (!state) throw new Error(globalThis.PlatformI18n.t("core:the_app_returned_an_invalid_notification_state_a2e3a628"));
       return state;
     },
 
@@ -287,7 +287,7 @@
         }
         const info = await NativeChrome.getInfo();
         if (info && info.degraded === true) {
-          throw new Error('Native bridge capability probe was inconclusive');
+          throw new Error(globalThis.PlatformI18n.t("core:native_bridge_capability_probe_was_inconclusive_57d2b6eb"));
         }
         conclusive = true;
         const capabilities = Array.isArray(info && info.capabilities)

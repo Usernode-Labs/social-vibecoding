@@ -119,7 +119,7 @@ function statusLabel(session) {
   // bookkeeping, not a state of the work. It pauses by itself when idle and
   // resumes by itself when opened or messaged, so it reads like any other
   // session that is waiting for its owner.
-  if (awaitsInput(session)) return 'Needs you';
+  if (awaitsInput(session)) return globalThis.PlatformI18n.t("apps:needs_you_74b6abdf");
   return null;
 }
 
@@ -159,7 +159,7 @@ function toRow(session, appNameFallback) {
     // sends `session_title` / `pr_title` / `branch_name` and no `title` at
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
-      || `Session #${session.id}`,
+      || globalThis.PlatformI18n.t("apps:session_value1_f839c61d", { value1: session.id }),
     // A row represents the change, not just its chat. The lifecycle-aware
     // page keeps the context around the workspace and still embeds it. A
     // change an agent session started is worked on in that conversation
@@ -202,7 +202,7 @@ function taskToRow(task, appNameFallback) {
     appSlug: task.app_slug || null,
     appName: task.app_name || appNameFallback || task.app_slug || '',
     icon: iconOf(task, appNameFallback),
-    title: task.title || `Work order #${task.id}`,
+    title: task.title || globalThis.PlatformI18n.t("apps:work_order_value1_f44b65e0", { value1: task.id }),
     href: task.issue_number
       ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
       : `#app/${task.app_slug}/dev`,
@@ -221,9 +221,9 @@ function taskToRow(task, appNameFallback) {
  * normalizes to — never whatever string a connector client claimed.
  */
 function agentLabel(agent) {
-  if (agent === 'claude-code') return 'Claude Code';
+  if (agent === 'claude-code') return globalThis.PlatformI18n.t("apps:claude_code_246ef8c1");
   if (agent === 'codex') return 'Codex';
-  return 'Handed off';
+  return globalThis.PlatformI18n.t("apps:handed_off_b60c5435");
 }
 
 const Improve = {

@@ -1,3 +1,4 @@
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * The Help & Info tiles — a static port of the native FaqSection copy.
  *
@@ -13,89 +14,53 @@ export interface FaqTile {
 }
 
 const ABOUT: FaqTile = {
-  title: 'About',
-  paragraphs: [
-    'Your device is part of a new network. It verifies, executes, and '
-    + 'contributes compute directly to the network, passively in the '
-    + 'background - with no central servers, no hidden infra. As long as '
-    + 'users keep the app running, the network will continue to operate, '
-    + 'peer to peer, with no external dependencies.',
-    "We're doing this to enable networks that can be hosted end-to-end "
-    + 'by their own communities - both for decentralization, and to '
-    + 'enable a natural coordination point around participation, where '
-    + 'users who help operate and contribute to systems directly realize '
-    + 'the benefits from it.',
-    'Right now we are in testnet as we validate the core layer: block '
-    + "production, consensus behavior, and network reliability. As these "
-    + "stabilize, we'll build upon the unique features of the platform - "
-    + 'its decentralization, zero knowledge proofs, and sybil-resistant '
-    + 'identity - to introduce new activities, coordination mechanisms, '
-    + 'and tools for self-hosted, sybil-resistant communities.',
-    'Thanks for helping test at this early stage. The app right now is '
-    + 'simple, but as we prove out the core functionality, we hope to '
-    + 'make possible a new kind of community-owned network, where users '
-    + 'can directly run and benefit from the networks they use.',
-  ],
+  get title() { return tr("settings:about_4efca0d1"); },
+  get paragraphs() { return [
+    tr("settings:your_device_is_part_of_a_new_network_it_verifies_b8d3b822"),
+    tr("settings:we_re_doing_this_to_enable_networks_that_can_be__2b47c4a3"),
+    tr("settings:right_now_we_are_in_testnet_as_we_validate_the_c_2441305b"),
+    tr("settings:thanks_for_helping_test_at_this_early_stage_the__61912025")
+  ]; },
 };
 
 const BLOCK_PRODUCTION: FaqTile = {
-  title: 'What is Block Production?',
-  paragraphs: [
-    'This feature automatically wakes your device to produce '
-    + "blockchain blocks when your node wins a slot. Here's how it works:",
-    '1. VRF Selection: each epoch, the network randomly selects which '
-    + 'validators will produce blocks using Verifiable Random Function '
-    + '(VRF).',
-    '2. Slot Scheduling: when you win slots, the app schedules alarms '
-    + 'to wake your device ~1 minute before each slot.',
-    '3. Block Production: at slot time, the app monitors your node '
-    + 'and ensures the block is produced.',
-    '4. Success Tracking: results are recorded to track your '
-    + 'reliability over time.',
-  ],
+  get title() { return tr("settings:what_is_block_production_f3cd476e"); },
+  get paragraphs() { return [
+    tr("settings:this_feature_automatically_wakes_your_device_to__b0370683"),
+    tr("settings:1_vrf_selection_each_epoch_the_network_randomly__2fd9c56c"),
+    tr("settings:2_slot_scheduling_when_you_win_slots_the_app_sch_578d8de2"),
+    tr("settings:3_block_production_at_slot_time_the_app_monitors_41d069d1"),
+    tr("settings:4_success_tracking_results_are_recorded_to_track_4eb22c2b")
+  ]; },
 };
 
 const VRF: FaqTile = {
-  title: 'Understanding VRF & Slots',
-  paragraphs: [
-    'VRF (Verifiable Random Function) is how the network fairly '
-    + 'selects block producers. At the start of each epoch, the network '
-    + 'runs VRF calculations to determine which validators will produce '
-    + 'blocks in upcoming slots.',
-    'Status meanings. Pending: waiting for epoch transition to start '
-    + 'calculations. Calculating: VRF evaluation in progress (takes a '
-    + 'few hours). Complete: slot assignments are finalized and '
-    + 'scheduled.',
-    'When VRF selects your node to produce a block at a specific time, '
-    + 'you\'ve "won" that slot. Your responsibility is to have your '
-    + 'device awake and connected so the block can be produced.',
-    "Why timing matters: each slot has a ~5-seconds window. If your "
-    + "device doesn't wake up in time or loses network connectivity, the "
-    + 'slot is missed and counted as "failed."',
-  ],
+  get title() { return tr("settings:understanding_vrf_slots_9336e3ea"); },
+  get paragraphs() { return [
+    tr("settings:vrf_verifiable_random_function_is_how_the_networ_bbd1f44f"),
+    tr("settings:status_meanings_pending_waiting_for_epoch_transi_64334c4a"),
+    tr("settings:when_vrf_selects_your_node_to_produce_a_block_at_df71f91f"),
+    tr("settings:why_timing_matters_each_slot_has_a_5_seconds_win_9c4572e5")
+  ]; },
 };
 
 export function faqTiles(isAndroid: boolean, deviceManufacturer?: string | null): FaqTile[] {
   const platform = isAndroid
     ? [
-      "Uses Android's exact alarm system (AlarmManager) to wake your "
-      + 'device precisely when needed for block production.',
+      tr("settings:uses_android_s_exact_alarm_system_alarmmanager_t_70d4cead"),
       'Reliability by mode: Default (Event-Driven) 90-95%, '
       + 'battery-efficient, wakes only during slot windows. Keep-Alive '
       + 'Mode 100%, persistent service, higher battery (~5-10%/hr).',
     ]
     : [
-      'Uses a combination of background tasks and keep-alive mode to '
-      + 'wake your device for block production.',
-      'Reliability by mode: Keep-Alive Mode 99%, app stays awake in '
-      + 'foreground, requires charger. Background Only 40-60%, iOS '
-      + 'controls execution, not guaranteed.',
+      tr("settings:uses_a_combination_of_background_tasks_and_keep__f14325b4"),
+      tr("settings:reliability_by_mode_keep_alive_mode_99_app_stays_bc702c39"),
     ];
-  if (isAndroid && deviceManufacturer) platform.push(`Device: ${deviceManufacturer}`);
+  if (isAndroid && deviceManufacturer) platform.push(tr("settings:device_value1_2f4b7f85", { value1: deviceManufacturer }));
   return [
     ABOUT,
     BLOCK_PRODUCTION,
-    { title: 'Platform & Reliability', paragraphs: platform },
+    { get title() { return tr("settings:platform_reliability_01eb3d81"); }, paragraphs: platform },
     VRF,
   ];
 }

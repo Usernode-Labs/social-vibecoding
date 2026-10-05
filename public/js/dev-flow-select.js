@@ -66,9 +66,9 @@
   // here is the allowlist, because these three ids are a persisted column's
   // domain and this module is one of the three copies that must agree.
   var FLOWS = [
-    { id: 'platform', title: 'Homeroom · Claude' },
-    { id: 'claude-code', title: 'Claude Code on the web' },
-    { id: 'codex', title: 'Codex on the web' },
+    { id: 'platform', get title() { return globalThis.PlatformI18n.t("core:homeroom_claude_512e3c8d"); } },
+    { id: 'claude-code', get title() { return globalThis.PlatformI18n.t("core:claude_code_on_the_web_d6d69420"); } },
+    { id: 'codex', get title() { return globalThis.PlatformI18n.t("core:codex_on_the_web_114daa2d"); } },
   ];
 
   function escapeHtml(value) {
@@ -81,9 +81,9 @@
   }
 
   function agentLabel(agent) {
-    if (agent === 'claude-code') return 'Claude Code';
+    if (agent === 'claude-code') return globalThis.PlatformI18n.t("core:claude_code_246ef8c1");
     if (agent === 'codex') return 'Codex';
-    return 'your coding agent';
+    return globalThis.PlatformI18n.t("core:your_coding_agent_9f9a3cb0");
   }
 
   function agentUrl(agent) {
@@ -101,10 +101,10 @@
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
     if (reason === 'no_repository') {
-      return 'This app has no GitHub repository yet, so it can only be built here on Homeroom.';
+      return globalThis.PlatformI18n.t("core:this_app_has_no_github_repository_yet_so_it_can__7d49dfd0");
     }
     if (reason === 'platform_unavailable' || reason === 'link_unavailable' || reason === 'unavailable') {
-      return 'Handing work to Claude Code or Codex is unavailable on this deployment right now.';
+      return globalThis.PlatformI18n.t("core:handing_work_to_claude_code_or_codex_is_unavaila_074a5e21");
     }
     return '';
   }
@@ -133,18 +133,18 @@
     var list = [
       {
         key: 'github',
-        title: 'Link your GitHub account',
+        get title() { return globalThis.PlatformI18n.t("core:link_your_github_account_864ea552"); },
         done: !!gh.linked,
         detail: gh.linked
-          ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
-          : 'Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
+          ? globalThis.PlatformI18n.t("core:linked_as_f5e67868") + (gh.login || globalThis.PlatformI18n.t("core:your_github_account_abf08edf")) + '.'
+          : globalThis.PlatformI18n.t("core:identity_only_homeroom_asks_for_no_access_to_you_21e79c2f"),
         actions: gh.linked
           ? []
-          : [{ action: 'link-github', label: 'Link GitHub', primary: true, href: GITHUB_CONNECT_HREF }],
+          : [{ action: 'link-github', get label() { return globalThis.PlatformI18n.t("core:link_github_3b7f3198"); }, primary: true, href: GITHUB_CONNECT_HREF }],
       },
       {
         key: 'fork',
-        title: 'Fork the app repository',
+        get title() { return globalThis.PlatformI18n.t("core:fork_the_app_repository_26ac891c"); },
         // 'unknown' means the read failed, not that there is no fork. Treat
         // it as not-done but say so honestly rather than asserting.
         done: !!(fork && fork.state === 'ready'),
@@ -153,7 +153,7 @@
       },
       {
         key: 'handoff',
-        title: connected ? 'Hand it to ' + label : 'Connect Homeroom',
+        title: connected ? globalThis.PlatformI18n.t("core:hand_it_to_0b3e1f6c") + label : globalThis.PlatformI18n.t("core:connect_homeroom_91812306"),
         // Terminal. Homeroom used to track the rest — a work order minted
         // here, a branch to watch for, a Submit button to come back and press
         // — and that tracking is exactly what left a stale work order sitting
@@ -163,15 +163,15 @@
         done: false,
         detail: connected
           ? handoffDetail(label, targetKind)
-          : 'Homeroom hands ' + label + ' a short set of instructions; '
-            + label + ' asks what you want to build and takes it from there: '
-            + 'writing the work order, reading this app\'s rules, pushing the '
-            + 'branch and opening the proposal. It needs the connector in the '
-            + connectorProduct(agent) + ' account it runs as to do any of that.',
+          : globalThis.PlatformI18n.t("core:homeroom_hands_c8f0fe5a") + label + globalThis.PlatformI18n.t("core:a_short_set_of_instructions_e3f8035a")
+            + label + globalThis.PlatformI18n.t("core:asks_what_you_want_to_build_and_takes_it_from_th_be85f283")
+            + globalThis.PlatformI18n.t("core:writing_the_work_order_reading_this_app_s_rules__a7a5b8ce")
+            + globalThis.PlatformI18n.t("core:branch_and_opening_the_proposal_it_needs_the_con_5d749290")
+            + connectorProduct(agent) + globalThis.PlatformI18n.t("core:account_it_runs_as_to_do_any_of_that_6d1e3eaa"),
         actions: connected
           ? handoffActions(agent)
-          : [{ action: 'link-connector', label: 'Connect Homeroom', primary: true },
-            { action: 'refresh', label: 'Check again' }],
+          : [{ action: 'link-connector', get label() { return globalThis.PlatformI18n.t("core:connect_homeroom_91812306"); }, primary: true },
+            { action: 'refresh', get label() { return globalThis.PlatformI18n.t("core:check_again_fb7099ad"); } }],
       },
     ];
 
@@ -198,44 +198,44 @@
   }
 
   function shortSha(sha) {
-    return String(sha || '').slice(0, 7) || 'the base commit';
+    return String(sha || '').slice(0, 7) || globalThis.PlatformI18n.t("core:the_base_commit_13a53e91");
   }
 
   function forkDetail(fork) {
-    if (!fork) return 'Your agent needs somewhere to push. Homeroom checks GitHub for your fork of this app.';
+    if (!fork) return globalThis.PlatformI18n.t("core:your_agent_needs_somewhere_to_push_homeroom_chec_72ecc50e");
     if (fork.state === 'ready') return 'Found ' + fork.owner + '/' + fork.repo + '.';
     if (fork.state === 'name_conflict') {
-      return 'You already own a repository called ' + fork.repo.replace(/-usernode$/, '')
-        + ' that is not a fork of this app, so fork it as ' + fork.repo + ' instead.';
+      return globalThis.PlatformI18n.t("core:you_already_own_a_repository_called_0a1ec175") + fork.repo.replace(/-usernode$/, '')
+        + globalThis.PlatformI18n.t("core:that_is_not_a_fork_of_this_app_so_fork_it_as_f9fe71e7") + fork.repo + ' instead.';
     }
-    if (fork.state === 'unknown') return 'Homeroom could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.';
-    return 'No fork yet. Fork the app on GitHub, then come back and check again.';
+    if (fork.state === 'unknown') return globalThis.PlatformI18n.t("core:homeroom_could_not_read_github_just_now_so_it_ca_3544f40e");
+    return globalThis.PlatformI18n.t("core:no_fork_yet_fork_the_app_on_github_then_come_bac_9dca1c27");
   }
 
   function forkActions(fork) {
     if (!fork || fork.state === 'ready') return [];
     var actions = [];
     if (fork.pageUrl) {
-      actions.push({ action: 'open-fork', label: 'Fork on GitHub', href: fork.pageUrl, primary: true });
+      actions.push({ action: 'open-fork', get label() { return globalThis.PlatformI18n.t("core:fork_on_github_0022deee"); }, href: fork.pageUrl, primary: true });
     }
-    actions.push({ action: 'refresh', label: 'Check again' });
+    actions.push({ action: 'refresh', get label() { return globalThis.PlatformI18n.t("core:check_again_fb7099ad"); } });
     return actions;
   }
   function handoffDetail(label, targetKind) {
-    var base = 'Copy the instructions and paste them into ' + label + '. It will ask '
-      + 'what you want to build, then write the work order, push the branch and open '
-      + 'the proposal itself. You do not come back here to finish.';
+    var base = globalThis.PlatformI18n.t("core:copy_the_instructions_and_paste_them_into_bd3bd2bc") + label + '. It will ask '
+      + globalThis.PlatformI18n.t("core:what_you_want_to_build_then_write_the_work_order_e4ddd39c")
+      + globalThis.PlatformI18n.t("core:the_proposal_itself_you_do_not_come_back_here_to_7c688f2d");
     if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The instructions name the ' + (targetKind === 'session' ? 'session' : 'proposal')
-        + ' this continues, so the work lands as an update to it rather than as a second copy.';
+      base += globalThis.PlatformI18n.t("core:the_instructions_name_the_cb26ad8c") + (targetKind === 'session' ? 'session' : 'proposal')
+        + globalThis.PlatformI18n.t("core:this_continues_so_the_work_lands_as_an_update_to_c86f1334");
     }
     return base;
   }
 
   function handoffActions(agent) {
-    var actions = [{ action: 'copy', label: 'Copy instructions', primary: true }];
+    var actions = [{ action: 'copy', get label() { return globalThis.PlatformI18n.t("core:copy_instructions_37b2f337"); }, primary: true }];
     var url = agentUrl(agent);
-    if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
+    if (url) actions.push({ action: 'open-agent', label: globalThis.PlatformI18n.t("core:open_value1_839d6dee", { value1: agentLabel(agent) }), href: url });
     return actions;
   }
 
@@ -281,10 +281,10 @@
   // statement and is inert.
   function vendorToggleHtml(agent, busy) {
     var vendors = [
-      { id: 'claude-code', label: 'Claude' },
-      { id: 'codex', label: 'ChatGPT' },
+      { id: 'claude-code', get label() { return globalThis.PlatformI18n.t("core:claude_0615570f"); } },
+      { id: 'codex', get label() { return globalThis.PlatformI18n.t("core:chatgpt_50a41229"); } },
     ];
-    return '<div class="dc-flow-vendors" role="group" aria-label="Which agent builds this">'
+    return `<div class="dc-flow-vendors" role="group" aria-label="${globalThis.PlatformI18n.htmlText("core:which_agent_builds_this_23177f05")}">`
       + vendors.map(function (v) {
         var on = v.id === agent;
         return '<button type="button" class="dc-flow-vendor'
@@ -314,21 +314,21 @@
 
     if (!s.status) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-        + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + `<div class="dc-flow-card-lead">${globalThis.PlatformI18n.htmlText("core:building_with_77bd4403")} ` + escapeHtml(label) + '</div>'
         + vendorToggleHtml(agent, true)
-        + '<div class="dc-flow-card-detail">Checking where you are&hellip;</div>'
+        + `<div class="dc-flow-card-detail">${globalThis.PlatformI18n.htmlText("core:checking_where_you_are_hellip_5002739a")}</div>`
         + '</div>';
     }
 
     if (s.status.available === false) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-        + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + `<div class="dc-flow-card-lead">${globalThis.PlatformI18n.htmlText("core:building_with_77bd4403")} ` + escapeHtml(label) + '</div>'
         + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">'
-        + escapeHtml(unavailableNote(s.status.reason) || 'This flow is unavailable right now.')
+        + escapeHtml(unavailableNote(s.status.reason) || globalThis.PlatformI18n.t("core:this_flow_is_unavailable_right_now_1a99ed3b"))
         + '</div>'
         + '<div class="dc-flow-actions">'
-        + actionHtml({ action: 'cancel', label: 'Build here instead', primary: true }, false)
+        + actionHtml({ action: 'cancel', get label() { return globalThis.PlatformI18n.t("core:build_here_instead_93fef203"); }, primary: true }, false)
         + '</div>'
         + '</div>';
     }
@@ -382,7 +382,7 @@
     // details:not([open]), as the other details-based checks in dapp.json
     // do, because a collapsed body is not there to be seen.
     var order = s.status.instructions
-      ? '<details class="dc-flow-order"><summary>Instructions</summary>'
+      ? '<details class="dc-flow-order"><summary>' + globalThis.PlatformI18n.htmlText('workshop:instructions_934652dc') + '</summary>'
         + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(s.status.instructions) + '</pre>'
         + '</details>'
       : '';
@@ -400,18 +400,18 @@
     // picks it up with no new wiring. Settings is still one tap away, from
     // the card the button opens.
     var connectors = s.status.connectors && s.status.connectors.count
-      ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
-        + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected. You can also just ask it to pick this task up.'
-        + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
-        + ' account it was added in, so pasting into a different account needs its own: '
+      ? `<div class="dc-flow-card-hint">${globalThis.PlatformI18n.htmlText("core:you_already_have_9901a8f9")} ` + escapeHtml(String(s.status.connectors.count))
+        + globalThis.PlatformI18n.t("core:claude_chatgpt_connector_8a3737f7") + (s.status.connectors.count === 1 ? '' : 's')
+        + globalThis.PlatformI18n.t("core:connected_you_can_also_just_ask_it_to_pick_this__91b10a0d")
+        + globalThis.PlatformI18n.t("core:a_connector_belongs_to_the_6862924b") + escapeHtml(connectorProduct(agent))
+        + globalThis.PlatformI18n.t("core:account_it_was_added_in_so_pasting_into_a_differ_7717dcdb")
         + '<button type="button" class="dc-flow-hint-link" data-flow-action="link-connector">'
         + 'show the steps</button>.</div>'
       : '';
 
     return ''
       + '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-      + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+      + `<div class="dc-flow-card-lead">${globalThis.PlatformI18n.htmlText("core:building_with_77bd4403")} ` + escapeHtml(label) + '</div>'
       + vendorToggleHtml(agent, !!s.busy)
       + (s.error ? '<div class="dc-flow-error">' + escapeHtml(s.error) + '</div>' : '')
       + (s.notice ? '<div class="dc-flow-notice">' + escapeHtml(s.notice) + '</div>' : '')
@@ -419,7 +419,7 @@
       + order
       + connectors
       + '<div class="dc-flow-actions dc-flow-actions-footer">'
-      + actionHtml({ action: 'cancel', label: 'Build on the Homeroom platform instead' }, !!s.busy)
+      + actionHtml({ action: 'cancel', get label() { return globalThis.PlatformI18n.t("core:build_on_the_homeroom_platform_instead_2a33d325"); } }, !!s.busy)
       + '</div>'
       + '</div>';
   }

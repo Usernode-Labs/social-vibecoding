@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Communities screen's Needs you tab as one feed (#3270), and since #3488
  * THE SAME FEED a project's Needs you page is.
@@ -101,7 +105,7 @@ export function reelRows(
         cls: '',
         attrs,
         icon: null,
-        title: { text: item.title || (change ? 'A change' : 'A group decision'), title: '' },
+        title: { text: item.title || (change ? tr("workshop:a_change_207f6b5c") : tr("workshop:a_group_decision_727c136f")), title: '' },
         meta: [],
         pill: null,
         linked: [],
@@ -117,9 +121,9 @@ export function reelRows(
         uncapped: false,
       },
       kind: 'vote',
-      ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] } } : null,
-      no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
+      ask: change ? tr("workshop:should_this_change_go_in_45d77d7a") : tr("workshop:should_this_go_ahead_3023393f"),
+      yes: change ? { get label() { return tr("workshop:yes_85a39ab3"); }, act: { fn: 'castVote', args: [item.id, 'yes', ...rev] } } : null,
+      no: change ? { get label() { return tr("workshop:no_1ea442a1"); }, act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,
@@ -169,10 +173,11 @@ export function NeedsReel({ items, error, capped, onDone }: {
   /** The end card's way on: back to the list of communities. */
   onDone: () => void;
 }) {
+  const language = useUiLanguage();
   const rows = useMemo(() => (items ? reelRows(items, (md) => {
     const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
     return typeof out === 'string' ? out : '';
-  }) : []), [items]);
+  }) : []), [items, language]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -186,13 +191,13 @@ export function NeedsReel({ items, error, capped, onDone }: {
   }, []);
 
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">Couldn't load what is waiting on you. Each project's own Needs you page still has it.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error=""><Message id="workshop:couldn_t_load_what_is_waiting_on_you_each_projec_ad8dd075" /></p>;
   }
   if (!items) {
-    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label="Loading what needs you" />;
+    return <Localized element={<div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={catalogText("workshop:loading_what_needs_you_c5470c57")} />} messages={{"aria-label":"workshop:loading_what_needs_you_c5470c57"}} />;
   }
   if (!items.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">Nothing is waiting on your vote in any of your projects.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty=""><Message id="workshop:nothing_is_waiting_on_your_vote_in_any_of_your_p_5c4f586e" /></p>;
   }
   return (
     <>
@@ -204,14 +209,12 @@ export function NeedsReel({ items, error, capped, onDone }: {
           slug=""
           canPost
           onDone={onDone}
-          doneLabel="Back to your communities"
+          doneLabel={tr("workshop:message_b5358765cc2f")}
           renderApp={ReelApp}
         />
       </div>
       {capped ? (
-        <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          Showing the newest {items.length}. Each project's own Needs you page has the rest.
-        </p>
+        <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped=""><RichMessage id="workshop:sentence_7c524e7467ef" values={{ value1: items.length }} /></p>
       ) : null}
     </>
   );

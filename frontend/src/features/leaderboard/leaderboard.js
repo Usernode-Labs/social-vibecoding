@@ -349,7 +349,7 @@ const Leaderboard = {
     if (!username) return;
     Leaderboard.profileUser = username;
     // The profile is users-tab territory — back lands on Top users.
-    Leaderboard.sub = 'users';
+    Leaderboard.sub = globalThis.PlatformI18n.t("apps:users_7dfb4cf6");
     Leaderboard.section = 'kudos';
     Leaderboard._syncHash();
     if (!Leaderboard._open) return;
@@ -531,26 +531,25 @@ const Leaderboard = {
     const subTabs = ['prs', 'users', 'history'].map((s) => ({
       key: s,
       active: s === Leaderboard.sub,
-      label: s === 'prs' ? 'Top changes' : s === 'users' ? 'Top users' : 'My history',
+      label: s === 'prs' ? globalThis.PlatformI18n.t("apps:top_changes_0af147a3") : s === 'users' ? globalThis.PlatformI18n.t("apps:top_users_60541946") : globalThis.PlatformI18n.t("apps:my_history_ca28b082"),
     }));
     // The All-time / This week pills only apply to the leaderboard
     // tabs — history is always everything, newest first.
     const winTabs = isHistory ? [] : ['all', 'week'].map((w) => ({
       key: w,
       active: w === Leaderboard.window,
-      label: w === 'all' ? 'All-time' : 'This week',
+      label: w === 'all' ? globalThis.PlatformI18n.t("apps:all_time_074daba2") : globalThis.PlatformI18n.t("apps:this_week_8c4eef5a"),
     }));
 
     const subtitle = isHistory
-      ? 'Everything you’ve given: kudos, bounty pledges, and votes, newest first. Only you can see this.'
+      ? globalThis.PlatformI18n.t("apps:everything_you_ve_given_kudos_bounty_pledges_and_2cb5f0f9")
       // #964: read the cap from the budget the badge already fetched rather
       // than hardcoding it here, so raising WEEKLY_KUDOS_LIMIT server-side
       // can never leave this subtitle quoting a stale number again. The
       // fallback matches the server constant for the brief window before
       // /api/me/kudos-budget lands (or when it failed).
       // #3230: the weekly reset is named in the viewer's own clock.
-      : `${window.Kudos?.Budget?.state?.limit || 20} kudos per week, resets ${
-        window.ResetTime ? window.ResetTime.resetWhen('weekly') : 'Monday 00:00 UTC'}. Give them to changes you appreciate.`;
+      : globalThis.PlatformI18n.t("apps:value1_kudos_per_week_resets_value2_give_them_to_a9768348", { value1: window.Kudos?.Budget?.state?.limit || 20, value2: window.ResetTime ? window.ResetTime.resetWhen('weekly') : globalThis.PlatformI18n.t("apps:message_c5ae7b248fc4") });
 
     // No <h2> of our own: the Leaderboard screen shell already titles the
     // page and the section tab above says "Kudos". The subtitle stays —
@@ -574,7 +573,7 @@ const Leaderboard = {
 
     if (!data) return { kind: 'loading' };
     if (data.error) {
-      return { kind: 'error', message: 'Couldn’t load leaderboard. Try again later.' };
+      return { kind: 'error', get message() { return globalThis.PlatformI18n.t("apps:couldn_t_load_leaderboard_try_again_later_7bc1236d"); } };
     }
     const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) {
@@ -582,10 +581,10 @@ const Leaderboard = {
       // stay next to the sentence they belong to.
       return {
         kind: 'empty',
-        message: `No kudos ${Leaderboard.window === 'week' ? 'this week ' : ''}yet. `
+        message: globalThis.PlatformI18n.t("apps:no_kudos_value1_yet_bb85e124", { value1: Leaderboard.window === 'week' ? globalThis.PlatformI18n.t("apps:this_week_a9bcfba0") : '' })
           + (Leaderboard.sub === 'prs'
-            ? 'When someone gives a change kudos, it shows up here.'
-            : 'When someone gets kudos on a change they made, they show up here.'),
+            ? globalThis.PlatformI18n.t("apps:when_someone_gives_a_change_kudos_it_shows_up_he_2f483424")
+            : globalThis.PlatformI18n.t("apps:when_someone_gets_kudos_on_a_change_they_made_th_79233c2b")),
       };
     }
     return Leaderboard.sub === 'prs'
@@ -602,19 +601,19 @@ const Leaderboard = {
     if (!data) return { kind: 'loading' };
     if (data.error) {
       return data.notFound
-        ? { kind: 'empty', message: 'User not found.' }
-        : { kind: 'error', message: 'Couldn’t load this profile. Try again later.' };
+        ? { kind: 'empty', get message() { return globalThis.PlatformI18n.t("apps:user_not_found_f412be43"); } }
+        : { kind: 'error', get message() { return globalThis.PlatformI18n.t("apps:couldn_t_load_this_profile_try_again_later_b7d988f8"); } };
     }
 
     const s = data.stats || {};
     const prsTotal = s.prs_total || 0;
     const stats = {
-      kudosMerged: `${s.kudos_merged || 0} on live changes`,
+      kudosMerged: globalThis.PlatformI18n.t("apps:value1_on_live_changes_97f02fa8", { value1: s.kudos_merged || 0 }),
       chips: [
-        { label: `${s.prs_merged || 0} live`, title: 'Their changes that went live' },
+        { get label() { return globalThis.PlatformI18n.t("apps:value1_live_2c4bcb92", { value1: s.prs_merged || 0 }); }, get title() { return globalThis.PlatformI18n.t("apps:their_changes_that_went_live_bbfb1b32"); } },
         {
-          label: `${prsTotal} change${prsTotal === 1 ? '' : 's'} made`,
-          title: 'Everything they put up for the group, including open and closed changes',
+          get label() { return globalThis.PlatformI18n.t("apps:message_ff2b4b6c6147", { value1: prsTotal, count: prsTotal }); },
+          get title() { return globalThis.PlatformI18n.t("apps:everything_they_put_up_for_the_group_including_o_4df8f313"); },
         },
       ],
     };
@@ -640,7 +639,7 @@ const Leaderboard = {
   profilePrRowViews(items) {
     return items.map((row, i) => ({
       key: `${row.app_slug}|${row.session_id}|${i}`,
-      title: row.pr_title || 'Untitled change',
+      title: row.pr_title || globalThis.PlatformI18n.t("apps:untitled_change_63cb7c2e"),
       appName: row.app_name || row.app_slug || 'app',
       badge: Leaderboard._statusBadge(row.status),
       when: Leaderboard._fmtDate(row.created_at),
@@ -659,10 +658,10 @@ const Leaderboard = {
   // the voided-bounty chip uses. A {tone,label} pair now; ./kudos-pane.tsx
   // holds the one class table both this and the Top-PRs badge read from.
   _statusBadge(status) {
-    if (status === 'merged') return { tone: 'emerald', label: 'live' };
-    if (status === 'merging') return { tone: 'amber', label: 'going live' };
-    if (status === 'archived') return { tone: 'zinc', label: 'closed' };
-    return { tone: 'violet', label: 'open' };
+    if (status === 'merged') return { tone: 'emerald', get label() { return globalThis.PlatformI18n.t("apps:live_247610f4"); } };
+    if (status === 'merging') return { tone: 'amber', get label() { return globalThis.PlatformI18n.t("apps:going_live_9a87940f"); } };
+    if (status === 'archived') return { tone: 'zinc', get label() { return globalThis.PlatformI18n.t("apps:closed_c3eefb58"); } };
+    return { tone: 'violet', get label() { return globalThis.PlatformI18n.t("apps:open_2348f998"); } };
   },
 
   // Whether this person page draws the prototype's "Message" button: someone
@@ -692,8 +691,8 @@ const Leaderboard = {
     const view = {
       kind: 'history',
       chips: [
-        { key: 'kudos', label: '\u{1F44F} Kudos', on: Leaderboard._histKudos },
-        { key: 'votes', label: '\u{1F5F3}️ Votes', on: Leaderboard._histVotes },
+        { key: 'kudos', get label() { return globalThis.PlatformI18n.t("apps:kudos_b17818b9"); }, on: Leaderboard._histKudos },
+        { key: 'votes', get label() { return globalThis.PlatformI18n.t("apps:votes_c77d8b2d"); }, on: Leaderboard._histVotes },
       ],
       list: null,
       more: null,
@@ -702,13 +701,13 @@ const Leaderboard = {
     if (!data) {
       view.list = { kind: 'loading' };
     } else if (data.error) {
-      view.list = { kind: 'error', message: 'Couldn’t load your history. Try again later.' };
+      view.list = { kind: 'error', get message() { return globalThis.PlatformI18n.t("apps:couldn_t_load_your_history_try_again_later_fb29df29"); } };
     } else {
       const items = Array.isArray(data.items) ? data.items : [];
       if (!items.length) {
         view.list = {
           kind: 'empty',
-          message: 'Nothing here yet. Kudos, bounty pledges, and votes you give will appear here.',
+          get message() { return globalThis.PlatformI18n.t("apps:nothing_here_yet_kudos_bounty_pledges_and_votes__86124e94"); },
         };
       } else {
         view.list = { kind: 'rows', rows: Leaderboard.historyRowViews(items) };
@@ -730,41 +729,41 @@ const Leaderboard = {
 
       if (it.type === 'kudos') {
         marker = { kind: 'kudos' };
-        title = it.pr?.title || 'Untitled change';
-        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        title = it.pr?.title || globalThis.PlatformI18n.t("apps:untitled_change_63cb7c2e");
+        metaBits.push({ kind: 'text', get text() { return globalThis.PlatformI18n.t("apps:by_value1_363778f7", { value1: it.pr?.author || globalThis.PlatformI18n.t("apps:deleted_user_c9cc0c29") }); } });
         metaBits.push({ kind: 'text', text: appName });
       } else if (it.type === 'bounty') {
         marker = { kind: 'bounty' };
-        title = `Pledged kudos on issue #${it.issue?.number ?? '?'}`;
+        title = globalThis.PlatformI18n.t("apps:pledged_kudos_on_issue_value1_47c4b926", { value1: it.issue?.number ?? '?' });
         metaBits.push({ kind: 'text', text: appName });
         if (it.status === 'awarded') {
-          const to = it.awarded?.username ? `@${it.awarded.username}` : 'deleted user';
+          const to = it.awarded?.username ? `@${it.awarded.username}` : globalThis.PlatformI18n.t("apps:deleted_user_c9cc0c29");
           const at = it.awarded?.at ? ` ${Leaderboard._fmtDate(it.awarded.at)}` : '';
-          metaBits.push({ kind: 'badge', tone: 'emerald', text: `awarded to ${to}${at}` });
+          metaBits.push({ kind: 'badge', tone: 'emerald', get text() { return globalThis.PlatformI18n.t("apps:awarded_to_value1_value2_592c52b4", { value1: to, value2: at }); } });
         } else if (it.status === 'voided') {
           metaBits.push({
-            kind: 'badge', tone: 'zinc', text: 'voided',
-            title: 'Your own change closed this request, so the pledge went back to your weekly allowance',
+            kind: 'badge', tone: 'zinc', get text() { return globalThis.PlatformI18n.t("apps:voided_df6a068a"); },
+            get title() { return globalThis.PlatformI18n.t("apps:your_own_change_closed_this_request_so_the_pledg_b15a274e"); },
           });
         } else {
-          metaBits.push({ kind: 'badge', tone: 'violet', text: 'open' });
+          metaBits.push({ kind: 'badge', tone: 'violet', get text() { return globalThis.PlatformI18n.t("apps:open_2348f998"); } });
         }
       } else if (it.type === 'pr_vote') {
         marker = { kind: 'pr_vote', yes: it.vote === 'yes' };
-        title = it.pr?.title || 'Untitled change';
-        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        title = it.pr?.title || globalThis.PlatformI18n.t("apps:untitled_change_63cb7c2e");
+        metaBits.push({ kind: 'text', get text() { return globalThis.PlatformI18n.t("apps:by_value1_363778f7", { value1: it.pr?.author || globalThis.PlatformI18n.t("apps:deleted_user_c9cc0c29") }); } });
         metaBits.push({ kind: 'text', text: appName });
         // pr_votes keeps only the standing vote; the timestamp is the
         // last cast/flip, not the first.
-        metaBits.push({ kind: 'italic', text: 'current vote' });
+        metaBits.push({ kind: 'italic', get text() { return globalThis.PlatformI18n.t("apps:current_vote_03c73be0"); } });
       } else if (it.type === 'proposal_vote') {
         marker = { kind: 'proposal_vote', up: it.vote === 'up' };
-        title = it.issue?.title || `Request #${it.issue?.number ?? '?'}`;
+        title = it.issue?.title || globalThis.PlatformI18n.t("apps:request_value1_8051e8ec", { value1: it.issue?.number ?? '?' });
         if (it.issue?.kind && it.issue.kind !== 'general') {
           metaBits.push({ kind: 'badge', tone: 'sky', text: Leaderboard._kindLabel(it.issue.kind) });
         }
         metaBits.push({ kind: 'text', text: appName });
-        metaBits.push({ kind: 'italic', text: 'current vote' });
+        metaBits.push({ kind: 'italic', get text() { return globalThis.PlatformI18n.t("apps:current_vote_03c73be0"); } });
       } else {
         // An unknown row type rendered as the empty string before, i.e. it
         // took up no space in the list. null is the descriptor spelling of
@@ -782,11 +781,11 @@ const Leaderboard = {
   // of their own; anything newer falls back to the value with its
   // underscores spaced out and the first letter raised, never the raw token.
   _KIND_LABELS: Object.freeze({
-    secret_change: 'Secret change',
-    rename: 'Rename',
-    close_issue: 'Close issue',
-    maintenance_campaign: 'Maintenance campaign',
-    featured_illustration: 'Featured illustration',
+    get secret_change() { return globalThis.PlatformI18n.t("apps:secret_change_c4d94bb1"); },
+    get rename() { return globalThis.PlatformI18n.t("apps:rename_3064d79a"); },
+    get close_issue() { return globalThis.PlatformI18n.t("apps:close_issue_ae84bc5f"); },
+    get maintenance_campaign() { return globalThis.PlatformI18n.t("apps:maintenance_campaign_88540564"); },
+    get featured_illustration() { return globalThis.PlatformI18n.t("apps:featured_illustration_2ad772c7"); },
   }),
 
   _kindLabel(kind) {
@@ -801,7 +800,7 @@ const Leaderboard = {
   _fmtDate(ts) {
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString(globalThis.PlatformI18n.getLanguage(), { year: 'numeric', month: 'short', day: 'numeric' });
   },
 
   // Rows that carry a slug route to that app's group chat — the PR card /
@@ -824,7 +823,7 @@ const Leaderboard = {
     return items.map((row, i) => ({
       key: `${row.app_slug}|${row.session_id}|${i}`,
       rank: i + 1,
-      title: row.pr_title || 'Untitled change',
+      title: row.pr_title || globalThis.PlatformI18n.t("apps:untitled_change_63cb7c2e"),
       author: row.author_username || 'unknown',
       appName: row.app_name || row.app_slug || 'app',
       // The Top-PRs strip has no 'archived' case — an archived PR is not on
@@ -845,20 +844,20 @@ const Leaderboard = {
       // The detail line is a list of bits with a "·" between them, so the
       // separators can't drift out of step with the bits they separate.
       // First bit is unconditional; each later one carries its own.
-      const meta = [{ text: `${row.prs_kudosed} change${row.prs_kudosed === 1 ? '' : 's'} given kudos` }];
+      const meta = [{ get text() { return globalThis.PlatformI18n.t("apps:message_18cc59f1fb77", { value1: row.prs_kudosed, count: row.prs_kudosed }); } }];
       // prs_merged is all-time (no merge timestamp to window by), so only
       // show it in the all-time view to avoid implying a weekly figure.
       // Kept as a secondary detail now that ranking is by kudos, not
       // merge count.
       if (Leaderboard.window === 'all' && prsMerged > 0) {
-        meta.push({ text: `${prsMerged} live` });
+        meta.push({ get text() { return globalThis.PlatformI18n.t("apps:value1_live_2c4bcb92", { value1: prsMerged }); } });
       }
       // Issues this user filed (issues.created_by). Correctly windowed by
       // created_at, so — unlike prs_merged — it's shown in both windows.
       // Hidden at 0 to match the other optional detail chips.
       const issuesCreated = row.issues_created || 0;
       if (issuesCreated > 0) {
-        meta.push({ text: `${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}` });
+        meta.push({ get text() { return globalThis.PlatformI18n.t("apps:message_a207671c678a", { value1: issuesCreated, count: issuesCreated }); } });
       }
       // Apps this user is currently active on (active_apps: [{slug, name}]).
       // Show a count chip with the app names on hover; hidden at 0 to match
@@ -867,8 +866,8 @@ const Leaderboard = {
       const activeApps = Array.isArray(row.active_apps) ? row.active_apps : [];
       if (activeApps.length > 0) {
         meta.push({
-          text: `active on ${activeApps.length} app${activeApps.length === 1 ? '' : 's'}`,
-          title: 'Active on: ' + activeApps
+          get text() { return globalThis.PlatformI18n.t("apps:message_0578756e9eff", { value1: activeApps.length, count: activeApps.length }); },
+          title: globalThis.PlatformI18n.t("apps:active_on_020de972") + activeApps
             .map((a) => (a && a.name) ? a.name : (a && a.slug) || '')
             .filter(Boolean)
             .join(', '),
@@ -883,7 +882,7 @@ const Leaderboard = {
         // Footnote on the kudos badge: how many additional kudos sit on
         // PRs that haven't landed yet (and so don't count toward the
         // ranking score). Only meaningful when > 0.
-        unmergedNote: kudosOnUnmerged > 0 ? `+${kudosOnUnmerged} not live yet` : null,
+        unmergedNote: kudosOnUnmerged > 0 ? globalThis.PlatformI18n.t("apps:value1_not_live_yet_851229a1", { value1: kudosOnUnmerged }) : null,
         // Headline score = kudos earned on MERGED PRs. This is what the
         // leaderboard now ranks by (issue #59), so the big badge shows it
         // rather than total kudos across all PRs.
@@ -911,3 +910,8 @@ const Leaderboard = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.Leaderboard = Leaderboard;
+
+// Recompute translated view models from cached data without resetting forms.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => { if (Leaderboard._open) { Leaderboard._render(); Leaderboard._syncTitle(); } });
+}

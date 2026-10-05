@@ -115,11 +115,11 @@
     var t = Date.parse(iso);
     if (!Number.isFinite(t)) return null;
     var secs = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (secs < 45) return 'measured just now';
-    if (secs < 90) return 'measured a minute ago';
-    if (secs < 3600) return 'measured ' + Math.round(secs / 60) + ' minutes ago';
-    if (secs < 7200) return 'measured an hour ago';
-    return 'measured ' + Math.round(secs / 3600) + ' hours ago';
+    if (secs < 45) return globalThis.PlatformI18n.t("core:measured_just_now_b5e96dd7");
+    if (secs < 90) return globalThis.PlatformI18n.t("core:measured_a_minute_ago_7548c765");
+    if (secs < 3600) return 'measured ' + Math.round(secs / 60) + globalThis.PlatformI18n.t("core:minutes_ago_04096f61");
+    if (secs < 7200) return globalThis.PlatformI18n.t("core:measured_an_hour_ago_210fb6a1");
+    return 'measured ' + Math.round(secs / 3600) + globalThis.PlatformI18n.t("core:hours_ago_9a06b5da");
   }
 
   // #3232 — how long the checks run in flight has been going, as the pill's
@@ -140,11 +140,11 @@
   // in the browser and cannot require it, so the phrases are repeated here
   // and tests/explicit-approval-vote-panel.test.js holds the two together.
   var EXPLICIT_PHRASES = {
-    admins: 'who runs this app',
-    governance: 'how changes are approved',
-    visibility: 'who can see this app',
-    platform_env: 'this app\u2019s platform settings',
-    secrets: 'this app\u2019s keys',
+    get admins() { return globalThis.PlatformI18n.t("core:who_runs_this_app_26f26c81"); },
+    get governance() { return globalThis.PlatformI18n.t("core:how_changes_are_approved_0fdceb82"); },
+    get visibility() { return globalThis.PlatformI18n.t("core:who_can_see_this_app_0358aef4"); },
+    get platform_env() { return globalThis.PlatformI18n.t("core:this_app_s_platform_settings_1af87577"); },
+    get secrets() { return globalThis.PlatformI18n.t("core:this_app_s_keys_45a67d5f"); },
   };
 
   // { phrase, sentence, line } for a reason; an unknown or missing reason
@@ -155,9 +155,9 @@
     return {
       phrase: phrase,
       sentence: phrase
-        ? 'Changes to ' + phrase + ' need a Yes from another member.'
-        : 'This change needs a Yes from another member.',
-      line: phrase ? 'It changes ' + phrase : 'It changes a protected setting',
+        ? globalThis.PlatformI18n.t("core:changes_to_e6694ea7") + phrase + globalThis.PlatformI18n.t("core:need_a_yes_from_another_member_6f1dc08e")
+        : globalThis.PlatformI18n.t("core:this_change_needs_a_yes_from_another_member_456bf8bc"),
+      line: phrase ? globalThis.PlatformI18n.t("core:it_changes_98054fc9") + phrase : globalThis.PlatformI18n.t("core:it_changes_a_protected_setting_ae42b601"),
     };
   }
 
@@ -245,49 +245,46 @@
     // to go. Both are in-flight or waiting: neither asks the reader to act.
     var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
     if (status === 'promoted' && served.indexOf('integrating') !== -1) {
-      return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
+      return descriptor('integrating', globalThis.PlatformI18n.t("core:bringing_up_to_date_4d201b46"), 'amber', true, {
         votes: votes,
         // Only a CONFLICT is ever brought up to date now: a head that merges
         // cleanly merges as it stands, however far behind. So this is the
         // conflict lane at work, and the sentence says what that lane does.
-        title: 'The platform is merging main into this proposal to resolve a conflict. '
-          + 'The result is previewed and checked, and it merges on its own once '
-          + 'the vote passes.' + (ageOf(integ.measuredAt) ? ' \u00b7 ' + ageOf(integ.measuredAt) : ''),
+        title: globalThis.PlatformI18n.t("core:the_platform_is_merging_main_into_this_proposal__a2957cfe") + (ageOf(integ.measuredAt) ? ' \u00b7 ' + ageOf(integ.measuredAt) : ''),
       });
     }
     if (status === 'promoted' && served.indexOf('budget') !== -1) {
-      return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
+      return descriptor('integrating', globalThis.PlatformI18n.t("core:waiting_on_shared_budget_32e9da4b"), 'amber', false, {
         votes: votes,
         // #3230: the reset in the viewer's own clock where ResetTime is loaded.
-        title: localReset('This proposal needs merging with main, but the platform\u2019s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
+        title: localReset(globalThis.PlatformI18n.t("core:this_proposal_needs_merging_with_main_but_the_pl_195813c8")),
       });
     }
 
     // 1 — terminal: merged.
     if (status === 'merged') {
-      return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });
+      return descriptor('merged', globalThis.PlatformI18n.t("core:merged_bd0a0620"), 'violet', false, { glyph: '✓', votes: votes });
     }
     // 2 — actively merging (GitHub merge + prod rebuild in flight).
     if (status === 'merging') {
       return descriptor('merging', 'Merging…', 'amber', true, {
         votes: votes,
-        title: 'This change is being merged into the app and production is rebuilding.',
+        get title() { return globalThis.PlatformI18n.t("core:this_change_is_being_merged_into_the_app_and_pro_8fd7219f"); },
       });
     }
     // 3 — auto-resolver reconciling conflicts (persisted snapshot, or the
     // feed's process-local `resolving` flag) then retrying the merge.
     if (mcs === 'resolving' || p.resolving === true) {
-      return descriptor('resolving', 'Resolving conflicts automatically…', 'amber', true, {
+      return descriptor('resolving', globalThis.PlatformI18n.t("core:resolving_conflicts_automatically_6191b885"), 'amber', true, {
         votes: votes,
-        title: 'Reconciling conflicts with main automatically, then retrying the merge.',
+        get title() { return globalThis.PlatformI18n.t("core:reconciling_conflicts_with_main_automatically_th_0deeee4f"); },
       });
     }
     // 4 — auto-resolve gave up; a human must sync/resolve.
     if (mcs === 'failed') {
-      return descriptor('conflict_failed', 'Conflict resolution failed', 'red', false, {
+      return descriptor('conflict_failed', globalThis.PlatformI18n.t("core:conflict_resolution_failed_95fc7813"), 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'The last automatic conflict resolution failed. The owner needs to resolve manually.',
+        get title() { return globalThis.PlatformI18n.t("core:the_last_automatic_conflict_resolution_failed_th_d4359cb0"); },
       });
     }
     // 4b — a real merge attempt hit a GitHub conflict ('conflict' is written
@@ -298,10 +295,9 @@
     // badge forever. Red: the reliable way out is the proposal's creator
     // finishing the merge from their session.
     if (mcs === 'conflict') {
-      return descriptor('merge_conflict', 'Merge failed: conflict', 'red', false, {
+      return descriptor('merge_conflict', globalThis.PlatformI18n.t("core:merge_failed_conflict_cdc73e88"), 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'Going live was attempted but this change conflicts with main. '
-          + 'The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").',
+        get title() { return globalThis.PlatformI18n.t("core:going_live_was_attempted_but_this_change_conflic_9005e484"); },
       });
     }
     // 4c (#1442) — GitHub predicts the NEXT merge will conflict. States 4/4b
@@ -320,16 +316,16 @@
       // once beforehand, unasked), so the creator is never the ONLY way out
       // unless the lane has said so.
       var who = served.indexOf('unresolvable') !== -1
-        ? 'The platform tried to resolve it and could not. The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").'
+        ? globalThis.PlatformI18n.t("core:the_platform_tried_to_resolve_it_and_could_not_t_2ea58998")
         : served.indexOf('fork_head') !== -1
-          ? 'Its branch lives on the creator\u2019s own fork, which the platform cannot write to, so only the creator can bring it up to date.'
+          ? globalThis.PlatformI18n.t("core:its_branch_lives_on_the_creator_s_own_fork_which_5348c1a0")
           : served.indexOf('awaiting_approval') !== -1
-            ? 'The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session ("Sync with main").'
-            : 'The platform resolves it automatically. The creator can also bring it up to date from their agent session ("Sync with main").';
+            ? globalThis.PlatformI18n.t("core:the_platform_resolves_it_once_the_vote_passes_th_74f7ef63")
+            : globalThis.PlatformI18n.t("core:the_platform_resolves_it_automatically_the_creat_af706c09");
       return descriptor('mergeability_conflict',
-        nf ? 'Conflicts with main · ' + nf : 'Conflicts with main', 'red', false, {
+        nf ? globalThis.PlatformI18n.t("core:conflicts_with_main_5de978e6") + nf : globalThis.PlatformI18n.t("core:conflicts_with_main_160f1693"), 'red', false, {
           glyph: '⚠', votes: votes,
-          title: 'Main has moved on and this proposal no longer merges on its own. ' + who,
+          title: globalThis.PlatformI18n.t("core:main_has_moved_on_and_this_proposal_no_longer_me_dd52697c") + who,
         });
     }
     // 5a — preview boot failure and checks-run infrastructure failure are
@@ -337,26 +333,26 @@
     // error; check_state='error' by itself only says the runner did not
     // produce a verdict and must not accuse the app of failing to boot.
     if (p.preview_state === 'failed' || p.staging_error) {
-      return descriptor('preview_failed', "Preview won't boot", 'red', false, {
+      return descriptor('preview_failed', globalThis.PlatformI18n.t("core:preview_won_t_boot_cf4e0364"), 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.staging_error
-          ? ('The preview failed to start, so it can\u2019t be tested. It can\u2019t go live until it starts. Reason: ' + p.staging_error)
-          : 'The preview failed to start, so it couldn\u2019t be tested. It can\u2019t go live until it starts.',
+          ? (globalThis.PlatformI18n.t("core:the_preview_failed_to_start_so_it_can_t_be_teste_57a25ee3") + p.staging_error)
+          : globalThis.PlatformI18n.t("core:the_preview_failed_to_start_so_it_couldn_t_be_te_4bc53266"),
       });
     }
     if (check === 'error' && checksWillRetry(p)) {
       // In flight and nobody need act: the same treatment as a running check.
-      return descriptor('checks_running', 'Checks will run again', 'neutral', true, {
+      return descriptor('checks_running', globalThis.PlatformI18n.t("core:checks_will_run_again_01842acf"), 'neutral', true, {
         votes: votes,
-        title: (p.check_error_detail ? p.check_error_detail + ' ' : '') + 'Merge is blocked until they pass.',
+        title: (p.check_error_detail ? p.check_error_detail + ' ' : '') + globalThis.PlatformI18n.t("core:merge_is_blocked_until_they_pass_00f3dc84"),
       });
     }
     if (check === 'error') {
-      return descriptor('checks_error', "Checks couldn't run", 'red', false, {
+      return descriptor('checks_error', globalThis.PlatformI18n.t("core:checks_couldn_t_run_ae981c13"), 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.check_error_detail
-          ? ('The automated check run ended before it produced a verdict. Merge is blocked. Reason: ' + p.check_error_detail)
-          : 'The automated check run ended before it produced a verdict. The preview may still be available; merge is blocked until checks complete.',
+          ? (globalThis.PlatformI18n.t("core:the_automated_check_run_ended_before_it_produced_9441aaad") + p.check_error_detail)
+          : globalThis.PlatformI18n.t("core:the_automated_check_run_ended_before_it_produced_deef3cc8"),
       });
     }
     // 5b — checks blocked the merge (a test broke).
@@ -369,10 +365,10 @@
       var n = Array.isArray(p.test_results)
         ? p.test_results.filter(function (r) { return r && r.status !== 'pass' && !r.advisory; }).length
         : 0;
-      var label = n ? 'Checks failing · ' + n : 'Checks failing';
+      var label = n ? globalThis.PlatformI18n.t("core:checks_failing_241def0e") + n : globalThis.PlatformI18n.t("core:checks_failing_cc33bd61");
       return descriptor('checks_failing', label, 'amber', false, {
         glyph: '⚠', votes: votes,
-        title: 'Checks are not passing on the preview. It can\u2019t go live until they pass.',
+        get title() { return globalThis.PlatformI18n.t("core:checks_are_not_passing_on_the_preview_it_can_t_g_855a4c53"); },
       });
     }
     // 6 — checks still running (not yet a verdict). Grey, not amber: it's
@@ -382,11 +378,9 @@
       // the head conflicts with main and a verdict on a tree that cannot
       // merge is not worth the minutes. They run once it merges cleanly.
       // Not a spinner: nothing is running, and nobody has to act on it.
-      return descriptor('checks_deferred', 'Checks deferred', 'neutral', false, {
+      return descriptor('checks_deferred', globalThis.PlatformI18n.t("core:checks_deferred_a2cd58c8"), 'neutral', false, {
         votes: votes,
-        title: 'This proposal conflicts with main, so its preview was built but its tests '
-          + 'were not run: they would judge a tree that cannot merge. They run automatically '
-          + 'once it merges cleanly.',
+        get title() { return globalThis.PlatformI18n.t("core:this_proposal_conflicts_with_main_so_its_preview_40dcbb19"); },
       });
     }
     if (check === 'pending') {
@@ -394,9 +388,9 @@
       // twenty minutes" reads as a number rather than as a hang (#3232).
       var runningFor = runningForOf(p);
       return descriptor('checks_running',
-        runningFor ? 'Checks running · ' + runningFor : 'Checks running…', 'neutral', true, {
+        runningFor ? globalThis.PlatformI18n.t("core:checks_running_a674f947") + runningFor : globalThis.PlatformI18n.t("core:checks_running_37893559"), 'neutral', true, {
         votes: votes,
-        title: 'Still testing the preview. It can\u2019t go live until the checks pass.',
+        get title() { return globalThis.PlatformI18n.t("core:still_testing_the_preview_it_can_t_go_live_until_ea9ad72b"); },
       });
     }
     // 6a (#607) — a promoted proposal with NO verdict recorded at all: the
@@ -405,9 +399,9 @@
     // Rows carrying a console snapshot are genuine pre-#47 legacy and keep
     // falling through to the vote states.
     if (!check && status === 'promoted' && !p.console_check_state) {
-      return descriptor('checks_running', 'Checks starting…', 'neutral', true, {
+      return descriptor('checks_running', globalThis.PlatformI18n.t("core:checks_starting_0ddf2772"), 'neutral', true, {
         votes: votes,
-        title: 'The preview is being prepared and testing is about to start. It can\u2019t go live until the checks pass.',
+        get title() { return globalThis.PlatformI18n.t("core:the_preview_is_being_prepared_and_testing_is_abo_9cf08413"); },
       });
     }
     // 6b — checks explicitly skipped (#461): there was genuinely nothing to
@@ -415,11 +409,11 @@
     // NON-blocking — the gate treats it like 'passing' — so grey, no
     // spinner, with the recorded reason in the tooltip.
     if (check === 'skipped') {
-      return descriptor('checks_skipped', 'Checks skipped', 'neutral', false, {
+      return descriptor('checks_skipped', globalThis.PlatformI18n.t("core:checks_skipped_765099c7"), 'neutral', false, {
         votes: votes,
         title: p.check_error_detail
-          ? ('Checks were skipped: ' + p.check_error_detail + '. It can still go live.')
-          : 'Checks were skipped: there was nothing to test. It can still go live.',
+          ? (globalThis.PlatformI18n.t("core:value1_value2_it_can_still_go_live_1a8efecc", { value1: globalThis.PlatformI18n.t("core:checks_were_skipped_c7a2946d"), value2: p.check_error_detail }))
+          : globalThis.PlatformI18n.t("core:checks_were_skipped_there_was_nothing_to_test_it_1c84321c"),
       });
     }
     // 7 — behind main. ('conflict' no longer falls through here — it has its
@@ -431,10 +425,9 @@
       // stands, and GitHub's own merge is the last word on whether it still
       // can. (The conflicting case never reaches here: 4c above takes it.)
       var behindAge = integ ? ageOf(integ.measuredAt) : null;
-      return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
+      return descriptor('behind', behind ? globalThis.PlatformI18n.t("core:behind_main_f8a37255") + behind : globalThis.PlatformI18n.t("core:behind_main_fff25504"), 'amber', false, {
         votes: votes,
-        title: 'Main has moved on since this was proposed, but this still merges cleanly. '
-          + 'Nothing needs syncing: it merges as it stands once the vote passes.'
+        title: globalThis.PlatformI18n.t("core:main_has_moved_on_since_this_was_proposed_but_th_c6fdfaaf")
           + (behindAge ? ' \u00b7 ' + behindAge : ''),
       });
     }
@@ -442,15 +435,15 @@
     // fires where the caller supplies `locked`; the admin-yes is verified
     // server-side, so this is the "still needs admin" hint, not a guarantee.)
     if (status === 'promoted' && reached && locked) {
-      return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
+      return descriptor('awaiting_admin', globalThis.PlatformI18n.t("core:awaiting_admin_approval_c16937fc"), 'amber', false, {
         votes: votes,
-        title: 'App is locked, so it also needs at least one admin yes before it merges.',
+        get title() { return globalThis.PlatformI18n.t("core:app_is_locked_so_it_also_needs_at_least_one_admi_fcb4069f"); },
       });
     }
     // 8a — the member floor: the votes are in, but none of them is from a
     // member other than the author. "Merging shortly" would be untrue.
     if (status === 'promoted' && reached && awaitingOtherMember(p)) {
-      return descriptor('awaiting_member', 'Needs another member\u2019s Yes', 'amber', false, {
+      return descriptor('awaiting_member', globalThis.PlatformI18n.t("core:needs_another_member_s_yes_43bb7625"), 'amber', false, {
         votes: votes,
         title: explicitApprovalCopy(p.explicit_approval_reason).sentence,
         explicitApproval: true,
@@ -462,18 +455,17 @@
     // row says so, and the tooltip names the test and the way out.
     var mainPause = mainPauseOf(p);
     if (status === 'promoted' && reached && check === 'passing' && mainPause) {
-      return descriptor('main_paused', 'Approved, going live is paused', 'amber', false, {
+      return descriptor('main_paused', globalThis.PlatformI18n.t("core:approved_going_live_is_paused_56cd528d"), 'amber', false, {
         votes: votes,
-        title: 'Approved and checks passed, but ' + (mainPause.note || 'main\u2019s unit suite is failing and going live is paused for this app')
-          + '. Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.',
+        title: globalThis.PlatformI18n.t("core:value1_value2_nothing_about_this_change_is_wrong_76eb1c25", { value1: globalThis.PlatformI18n.t("core:approved_and_checks_passed_but_e39cfc6b"), value2: (mainPause.note || globalThis.PlatformI18n.t("core:main_s_unit_suite_is_failing_and_going_live_is_p_7c53e98f")) }),
       });
     }
     // 9 — passed the vote, checks green, not behind: eligible and queued to
     // merge (one proposal per app merges at a time). The new explicit state.
     if (status === 'promoted' && reached && check === 'passing') {
-      return descriptor('ready', 'Approved, going live shortly', 'green', false, {
+      return descriptor('ready', globalThis.PlatformI18n.t("core:approved_going_live_shortly_15a8bd33"), 'green', false, {
         votes: votes,
-        title: 'Approved and checks passed. It goes live shortly.',
+        get title() { return globalThis.PlatformI18n.t("core:approved_and_checks_passed_it_goes_live_shortly_d602759c"); },
       });
     }
     // 10 — proposed, still collecting votes. #788: a flagged proposal
@@ -485,11 +477,11 @@
       // creator's own words on a project that is just them, whose one Yes is
       // the Yes it needs.
       var solo = (opts.audience || p.app_audience) === 'solo' && majority <= 1;
-      return descriptor('in_vote', solo ? 'Waiting for your approval' : 'Waiting for approval', 'violet', false, {
+      return descriptor('in_vote', solo ? globalThis.PlatformI18n.t("core:waiting_for_your_approval_af7a94b9") : globalThis.PlatformI18n.t("core:waiting_for_approval_10c5739b"), 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
           ? explicitApprovalCopy(p.explicit_approval_reason).sentence
-            + ' It won\u2019t merge on a timer: it needs real Yes votes to reach the app\u2019s normal threshold.'
+            + globalThis.PlatformI18n.t("core:it_won_t_merge_on_a_timer_it_needs_real_yes_vote_cbbaeba4")
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
       });
@@ -501,14 +493,14 @@
     // retain precedence, and promoted rows already resolved through their
     // vote state.
     if (status === 'active' && check === 'passing') {
-      return descriptor('checks_passed', 'Checks passed', 'green', false, {
+      return descriptor('checks_passed', globalThis.PlatformI18n.t("core:checks_passed_b63c39d9"), 'green', false, {
         glyph: '✓',
-        title: 'Checks passed on the preview. It is ready to send for approval.',
+        get title() { return globalThis.PlatformI18n.t("core:checks_passed_on_the_preview_it_is_ready_to_send_32255c42"); },
       });
     }
     // 11 — building; not yet proposed.
     if (status === 'active') {
-      return descriptor('draft', 'Draft', 'neutral', false, {});
+      return descriptor('draft', globalThis.PlatformI18n.t("core:draft_ebf12ef4"), 'neutral', false, {});
     }
     // Unknown / non-merge lifecycle (paused, archived, …): no badge.
     return descriptor('none', '', 'neutral', false, {});
@@ -527,7 +519,7 @@
       // invited-approver apps — recorded, but not in the headline tally.
       if (life.votes.advisory > 0) {
         advisory = ' <span class="ms-advisory" title="'
-          + life.votes.advisory + ' advisory vote' + (life.votes.advisory === 1 ? '' : 's')
+          + life.votes.advisory + globalThis.PlatformI18n.t("core:advisory_vote_f205dcb4") + (life.votes.advisory === 1 ? '' : 's')
           + ' from non-approvers. They don’t count toward merging">+'
           + life.votes.advisory + '</span>';
       }

@@ -652,7 +652,7 @@ const App = {
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
-    await window.PlatformI18n?.useAccountLanguage?.(null);
+    await globalThis.PlatformI18n?.useAccountLanguage?.(null);
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
     window.UITelemetry?.clearUser?.();
@@ -1412,11 +1412,11 @@ const App = {
       // Not awaited: the shot leaves the dialog standing for the camera. It
       // resolves if somebody dismisses it, and its answer goes nowhere.
       AppView.showPermissionConsentModal({
-        appName: 'Staging demo app',
+        get appName() { return globalThis.PlatformI18n.t("core:staging_demo_app_577df2d0"); },
         capability: 'microphone',
-        label: 'Microphone',
-        blurb: 'record audio from your microphone',
-        reason: 'Records your voice notes',
+        get label() { return globalThis.PlatformI18n.t("core:microphone_186352a8"); },
+        get blurb() { return globalThis.PlatformI18n.t("core:record_audio_from_your_microphone_d27cfa65"); },
+        get reason() { return globalThis.PlatformI18n.t("core:records_your_voice_notes_c2a3b1a2"); },
         needsReload: true,
         surfaced: false,
       });
@@ -1453,7 +1453,7 @@ const App = {
         payload: {
           id: 900500,
           version: 'staging-demo-v1',
-          title: 'Staging Demo Terms of Service',
+          get title() { return globalThis.PlatformI18n.t("core:staging_demo_terms_of_service_a68f9117"); },
           terms_link: 'https://staging-demo.example.invalid/terms',
           published_at: '2026-07-15T00:00:00.000Z',
           consent: { status: null, accepted: false, responded_at: null },
@@ -1622,7 +1622,7 @@ const App = {
     if (queued) {
       window.FeedbackQueue?.seedDisplayOnly?.([{
         payload: {
-          description: 'Dragging a card scrolls the board back to the top.',
+          get description() { return globalThis.PlatformI18n.t("core:dragging_a_card_scrolls_the_board_back_to_the_to_a86a6894"); },
           target: 'platform',
         },
       }]);
@@ -1709,7 +1709,7 @@ const App = {
           const text = document.getElementById('feedback-text');
           // Assigned, not typed: dispatching `input` would start the live
           // title generation, and a display-only shot must not call the LLM.
-          if (text) text.value = 'The board scrolls back to the top when I drag a card.';
+          if (text) text.value = globalThis.PlatformI18n.t("core:the_board_scrolls_back_to_the_top_when_i_drag_a__c899424e");
           // One more tick so the dialog has settled (and its own open-time
           // resets have run) before the failing attempt starts — and then the
           // same retry the open above gets, for the same reason one level
@@ -1740,7 +1740,7 @@ const App = {
             const app = document.getElementById('feedback-target-app');
             const name = document.getElementById('feedback-target-app-name');
             if (app && !app.disabled && name && name.textContent === 'Example App') return;
-            try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
+            try { App._simulateFeedbackTargetChoice?.(globalThis.PlatformI18n.t("core:example_app_941d64ed")); } catch (e) { /* ignore */ }
             if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(poseChoice, 50);
@@ -1751,8 +1751,8 @@ const App = {
             const row = document.getElementById('feedback-target');
             if (row && row.getAttribute('aria-invalid') === 'true') return;
             const text = document.getElementById('feedback-text');
-            if (text && !text.value) text.value = 'Dragging a card scrolls the board back to the top.';
-            try { App._simulateFeedbackTargetMissed?.('Example App'); } catch (e) { /* ignore */ }
+            if (text && !text.value) text.value = globalThis.PlatformI18n.t("core:dragging_a_card_scrolls_the_board_back_to_the_to_a86a6894");
+            try { App._simulateFeedbackTargetMissed?.(globalThis.PlatformI18n.t("core:example_app_941d64ed")); } catch (e) { /* ignore */ }
             if (--missTries > 0) setTimeout(pressWithoutChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(pressWithoutChoice, 50);
@@ -2338,8 +2338,8 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
-        : 'Running outside of a deploy (no GIT_SHA set)';
+        ? globalThis.PlatformI18n.t("core:staging_preview_of_the_platform_built_without_a__e12080df")
+        : globalThis.PlatformI18n.t("core:running_outside_of_a_deploy_no_git_sha_set_1447ae37");
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`, 'idle');
       return;
@@ -2351,9 +2351,9 @@ const App = {
       const elapsed = deploy.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
         : null;
-      const tipParts = [`Deploying ${newShort || 'new build'}`];
-      if (oldShort) tipParts.push(`from ${oldShort}`);
-      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
+      const tipParts = [globalThis.PlatformI18n.t("core:deploying_value1_0b7f80d9", { value1: newShort || globalThis.PlatformI18n.t("core:new_build_9893f46b") })];
+      if (oldShort) tipParts.push(globalThis.PlatformI18n.t("core:from_value1_299c8d93", { value1: oldShort }));
+      if (elapsed != null) tipParts.push(globalThis.PlatformI18n.t("core:value1_s_elapsed_6a308a97", { value1: elapsed }));
       const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
       paint(`
         <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
@@ -2381,8 +2381,8 @@ const App = {
         // is one.
         paint(`
           <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
-                title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
-            <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
+                title="${globalThis.PlatformI18n.htmlText("core:platform_updated_from_value0_to_value1_downloadi_2343e281", { value0: oldShort, value1: newShort })}">
+            <span class="drawer-ver-spinner" aria-hidden="true"></span>${globalThis.PlatformI18n.htmlText("core:value2_updating_0acc62b9", { value2: newShort })}
           </span>`, 'downloading');
         return;
       }
@@ -2393,19 +2393,19 @@ const App = {
       const failed = !!(update && update.state === 'failed');
       const tip = failed
         ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
+        : globalThis.PlatformI18n.t("core:platform_updated_from_value1_to_value2_and_the_n_b0976baf", { value1: oldShort, value2: newShort });
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
                 title="${tip}"
-                onclick="location.reload()">${newShort} · reload</button>`, failed ? 'failed' : 'ready');
+                onclick="location.reload()">${globalThis.PlatformI18n.htmlText("core:value1_reload_c2012433", { value1: newShort })}</button>`, failed ? 'failed' : 'ready');
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`, 'idle');
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="${globalThis.PlatformI18n.htmlText("core:platform_commit_value1_47c0d8d1", { value1: shortSha })}">${shortSha}</a>`, 'idle');
   },
 
   // Tiny local HTML-escaper for server-sourced strings interpolated into
@@ -3105,7 +3105,7 @@ const App = {
         break;
       case 'staging_ready':
         DevChat._deactivateLastStatus();
-        DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
+        DevChat.messages.push({ role: 'system', get content() { return globalThis.PlatformI18n.t("core:staging_deployed_82f73d4d"); }, stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         if (data.url) {
@@ -3119,9 +3119,9 @@ const App = {
         DevChat._deactivateLastStatus();
         DevChat.messages.push({
           role: 'system',
-          content: `Staging build failed: ${data.error || 'unknown error'}`,
+          content: globalThis.PlatformI18n.t("core:staging_build_failed_value1_40812ac8", { value1: data.error || globalThis.PlatformI18n.t("core:unknown_error_3e4443e5") }),
           stagingFailed: true,
-          stagingErrorName: data.errorName || 'Error',
+          stagingErrorName: data.errorName || globalThis.PlatformI18n.t("core:error_54a0e8c1"),
           stagingMissingKeys: data.missingKeys || [],
           created_at: new Date().toISOString(),
           _slug: Math.random().toString(36).slice(2,8),
@@ -3337,8 +3337,8 @@ const App = {
           ccLog: data.log,
           // #3296: an OpenRouter model can run in Claude Code as well.
           content: data.agentBackend === 'codex_openrouter' && data.agentHarness !== 'claude'
-            ? 'Codex log'
-            : 'Claude Code log',
+            ? globalThis.PlatformI18n.t("core:codex_log_13c7f056")
+            : globalThis.PlatformI18n.t("core:claude_code_log_8ea01952"),
           agentBackend: data.agentBackend,
           agentHarness: data.agentHarness,
           agentModel: data.agentModel,
@@ -3945,10 +3945,10 @@ const App = {
         if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
       };
       const DEAD = {
-        expired: 'That invite link has expired.',
-        revoked: 'That invite link was turned off.',
-        used_up: 'That invite link has been used as many times as it allows.',
-        unknown: 'That invite link does not work.',
+        get expired() { return globalThis.PlatformI18n.t("core:that_invite_link_has_expired_7aa263b3"); },
+        get revoked() { return globalThis.PlatformI18n.t("core:that_invite_link_was_turned_off_e06ebc93"); },
+        get used_up() { return globalThis.PlatformI18n.t("core:that_invite_link_has_been_used_as_many_times_as__470ba439"); },
+        get unknown() { return globalThis.PlatformI18n.t("core:that_invite_link_does_not_work_a0ffc591"); },
       };
       const openHub = (slug) => {
         if (!slug) return;
@@ -3986,12 +3986,12 @@ const App = {
           return;
         }
         if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-        const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+        const name = standing.project && standing.project.name ? standing.project.name : globalThis.PlatformI18n.t("core:this_project_11453073");
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} made it and invited you.`
-          : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
+          ? globalThis.PlatformI18n.t("core:value1_made_it_and_invited_you_b8cd87fa", { value1: standing.inviterName })
+          : (standing.inviter ? globalThis.PlatformI18n.t("core:value1_invited_you_95c65b25", { value1: standing.inviter }) : globalThis.PlatformI18n.t("core:you_were_invited_6e957db7"));
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
         // sign-in-sheet.tsx): that press was the consent, so it is not asked
@@ -4002,22 +4002,22 @@ const App = {
           sessionStorage.removeItem('usernode:invite-join');
         } catch (_) { /* asked as before */ }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
-          title: `Join ${name}?`,
+          get title() { return globalThis.PlatformI18n.t("core:join_value1_b4f8b7c8", { value1: name }); },
           message: from
             + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
+            + (count ? globalThis.PlatformI18n.t("core:value1_value2_in_it_df113c03", { value1: count, value2: count === 1 ? globalThis.PlatformI18n.t("core:person_is_df584934") : globalThis.PlatformI18n.t("core:people_are_210a756d") }) : '')
             // WP-E: the link's maker hears when somebody joins through it.
             + (standing.inviterName || standing.inviter
-              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
-          confirmLabel: 'Join',
-          cancelLabel: 'Not now',
+              ? globalThis.PlatformI18n.t("core:value1_will_see_that_you_joined_a16062a6", { value1: standing.inviterName || `@${standing.inviter}` }) : ''),
+          get confirmLabel() { return globalThis.PlatformI18n.t("core:join_fd30fe68"); },
+          get cancelLabel() { return globalThis.PlatformI18n.t("core:not_now_a0e63d7c"); },
         }) : true;
         if (!ok) return;
         const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
         const result = await joined.json().catch(() => ({}));
-        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || globalThis.PlatformI18n.t("core:could_not_join_try_again_d8162dad"), true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
         // the confirm, and they are cached for a minute (HomePanels.TTL_MS),
@@ -4029,11 +4029,11 @@ const App = {
         if (result.status === 'joined') window.HomePanels?.ensureLoaded?.({ force: true });
         if (result.slug) {
           if (welcome({ ...standing, newAccount: false }, result.slug)) return;
-          toast(`You joined ${result.name || name}.`);
+          toast(globalThis.PlatformI18n.t("core:you_joined_value1_9560d0b2", { value1: result.name || name }));
           openHub(result.slug);
         }
       } catch (_) {
-        toast('Could not open that invite link. Try again.', true);
+        toast(globalThis.PlatformI18n.t("core:could_not_open_that_invite_link_try_again_ea0e2965"), true);
       }
     } finally {
       settle(joinedHere);
@@ -6030,18 +6030,18 @@ const App = {
       same method on every section change. One table, both paths.
   */
   LEADERBOARD_TITLES: {
-    challenges: 'Challenges',
-    kudos: 'Kudos',
-    prs: 'Kudos',
-    users: 'Kudos',
-    history: 'Kudos',
-    topochain: 'Standings',
-    seasons: 'History',
+    get challenges() { return globalThis.PlatformI18n.t("core:challenges_40b9c8f4"); },
+    get kudos() { return globalThis.PlatformI18n.t("core:kudos_51483eb0"); },
+    get prs() { return globalThis.PlatformI18n.t("core:kudos_51483eb0"); },
+    get users() { return globalThis.PlatformI18n.t("core:kudos_51483eb0"); },
+    get history() { return globalThis.PlatformI18n.t("core:kudos_51483eb0"); },
+    get topochain() { return globalThis.PlatformI18n.t("core:standings_c7342049"); },
+    get seasons() { return globalThis.PlatformI18n.t("core:history_0e769600"); },
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || globalThis.PlatformI18n.t("core:challenges_40b9c8f4");
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -6124,7 +6124,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(username ? `@${username}` : 'Profile');
+      App.setHeaderTitle(username ? `@${username}` : globalThis.PlatformI18n.t("core:profile_d696a35b"));
       // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
       // beside it, so a control in the corner that goes home is a second way
       // to press a button already in view.
@@ -6148,7 +6148,7 @@ const App = {
   // not a new screen entry. Keep it out of the global transition gate so
   // drawer navigation still has exactly one transition per screen entry.
   _routeMountedProfile(username) {
-    App.setHeaderTitle(username ? `@${username}` : 'Profile');
+    App.setHeaderTitle(username ? `@${username}` : globalThis.PlatformI18n.t("core:profile_d696a35b"));
     if (window.Profile?.open) Profile.open(username);
   },
 
@@ -6177,7 +6177,7 @@ const App = {
     'your-votes': 'votes',
   },
   PROFILE_WORK_TITLES: {
-    changes: 'Your changes', requests: 'Your requests', votes: 'Your votes',
+    get changes() { return globalThis.PlatformI18n.t("core:your_changes_96b37574"); }, get requests() { return globalThis.PlatformI18n.t("core:your_requests_4c64a2a1"); }, get votes() { return globalThis.PlatformI18n.t("core:your_votes_ca7f0008"); },
   },
 
   navigateToProfileProposals(kind = 'changes') {
@@ -6253,7 +6253,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('browse-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:all_apps_01bed311"));
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
@@ -6319,7 +6319,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Communities');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:communities_c864f329"));
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -6610,7 +6610,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('admin-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
+      App.setHeaderTitle(publicMode ? globalThis.PlatformI18n.t("core:platform_status_c6df37e5") : 'Admin & moderation');
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -6661,7 +6661,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('settings-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Settings');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:settings_74a883a0"));
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link
       // the header ends up showing the section's name rather than
       // "Settings".
@@ -6720,7 +6720,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Messages');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:messages_04d7b483"));
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -6802,7 +6802,7 @@ const App = {
       App._showOnlyScreen('global-chat-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Chat');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:chat_460b3a7d"));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -6875,7 +6875,7 @@ const App = {
       App._showOnlyScreen('agent-session-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Agent session');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:agent_session_da3d3fb8"));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7405,7 +7405,7 @@ const App = {
     if (AppView.appData?.slug === slug && AppView.appData.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     } else if (!AppView.appData) {
-      App.setHeaderTitle('App not available');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("core:app_not_available_f92ec0a5"));
     }
 
     // "View on GitHub" and "Share app" were drawer rows revealed by hand

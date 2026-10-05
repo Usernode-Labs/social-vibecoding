@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 // The Leaderboard screen (#leaderboard) as a React island — #1083 chunk F
 // step 3, and the biggest of the four regions by module count: five legacy
 // modules retire into the bundle with it.
@@ -110,10 +112,10 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // been the Kudos pane's "My history" sub-view, and a deep link must keep
 // meaning what it meant.
 const SECTION_TABS = [
-  { key: 'challenges', label: 'Challenges' },
-  { key: 'kudos', label: 'Kudos' },
-  { key: 'topochain', label: 'Standings' },
-  { key: 'seasons', label: 'History' },
+  { key: 'challenges', get label() { return tr("apps:challenges_40b9c8f4"); } },
+  { key: 'kudos', get label() { return tr("apps:kudos_51483eb0"); } },
+  { key: 'topochain', get label() { return tr("apps:standings_c7342049"); } },
+  { key: 'seasons', get label() { return tr("apps:history_0e769600"); } },
 ];
 
 // Four labels at the strip's px-4 are wider than a 390px phone's column, so
@@ -136,6 +138,7 @@ const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-w
 const KUDOS_COLUMN = 'max-w-[40rem] mx-auto';
 
 export function LeaderboardScreen() {
+  useUiLanguage();
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'leaderboard-screen', false);
   const { mounted, section } = useLeaderboardSection();

@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#llm-grants-list` — the App AI permissions rows, as the only React writer
  * below that host.
@@ -69,15 +74,10 @@ const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 function RevokedRow({ grant }: { grant: GrantView }) {
   return (
     <div className={ROW_CLASS}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-zinc-500 dark:text-zinc-500 truncate">{grant.appName}</span>
-        <span className="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">
-          Revoked
-        </span>
-      </div>
+      <div className="flex items-center justify-between gap-2"><RichMessage id="settings:sentence_52d17a625c2c" values={{ value1: grant.appName }} components={[<span className="font-medium text-zinc-500 dark:text-zinc-500 truncate" />, <span className="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400" />]} /></div>
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
         <span className="text-zinc-500 dark:text-zinc-500">
-          {`Re-enabling restores its $${grant.cap} daily cap.`}
+          <LocalizedValue render={() => (tr("settings:re_enabling_restores_its_value1_daily_cap_655ec6cb", { value1: grant.cap }))} />
         </span>
         <Button
           type="button"
@@ -86,9 +86,7 @@ function RevokedRow({ grant }: { grant: GrantView }) {
           variant="compact"
           size="xs"
           onClick={() => { void controller()?._onGrantReenable?.(grant); }}
-        >
-          Re-enable
-        </Button>
+        ><Message id="settings:re_enable_63de4217" /></Button>
       </div>
     </div>
   );
@@ -100,13 +98,11 @@ function GrantRow({ grant }: { grant: GrantView }) {
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate">{grant.appName}</span>
         <span className="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">
-          {`$${grant.spent} / $${grant.cap} today`}
+          <LocalizedValue render={() => (tr("settings:value1_value2_today_807fc2e9", { value1: grant.spent, value2: grant.cap }))} />
         </span>
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
-        <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          Cap $
-          {/* #2437 widened tests/shell-primitive-adoption.test.js's field-box
+        <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400"><Message id="settings:cap_65f13504" />{/* #2437 widened tests/shell-primitive-adoption.test.js's field-box
               scan to the WHITE fill, which is the fill this row has always
               used — so this field, hand-written since the conversion, became
               visible to the rule for the first time. It renders the same class
@@ -135,9 +131,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
               className="accent-violet-500 w-3.5 h-3.5"
               checked={grant.allowByok}
               onChange={(e) => controller()?._onGrantByokChange?.(grant.appId, e.currentTarget.checked)}
-            />
-            Use my own key past the daily budget
-          </label>
+            /><Message id="settings:use_my_own_key_past_the_daily_budget_4e44fe70" /></label>
         ) : null}
         {/*
             Filled, not a red outline — the language draws no outlined control
@@ -150,9 +144,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onGrantRevoke?.(grant.appId, grant.appName); }}
-        >
-          Revoke
-        </button>
+        ><Message id="settings:revoke_87e6d00b" /></button>
       </div>
     </div>
   );
@@ -160,10 +152,10 @@ function GrantRow({ grant }: { grant: GrantView }) {
 
 export function GrantsListView({ phase, grants }: GrantsState) {
   if (phase === 'idle') return null;
-  if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">Failed to load app permissions.</p>;
+  if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:loading_ba3bbbe1" /></p>;
+  if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400"><Message id="settings:failed_to_load_app_permissions_5eb6af55" /></p>;
   if (!grants.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-500"><Message id="settings:no_apps_have_asked_to_use_ai_yet_b11b6069" /></p>;
   }
   return (
     <>
@@ -175,5 +167,6 @@ export function GrantsListView({ phase, grants }: GrantsState) {
 }
 
 export function GrantsList() {
+  useUiLanguage();
   return <GrantsListView {...useStoreState<GrantsState>(grantsStore)} />;
 }

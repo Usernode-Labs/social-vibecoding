@@ -180,7 +180,7 @@ const TopochainChallenges = {
   formatReward(reward) {
     const s = String(reward == null ? '' : reward).trim();
     if (!s) return null;
-    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+    return /^[\d][\d.,]*$/.test(s) ? globalThis.PlatformI18n.t("apps:value1_pts_7157c665", { value1: s }) : s;
   },
 
   // "2,000 pts": a points figure with thousands separators. A value that is
@@ -189,7 +189,7 @@ const TopochainChallenges = {
   _pts(v) {
     const n = Number(v);
     return v != null && v !== '' && Number.isFinite(n)
-      ? `${n.toLocaleString('en-US')} pts` : TopochainChallenges.str(v);
+      ? globalThis.PlatformI18n.t("apps:value1_pts_7157c665", { value1: n.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : TopochainChallenges.str(v);
   },
 
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
@@ -367,7 +367,7 @@ const TopochainChallenges = {
     } else {
       TopochainChallenges._challenges = [];
       TopochainChallenges._challengesError = (res.data && res.data.error)
-        || 'Failed to load challenges.';
+        || globalThis.PlatformI18n.t("apps:failed_to_load_challenges_e3bed3a9");
     }
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
@@ -421,11 +421,11 @@ const TopochainChallenges = {
   // without them. `order` is each group's rank while setup is unfinished;
   // _groupRankOf moves a finished First challenges group to the end.
   GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    ONBOARDING: { key: 'setup', get heading() { return globalThis.PlatformI18n.t("apps:first_challenges_79462a6d"); }, order: 0 },
+    WEEKLY: { key: 'week', get heading() { return globalThis.PlatformI18n.t("apps:this_week_8c4eef5a"); }, order: 1 },
+    PERSISTENT: { key: 'always', get heading() { return globalThis.PlatformI18n.t("apps:always_open_67b6ffc1"); }, order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+  OTHER_GROUP: { key: 'other', get heading() { return globalThis.PlatformI18n.t("apps:season_challenges_ba3646b8"); }, order: 3 },
 
   _groupOf(c) {
     const label = c && c.card_preview ? c.card_preview.label : null;
@@ -554,7 +554,7 @@ const TopochainChallenges = {
     const groups = (firstDone > 0 && doneCount > 0)
       ? [
         { key: 'open', heading: null, cards: cards.slice(0, firstDone) },
-        { key: 'done', heading: 'Completed', cards: cards.slice(firstDone) },
+        { key: 'done', get heading() { return globalThis.PlatformI18n.t("apps:completed_22a970d2"); }, cards: cards.slice(firstDone) },
       ]
       : [{ key: 'all', heading: null, cards }];
 
@@ -613,7 +613,7 @@ const TopochainChallenges = {
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
         ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'First challenges'),
+        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, globalThis.PlatformI18n.t("apps:first_challenges_79462a6d")),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
@@ -627,7 +627,7 @@ const TopochainChallenges = {
       // its Getting started list on Home (the tour as well as these), so
       // that is what the words name (2026-10-01).
       ...(onboarding.unlocked ? {} : {
-        notice: 'Finish Getting started to unlock the rest of the season.',
+        get notice() { return globalThis.PlatformI18n.t("apps:finish_getting_started_to_unlock_the_rest_of_the_2ab652a3"); },
         lockedCount: Number(onboarding.hidden_count) || 0,
         lockedNames: Array.isArray(onboarding.hidden_names) ? onboarding.hidden_names : [],
       }),
@@ -648,9 +648,9 @@ const TopochainChallenges = {
     const allDone = total > 0 && done === total;
     const left = allDone || key === 'setup' ? null : TopochainChallenges._groupTimeLeft(key, list);
     let meta;
-    if (allDone) meta = `${total}/${total} done`;
+    if (allDone) meta = globalThis.PlatformI18n.t("apps:value1_value2_done_01a53bd7", { value1: total, value2: total });
     else if (key === 'setup') meta = `${done}/${total}`;
-    else meta = `${done}/${total} · ${left || 'no deadline'}`;
+    else meta = `${done}/${total} · ${left || globalThis.PlatformI18n.t("apps:no_deadline_4cee0239")}`;
     return { done, total, allDone, left, meta };
   },
 
@@ -754,13 +754,13 @@ const TopochainChallenges = {
     const clock = (ms) => {
       const at = new Date(ms);
       return at.toDateString() === new Date(now).toDateString()
-        ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-        : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        ? at.toLocaleTimeString(globalThis.PlatformI18n.getLanguage(), { hour: 'numeric', minute: '2-digit' })
+        : at.toLocaleString(globalThis.PlatformI18n.getLanguage(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     };
     const next = last + every;
-    if (next > now) return `next count ${clock(next)}`;
-    if (now - next < every) return 'counting now';
-    return `last count ${clock(last)}`;
+    if (next > now) return globalThis.PlatformI18n.t("apps:next_count_value1_a0d85a7b", { value1: clock(next) });
+    if (now - next < every) return globalThis.PlatformI18n.t("apps:counting_now_5c6c0ea5");
+    return globalThis.PlatformI18n.t("apps:last_count_value1_9b335da2", { value1: clock(last) });
   },
 
   // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
@@ -802,7 +802,7 @@ const TopochainChallenges = {
     const ms = ends - Date.now();
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
-    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+    return hours < 24 ? globalThis.PlatformI18n.t("apps:value1_h_left_1000363c", { value1: hours }) : globalThis.PlatformI18n.t("apps:value1_d_left_eacaadd0", { value1: Math.ceil(ms / 86400000) });
   },
 
   // The progress over the grid, as the board's quiet season summary draws it
@@ -819,11 +819,11 @@ const TopochainChallenges = {
   // different counts under one label. The event's tally reads "done in this
   // event · <name>" now. A named scope ("First challenges") is unchanged.
   _progressView(done, total, scope) {
-    if (scope) return { done, total, caption: `done in ${scope}` };
+    if (scope) return { done, total, caption: globalThis.PlatformI18n.t("apps:done_in_value1_e6213234", { value1: scope }) };
     const ctx = window.TopochainEventContext;
     const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
     const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? `done in this event · ${name}` : 'done' };
+    return { done, total, caption: name ? globalThis.PlatformI18n.t("apps:done_in_this_event_value1_cf02d62d", { value1: name }) : 'done' };
   },
 
   // The card's rail: which of the three states a challenge is in, the one
@@ -882,8 +882,8 @@ const TopochainChallenges = {
     const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
     const p = (c && c.progress) || null;
     if (TopochainChallenges._isDone(c)) {
-      const earned = points ? `Earned ${points.toLocaleString('en-US')} pts` : null;
-      return { state: 'done', stateLabel: 'Done', fill: 1, counted: false, earned };
+      const earned = points ? globalThis.PlatformI18n.t("apps:earned_value1_pts_bb32d65a", { value1: points.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : null;
+      return { state: 'done', get stateLabel() { return globalThis.PlatformI18n.t("apps:done_11a6767d"); }, fill: 1, counted: false, earned };
     }
     if (p) {
       const target = Number(p.target);
@@ -907,9 +907,9 @@ const TopochainChallenges = {
         };
       }
       if (current > 0 || points > 0) {
-        return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+        return { state: 'progress', get stateLabel() { return globalThis.PlatformI18n.t("apps:started_ecbc89cd"); }, fill: null, counted: false, earned: null };
       }
-      return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
+      return { state: 'new', get stateLabel() { return globalThis.PlatformI18n.t("apps:not_started_ba35f0c4"); }, fill: 0, counted: false, earned: null };
     }
     const metric = (m && m.metric) || null;
     const at = (c && c.activity_type) || null;
@@ -944,9 +944,9 @@ const TopochainChallenges = {
         earned: null,
       };
     }
-    if (points) return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+    if (points) return { state: 'progress', get stateLabel() { return globalThis.PlatformI18n.t("apps:started_ecbc89cd"); }, fill: null, counted: false, earned: null };
     // Points, not rows: a zero-point ledger row is not a step taken.
-    return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
+    return { state: 'new', get stateLabel() { return globalThis.PlatformI18n.t("apps:not_started_ba35f0c4"); }, fill: 0, counted: false, earned: null };
   },
 
   // A card click, by its index in the flat ordered array. Recomputed rather
@@ -1121,7 +1121,7 @@ const TopochainChallenges = {
       // "Challenge", not the challenge's own name: the page's large title says
       // which one, and a generic word keeps the bar short and steady.
       app.setBackIcon('arrow', '#leaderboard/challenges');
-      app.setHeaderTitle('Challenge');
+      app.setHeaderTitle(globalThis.PlatformI18n.t("apps:challenge_27cf1792"));
       return;
     }
     // Any section: the screen names the SECTION you are on, and a page left
@@ -1133,7 +1133,7 @@ const TopochainChallenges = {
     // comes from App.LEADERBOARD_TITLES, which is the table both entries into
     // this screen read — restating the word here is how the two drift.
     app.setBackIcon('arrow', '#profile');
-    app.setHeaderTitle(app._leaderboardTitle?.(lb?.section) || 'Leaderboard');
+    app.setHeaderTitle(app._leaderboardTitle?.(lb?.section) || globalThis.PlatformI18n.t("apps:leaderboard_31b47121"));
   },
 
   // The platform header's back chevron (and Escape), claimed the way Settings
@@ -1237,7 +1237,7 @@ const TopochainChallenges = {
         };
       }
     } else {
-      TopochainChallenges._breakdownError = (data && data.error) || 'Failed to load the breakdown.';
+      TopochainChallenges._breakdownError = (data && data.error) || globalThis.PlatformI18n.t("apps:failed_to_load_the_breakdown_54ab326c");
     }
     TopochainChallenges._renderDetailOverlay();
   },
@@ -1267,7 +1267,7 @@ const TopochainChallenges = {
   // one section where block production lives: the root has nothing about
   // it, and the button's own label promises the section.
   ctaView(dm, challenge) {
-    const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || 'Go');
+    const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || globalThis.PlatformI18n.t("apps:go_6cc8519b"));
     if (!dm.cta_link) return null;
     const route = TopochainChallenges._inAppRoute(dm.cta_link);
     if (route) {
@@ -1381,60 +1381,53 @@ const TopochainChallenges = {
     if (!state) {
       return {
         step: 'error',
-        title: 'Could not check your block-production status',
-        text: 'Check your connection and try again.',
-        action: { label: 'Try again' },
+        get title() { return globalThis.PlatformI18n.t("apps:could_not_check_your_block_production_status_b619a319"); },
+        get text() { return globalThis.PlatformI18n.t("apps:check_your_connection_and_try_again_481859b6"); },
+        action: { get label() { return globalThis.PlatformI18n.t("apps:try_again_d8b8392e"); } },
       };
     }
     if (state.bp_released) {
       const onDevice = e.native && e.android ? {
-        title: 'Or produce blocks on this phone',
-        text: 'Producing directly on this phone earns full points.',
-        warning: 'Only for phones that can stay on. A background service keeps running with a'
-          + ' persistent notification, it uses more battery and data, and Android must let the'
-          + ' app run unrestricted in the background and set exact alarms. If the phone stops'
-          + ' the app, it misses its slots.',
+        get title() { return globalThis.PlatformI18n.t("apps:or_produce_blocks_on_this_phone_49131518"); },
+        get text() { return globalThis.PlatformI18n.t("apps:producing_directly_on_this_phone_earns_full_poin_969e4ca2"); },
+        get warning() { return globalThis.PlatformI18n.t("apps:only_for_phones_that_can_stay_on_a_background_se_81f5c171"); },
       } : null;
       return {
         step: 'account',
-        title: 'Choose how to produce blocks',
+        get title() { return globalThis.PlatformI18n.t("apps:choose_how_to_produce_blocks_bbee698a"); },
         delegation: {
-          title: 'Delegate (recommended)',
-          text: 'Your stake is delegated to Homeroom\'s block-production server, so nothing'
-            + ' keeps running on your phone. When delegated, you receive half the points'
-            + ' you would earn by producing blocks directly from your phone.',
+          get title() { return globalThis.PlatformI18n.t("apps:delegate_recommended_4725f1a3"); },
+          get text() { return globalThis.PlatformI18n.t("apps:your_stake_is_delegated_to_homeroom_s_block_prod_48e5428c"); },
         },
         onDevice,
         onDeviceNote: onDevice ? null
-          : 'Producing blocks on the phone itself is available only in the Android app.',
-        action: e.wallet ? { label: 'Manage delegation' } : null,
+          : globalThis.PlatformI18n.t("apps:producing_blocks_on_the_phone_itself_is_availabl_97066173"),
+        action: e.wallet ? { get label() { return globalThis.PlatformI18n.t("apps:manage_delegation_0f6f168b"); } } : null,
         appNote: e.wallet ? null
           : (e.native
-            ? 'Delegation is managed from the wallet in the Homeroom app. If it is not offered there yet, update the app.'
-            : 'Delegation is managed from your wallet in the Homeroom app. Open this challenge there.'),
+            ? globalThis.PlatformI18n.t("apps:delegation_is_managed_from_the_wallet_in_the_hom_58d3bd9f")
+            : globalThis.PlatformI18n.t("apps:delegation_is_managed_from_your_wallet_in_the_ho_24a679a6")),
       };
     }
     if (state.bp_requested) {
       return {
         step: 'pending',
-        title: 'Wallet requested',
-        text: 'An admin releases wallet keys in batches. Once yours are released, come back here'
-          + ' to choose how your blocks are produced.',
+        get title() { return globalThis.PlatformI18n.t("apps:wallet_requested_85761edd"); },
+        get text() { return globalThis.PlatformI18n.t("apps:an_admin_releases_wallet_keys_in_batches_once_yo_a2883512"); },
       };
     }
     if (!state.has_platform_access) {
       return {
         step: 'locked',
-        title: 'Not available yet',
-        text: 'You can request a wallet once your account has platform access.',
+        get title() { return globalThis.PlatformI18n.t("apps:not_available_yet_787406dd"); },
+        get text() { return globalThis.PlatformI18n.t("apps:you_can_request_a_wallet_once_your_account_has_p_fe9d8e4c"); },
       };
     }
     return {
       step: 'request',
-      title: 'First, request a wallet',
-      text: 'Producing blocks needs a wallet with producer keys. Ask for one and an admin will'
-        + ' release your keys in batches.',
-      action: { label: requesting ? 'Requesting…' : 'Request a wallet', pending: !!requesting },
+      get title() { return globalThis.PlatformI18n.t("apps:first_request_a_wallet_db0883e6"); },
+      get text() { return globalThis.PlatformI18n.t("apps:producing_blocks_needs_a_wallet_with_producer_ke_f56b6e59"); },
+      action: { label: requesting ? globalThis.PlatformI18n.t("apps:requesting_1db9285a") : globalThis.PlatformI18n.t("apps:request_a_wallet_86002c33"), pending: !!requesting },
     };
   },
 
@@ -1466,13 +1459,13 @@ const TopochainChallenges = {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || data.success === false) {
-        throw new Error((data && data.error) || 'Request failed');
+        throw new Error((data && data.error) || globalThis.PlatformI18n.t("apps:request_failed_cfce761b"));
       }
       TopochainChallenges._bpState = Object.assign({}, TopochainChallenges._bpState || {}, {
         bp_requested: true,
         bp_released: !!(data.data && data.data.bp_released),
       });
-      if (ui && ui.toast) ui.toast('Request sent. An admin will release your keys');
+      if (ui && ui.toast) ui.toast(globalThis.PlatformI18n.t("apps:request_sent_an_admin_will_release_your_keys_ac5d16ce"));
       // #2960: the Android "Set up your device" sheet waits for exactly this
       // moment; on iOS or an already-answered device it presents nothing.
       const nc = window.NativeChrome;
@@ -1480,7 +1473,7 @@ const TopochainChallenges = {
         nc.maybeShowFirstRunPermissions({ force: true });
       }
     } catch (e) {
-      if (ui && ui.toast) ui.toast((e && e.message) || 'Request failed', { error: true });
+      if (ui && ui.toast) ui.toast((e && e.message) || globalThis.PlatformI18n.t("apps:request_failed_cfce761b"), { error: true });
     } finally {
       TopochainChallenges._bpRequesting = false;
       TopochainChallenges._renderDetailOverlay();
@@ -1552,7 +1545,7 @@ const TopochainChallenges = {
     const reward = TopochainChallenges.formatReward(cp.reward);
     let amount = null;
     if (rail.earned) amount = { text: rail.earned, earned: true };
-    else if (points) amount = { text: `${points.toLocaleString('en-US')} pts so far`, earned: false };
+    else if (points) amount = { get text() { return globalThis.PlatformI18n.t("apps:value1_pts_so_far_a81abd75", { value1: points.toLocaleString(globalThis.PlatformI18n.getLanguage()) }); }, earned: false };
     else if (reward) amount = { text: reward, earned: false };
 
     const bpStep = TopochainChallenges._isBlockProduction(challenge)
@@ -1617,10 +1610,10 @@ const TopochainChallenges = {
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,
       participants: participants
-        ? `Participants · ${participants.toLocaleString('en-US')}` : 'Participants',
-      pointsTotal: totalPoints ? `${totalPoints.toLocaleString('en-US')} pts between them` : null,
+        ? globalThis.PlatformI18n.t("apps:participants_value1_0d7965bb", { value1: participants.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : globalThis.PlatformI18n.t("apps:participants_0e27279b"),
+      pointsTotal: totalPoints ? globalThis.PlatformI18n.t("apps:value1_pts_between_them_1d105419", { value1: totalPoints.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : null,
       moreLabel: remaining > 0 && remaining <= 25
-        ? `Show all ${participants.toLocaleString('en-US')} →` : 'Show more →',
+        ? globalThis.PlatformI18n.t("apps:show_all_value1_3e158828", { value1: participants.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : globalThis.PlatformI18n.t("apps:show_more_71e579d3"),
       entries,
     };
   },
@@ -1656,7 +1649,7 @@ const TopochainChallenges = {
       if (ok && data?.success) {
         TopochainChallenges._profile = data.data;
       } else {
-        TopochainChallenges._profileError = (data && data.error) || 'Failed to load this profile.';
+        TopochainChallenges._profileError = (data && data.error) || globalThis.PlatformI18n.t("apps:failed_to_load_this_profile_e363ddd7");
       }
       TopochainChallenges._renderProfileOverlay();
     });
@@ -1682,17 +1675,17 @@ const TopochainChallenges = {
     const p = TopochainChallenges._profile;
     return {
       kind: 'profile',
-      name: str(p.display_name) || 'Anonymous',
+      name: str(p.display_name) || globalThis.PlatformI18n.t("apps:anonymous_e7a8aa2d"),
       // The stats grid was six hand-written cells in the same shape; one
       // ordered list of label/value pairs is the same six, and a label can no
       // longer drift away from the field it sits over.
       stats: [
-        { label: 'Rank', value: str(p.rank ?? '—') },
-        { label: 'Total points', value: str(p.total_points) },
-        { label: 'Extra points', value: str(p.extra_points) },
-        { label: 'Produced blocks', value: str(p.produced_blocks) },
-        { label: 'VRF won slots', value: str(p.vrf_won_slots) },
-        { label: 'Success rate', value: `${str(p.success_rate)}%` },
+        { get label() { return globalThis.PlatformI18n.t("apps:rank_a4130d7d"); }, value: str(p.rank ?? '—') },
+        { get label() { return globalThis.PlatformI18n.t("apps:total_points_82d73caa"); }, value: str(p.total_points) },
+        { get label() { return globalThis.PlatformI18n.t("apps:extra_points_c1419df1"); }, value: str(p.extra_points) },
+        { get label() { return globalThis.PlatformI18n.t("apps:produced_blocks_4898d66e"); }, value: str(p.produced_blocks) },
+        { get label() { return globalThis.PlatformI18n.t("apps:vrf_won_slots_6ba86e99"); }, value: str(p.vrf_won_slots) },
+        { get label() { return globalThis.PlatformI18n.t("apps:success_rate_49da60f8"); }, value: `${str(p.success_rate)}%` },
       ],
       // null, not [], so the renderer's "No activities recorded." branch is
       // the same explicit choice the template's ternary was.

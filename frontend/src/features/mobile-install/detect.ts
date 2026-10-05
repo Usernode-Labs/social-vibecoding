@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * Should this visitor be offered the native app, and where does it send them?
  *
@@ -58,8 +59,8 @@ export type InstallOffer =
  * name takes one.
  */
 export const STORE_LABEL: Record<MobileOs, string> = {
-  ios: 'the App Store',
-  android: 'Google Play',
+  get ios() { return tr("core:the_app_store_8768b638"); },
+  get android() { return tr("core:google_play_027b1684"); },
 };
 
 /**
@@ -83,8 +84,8 @@ export function storeLabel(os: MobileOs, url: string): string {
     return STORE_LABEL[os];
   }
   if (host === 'testflight.apple.com') return 'TestFlight';
-  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'the App Store';
-  if (host === 'play.google.com') return 'Google Play';
+  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return tr("core:the_app_store_8768b638");
+  if (host === 'play.google.com') return tr("core:google_play_027b1684");
   return STORE_LABEL[os];
 }
 
@@ -177,8 +178,8 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
  * Telling somebody where the menu item is works on both, every time.
  */
 export const A2HS_STEPS: Record<MobileOs, string> = {
-  ios: 'Tap Share, then Add to Home Screen.',
-  android: 'Open the browser menu, then Add to Home screen.',
+  get ios() { return tr("core:tap_share_then_add_to_home_screen_1ba29065"); },
+  get android() { return tr("core:open_the_browser_menu_then_add_to_home_screen_067947cc"); },
 };
 
 /**

@@ -1,3 +1,4 @@
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * The Homeroom-app section's vocabulary: the five shapes `settings.js` built
  * with `_unEl`, `_unSection`, `_unStatusRow`, `_unButton` and `_unToggle`.
@@ -99,7 +100,7 @@ const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-left';
 const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
-  const { busy, run } = useAction('Action failed');
+  const { busy, run } = useAction(tr("settings:action_failed_6e1704d8"));
   const dot = `w-2 h-2 rounded-full shrink-0 ${row.ok ? 'bg-emerald-500' : 'bg-amber-500'}`;
   const ink = row.ok
     ? 'ml-auto text-xs text-emerald-700 dark:text-emerald-400'
@@ -135,7 +136,7 @@ const BTN_TONE = {
 } as const;
 
 export function UnBtn({ btn }: { btn: UnAction }): ReactNode {
-  const { busy, run } = useAction('Action failed');
+  const { busy, run } = useAction(tr("settings:action_failed_6e1704d8"));
   return (
     <button
       id={btn.id} type="button"
@@ -150,7 +151,7 @@ export function UnSwitch({ toggle }: { toggle: UnToggle }): ReactNode {
   // `checked` follows the MODEL, and a failed setter simply never publishes a
   // new one — so the revert the old handler did by hand (`input.checked =
   // !e.target.checked`) is what not-publishing already means.
-  const { busy, run } = useAction('Could not save the setting');
+  const { busy, run } = useAction(tr("settings:could_not_save_the_setting_de85eeb0"));
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none mt-2">
       <input

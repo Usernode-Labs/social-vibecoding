@@ -71,9 +71,9 @@ function roundCountdownMs(remainingMs) {
 // conveys how far a run has gone).
 function formatCountdown(targetMs, nowMs) {
   var remaining = (Number(targetMs) || 0) - (Number(nowMs) || 0);
-  if (!(remaining > COUNTDOWN_FLOOR_MS)) return ' · under a minute left';
+  if (!(remaining > COUNTDOWN_FLOOR_MS)) return globalThis.PlatformI18n.t("core:under_a_minute_left_91c74824");
   var rounded = roundCountdownMs(remaining);
-  if (rounded < 60000) return ' · under a minute left';
+  if (rounded < 60000) return globalThis.PlatformI18n.t("core:under_a_minute_left_91c74824");
   return ' · ~' + formatElapsed(rounded) + ' left';
 }
 
@@ -99,8 +99,8 @@ function formatCountdown(targetMs, nowMs) {
 function runCohortHint(elapsedMs) {
   var ms = Number(elapsedMs) || 0;
   if (ms < 600000) return '';
-  if (ms < 1800000) return 'running longer than most, about 1 in 5 runs do';
-  return 'this is a long one, some runs go 30 min+';
+  if (ms < 1800000) return globalThis.PlatformI18n.t("core:running_longer_than_most_about_1_in_5_runs_do_baedec83");
+  return globalThis.PlatformI18n.t("core:this_is_a_long_one_some_runs_go_30_min_c77fdeba");
 }
 
 // Friendly names for the __USERNODE_PHASE__ markers run-cc.sh emits.
@@ -108,23 +108,23 @@ function runCohortHint(elapsedMs) {
 // phase text so they're still informative rather than hidden.
 function ccPhaseLabel(phase) {
   var p = String(phase || '').trim();
-  if (/^claude\b/.test(p)) return 'Claude is working';
+  if (/^claude\b/.test(p)) return globalThis.PlatformI18n.t("core:claude_is_working_74909c18");
   // Backend-neutral phase markers for codex_openrouter sessions (plan.md
   // PR5). Kept generic so the progress card renders a friendly label for
   // the second coding-agent backend without a Claude-specific branch.
-  if (/^codex\b/.test(p)) return 'Coding agent is working';
-  if (/^agent\b/.test(p)) return 'Coding agent is working';
-  if (/^sync/.test(p)) return 'Syncing with main';
-  if (p === 'refresh') return 'Syncing branch';
-  if (p === 'commit') return 'Committing';
-  if (p === 'push') return 'Pushing';
+  if (/^codex\b/.test(p)) return globalThis.PlatformI18n.t("core:coding_agent_is_working_bdba63ba");
+  if (/^agent\b/.test(p)) return globalThis.PlatformI18n.t("core:coding_agent_is_working_bdba63ba");
+  if (/^sync/.test(p)) return globalThis.PlatformI18n.t("core:syncing_with_main_a88d4c38");
+  if (p === 'refresh') return globalThis.PlatformI18n.t("core:syncing_branch_1c0cc2f2");
+  if (p === 'commit') return globalThis.PlatformI18n.t("core:committing_f9764fc0");
+  if (p === 'push') return globalThis.PlatformI18n.t("core:pushing_a602ed6c");
   // Terminal markers: run-cc.sh emits done/push_failed at the end of a
   // turn, and the server appends done/push_failed/interrupted on the
   // recovery/error paths — so the collapsed progress card always ends
   // on a terminal label instead of freezing on "Pushing".
-  if (p === 'done') return 'Finished';
-  if (p === 'push_failed') return 'Push failed';
-  if (p === 'interrupted') return 'Interrupted';
+  if (p === 'done') return globalThis.PlatformI18n.t("core:finished_7804f7a7");
+  if (p === 'push_failed') return globalThis.PlatformI18n.t("core:push_failed_91809be5");
+  if (p === 'interrupted') return globalThis.PlatformI18n.t("core:interrupted_132d124d");
   return p;
 }
 

@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { GrantsList } from '../grants-list';
@@ -18,9 +19,7 @@ export function AppAiSection() {
   return (
     <div data-settings-section="app-ai" className="hidden">
       <div id="llm-grants-section">
-        <SectionHeading title="App AI permissions">
-          Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately, and a revoked app can be re-enabled here with its previous cap.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:app_ai_permissions_8be55dd9")}><Message id="settings:apps_you_ve_allowed_to_use_ai_on_your_behalf_the_f61e6dba" /></SectionHeading>} messages={{"title":"settings:app_ai_permissions_8be55dd9"}} />
         <div id="llm-grants-list" className="space-y-2">
           <GrantsList />
         </div>

@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * How far through a scope of challenges the viewer is: "3/9 done in Season 2"
  * over one short segment per challenge.
@@ -48,12 +50,12 @@ export function SeasonProgress({
         <span className={FRACTION}>{`${done}/${total}`}</span>
         <span className={CAPTION}>{view.caption}</span>
       </p>
-      <div
+      <LocalizedDynamic element={<div
         role="meter"
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={done}
-        aria-label={`${done} of ${total} ${view.caption}`}
+        aria-label={tr("apps:value1_of_value2_value3_226fde89", { value1: done, value2: total, value3: view.caption })}
         className="flex gap-1"
       >
         {total <= SEGMENT_LIMIT
@@ -68,7 +70,7 @@ export function SeasonProgress({
               />
             </span>
           )}
-      </div>
+      </div>} resolve={() => ({ get "aria-label"() { return tr("apps:value1_of_value2_value3_226fde89", { value1: done, value2: total, value3: view.caption }); } })} />
     </div>
   );
 }

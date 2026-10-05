@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#notification-prefs-list` — your account-wide notification defaults and
  * every app you have set differently (#1374).
@@ -45,13 +47,14 @@ function controller(): any {
 const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 export function NotificationPrefsList() {
+  useUiLanguage();
   const state = useStoreState<State>(notificationPrefsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:loading_ba3bbbe1" /></p>;
   }
   if (state.phase === 'error') {
-    return <p className="text-xs text-red-700 dark:text-red-400">Could not load notification settings.</p>;
+    return <p className="text-xs text-red-700 dark:text-red-400"><Message id="settings:could_not_load_notification_settings_9b7eaff0" /></p>;
   }
   return (
     <>
@@ -85,7 +88,7 @@ export function NotificationPrefsList() {
       </div>
 
       <div className="mt-5 pt-5 border-t border-zinc-200 dark:border-zinc-800">
-        <p className="text-sm font-medium text-zinc-800 mb-2 dark:text-zinc-200">Apps set differently</p>
+        <p className="text-sm font-medium text-zinc-800 mb-2 dark:text-zinc-200"><Message id="settings:apps_set_differently_f8de2a66" /></p>
         {state.apps.length ? (
           <div className="space-y-2">
             {state.apps.map((app) => (
@@ -103,9 +106,7 @@ export function NotificationPrefsList() {
                     onClick={() => {
                       void controller()?._onNotificationAppReset?.(app.appId, app.appSlug);
                     }}
-                  >
-                    Use my defaults
-                  </Button>
+                  ><Message id="settings:use_my_defaults_1b232808" /></Button>
                 </div>
                 <ul className="mt-1 text-zinc-500 dark:text-zinc-400">
                   {app.categories.map((category) => (
@@ -118,9 +119,7 @@ export function NotificationPrefsList() {
             ))}
           </div>
         ) : (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            No app is set differently. Change one from its Notifications entry in the app menu.
-          </p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:no_app_is_set_differently_change_one_from_its_no_0ae74d77" /></p>
         )}
       </div>
     </>

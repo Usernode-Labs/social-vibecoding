@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Topochain standings pane — `#topochain-leaderboard-root` (#1191 slice 6,
  * conversion 5, the first of the Leaderboard screen's three panes).
@@ -131,7 +136,7 @@ function ChallengeLine(
           the cross-link stands on its own rather than carrying a zero that
           reads as theirs. "done" is the word Home uses for this same number;
           the two must not drift apart again. */}
-      {line.done == null ? null : `${line.done} of ${line.total} challenges done `}
+      <LocalizedValue render={() => (line.done == null ? null : tr("apps:value1_of_value2_challenges_done_54942000", { value1: line.done, value2: line.total }))} />
       {/* QA 2026-09-24 Q32c: a space after the dot as well as before it,
           inside the span rather than as a whitespace-only child (React
           #418, see notifications-list.tsx). */}
@@ -140,9 +145,7 @@ function ChallengeLine(
         id="tc-lb-to-challenges"
         className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
         onClick={() => controller()?._goToChallenges()}
-      >
-        View challenges →
-      </button>
+      ><Message id="apps:view_challenges_fa7e81e5" /></button>
     </p>
   );
 }
@@ -156,10 +159,9 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
       <td className="px-3 py-2 text-sm">
         <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
         {row.nonPodium ? (
-          <span
-            className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
-            title="Excluded from podium ranking"
-          >{' non-podium'}</span>
+          <Localized element={<span
+            className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400" title={catalogText("apps:excluded_from_podium_ranking_07f1600c")}
+          ><Message id="apps:non_podium_759e30d5" /></span>} messages={{"title":"apps:excluded_from_podium_ranking_07f1600c"}} />
         ) : null}
       </td>
     );
@@ -196,12 +198,12 @@ function StandingsTable(
               their column headers) but takes focus and opens on Enter or
               Space, as the Kudos rows do. The label says what it opens. */}
           {view.rows.map((row) => (
-            <tr
+            <LocalizedDynamic element={<tr
               key={row.index}
               className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60"
               data-row-index={row.index}
               tabIndex={0}
-              aria-label={`Open ${row.user}'s details`}
+              aria-label={tr("apps:open_value1_s_details_034e5763", { value1: row.user })}
               onClick={() => controller()?._openRowAt(row.index)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -211,7 +213,7 @@ function StandingsTable(
               }}
             >
               {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
-            </tr>
+            </tr>} resolve={() => ({ get "aria-label"() { return tr("apps:open_value1_s_details_034e5763", { value1: row.user }); } })} />
           ))}
         </tbody>
       </table>
@@ -227,7 +229,7 @@ function Pagination(
   return (
     <div className="flex items-center justify-between mt-3 text-sm">
       <span className="text-zinc-500 dark:text-zinc-400">
-        {`Page ${meta.page} of ${meta.totalPages} · ${meta.total} total`}
+        <LocalizedValue render={() => (tr("apps:page_value1_of_value2_value3_total_36665061", { value1: meta.page, value2: meta.totalPages, value3: meta.total }))} />
       </span>
       <div className="flex gap-2">
         <button
@@ -235,17 +237,13 @@ function Pagination(
           className={btn}
           disabled={meta.prevDisabled}
           onClick={() => controller()?._prevPage()}
-        >
-          Prev
-        </button>
+        ><Message id="apps:prev_73912999" /></button>
         <button
           id="tc-lb-next"
           className={btn}
           disabled={meta.nextDisabled}
           onClick={() => controller()?._nextPage()}
-        >
-          Next
-        </button>
+        ><Message id="apps:next_1ff57a29" /></button>
       </div>
     </div>
   );
@@ -271,8 +269,7 @@ function Pagination(
  */
 function StandingsSkeleton(): ReactNode {
   return (
-    <SkeletonGroup
-      label="Loading the standings"
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_the_standings_4eda8afa")}
       className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800"
     >
       <div className="bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 flex items-center gap-3">
@@ -292,7 +289,7 @@ function StandingsSkeleton(): ReactNode {
           <Skeleton shape="muted" className="w-14" />
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_the_standings_4eda8afa"}} />
   );
 }
 
@@ -306,12 +303,12 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
     );
   }
   if (view.state === 'empty') return <p className={HINT}>{view.message}</p>;
-  if (view.state === 'none') return <p className="text-sm text-zinc-500 dark:text-zinc-400">No data.</p>;
+  if (view.state === 'none') return <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="apps:no_data_5118ec56" /></p>;
   if (view.state === 'private') {
     return (
       <>
         <Disclaimer text={view.disclaimer} />
-        <p className={HINT}>The leaderboard for this event isn't public yet.</p>
+        <p className={HINT}><Message id="apps:the_leaderboard_for_this_event_isn_t_public_yet_d3810d93" /></p>
       </>
     );
   }
@@ -324,7 +321,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
             dapp.json standings checks: a fresh season has an empty
             leaderboard, and the checks accept "table or this hint" while
             still rejecting the red error state. */}
-        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet. {STANDINGS_UPDATE_NOTE}</p>
+        <p className={HINT} data-tc-lb-empty=""><RichMessage id="apps:sentence_5724100daa2c" values={{ value1: STANDINGS_UPDATE_NOTE() }} /></p>
       </>
     );
   }
@@ -339,10 +336,10 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
 }
 
 function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
-  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading activities…</p>;
+  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:loading_activities_8d272db6" /></p>;
   if (view.error) return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   if (!view.items || !view.items.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded for this event.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:no_activities_recorded_for_this_event_b7f206f1" /></p>;
   }
   return (
     <ul className="space-y-1">
@@ -357,20 +354,20 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
 }
 
 function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
-  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading epoch breakdown…</p>;
+  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:loading_epoch_breakdown_38866881" /></p>;
   if (view.error) return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   if (!view.rows || !view.rows.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No epoch data for this event.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:no_epoch_data_for_this_event_dbf4c6ce" /></p>;
   }
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead className="text-zinc-500 dark:text-zinc-400">
           <tr>
-            <th className="text-left py-1">Epoch</th>
-            <th className="text-right py-1">Won slots</th>
-            <th className="text-right py-1">Produced</th>
-            <th className="text-right py-1">Success rate</th>
+            <th className="text-left py-1"><Message id="apps:epoch_fff7a2d7" /></th>
+            <th className="text-right py-1"><Message id="apps:won_slots_32dbf5c2" /></th>
+            <th className="text-right py-1"><Message id="apps:produced_3b22f22b" /></th>
+            <th className="text-right py-1"><Message id="apps:success_rate_49da60f8" /></th>
           </tr>
         </thead>
         <tbody>
@@ -401,24 +398,22 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   if (!view.shown) return null;
   let inner: ReactNode;
   if (view.loading) {
-    inner = <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading your profile…</p>;
+    inner = <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:loading_your_profile_dc371220" /></p>;
   } else if (view.error) {
     inner = <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   } else if (view.stats) {
     const s = view.stats;
     inner = (
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-        <ProfileStat label="Rank" value={s.rank} />
-        <ProfileStat label="Total points" value={s.totalPoints} />
-        <ProfileStat label="Produced blocks" value={s.producedBlocks} />
-        <ProfileStat
-          label="Client success rate"
+        <Localized element={<ProfileStat label={catalogText("apps:rank_a4130d7d")} value={s.rank} />} messages={{"label":"apps:rank_a4130d7d"}} />
+        <Localized element={<ProfileStat label={catalogText("apps:total_points_82d73caa")} value={s.totalPoints} />} messages={{"label":"apps:total_points_82d73caa"}} />
+        <Localized element={<ProfileStat label={catalogText("apps:produced_blocks_4898d66e")} value={s.producedBlocks} />} messages={{"label":"apps:produced_blocks_4898d66e"}} />
+        <Localized element={<ProfileStat label={catalogText("apps:client_success_rate_f58196ac")}
           value={s.clientSuccessRate == null ? '—' : `${s.clientSuccessRate}%`}
-        />
-        <ProfileStat
-          label="Canonical success rate"
+        />} messages={{"label":"apps:client_success_rate_f58196ac"}} />
+        <Localized element={<ProfileStat label={catalogText("apps:canonical_success_rate_56b13819")}
           value={s.canonicalSuccessRate == null ? '—' : `${s.canonicalSuccessRate}%`}
-        />
+        />} messages={{"label":"apps:canonical_success_rate_56b13819"}} />
       </div>
     );
   } else {
@@ -426,7 +421,7 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   }
   return (
     <div className="mb-4">
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Your profile</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1"><Message id="apps:your_profile_528d89ad" /></div>
       {inner}
     </div>
   );
@@ -444,14 +439,13 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             {view.displayName}
           </h3>
-          <button
+          <Localized element={<button
             id="tc-lb-drill-close"
-            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400"
-            aria-label="Close"
+            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400" aria-label={catalogText("apps:close_7d9eb7ac")}
             onClick={() => controller()?._closeDrill()}
           >
             ×
-          </button>
+          </button>} messages={{"aria-label":"apps:close_7d9eb7ac"}} />
         </div>
         {view.walletAddress ? (
           <p className="text-xs font-mono text-zinc-500 mb-3 break-all dark:text-zinc-400">{view.walletAddress}</p>
@@ -459,11 +453,11 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
         <Profile view={view.profile} />
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
+            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1"><Message id="apps:activities_4d0076e6" /></div>
             <Activities view={view.activities} />
           </div>
           <div>
-            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Epoch breakdown</div>
+            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1"><Message id="apps:epoch_breakdown_0cdc9208" /></div>
             <EpochBreakdown view={view.epoch} />
           </div>
         </div>
@@ -473,6 +467,7 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
 }
 
 export function TopochainStandingsPane(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(topochainStandingsStore) as {
     mounted: boolean;
     body: BodyView | null;

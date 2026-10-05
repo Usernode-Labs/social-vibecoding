@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -27,51 +28,40 @@ export function UsernameSection() {
   return (
     <div data-settings-section="username" className="hidden">
       <div id="change-username-section">
-        <SectionHeading title="Username">
-          Your @handle is how you sign in and the address of your public builder page.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:username_e3b89e9d")}><Message id="settings:your_handle_is_how_you_sign_in_and_the_address_o_72596fbe" /></SectionHeading>} messages={{"title":"settings:username_e3b89e9d"}} />
 
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           {/* Filled by Settings._syncUsername() from the session user. */}
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-2 text-[17px]">
-            <span className="text-zinc-500 dark:text-zinc-400">Current</span>
+            <span className="text-zinc-500 dark:text-zinc-400"><Message id="settings:current_e0d1b682" /></span>
             <span id="cu-current" className="ml-auto font-medium text-zinc-900 dark:text-zinc-100">—</span>
           </div>
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-            <Input
+            <Localized element={<Input
               id="cu-new"
               type="text"
               autoComplete="off"
               autoCapitalize="off"
-              spellCheck={false}
-              placeholder="New username"
+              spellCheck={false} placeholder={catalogText("settings:new_username_0e2b4ad7")}
               box="card"
               ring="bare"
               hint="dim"
-            />
+            />} messages={{"placeholder":"settings:new_username_0e2b4ad7"}} />
           </div>
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-            <PasswordInput
+            <Localized element={<PasswordInput
               id="cu-password"
-              autoComplete="current-password"
-              placeholder="Current password"
+              autoComplete="current-password" placeholder={catalogText("settings:current_password_72ed2bd7")}
               box="card"
               ring="bare"
               hint="dim"
-            />
+            />} messages={{"placeholder":"settings:current_password_72ed2bd7"}} />
           </div>
         </div>
 
-        <Button id="cu-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          Change username
-        </Button>
+        <Button id="cu-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3"><Message id="settings:change_username_5912b563" /></Button>
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-          Letters, numbers and underscores, 3–32 characters, so people can still
-          @mention you. Your old handle is kept reserved for you rather than
-          released, so links and mentions that used it keep pointing at you and
-          nobody else can take it. You can change your username again after 30 days.
-        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3"><Message id="settings:letters_numbers_and_underscores_3_32_characters__1534a76f" /></p>
 
         <StatusLine id="cu-status" />
       </div>

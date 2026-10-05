@@ -57,10 +57,10 @@ export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
   const [tl, tr, br, bl] = radii;
   // [radii, box x, box y, box w, box h, the ellipse centre's corner of the box]
   const corners = [
-    [tl, holeLeft, holeTop, rect.left + tl[0] - holeLeft, rect.top + tl[1] - holeTop, 'right bottom'],
-    [tr, rect.right - tr[0], holeTop, holeRight - (rect.right - tr[0]), rect.top + tr[1] - holeTop, 'left bottom'],
-    [br, rect.right - br[0], rect.bottom - br[1], holeRight - (rect.right - br[0]), holeBottom - (rect.bottom - br[1]), 'left top'],
-    [bl, holeLeft, rect.bottom - bl[1], rect.left + bl[0] - holeLeft, holeBottom - (rect.bottom - bl[1]), 'right top'],
+    [tl, holeLeft, holeTop, rect.left + tl[0] - holeLeft, rect.top + tl[1] - holeTop, globalThis.PlatformI18n.t("core:right_bottom_e5bc3942")],
+    [tr, rect.right - tr[0], holeTop, holeRight - (rect.right - tr[0]), rect.top + tr[1] - holeTop, globalThis.PlatformI18n.t("core:left_bottom_9b96b9fc")],
+    [br, rect.right - br[0], rect.bottom - br[1], holeRight - (rect.right - br[0]), holeBottom - (rect.bottom - br[1]), globalThis.PlatformI18n.t("core:left_top_f2114ae8")],
+    [bl, holeLeft, rect.bottom - bl[1], rect.left + bl[0] - holeLeft, holeBottom - (rect.bottom - bl[1]), globalThis.PlatformI18n.t("core:right_top_8bd96e38")],
   ];
   for (const [[rx, ry], x, y, w, h, center] of corners) {
     if (!(rx > 0 && ry > 0)) continue;

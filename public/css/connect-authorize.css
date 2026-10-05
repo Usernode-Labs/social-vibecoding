@@ -116,3 +116,10 @@ button:disabled {
 }
 
 .error { color: #fca5a5; }
+
+/* English remains available if language startup cannot finish. */
+html[data-language-loading] body {
+  visibility: hidden;
+  animation: authorization-language-fallback 0s 10s forwards;
+}
+@keyframes authorization-language-fallback { to { visibility: visible; } }

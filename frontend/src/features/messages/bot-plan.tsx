@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
@@ -60,6 +64,7 @@ function quote(message: ConversationMessage, conversationId: number) {
 }
 
 export function BotPlanCard({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  useUiLanguage();
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
   if (!meta?.plan) return null;
@@ -87,6 +92,7 @@ export function BotPlanCard({ message, conversationId }: { message: Conversation
 }
 
 export function BotTwoQuestions({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  useUiLanguage();
   const meta = botMeta(message);
   const questions = meta?.questions || [];
   const [picked, setPicked] = useState<Array<string | null>>(() => questions.map(() => null));
@@ -117,7 +123,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
                 onClick={() => setPicked((current) => current.map((value, i) => (i === index ? answer : value)))}
               >
                 <span>{answer}</span>
-                {j === 0 ? <span className="messages-bot-default">suggested</span> : null}
+                {j === 0 ? <span className="messages-bot-default"><Message id="community:suggested_8ad70375" /></span> : null}
               </button>
             ))}
           </div>
@@ -128,17 +134,17 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
         </ol>
       )}
       {open ? (
-        <div className="mt-2.5 messages-bot-answers" role="group" aria-label="Actions">
-          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>Build it</button>
-          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>Something else</button>
-        </div>
+        <Localized element={<div className="mt-2.5 messages-bot-answers" role="group" aria-label={catalogText("community:actions_ff8059dc")}>
+          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}><Message id="community:build_it_5e383207" /></button>
+          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}><Message id="community:something_else_cc728431" /></button>
+        </div>} messages={{"aria-label":"community:actions_ff8059dc"}} />
       ) : null}
-      {answered ? <p className="messages-bot-answered whitespace-pre-line">{`You answered:\n${answered}`}</p> : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {answered ? <p className="messages-bot-answered whitespace-pre-line"><LocalizedValue render={() => (tr("community:you_answered_value1_ddf5f998", { value1: answered }))} /></p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered"><Message id="community:no_longer_needed_ace70031" /></p> : null}
       {open || sent ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answers are posted on ${requestPlace(meta)}’s public discussion, where the group can see them.`}</span>
+          <span><LocalizedValue render={() => (tr("community:your_answers_are_posted_on_value1_s_public_discu_9905b828", { value1: requestPlace(meta) }))} /></span>
         </p>
       ) : null}
     </div>

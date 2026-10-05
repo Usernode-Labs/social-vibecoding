@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * #settings-screen — the settings chassis, as a React island (#1081 chunk D).
  *
@@ -85,6 +87,7 @@ interface SettingsChunkState {
 }
 
 export function SettingsScreen() {
+  useUiLanguage();
   // The sixteen panes mount on the screen's FIRST REVEAL, not in the
   // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
   // 1,485 elements, parsed, styled and hydrated on every load for a screen
@@ -156,9 +159,7 @@ export function SettingsScreen() {
               <button
                 id="settings-logout"
                 className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
-              >
-                Log out
-              </button>
+              ><Message id="settings:log_out_49616145" /></button>
             </div>
           </div>
           <div id="settings-content-col" className="flex-1 min-w-0">
@@ -176,9 +177,7 @@ export function SettingsScreen() {
             <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">
-                  Settings could not be loaded. Check your connection and try again.
-                </p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4"><Message id="settings:settings_could_not_be_loaded_check_your_connecti_19779122" /></p>
               ) : null}
             </div>
           </div>

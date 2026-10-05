@@ -1,3 +1,4 @@
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * The five steps of the welcome tour, as data.
  *
@@ -132,8 +133,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // community it is on, which is why the copy says "here" rather than
     // describing what the tab shows.
     id: 'communities',
-    title: 'Communities',
-    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    get title() { return tr("apps:communities_c864f329"); },
+    get body() { return tr("apps:homeroom_is_made_of_communities_that_build_proje_8de9b85d"); },
     targets: ['#platform-tab-workshop'],
   },
   {
@@ -141,8 +142,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Shortcuts',
-    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    get title() { return tr("apps:shortcuts_46e978d0"); },
+    get body() { return tr("apps:the_apps_you_keep_close_a_small_mark_says_where__b2818e47"); },
     targets: ['#home-apps-section', '#app-list'],
   },
   {
@@ -156,8 +157,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // way rather than skipping past it — the next step points INSIDE the
     // menu, so a Next that only moved the counter would land on nothing.
     id: 'app-menu',
-    title: 'The Homeroom menu',
-    body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
+    get title() { return tr("apps:the_homeroom_menu_7997f48e"); },
+    get body() { return tr("apps:inside_any_app_this_mark_opens_its_menu_tap_it_o_ebb6493f"); },
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',
@@ -171,8 +172,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // builds it (or, where it does not build, it goes to the group), and
     // making it yourself is Build it yourself.
     id: 'menu-actions',
-    title: 'Ask for a change',
-    body: 'Tell Homeroom bot what should change. It builds it for you, or passes it to the group as a request. To build it yourself with a coding agent, tap Build it yourself.',
+    get title() { return tr("apps:ask_for_a_change_f445fc4f"); },
+    get body() { return tr("apps:tell_homeroom_bot_what_should_change_it_builds_i_c8bedd37"); },
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },
@@ -187,8 +188,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // tab after the signed-in user, so it names the place instead of a label
     // the tab no longer shows.
     id: 'settings',
-    title: 'Replay this any time',
-    body: 'You can replay this tour any time from Settings, on your profile.',
+    get title() { return tr("apps:replay_this_any_time_c8c5e398"); },
+    get body() { return tr("apps:you_can_replay_this_tour_any_time_from_settings__85bceb55"); },
     targets: ['#platform-tab-me'],
     closesPanel: true,
   },
@@ -254,5 +255,5 @@ export function nextOpensMenu(index: number): boolean {
 
 /** The counter the card prints, e.g. "3 of 5". */
 export function stepCounter(index: number): string {
-  return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
+  return tr("apps:value1_of_value2_a48c498b", { value1: clampIndex(index) + 1, value2: TOUR_LENGTH });
 }

@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * A change in flight, as a row — the Improve panel's "Changes in progress"
  * and "Changes in other apps" lists.
@@ -153,14 +156,14 @@ function stateOf(session: SessionRowView): {
 } {
   if (session.busy) {
     return {
-      label: 'Working',
+      get label() { return tr("apps:working_a92f0449"); },
       pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
       spinner: true,
     };
   }
   if (session.kind === 'task') {
     return {
-      label: 'Handed off',
+      get label() { return tr("apps:handed_off_b60c5435"); },
       pill: 'border border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400',
       spinner: false,
     };
@@ -171,7 +174,7 @@ function stateOf(session: SessionRowView): {
     // TITLE — the part a reader has to read — at "[Mock] Yo…". Same fact,
     // same predicate, and the word the caption and the Workshop's own
     // "Needs you" already use for it.
-    label: session.awaitingInput ? 'Needs you' : 'Ready',
+    label: session.awaitingInput ? tr("apps:needs_you_74b6abdf") : tr("apps:ready_5fa7aac5"),
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
     spinner: false,
   };
@@ -250,6 +253,7 @@ export function SessionRow({
   showApp: boolean;
   onNavigate: () => void;
 }) {
+  useUiLanguage();
   const { sessionUnreadIds } = useStoreState(notificationsStore) as {
     sessionUnreadIds: number[];
   };
@@ -304,12 +308,11 @@ export function SessionRow({
         {state.label}
       </span>
       {unread ? (
-        <span
+        <Localized element={<span
           className="w-2 h-2 rounded-full bg-violet-500 shrink-0"
-          role="img"
-          aria-label="Unread activity"
+          role="img" aria-label={catalogText("apps:unread_activity_d1b1f643")}
           data-session-unread={session.id}
-        />
+        />} messages={{"aria-label":"apps:unread_activity_d1b1f643"}} />
       ) : null}
       {/* NO CHEVRON. The whole row is an anchor and the state pill already
           says this is a live thing you can open; an affordance glyph on every

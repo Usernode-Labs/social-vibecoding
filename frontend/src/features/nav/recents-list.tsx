@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * #platform-recents — what you were just doing, in the desktop rail (#2802).
  *
@@ -119,11 +123,11 @@ const GLYPHS: Record<RecentKind, typeof UserIcon> = {
 
 /** What the kind is called, for the row's accessible name. */
 const KIND_NAMES: Record<RecentKind, string> = {
-  app: 'App',
-  direct: 'Direct message',
-  group: 'Group chat',
-  channel: 'Channel',
-  agent: 'Agent chat',
+  get app() { return tr("core:app_0d04bfeb"); },
+  get direct() { return tr("core:direct_message_cd3e1605"); },
+  get group() { return tr("core:group_chat_28c7d3f8"); },
+  get channel() { return tr("core:channel_ce4683e7"); },
+  get agent() { return tr("core:agent_chat_3b662892"); },
 };
 
 function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, resume = false): void {
@@ -188,7 +192,7 @@ function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boo
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
-  const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
+  const loaded = live ? `, ${LIVE_APP_LABEL()}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
   return (
     <a
@@ -212,7 +216,7 @@ function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boo
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
       {/* #3618: the action the row stands for, on a running app you left. */}
-      {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
+      {resume ? <span className="platform-recent-resume" aria-hidden="true"><Message id="core:resume_d640c742" /></span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
@@ -250,13 +254,13 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           ("Older") under "Earlier" would say nothing new. */}
       {earlier.length ? (
         <>
-          <div className="platform-recents-day">Earlier</div>
+          <div className="platform-recents-day"><Message id="core:earlier_e10ae990" /></div>
           {earlier.map(row)}
         </>
       ) : null}
       {showOlder && older.length ? (
         <>
-          {earlier.length ? null : <div className="platform-recents-day">Older</div>}
+          {earlier.length ? null : <div className="platform-recents-day"><Message id="core:older_03281c88" /></div>}
           {older.map(row)}
         </>
       ) : null}
@@ -270,7 +274,7 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           {showOlder
             ? <ChevronUpIcon className="platform-recents-more-icon" aria-hidden="true" />
             : <ChevronDownIcon className="platform-recents-more-icon" aria-hidden="true" />}
-          <span>{showOlder ? 'Show less' : `Show ${older.length} older`}</span>
+          <span><LocalizedValue render={() => (showOlder ? tr("core:show_less_94ea9b1d") : tr("core:show_value1_older_c9af5723", { value1: older.length }))} /></span>
         </button>
       ) : null}
     </>
@@ -286,7 +290,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   if (!items.length) return null;
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
-      <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
+      <h2 id="platform-active-head" className="platform-recents-head"><Message id="core:active_92340695" /></h2>
       {items.map((item) => <RecentRow key={item.key} item={item} live resume={!item.current} />)}
     </div>
   );
@@ -310,6 +314,7 @@ function useMidnightRender(): void {
 }
 
 export function RecentsList() {
+  useUiLanguage();
   const ref = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   // #2919: the rows before the labelled days, folded on every load.
@@ -389,7 +394,7 @@ export function RecentsList() {
       aria-labelledby="platform-recents-head"
     >
       <ActiveApps items={active} />
-      <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
+      <h2 id="platform-recents-head" className="platform-recents-head"><Message id="core:recents_41a86988" /></h2>
       <RecentsByDay
         items={items}
         live={live}

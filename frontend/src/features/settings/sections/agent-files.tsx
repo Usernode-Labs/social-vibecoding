@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { Button } from '@/components/ui/button';
 
 import { AgentFilesList } from '../agent-files-list';
@@ -22,20 +23,14 @@ export function AgentFilesSection() {
   return (
     <div data-settings-section="agent-files" className="hidden">
       <div id="agent-files-section">
-        <SectionHeading title={<>Agent instructions &amp; skills</>}>
-          Personal files the coding agent follows on every build or spec run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
-        </SectionHeading>
+        <SectionHeading title={<><Message id="settings:agent_instructions_skills_7c5c7975" /></>}><Message id="settings:personal_files_the_coding_agent_follows_on_every_0ac8544a" /></SectionHeading>
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
-            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              Instructions
-            </h4>
+            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300"><Message id="settings:instructions_934652dc" /></h4>
             <button
               data-agent-files-upload="instruction"
               className="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              Upload
-            </button>
+            ><Message id="settings:upload_865e89de" /></button>
           </div>
           <div id="agent-files-instructions-list" className="space-y-1.5">
             <AgentFilesList
@@ -46,15 +41,11 @@ export function AgentFilesSection() {
         </div>
         <div className="mb-2">
           <div className="flex items-center justify-between mb-1.5">
-            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              Skills
-            </h4>
+            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300"><Message id="settings:skills_66d0f523" /></h4>
             <button
               data-agent-files-upload="skill"
               className="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              Upload
-            </button>
+            ><Message id="settings:upload_865e89de" /></button>
           </div>
           <div id="agent-files-skills-list" className="space-y-1.5">
             <AgentFilesList
@@ -84,7 +75,7 @@ export function AgentFilesSection() {
         >
           <div id="agent-files-form-title" className="font-medium text-zinc-700 dark:text-zinc-300 mb-2">
           </div>
-          <Field className="mb-2" label="Name">
+          <Localized element={<Field className="mb-2" label={catalogText("settings:name_dcd1d522")}>
             <Input
               id="agent-files-name"
               type="text"
@@ -95,26 +86,21 @@ export function AgentFilesSection() {
               ring={false}
               text
             />
-          </Field>
-          <Field id="agent-files-desc-wrap" className="mb-2" startHidden label="Description">
-            <Input
+          </Field>} messages={{"label":"settings:name_dcd1d522"}} />
+          <Localized element={<Field id="agent-files-desc-wrap" className="mb-2" startHidden label={catalogText("settings:description_526e0087")}>
+            <Localized element={<Input
               id="agent-files-desc"
               type="text"
-              maxLength={200}
-              placeholder="One line: what this skill does"
+              maxLength={200} placeholder={catalogText("settings:one_line_what_this_skill_does_5e8fbb47")}
               spacing="mt1"
               box="inset"
               ring={false}
               text
-            />
-          </Field>
+            />} messages={{"placeholder":"settings:one_line_what_this_skill_does_5e8fbb47"}} />
+          </Field>} messages={{"label":"settings:description_526e0087"}} />
           <div className="flex gap-2">
-            <Button id="agent-files-save" variant="compact" size="xs">
-              Save
-            </Button>
-            <Button id="agent-files-cancel" variant="outline" size="xs" ink="muted">
-              Cancel
-            </Button>
+            <Button id="agent-files-save" variant="compact" size="xs"><Message id="settings:save_1509f561" /></Button>
+            <Button id="agent-files-cancel" variant="outline" size="xs" ink="muted"><Message id="settings:cancel_19766ed6" /></Button>
           </div>
         </div>
         <StatusLine id="agent-files-status" />

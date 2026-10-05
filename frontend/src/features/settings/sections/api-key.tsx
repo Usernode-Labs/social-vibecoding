@@ -1,3 +1,5 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -13,9 +15,7 @@ import { Label } from '@/components/ui/label';
 export function ApiKeySection() {
   return (
     <div data-settings-section="api-key" className="hidden">
-      <SectionHeading title="Anthropic API key">
-        Bring your own Anthropic API key to keep working past the weekly limit. Your platform weekly allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.
-      </SectionHeading>
+      <Localized element={<SectionHeading title={catalogText("settings:anthropic_api_key_97d1086e")}><Message id="settings:bring_your_own_anthropic_api_key_to_keep_working_5b0792bc" /></SectionHeading>} messages={{"title":"settings:anthropic_api_key_97d1086e"}} />
       {/* The saved key, as the one row of its own card. It shared a card with
           the allowance until the settings restructure lifted the allowance
           into the Usage part at the head of this page. */}
@@ -24,13 +24,11 @@ export function ApiKeySection() {
           id="settings-key-display"
           className="hidden px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-3 text-[17px]"
         >
-          <span className="text-zinc-500 dark:text-zinc-400">Key</span>
-          <span className="ml-auto font-mono text-[15px] text-zinc-700 dark:text-zinc-300">sk-ant-…<span id="settings-key-last4"></span></span>
+          <span className="text-zinc-500 dark:text-zinc-400"><Message id="settings:key_99a52df3" /></span>
+          <span className="ml-auto font-mono text-[15px] text-zinc-700 dark:text-zinc-300"><Message id="settings:sk_ant_6c52ace5" /><span id="settings-key-last4"></span></span>
         </div>
       </div>
-      <Label className="sr-only" htmlFor="settings-api-key">
-        Anthropic API key
-      </Label>
+      <Label className="sr-only" htmlFor="settings-api-key"><Message id="settings:anthropic_api_key_97d1086e" /></Label>
       <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
         <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
         {/*
@@ -40,9 +38,8 @@ export function ApiKeySection() {
             survive a toggle: the field is uncontrolled, and React rewrites
             only the props that CHANGED between renders — here, the `type`.
         */}
-        <PasswordInput
-          id="settings-api-key"
-          placeholder="sk-ant-..."
+        <Localized element={<PasswordInput
+          id="settings-api-key" placeholder={catalogText("settings:sk_ant_dda59792")}
           autoComplete="off"
           spellCheck="false"
           wrapperClassName="flex-1 min-w-0"
@@ -50,7 +47,7 @@ export function ApiKeySection() {
           box="card"
           ring="bare"
           hint="dim"
-        />
+        />} messages={{"placeholder":"settings:sk_ant_dda59792"}} />
         </div>
         <div className="flex gap-2 px-4 py-3">
         {/*
@@ -67,18 +64,14 @@ export function ApiKeySection() {
             settings.js still finds both by getElementById and binds their
             clicks — same tags, same ids, same class strings.
         */}
-        <Button id="settings-save" layout="shrink" variant="pillAccent" size="pill">
-          Save
-        </Button>
+        <Button id="settings-save" layout="shrink" variant="pillAccent" size="pill"><Message id="settings:save_1509f561" /></Button>
         <Button
           id="settings-remove"
           layout="hiddenShrink"
           variant="pillDanger"
           size="pill"
           ink="dangerTint"
-        >
-          Remove
-        </Button>
+        ><Message id="settings:remove_c3812fc4" /></Button>
         </div>
       </div>
       <p className="text-[15px] text-zinc-500 dark:text-zinc-500 mt-3 leading-snug px-1">
@@ -87,18 +80,14 @@ export function ApiKeySection() {
             The spaces ride inside the neighbouring strings, not as
             whitespace-only children, which cannot survive hydration (React
             #418; the same rule as notifications-list.tsx). */}
-        {'Encrypted at rest, verified against Anthropic before saving, never shown in full after save. '
-          + 'The server decrypts it in memory to call Anthropic on your behalf, so don\'t paste keys into '
-          + 'services you don\'t trust with that level of access. '}
+        {tr("settings:encrypted_at_rest_verified_against_anthropic_bef_a5748651")}
         <a
           href="https://console.anthropic.com/settings/keys"
           target="_blank"
           rel="noopener"
           className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400"
-        >
-          Set tight spend limits
-        </a>
-        {' on the key itself for defense in depth.'}
+        ><Message id="settings:set_tight_spend_limits_9faa0b10" /></a>
+        <Message id="settings:on_the_key_itself_for_defense_in_depth_39b04ecd" />
       </p>
       <StatusLine id="settings-status" spacing={3} />
     </div>

@@ -591,7 +591,7 @@ const GroupChat = {
       case 'delete_error': {
         // The server refused THIS socket's own delete (services/ws.js): put
         // the message back and let deleteMessage's caller say so.
-        GroupChat._settleDelete(msg.id, new Error(`Delete failed (${msg.code || 'refused'})`));
+        GroupChat._settleDelete(msg.id, new Error(globalThis.PlatformI18n.t("core:delete_failed_value1_b3947cd1", { value1: msg.code || globalThis.PlatformI18n.t("core:message_83c874d33e8b") })));
         break;
       }
       case 'thread_summary': {
@@ -663,7 +663,7 @@ const GroupChat = {
 
   _renderThreadTyping(username) {
     if (username === App.user?.username) return;
-    GroupChat._publishComposer('thread', { status: `${username} is typing...` });
+    GroupChat._publishComposer('thread', { status: globalThis.PlatformI18n.t("core:value1_is_typing_bc18420b", { value1: username }) });
     clearTimeout(GroupChat._threadTypingTimer);
     GroupChat._threadTypingTimer = setTimeout(() => {
       GroupChat._publishComposer('thread', { status: '' });
@@ -767,7 +767,7 @@ const GroupChat = {
       }
       return;
     }
-    window.PlatformUI?.toast?.(`Not sent. ${msg.error || 'Join this project to post here.'}`);
+    window.PlatformUI?.toast?.(globalThis.PlatformI18n.t("core:not_sent_value1_12ce6ea2", { value1: msg.error || globalThis.PlatformI18n.t("core:join_this_project_to_post_here_d0cf5bda") }));
   },
 
   // The toast for a `rate_limited` frame. Worded here from the number rather
@@ -776,16 +776,16 @@ const GroupChat = {
   _rateLimitedText(msg) {
     const n = Math.ceil(Number(msg && msg.retryAfterSeconds));
     const when = Number.isFinite(n) && n > 0
-      ? `in ${n} ${n === 1 ? 'second' : 'seconds'}`
+      ? globalThis.PlatformI18n.t("core:in_count_seconds_1aec23a9", { count: n })
       : 'in a moment';
-    return `Not sent. You're sending messages too fast. Try again ${when}.`;
+    return globalThis.PlatformI18n.t("core:not_sent_you_re_sending_messages_too_fast_try_ag_b1a23e00", { value1: when });
   },
 
   // An `error` frame: show what the server said. Only `channel_moved` is
   // sent today, and it answers a chat message, so it says that too.
   _showSocketError(msg) {
-    const text = (msg && (msg.message || msg.error)) || 'Something went wrong. Try again.';
-    window.PlatformUI?.toast?.(msg && msg.code === 'channel_moved' ? `Not sent. ${text}` : text);
+    const text = (msg && (msg.message || msg.error)) || globalThis.PlatformI18n.t("core:something_went_wrong_try_again_4def98c8");
+    window.PlatformUI?.toast?.(msg && msg.code === 'channel_moved' ? globalThis.PlatformI18n.t("core:not_sent_value1_12ce6ea2", { value1: text }) : text);
   },
 
   sendTyping(thread) {
@@ -840,7 +840,7 @@ const GroupChat = {
     const isSystem = kindRaw === 'system' || kindRaw === 'conflict'
       || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
-    const username = msg.username || 'System';
+    const username = msg.username || globalThis.PlatformI18n.t("core:system_6725e7bb");
     const me = App.user && App.user.username;
     const editedAt = msg.editedAt || msg.edited_at;
     const q = meta.quote;
@@ -904,7 +904,7 @@ const GroupChat = {
       showBookmark: !!(window.App && App.user),
       quote: q && !deleted ? {
         icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
-        username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
+        username: q.author || (q.source === 'pr' ? globalThis.PlatformI18n.t("core:pr_value1_e1d02dd7", { value1: q.prNumber || '' }).trim() : 'system'),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
         source: q.source || '',
         href: q.source === 'pr' ? (q.href || '') : null,
@@ -936,7 +936,7 @@ const GroupChat = {
         ...event,
         sender: event.actor
           || GroupChat._appName()
-          || 'System',
+          || globalThis.PlatformI18n.t("core:system_6725e7bb"),
         // Yours when you are the actor — the row then sits on the right, as
         // your messages do. A merge the vote decided is nobody's.
         mine: !!(event.actor && App.user && event.actor === App.user.username),
@@ -989,7 +989,7 @@ const GroupChat = {
       {
         earlier: false,
         placeholder: null,
-        error: GroupChat._historyFailed ? 'Couldn’t load messages.' : null,
+        error: GroupChat._historyFailed ? globalThis.PlatformI18n.t("core:couldn_t_load_messages_c5936207") : null,
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
         // Whether the card SHOWS is the transcript's call — it knows whether a
         // person's message is among the rows, including one that lands live —
@@ -999,7 +999,7 @@ const GroupChat = {
           exhausted: !GroupChat.hasMore,
           canPost: !GroupChat._readOnly(),
           appName: GroupChat._appName()
-            || 'this app',
+            || globalThis.PlatformI18n.t("core:this_app_d2c823cf"),
         },
       },
       { flush: !!(opts && opts.flush) },
@@ -1070,7 +1070,7 @@ const GroupChat = {
       withHeader,
       readOnly: !!opts.readOnly,
       notice: opts.notice || 'This thread is read-only.',
-      placeholder: opts.placeholder || 'Reply in thread…',
+      placeholder: opts.placeholder || globalThis.PlatformI18n.t("core:reply_in_thread_5f4ecc1c"),
       maxLength: GC_MAX_MESSAGE_LEN,
     });
 
@@ -1286,9 +1286,9 @@ const GroupChat = {
         // In the chat language the quiet card says what an empty thread
         // means; the placeholder line is the flat thread's.
         placeholder: st.loaded
-          ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
-          : (st.failed ? null : 'Loading…'),
-        error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
+          ? (st.messages.length || chat ? null : globalThis.PlatformI18n.t("core:no_messages_yet_start_the_thread_23e9439c"))
+          : (st.failed ? null : globalThis.PlatformI18n.t("core:loading_ba3bbbe1")),
+        error: !st.loaded && st.failed ? globalThis.PlatformI18n.t("core:couldn_t_load_this_thread_7931a018") : null,
         language,
         ...(chat && st.loaded ? {
           quiet: {
@@ -1296,7 +1296,7 @@ const GroupChat = {
             exhausted: !st.hasMore,
             canPost: !GroupChat._readOnly(),
             appName: GroupChat._appName()
-              || 'this app',
+              || globalThis.PlatformI18n.t("core:this_app_d2c823cf"),
           },
         } : {}),
       },
@@ -1375,8 +1375,8 @@ const GroupChat = {
     // author is gone; say which.
     const view = q ? {
       label: q.source === 'pr'
-        ? `PR #${q.prNumber || ''}`.trim()
-        : (q.author ? `@${q.author}` : (q.source === 'event' ? 'a platform message' : 'a message')),
+        ? globalThis.PlatformI18n.t("core:pr_value1_e1d02dd7", { value1: q.prNumber || '' }).trim()
+        : (q.author ? `@${q.author}` : (q.source === 'event' ? globalThis.PlatformI18n.t("core:a_platform_message_3d7606b4") : globalThis.PlatformI18n.t("core:a_message_f53c09ca"))),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
     // #2387: the chip goes to the composer the quote was staged in, now that
@@ -1411,7 +1411,7 @@ const GroupChat = {
       return {
         source: 'spec', refMsgId: id,
         author: row.dataset.sharedBy || null,
-        snippet: row.dataset.specTitle || 'Spec',
+        snippet: row.dataset.specTitle || globalThis.PlatformI18n.t("core:spec_9bdc1337"),
       };
     }
     // #2390: a proposal event (submitted / went live) is a platform message
@@ -1705,7 +1705,7 @@ const GroupChat = {
       if (msg) msg.bookmarked = !next;
       GroupChat._paintBookmark(messageId, !next);
       if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
-        PlatformUI.toast(next ? "Couldn't save that message" : "Couldn't unsave that message");
+        PlatformUI.toast(next ? globalThis.PlatformI18n.t("core:couldn_t_save_that_message_6f7fee85") : globalThis.PlatformI18n.t("core:couldn_t_unsave_that_message_eb0afcde"));
       }
       console.warn('[group-chat] bookmark toggle failed', err);
     }
@@ -1783,7 +1783,7 @@ const GroupChat = {
       snippet = `\u{1F4CE} ${meta.attachments[0].filename || meta.attachments[0].name || 'file'}`;
     }
     const quote = kind === 'spec_share'
-      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || 'Spec' }
+      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || globalThis.PlatformI18n.t("core:spec_9bdc1337") }
       : { source: 'message', refMsgId: n, author: msg.username || null, snippet };
     GroupChat.setQuote(quote, surface === 'thread' ? 'thread' : 'main');
   },
@@ -1878,7 +1878,7 @@ const GroupChat = {
     }
     if (!res.ok) {
       restore();
-      throw new Error(`Delete failed (${res.status})`);
+      throw new Error(globalThis.PlatformI18n.t("core:delete_failed_value1_b3947cd1", { value1: res.status }));
     }
   },
 
@@ -1966,7 +1966,7 @@ const GroupChat = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ message_id: Number(id) }),
     });
-    if (!res.ok) throw new Error(`Mark unread failed (${res.status})`);
+    if (!res.ok) throw new Error(globalThis.PlatformI18n.t("core:mark_unread_failed_value1_8743ce4b", { value1: res.status }));
     // Stays unread while it is still the open channel: reading it again the
     // moment it was marked would undo the act.
     GroupChat._unreadHold = slug;
@@ -2053,9 +2053,9 @@ const GroupChat = {
       });
       const data = await res.json().catch(() => ({}));
       if (data && data.card) GroupChat.applyBotRequestCard({ appSlug: slug, card: data.card });
-      else if (!res.ok && window.PlatformUI) PlatformUI.toast(data.error || 'Couldn’t ask Homeroom bot just now.');
+      else if (!res.ok && window.PlatformUI) PlatformUI.toast(data.error || globalThis.PlatformI18n.t("core:couldn_t_ask_homeroom_bot_just_now_cd461128"));
     } catch {
-      if (window.PlatformUI) PlatformUI.toast('Couldn’t ask Homeroom bot just now.');
+      if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("core:couldn_t_ask_homeroom_bot_just_now_cd461128"));
     }
   },
 
@@ -2191,7 +2191,7 @@ const GroupChat = {
   // "edited Jun 16, 2026, 02:41 PM".
   _editedTitle(ts) {
     const { title } = GroupChat._stamp(ts);
-    return title ? `edited ${title}` : 'edited';
+    return title ? globalThis.PlatformI18n.t("core:edited_value1_2cf303e7", { value1: title }) : 'edited';
   },
 
   // `_renderEditBtn` lived here — the desktop hover pencil for your own
@@ -2248,8 +2248,8 @@ const GroupChat = {
     editor.innerHTML =
       `<textarea class="gc-edit-textarea gc-composer-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1"></textarea>` +
       `<div class="gc-edit-actions">` +
-        `<button type="button" class="gc-edit-save">Save</button>` +
-        `<button type="button" class="gc-edit-cancel">Cancel</button>` +
+        `<button type="button" class="gc-edit-save">${globalThis.PlatformI18n.htmlText("core:save_1509f561")}</button>` +
+        `<button type="button" class="gc-edit-cancel">${globalThis.PlatformI18n.htmlText("core:cancel_19766ed6")}</button>` +
         `<span class="gc-edit-notice" hidden></span>` +
       `</div>`;
     const ta = editor.querySelector('.gc-edit-textarea');
@@ -2297,7 +2297,7 @@ const GroupChat = {
       const notice = row.querySelector('.gc-edit-notice');
       if (notice) {
         notice.hidden = false;
-        notice.textContent = 'Not connected. Your edit wasn’t sent, so try again in a moment.';
+        notice.textContent = globalThis.PlatformI18n.t("core:not_connected_your_edit_wasn_t_sent_so_try_again_deb11515");
       }
       return;
     }
@@ -2366,7 +2366,7 @@ const GroupChat = {
       if (e.target.closest('.gc-react-bar-report')) {
         const id = parseInt(bar.dataset.msgId || '', 10);
         GroupChat._closeReactionBar();
-        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: 'Selected message' });
+        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, get label() { return globalThis.PlatformI18n.t("core:selected_message_13ce54a9"); } });
         return;
       }
       if (e.target.closest('.gc-react-bar-more')) {
@@ -2670,24 +2670,24 @@ const GroupChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { get error() { return globalThis.PlatformI18n.t("core:value1_is_too_big_images_max_value2_mb_0a267b9f", { value1: file.name, value2: Math.round(L.maxImageBytes / 1024 / 1024) }); } };
       }
       return { kind: 'image' };
     }
     if (ext === 'md' || ext === 'markdown') {
       if (file.size > L.maxMarkdownBytes) {
-        return { error: `"${file.name}" is too big. Markdown files max ${Math.round(L.maxMarkdownBytes / 1024)} KB.` };
+        return { get error() { return globalThis.PlatformI18n.t("core:value1_is_too_big_markdown_files_max_value2_kb_00443827", { value1: file.name, value2: Math.round(L.maxMarkdownBytes / 1024) }); } };
       }
       return { kind: 'markdown' };
     }
     if (ext === 'html' || ext === 'htm') {
       if (file.size > L.maxHtmlBytes) {
-        return { error: `"${file.name}" is too big. HTML files max ${Math.round(L.maxHtmlBytes / 1024 / 1024)} MB.` };
+        return { get error() { return globalThis.PlatformI18n.t("core:value1_is_too_big_html_files_max_value2_mb_b0817dd7", { value1: file.name, value2: Math.round(L.maxHtmlBytes / 1024 / 1024) }); } };
       }
       return { kind: 'html' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { get error() { return globalThis.PlatformI18n.t("core:value1_is_too_big_files_max_value2_mb_3d311c65", { value1: file.name, value2: Math.round(L.maxBinaryBytes / 1024 / 1024) }); } };
     }
     if (file.size <= L.maxTextBytes) {
       try {
@@ -2710,7 +2710,7 @@ const GroupChat = {
     const L = GroupChat.ATTACH_LIMITS;
     for (const file of Array.from(fileList)) {
       if (GroupChat.pendingAttachments.filter((a) => a.scope === key).length >= L.maxPerMessage) {
-        GroupChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`, thread);
+        GroupChat._setAttachError(globalThis.PlatformI18n.t("core:up_to_value1_files_per_message_de4b11ca", { value1: L.maxPerMessage }), thread);
         break;
       }
       const classified = await GroupChat._classifyChatFile(file);
@@ -2741,7 +2741,7 @@ const GroupChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error(data?.error || globalThis.PlatformI18n.t("core:upload_failed_http_value1_13c8431f", { value1: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -2755,7 +2755,7 @@ const GroupChat = {
       } catch (err) {
         GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
-        GroupChat._setAttachError(err.message || 'Upload failed', thread);
+        GroupChat._setAttachError(err.message || globalThis.PlatformI18n.t("core:upload_failed_6efc5d27"), thread);
       }
       GroupChat._renderAttachStrip(thread);
     }
@@ -2806,12 +2806,12 @@ const GroupChat = {
   _attachErrors: { general: null, thread: null },
 
   // Shown when Send is tapped while an attachment is still uploading.
-  UPLOAD_WAIT_NOTICE: 'Still uploading, one moment…',
+  get UPLOAD_WAIT_NOTICE() { return globalThis.PlatformI18n.t("core:still_uploading_one_moment_9862aef1"); },
 
   _humanAttSize(bytes) {
     const n = Number(bytes) || 0;
-    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    if (n >= 1024 * 1024) return globalThis.PlatformI18n.t("core:value1_mb_36c9af23", { value1: (n / 1024 / 1024).toFixed(1) });
+    if (n >= 1024) return globalThis.PlatformI18n.t("core:value1_kb_75f92af0", { value1: Math.round(n / 1024) });
     return `${n} B`;
   },
 
@@ -2921,11 +2921,11 @@ const GroupChat = {
     }
     try {
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`Couldn't load ${filename} (HTTP ${res.status})`);
+      if (!res.ok) throw new Error(globalThis.PlatformI18n.t("core:couldn_t_load_value1_http_value2_c85fea33", { value1: filename, value2: res.status }));
       const text = await res.text();
       GroupChat._showSpecPanel({ title: filename, content: text });
     } catch (err) {
-      GroupChat._showSpecPanel({ title: filename, content: err.message || 'Failed to load file', isError: true });
+      GroupChat._showSpecPanel({ title: filename, content: err.message || globalThis.PlatformI18n.t("core:failed_to_load_file_e9b9dd4d"), isError: true });
     }
   },
 
@@ -3232,8 +3232,8 @@ const GroupChat = {
     const pr = GroupChat._resolvePr(sessionId, prNumber);
     const title = pr && pr.pr_title ? String(pr.pr_title) : '';
     const n = prNumber || (pr && pr.pr_number != null ? String(pr.pr_number) : '');
-    if (n && title && t.startsWith(`PR #${n}: ${title}`)) {
-      t = t.slice(`PR #${n}: ${title}`.length).replace(/^[\s:,.\p{Pd}]+/u, '');
+    if (n && title && t.startsWith(globalThis.PlatformI18n.t("core:pr_value1_value2_11b3d70a", { value1: n, value2: title }))) {
+      t = t.slice(globalThis.PlatformI18n.t("core:pr_value1_value2_11b3d70a", { value1: n, value2: title }).length).replace(/^[\s:,.\p{Pd}]+/u, '');
     } else if (n && /^PR #\d+:\s/.test(t) && !title) {
       t = t.replace(/^PR #\d+:\s*/, '');
     }
@@ -3361,13 +3361,13 @@ const GroupChat = {
     // 02:41 PM", exactly like one built this June.
     const built = GroupChat._stamp(meta.builtAt).text || null;
     return {
-      title: meta.title || `Spec v${meta.version}`,
+      title: meta.title || globalThis.PlatformI18n.t("core:spec_v_value1_507f703d", { value1: meta.version }),
       // The preview title the panel header shows while the fetch is in
       // flight. It was a `data-spec-title` attribute the click delegate read
       // back off the card; it is a field now, so nothing has to round-trip
       // through the DOM to find it.
-      previewTitle: meta.title || `spec v${meta.version}`,
-      sharedBy: meta.sharedBy?.username || msg.username || 'Someone',
+      previewTitle: meta.title || globalThis.PlatformI18n.t("core:spec_v_value1_f6790848", { value1: meta.version }),
+      sharedBy: meta.sharedBy?.username || msg.username || globalThis.PlatformI18n.t("core:someone_864c855e"),
       version: meta.version,
       built,
       prNumber: meta.prNumber || null,
@@ -3395,7 +3395,7 @@ const GroupChat = {
   // older share that predates `metadata.specShare.title`.
   async openSharedSpec(sessionId, version, previewTitle) {
     if (!sessionId || !version) return;
-    const title = previewTitle || `Spec v${version}`;
+    const title = previewTitle || globalThis.PlatformI18n.t("core:spec_v_value1_507f703d", { value1: version });
     // Persist the open state so a refresh re-opens this same spec
     // automatically. Per-app keying ensures switching apps doesn't drag this
     // open state along with you.
@@ -3416,8 +3416,8 @@ const GroupChat = {
           title,
           version,
           content: resp.status === 404
-            ? 'This spec is no longer available. The sharer may have deleted the session.'
-            : `Failed to load spec (HTTP ${resp.status}).`,
+            ? globalThis.PlatformI18n.t("core:this_spec_is_no_longer_available_the_sharer_may__afd3109d")
+            : globalThis.PlatformI18n.t("core:failed_to_load_spec_http_value1_b224045d", { value1: resp.status }),
           isError: true,
         });
         return;
@@ -3426,7 +3426,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title,
         version,
-        content: data.spec.content || '(empty spec)',
+        content: data.spec.content || globalThis.PlatformI18n.t("core:empty_spec_c427bfe3"),
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
       });
@@ -3434,7 +3434,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title,
         version,
-        content: `Error: ${err.message}`,
+        content: globalThis.PlatformI18n.t("core:error_value1_7578f22b", { value1: err.message }),
         isError: true,
       });
     }
@@ -3488,7 +3488,7 @@ const GroupChat = {
     const subtitleParts = [];
     if (version != null) subtitleParts.push(`v${version}`);
     if (builtStr) subtitleParts.push(builtStr);
-    if (prNumber) subtitleParts.push(`PR #${prNumber}`);
+    if (prNumber) subtitleParts.push(globalThis.PlatformI18n.t("core:pr_value1_e1d02dd7", { value1: prNumber }));
     const subtitle = subtitleParts.join(' · ');
 
     // Render markdown for normal content; error / 404 messages are
@@ -3708,7 +3708,7 @@ const GroupChat = {
     if (!saved) return;
 
     const { sessionId, version, title } = saved;
-    const previewTitle = title || `Spec v${version}`;
+    const previewTitle = title || globalThis.PlatformI18n.t("core:spec_v_value1_507f703d", { value1: version });
 
     // Show the panel header right away (skeleton body) so the user
     // sees something immediately while the spec content loads.
@@ -3731,8 +3731,8 @@ const GroupChat = {
           title: previewTitle,
           version,
           content: resp.status === 404
-            ? 'This spec is no longer available. The sharer may have deleted the session.'
-            : `Failed to load spec (HTTP ${resp.status}).`,
+            ? globalThis.PlatformI18n.t("core:this_spec_is_no_longer_available_the_sharer_may__afd3109d")
+            : globalThis.PlatformI18n.t("core:failed_to_load_spec_http_value1_b224045d", { value1: resp.status }),
           isError: true,
         });
         return;
@@ -3742,7 +3742,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title: previewTitle,
         version,
-        content: data.spec.content || '(empty spec)',
+        content: data.spec.content || globalThis.PlatformI18n.t("core:empty_spec_c427bfe3"),
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
       });
@@ -3751,7 +3751,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title: previewTitle,
         version,
-        content: `Error: ${err.message}`,
+        content: globalThis.PlatformI18n.t("core:error_value1_7578f22b", { value1: err.message }),
         isError: true,
       });
     }
@@ -3773,7 +3773,7 @@ const GroupChat = {
     if (!wsOpen && GroupChat.appSlug) {
       const queued = GroupChat._pendingOutgoing.length;
       GroupChat._publishComposer('general', {
-        status: queued > 0 ? `Reconnecting… (${queued} queued)` : 'Reconnecting…',
+        status: queued > 0 ? globalThis.PlatformI18n.t("core:reconnecting_value1_queued_3726957c", { value1: queued }) : 'Reconnecting…',
       });
       return;
     }
@@ -3781,8 +3781,8 @@ const GroupChat = {
     const names = [...GroupChat.typingUsers.values()].filter((n) => n !== App.user?.username);
     GroupChat._publishComposer('general', {
       status: names.length === 0 ? ''
-        : names.length === 1 ? `${names[0]} is typing...`
-          : `${names.join(', ')} are typing...`,
+        : names.length === 1 ? globalThis.PlatformI18n.t("core:value1_is_typing_bc18420b", { value1: names[0] })
+          : globalThis.PlatformI18n.t("core:value1_are_typing_1b4b11cc", { value1: names.join(', ') }),
     });
   },
 
@@ -4149,7 +4149,7 @@ function decorateTextNode(textNode) {
       span.setAttribute('data-ref-number', seg.num);
       span.setAttribute('role', 'link');
       span.setAttribute('tabindex', '0');
-      span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      span.textContent = seg.isPr ? globalThis.PlatformI18n.t("core:pr_value1_8d7f966f", { value1: seg.num }) : `#${seg.num}`;
       frag.appendChild(span);
     }
   }
@@ -4380,7 +4380,7 @@ const MentionAutocomplete = {
 
   // B9: the bot's row in the list (its handle; it inserts its display form).
   BOT: 'homeroom_bot',
-  BOT_NAME: 'Homeroom bot',
+  get BOT_NAME() { return globalThis.PlatformI18n.t("core:homeroom_bot_dbcdaf67"); },
 
   _filter(query) {
     const q = query.toLowerCase();
@@ -4688,7 +4688,7 @@ const RefAutocomplete = {
       // still clickable once rendered as chips.
       const prs = (Array.isArray(prData.promoted) ? prData.promoted : [])
         .filter((pr) => pr.pr_number != null)
-        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || `by ${pr.username || ''}`, kind: 'pr' }));
+        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || globalThis.PlatformI18n.t("core:by_value1_227ec51b", { value1: pr.username || '' }), kind: 'pr' }));
       const issues = (Array.isArray(issueData.issues) ? issueData.issues : [])
         .map((i) => ({ number: i.number, title: i.title || '', kind: 'issue' }));
       RefAutocomplete._cacheBySlug.set(slug, { prs, issues, fetchedAt: Date.now() });
@@ -4898,7 +4898,7 @@ const RefAutocomplete = {
     const value = input.value;
     const before = value.slice(0, RefAutocomplete._tokenStart);
     const after = value.slice(caret);
-    const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `; // a channel is `#handle `
+    const insert = kind === 'pr' ? globalThis.PlatformI18n.t("core:pr_value1_51f9dc18", { value1: number }) : `#${number} `; // a channel is `#handle `
     const next = before + insert + after;
 
     const max = parseInt(input.getAttribute('maxlength') || '0', 10);

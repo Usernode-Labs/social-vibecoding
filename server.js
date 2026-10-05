@@ -181,6 +181,8 @@ app.use(trustedProxyClientIp({
 // so each one's answer passes through it; GET/HEAD only, and never a stream.
 // See src/middleware/response-compression.js.
 app.use(responseCompression());
+// Browser language applies only to registered ordinary-user error messages.
+app.use(require('./src/middleware/language-errors').languageErrors);
 
 // Cross-origin support for the anonymous `/api/public/*` tier, and for
 // nothing else. Marketing pages the platform does not host (the waitlist

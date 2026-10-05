@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#cli-tokens-list` — the CLI / coding-agent credential rows, as the only
  * React writer below that host.
@@ -40,9 +42,9 @@ const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 export function CliTokensListView({ phase, tokens }: CliTokensState) {
   if (phase === 'idle') return null;
   // A bare text node, as `list.textContent = 'Loading credentials…'` produced.
-  if (phase === 'loading') return <>Loading credentials…</>;
+  if (phase === 'loading') return <><Message id="settings:loading_credentials_f95763a4" /></>;
   if (!tokens.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No CLI credentials.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:no_cli_credentials_2575a681" /></p>;
   }
   return (
     <>
@@ -69,9 +71,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
                 type="button"
                 className="shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
                 onClick={(e) => controller()?._revokeCliToken?.(token.id, e.currentTarget)}
-              >
-                Revoke
-              </button>
+              ><Message id="settings:revoke_87e6d00b" /></button>
             ) : null}
           </div>
         </div>
@@ -81,5 +81,6 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
 }
 
 export function CliTokensList() {
+  useUiLanguage();
   return <CliTokensListView {...useStoreState<CliTokensState>(cliTokensStore)} />;
 }

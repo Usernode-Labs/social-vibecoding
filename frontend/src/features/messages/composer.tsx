@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
@@ -28,10 +33,10 @@ function attachmentLimit(file: File): number {
 function objectLabel(object: SharedObjectReference): string {
   const app = object.appSlug ? `${object.appSlug} · ` : '';
   if (object.type === 'app') return `${app}App`;
-  if (object.type === 'issue') return `${app}Issue #${object.issueNumber}`;
-  if (object.type === 'governance') return `${app}Governance #${object.proposalId}`;
-  if (object.type === 'spec') return `${app}Spec v${object.version} · session ${object.sessionId}`;
-  return `${app}Proposal ${object.sessionId}`;
+  if (object.type === 'issue') return tr("community:value1_issue_value2_6d99f50b", { value1: app, value2: object.issueNumber });
+  if (object.type === 'governance') return tr("community:value1_governance_value2_73d81693", { value1: app, value2: object.proposalId });
+  if (object.type === 'spec') return tr("community:value1_spec_v_value2_session_value3_996d74b1", { value1: app, value2: object.version, value3: object.sessionId });
+  return tr("community:value1_proposal_value2_057953b2", { value1: app, value2: object.sessionId });
 }
 
 /**
@@ -42,6 +47,7 @@ function objectLabel(object: SharedObjectReference): string {
  * Messages lands in the conversation, never inside a thread.
  */
 export function MessageComposer({ threadRootId = null }: { threadRootId?: number | null } = {}) {
+  const language = useUiLanguage();
   const snap = useMessagesSnapshot();
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
@@ -253,7 +259,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const token = findShortcodeToken(value, cursor, input?.selectionEnd ?? cursor);
     const items = token ? matchShortcodes(token.query, 8) : [];
     return token && items.length ? { ...token, key: `${token.start}:${token.query}`, items } : null;
-  }, [value]);
+  }, [value, language]);
   const emojiOpen = !!emoji && emoji.key !== emojiDismissed && !mention?.length && !channelMatches?.length;
   const emojiActive = emoji && emojiPick.key === emoji.key ? emojiPick.index : 0;
   useEffect(() => {
@@ -348,10 +354,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   async function addFiles(files: File[]) {
     const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
     const selected = files.slice(0, room);
-    if (!selected.length) { setError(`You can attach up to ${MAX_ATTACHMENTS} files.`); return; }
+    if (!selected.length) { setError(tr("community:you_can_attach_up_to_value1_files_d5b1c331", { value1: MAX_ATTACHMENTS })); return; }
     for (const file of selected) {
       if (file.size > attachmentLimit(file)) {
-        setError(`${file.name} is too large for this file type.`);
+        setError(tr("community:value1_is_too_large_for_this_file_type_9ad5e813", { value1: file.name }));
         continue;
       }
       setUploading((count) => count + 1); setError('');
@@ -359,7 +365,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         const attachment = await api.uploadAttachment(conversationId, file);
         setAttachments((items) => [...items, attachment]);
       }
-      catch (err) { setError(err instanceof Error ? err.message : `Couldn’t upload ${file.name}.`); }
+      catch (err) { setError(err instanceof Error ? err.message : tr("community:couldn_t_upload_value1_72787374", { value1: file.name })); }
       finally { setUploading((count) => Math.max(0, count - 1)); }
     }
   }
@@ -405,7 +411,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
+    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : tr("community:your_message_wasn_t_sent_c8fd3251")));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
@@ -425,13 +431,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
         <div className="messages-awaiting" role="status">
-          <strong>Message request sent</strong>
-          <p>Waiting for {who} to accept your message request. You can send more once they do.</p>
+          <strong><Message id="community:message_request_sent_113edd9f" /></strong>
+          <p><RichMessage id="community:sentence_9d7276bbcca1" values={{ value1: who }} /></p>
         </div>
       </div>
     );
   }
-  if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
+  if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar"><Message id="community:you_can_t_send_messages_in_this_conversation_bcf6029b" /></div>;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
 
@@ -440,53 +446,53 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
-      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `@${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance=""><LocalizedValue render={() => (waitingOn ? tr("community:message_ad9c1065bfc3", { username: waitingOn }) : tr("community:they_get_a506c8f9"))} /><Message before={" "} id="community:your_first_message_as_a_message_request_you_can__eed28da5" /></p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to {senderName(reply.sender)}</span><p className="truncate">{plainText(reply.content) || 'Attachment'}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{`Your reply is posted on ${requestPlace(reply.metadata.homeroomBot)}’s public discussion.`}</p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note">Say what to change, and Homeroom bot sends a new plan. Only you see this.</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
-      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
-      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
-      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
-      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="People">{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold"><Message after={" "} id="community:replying_to_2e89f01d" />{senderName(reply.sender)}</span><p className="truncate"><LocalizedValue render={() => (plainText(reply.content) || tr("community:attachment_040d2b36"))} /></p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note"><LocalizedValue render={() => (tr("community:your_reply_is_posted_on_value1_s_public_discussi_72846ac8", { value1: reply.metadata?.homeroomBot ? requestPlace(reply.metadata.homeroomBot) : '' }))} /></p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note"><Message id="community:say_what_to_change_and_homeroom_bot_sends_a_new__30c08eb2" /></p> : null}</div><Localized element={<button type="button" onClick={() => setReply(scope, null)} aria-label={catalogText("community:cancel_reply_2355f731")}>×</button>} messages={{"aria-label":"community:cancel_reply_2355f731"}} /></div> : null}
+      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><Localized element={<button type="button" onClick={() => setObject(null)} aria-label={catalogText("community:remove_shared_item_2bbf13f5")}>×</button>} messages={{"aria-label":"community:remove_shared_item_2bbf13f5"}} /></div> : null}
+      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><LocalizedDynamic element={<button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={tr("community:remove_value1_d2f6b9b7", { value1: item.name })}>×</button>} resolve={() => ({ get "aria-label"() { return tr("community:remove_value1_d2f6b9b7", { value1: item.name }); } })} /></div>)}{uploading ? <span className="dc-attach-uploading"><Message after={" "} id="community:uploading_8b898ca3" />{uploading}…</span> : null}</div> : null}
+      {channelShown && channelMatches ? <Localized element={<div className="messages-mention-menu" id={listId} role="listbox" aria-label={catalogText("community:channels_4c8906cf")}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div>} messages={{"aria-label":"community:channels_4c8906cf"}} /> : null}
+      {mentionShown && mention ? <Localized element={<div className="messages-mention-menu" id={listId} role="listbox" aria-label={catalogText("community:people_7db20897")}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div>} messages={{"aria-label":"community:people_7db20897"}} /> : null}
       {emojiOpen && emoji ? (
         <div className="messages-mention-menu messages-emoji-menu">
-          <div className="messages-emoji-menu-heading">Emoji matching <span className="messages-emoji-menu-query">:{emoji.query}</span></div>
-          <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label="Emoji">
+          <div className="messages-emoji-menu-heading"><Message after={" "} id="community:emoji_matching_026002d8" /><span className="messages-emoji-menu-query">:{emoji.query}</span></div>
+          <Localized element={<div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label={catalogText("community:emoji_61ad8976")}>
             {emoji.items.map((item, i) => (
               <button key={item.emoji} type="button" role="option" aria-selected={i === emojiActive} data-emoji-option={item.shortcode} onMouseDown={(event) => event.preventDefault()} onClick={() => insertEmoji(item.emoji)}>
                 <span className="messages-emoji-option-glyph" aria-hidden="true">{item.emoji}</span>
                 <span className="messages-emoji-option-code">:{item.shortcode}:</span>
               </button>
             ))}
-          </div>
+          </div>} messages={{"aria-label":"community:emoji_61ad8976"}} />
         </div>
       ) : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
-          <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label="Add to message" title="Add to message"><PlusIcon aria-hidden="true" /></button>
+          <Localized element={<button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={catalogText("community:add_to_message_a51ec5e2")} title={catalogText("community:add_to_message_a51ec5e2")}><PlusIcon aria-hidden="true" /></button>} messages={{"aria-label":"community:add_to_message_a51ec5e2","title":"community:add_to_message_a51ec5e2"}} />
           {addOpen ? (
-            <div className="messages-composer-menu" role="menu" aria-label="Add to message">
+            <Localized element={<div className="messages-composer-menu" role="menu" aria-label={catalogText("community:add_to_message_a51ec5e2")}>
               {/* The attachment cap disables the ROW, not the whole control:
                   sharing an item is still available with four files queued,
                   which a disabled "+" would have taken away with it. */}
               <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
                 <PaperClipIcon aria-hidden="true" />
-                <span>Attach files</span>
+                <span><Message id="community:attach_files_e697cc1e" /></span>
               </button>
               {inThread ? null : (
                 <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
                   <ArrowUpTrayIcon aria-hidden="true" />
-                  <span>Share item</span>
+                  <span><Message id="community:share_item_dbce8c33" /></span>
                 </button>
               )}
-            </div>
+            </div>} messages={{"aria-label":"community:add_to_message_a51ec5e2"}} />
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
+        <LocalizedDynamic element={<textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? tr("community:reply_in_thread_5f4ecc1c") : tr("community:message_fc71507e")} aria-label={inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a")} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />} resolve={() => ({ "placeholder": inThread ? tr("community:reply_in_thread_5f4ecc1c") : tr("community:message_fc71507e"), "aria-label": inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a") })} />
+        <Localized element={<button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={catalogText("community:send_message_93a26b1e")}><ArrowUpIcon aria-hidden="true" /></button>} messages={{"aria-label":"community:send_message_93a26b1e"}} />
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* The count's line is always laid out, empty or not: it appearing
@@ -495,7 +501,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           the limit (`data-near-limit`, app.css), so the card stays one row. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
-      {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
+      {dragging ? <div className="messages-drop-overlay"><Message id="community:drop_files_to_attach_1ab1b095" /></div> : null}
     </div>
   );
 }

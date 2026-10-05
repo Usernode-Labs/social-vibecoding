@@ -47,18 +47,19 @@
     tryAgain.hidden = !retry;
     if (retry) {
       tryAgain.textContent = canonicalCode || sessionStorage.getItem(STORAGE_KEY)
-        ? 'Try again'
-        : 'Start a new request';
+        ? globalThis.PlatformI18n.t("core:try_again_d8b8392e")
+        : globalThis.PlatformI18n.t("core:start_a_new_request_f80d20dc");
     }
   }
 
   function invalidOrExpired() {
     clearTemporaryCode();
-    showResult('That code is invalid or expired.', true);
+    showResult(globalThis.PlatformI18n.t("core:that_code_is_invalid_or_expired_4576daf0"), true);
   }
 
   async function lookup(code) {
-    entryMessage.textContent = 'Checking the authorization request…';
+    await globalThis.PlatformI18n.ready;
+    entryMessage.textContent = globalThis.PlatformI18n.t("core:checking_the_authorization_request_3cb34e96");
     const response = await fetch(
       `/api/cli/device/approval?user_code=${encodeURIComponent(code)}`,
       { headers: { Accept: 'application/json' }, cache: 'no-store' }
@@ -69,7 +70,7 @@
       return;
     }
     if (response.status === 404) return invalidOrExpired();
-    if (!response.ok) return showResult('Authorization is temporarily unavailable.', true);
+    if (!response.ok) return showResult(globalThis.PlatformI18n.t("core:authorization_is_temporarily_unavailable_44f141d0"), true);
     const data = await response.json();
     canonicalCode = data.user_code;
     sessionStorage.setItem(STORAGE_KEY, canonicalCode);
@@ -77,7 +78,7 @@
     document.getElementById('confirm-client').textContent = data.client_name;
     document.getElementById('confirm-scopes').textContent = data.scopes.join(', ');
     document.getElementById('confirm-expiry').textContent =
-      new Date(data.expires_at).toLocaleString();
+      new Date(data.expires_at).toLocaleString(globalThis.PlatformI18n.getLanguage());
     entry.hidden = true;
     result.hidden = true;
     confirmation.hidden = false;
@@ -104,18 +105,18 @@
         clearTemporaryCode();
         showResult(
           decision === 'approve'
-            ? 'Access authorized. You can return to the CLI.'
-            : 'Authorization cancelled.',
+            ? globalThis.PlatformI18n.t("core:access_authorized_you_can_return_to_the_cli_015f4a41")
+            : globalThis.PlatformI18n.t("core:authorization_cancelled_8ce509ef"),
           false
         );
       } else if (response.status === 409) {
         clearTemporaryCode();
-        showResult('This request already has the opposite decision.', false);
+        showResult(globalThis.PlatformI18n.t("core:this_request_already_has_the_opposite_decision_34ca5e3f"), false);
       } else {
-        showResult('Authorization is temporarily unavailable.', true);
+        showResult(globalThis.PlatformI18n.t("core:authorization_is_temporarily_unavailable_44f141d0"), true);
       }
     } catch {
-      showResult('Authorization is temporarily unavailable.', true);
+      showResult(globalThis.PlatformI18n.t("core:authorization_is_temporarily_unavailable_44f141d0"), true);
     } finally {
       approve.disabled = false;
       reject.disabled = false;
@@ -131,17 +132,17 @@
     entry.hidden = false;
     if (pendingCode) {
       lookup(pendingCode).catch(() => {
-        showResult('Authorization is temporarily unavailable.', true);
+        showResult(globalThis.PlatformI18n.t("core:authorization_is_temporarily_unavailable_44f141d0"), true);
       });
     } else {
       entryMessage.textContent =
-        'Start a new authorization request from the Homeroom CLI, Codex, Claude Code, or OpenCode.';
+        globalThis.PlatformI18n.t("core:start_a_new_authorization_request_from_the_homer_e76df2a5");
     }
   });
 
   if (initialCode) {
     lookup(initialCode).catch(() => {
-      showResult('Authorization is temporarily unavailable.', true);
+      showResult(globalThis.PlatformI18n.t("core:authorization_is_temporarily_unavailable_44f141d0"), true);
     });
   }
 })();

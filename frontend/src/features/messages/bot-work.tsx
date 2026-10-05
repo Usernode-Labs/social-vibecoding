@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -136,43 +140,43 @@ function resetBotWork(): void {
 
 /** What a tile of Now says the bot is doing when the server sends no words of its own. */
 export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
-  looking: 'looking at it',
+  get looking() { return tr("community:looking_at_it_1984f4e5"); },
   building: 'building',
-  following_up: 'following up on its proposal',
-  setting_up: 'getting the project ready',
+  get following_up() { return tr("community:following_up_on_its_proposal_2b822bf7"); },
+  get setting_up() { return tr("community:getting_the_project_ready_3d4685fa"); },
   // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
   // stage of the bot's progress as.
-  queued: 'waiting its turn in my queue',
-  follow_up_queued: 'waiting its turn to follow up on its proposal',
-  merging: 'merging its approved proposal',
+  get queued() { return tr("community:waiting_its_turn_in_my_queue_671f20c9"); },
+  get follow_up_queued() { return tr("community:waiting_its_turn_to_follow_up_on_its_proposal_1327004b"); },
+  get merging() { return tr("community:merging_its_approved_proposal_1b5f9e4b"); },
 };
 
 /** The same, as the header's status line says it after the request's name. */
 export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
-  looking: 'reading it',
+  get looking() { return tr("community:reading_it_e459ec75"); },
   building: 'building',
-  following_up: 'following up',
-  setting_up: 'setting up',
-  queued: 'in my queue',
-  follow_up_queued: 'queued to follow up',
+  get following_up() { return tr("community:following_up_452d3822"); },
+  get setting_up() { return tr("community:setting_up_6ae46cb7"); },
+  get queued() { return tr("community:in_my_queue_56c9701b"); },
+  get follow_up_queued() { return tr("community:queued_to_follow_up_bdc609ef"); },
   merging: 'merging',
 };
 
 /** The last thing the bot did, as the status line says it when nothing else is going on. */
 export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => string> = {
-  question: (name) => `asked you about ${name}`,
-  proposed: (name) => `proposed ${name}`,
-  live: (name) => `${name} went live`,
-  closed: (name) => `${name}’s proposal was closed`,
-  blocked: (name) => `couldn’t build ${name} as written`,
-  build_failed: (name) => `couldn’t finish building ${name}`,
-  person: (name) => `left ${name} to the group`,
-  empty: (name) => `found nothing to build in ${name}`,
-  failed: (name) => `couldn’t finish looking at ${name}`,
-  held: (name) => `held ${name} back for now`,
-  stopped: (name) => `stopped on ${name}`,
-  answer: (name) => `answered on ${name}`,
-  revise: (name) => `changed ${name}’s proposal`,
+  question: (name) => tr("community:asked_you_about_value1_ece021e7", { value1: name }),
+  proposed: (name) => tr("community:proposed_value1_6cf1f124", { value1: name }),
+  live: (name) => tr("community:value1_went_live_bae1c229", { value1: name }),
+  closed: (name) => tr("community:value1_s_proposal_was_closed_f49bf544", { value1: name }),
+  blocked: (name) => tr("community:couldn_t_build_value1_as_written_c3b76ce7", { value1: name }),
+  build_failed: (name) => tr("community:couldn_t_finish_building_value1_cd5d7f6c", { value1: name }),
+  person: (name) => tr("community:left_value1_to_the_group_c43a5dde", { value1: name }),
+  empty: (name) => tr("community:found_nothing_to_build_in_value1_22547337", { value1: name }),
+  failed: (name) => tr("community:couldn_t_finish_looking_at_value1_264cc956", { value1: name }),
+  held: (name) => tr("community:held_value1_back_for_now_18e4631c", { value1: name }),
+  stopped: (name) => tr("community:stopped_on_value1_e50a5446", { value1: name }),
+  answer: (name) => tr("community:answered_on_value1_e0b40710", { value1: name }),
+  revise: (name) => tr("community:changed_value1_s_proposal_03f92f9f", { value1: name }),
 };
 
 function capitalized(text: string): string {
@@ -206,38 +210,38 @@ export interface TrayStatus {
  * check reads).
  */
 export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date()): TrayStatus {
-  const plain: TrayStatus = { kind: 'idle', long: 'Activity', short: 'Activity' };
+  const plain: TrayStatus = { kind: 'idle', get long() { return tr("community:activity_38da1505"); }, get short() { return tr("community:activity_38da1505"); } };
   if (!work) return plain;
   const waiting = work.needsYou.length;
-  const needs = waiting ? ` · ${waiting} ${waiting === 1 ? 'needs' : 'need'} you` : '';
+  const needs = waiting ? tr("community:count_need_you_3260b3bd", { count: waiting }) : '';
   const queued = work.now.length > 0 && work.now.every((job) => QUEUED_PHASES.has(job.phase));
   // A phone's line has room for one of the two: what waits on them wins.
   if (work.now.length === 1) {
     const job = work.now[0];
-    let short = `Working on ${shortName(job)}`;
-    if (queued) short = needs ? `Queued${needs}` : `${shortName(job)} queued`;
+    let short = tr("community:working_on_value1_e874ddad", { value1: shortName(job) });
+    if (queued) short = needs ? `Queued${needs}` : tr("community:value1_queued_a4991001", { value1: shortName(job) });
     else if (needs) short = `Working${needs}`;
-    return { kind: 'working', long: `Working on ${jobName(job)} · ${SHORT_PHASES[job.phase]}${needs}`, short };
+    return { kind: 'working', long: tr("community:working_on_value1_value2_value3_5573966a", { value1: jobName(job), value2: SHORT_PHASES[job.phase], value3: needs }), short };
   }
   if (work.now.length) {
-    let short = `Working on ${work.now.length}`;
-    if (queued) short = needs ? `Queued${needs}` : `${work.now.length} queued`;
+    let short = tr("community:working_on_value1_e874ddad", { value1: work.now.length });
+    if (queued) short = needs ? `Queued${needs}` : tr("community:value1_queued_a4991001", { value1: work.now.length });
     else if (needs) short = `Working${needs}`;
-    return { kind: 'working', long: `Working on ${work.now.length} requests${needs}`, short };
+    return { kind: 'working', long: tr("community:working_on_value1_requests_value2_1172d03f", { value1: work.now.length, value2: needs }), short };
   }
   if (waiting === 1) {
     const job = work.needsYou[0];
-    return { kind: 'you', long: `${jobName(job)} needs you`, short: `${shortName(job)} needs you` };
+    return { kind: 'you', long: tr("community:value1_needs_you_a1e7084a", { value1: jobName(job) }), short: tr("community:value1_needs_you_a1e7084a", { value1: shortName(job) }) };
   }
-  if (waiting) return { kind: 'you', long: `${waiting} requests need you`, short: `${waiting} need you` };
+  if (waiting) return { kind: 'you', long: tr("community:value1_requests_need_you_e1d1c808", { value1: waiting }), short: tr("community:value1_need_you_efe77087", { value1: waiting }) };
   const last = work.history[0];
   if (!last?.outcome) return plain;
   const ago = agoStamp(last.at, { now }).text;
   const when = ago ? ` · ${ago}` : '';
   return {
     kind: 'last',
-    long: `Last: ${LAST_WORDS[last.outcome](jobName(last))}${when}`,
-    short: `Last: ${LAST_WORDS[last.outcome](shortName(last))}${when}`,
+    long: tr("community:last_value1_value2_0ac69961", { value1: LAST_WORDS[last.outcome](jobName(last)), value2: when }),
+    short: tr("community:last_value1_value2_0ac69961", { value1: LAST_WORDS[last.outcome](shortName(last)), value2: when }),
   };
 }
 
@@ -311,11 +315,9 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
     badge = <span className="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status={kind}><PingDot /></span>;
   }
   return (
-    <button
+    <Localized element={<button
       type="button"
-      className="messages-thread-action messages-bot-work-button"
-      aria-label="Activity"
-      title="Activity"
+      className="messages-thread-action messages-bot-work-button" aria-label={catalogText("community:activity_38da1505")} title={catalogText("community:activity_38da1505")}
       aria-expanded={open}
       aria-controls={BOT_WORK_PANEL_ID}
       data-bot-work-toggle=""
@@ -323,7 +325,7 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
     >
       <ClockIcon aria-hidden="true" />
       {badge}
-    </button>
+    </button>} messages={{"aria-label":"community:activity_38da1505","title":"community:activity_38da1505"}} />
   );
 }
 
@@ -336,22 +338,22 @@ export function BotWorkButton() {
 
 const TILE_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] items-start gap-2.5 px-3';
 
-function PanelNote({ children, className = '' }: { children: string; className?: string }) {
+function PanelNote({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <p className={`px-4 pb-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400 ${className}`}>{children}</p>;
 }
 
 /** Where a tile can be opened: its proposal once people can open it, its request, or its project. */
 function tileLinks(job: HomeroomBotJob): ReactNode[] {
   const links: ReactNode[] = [];
-  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>Open change</ActivityLink>);
+  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}><Message id="community:open_change_6ab4b6b1" /></ActivityLink>);
   if (job.links.request) {
     links.push(
       <ActivityLink key="request" data="bot-work" href={job.links.request}>
-        {job.firstVersion || !job.issueNumber ? 'Open request' : `Request #${job.issueNumber}`}
+        <LocalizedValue render={() => (job.firstVersion || !job.issueNumber ? tr("community:open_request_3cfb5504") : tr("community:request_value1_8051e8ec", { value1: job.issueNumber }))} />
       </ActivityLink>,
     );
   } else if (job.links.project) {
-    links.push(<ActivityLink key="project" data="bot-work" href={job.links.project}>Open project</ActivityLink>);
+    links.push(<ActivityLink key="project" data="bot-work" href={job.links.project}><Message id="community:open_project_5e5eba7f" /></ActivityLink>);
   }
   return links;
 }
@@ -368,6 +370,7 @@ interface TileProps {
 
 /** One request, in the activity cards' language. Its earlier runs fold away under it. */
 function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
+  useUiLanguage();
   const [showEarlier, setShowEarlier] = useState(false);
   const links = tileLinks(job);
   const earlier = job.earlier;
@@ -401,7 +404,7 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
               data-bot-work-earlier={earlier.length}
               onClick={() => setShowEarlier((shown) => !shown)}
             >
-              {`${earlier.length} earlier ${earlier.length === 1 ? 'run' : 'runs'}`}
+              <LocalizedValue render={() => (tr("community:message_409f67f96459", { value1: earlier.length, count: earlier.length }))} />
               <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${showEarlier ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
           ) : null}
@@ -427,7 +430,7 @@ function withTime(text: string, time: string): string {
 
 function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: (value: string | null) => string }) {
   const stepped = !!job.step && !!job.of;
-  const eyebrow = stepped ? `Step ${job.step} of ${job.of}${job.stepName ? ` · ${job.stepName}` : ''}` : 'Working on it';
+  const eyebrow = stepped ? tr("community:step_value1_of_value2_value3_8acfce48", { value1: job.step, value2: job.of, value3: job.stepName ? ` · ${job.stepName}` : '' }) : tr("community:working_on_it_d55b6d1b");
   const elapsed = spanText(job.since, at);
   return (
     <Tile
@@ -444,7 +447,7 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
 
 function PastTile({ job, group, ago }: { job: HomeroomBotPastJob; group: 'you' | 'history'; ago: (value: string | null) => string }) {
   const tone: ActivityTone = group === 'you' ? 'you' : (job.outcome ? ACTIVITY_OUTCOME_TONES[job.outcome] : 'ended');
-  const said = job.outcome ? ACTIVITY_OUTCOME_LABELS[job.outcome] : capitalized(job.doing || 'waiting on you');
+  const said = job.outcome ? ACTIVITY_OUTCOME_LABELS[job.outcome] : capitalized(job.doing || tr("community:waiting_on_you_40fd9e27"));
   return (
     <Tile
       job={job}
@@ -476,33 +479,32 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
   const ago = (value: string | null) => agoStamp(value, { now: at }).text;
   const idle = !!work && !work.now.length && !work.needsYou.length;
   return (
-    <section
+    <Localized element={<section
       id={BOT_WORK_PANEL_ID}
-      className="absolute inset-x-3 top-1 max-h-[min(70vh,40rem)] overflow-y-auto overscroll-contain rounded-[20px] bg-white pb-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_18px_40px_-16px_rgba(0,0,0,0.35)] dark:bg-zinc-900"
-      aria-label="Homeroom bot activity"
+      className="absolute inset-x-3 top-1 max-h-[min(70vh,40rem)] overflow-y-auto overscroll-contain rounded-[20px] bg-white pb-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_18px_40px_-16px_rgba(0,0,0,0.35)] dark:bg-zinc-900" aria-label={catalogText("community:homeroom_bot_activity_5bfda20d")}
       data-bot-work-panel=""
     >
       {!work ? (
         failed ? (
           <div className="flex items-center gap-3 px-4 py-3" role="alert">
-            <span className="min-w-0 flex-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">Couldn’t load what I’m working on.</span>
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={onRetry}>Try again</Button>
+            <span className="min-w-0 flex-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400"><Message id="community:couldn_t_load_what_i_m_working_on_e8390dd5" /></span>
+            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={onRetry}><Message id="community:try_again_d8b8392e" /></Button>
           </div>
         ) : (
-          <SkeletonGroup label="Loading activity" className="space-y-4 px-4 py-4">
+          <Localized element={<SkeletonGroup label={catalogText("community:loading_activity_0acd8adf")} className="space-y-4 px-4 py-4">
             {[0, 1, 2].map((key) => (
               <div key={key} className="space-y-2">
                 <Skeleton className="w-2/3" />
                 <Skeleton shape="muted" className="w-1/3" />
               </div>
             ))}
-          </SkeletonGroup>
+          </SkeletonGroup>} messages={{"label":"community:loading_activity_0acd8adf"}} />
         )
       ) : (
         <>
           {work.now.length ? (
             <>
-              <SectionHeader className="pt-3">Now</SectionHeader>
+              <SectionHeader className="pt-3"><Message id="community:now_fe18013d" /></SectionHeader>
               <div className={TILE_GRID}>
                 {work.now.map((job) => <NowTile key={job.key} job={job} at={at} ago={ago} />)}
               </div>
@@ -510,13 +512,13 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
           ) : null}
           {work.needsYou.length ? (
             <>
-              <SectionHeader className={work.now.length ? 'pt-4' : 'pt-3'}>Needs you</SectionHeader>
+              <SectionHeader className={work.now.length ? 'pt-4' : 'pt-3'}><Message id="community:needs_you_74b6abdf" /></SectionHeader>
               <div className={TILE_GRID}>
                 {work.needsYou.map((job) => <PastTile key={job.key} job={job} group="you" ago={ago} />)}
               </div>
             </>
           ) : null}
-          {idle ? <PanelNote className="pt-3">I’m not working on anything for you right now.</PanelNote> : null}
+          {idle ? <PanelNote className="pt-3"><Message id="community:i_m_not_working_on_anything_for_you_right_now_9d3a3f8e" /></PanelNote> : null}
           {work.history.length ? (
             <>
               <button
@@ -527,7 +529,7 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
                 data-bot-work-history-toggle=""
                 onClick={onToggleHistory}
               >
-                {historyOpen ? 'Hide history' : `Show history (${work.history.length})`}
+                <LocalizedValue render={() => (historyOpen ? tr("community:hide_history_db1ddf34") : tr("community:show_history_value1_579f517d", { value1: work.history.length }))} />
                 <ChevronDownIcon className={`h-4 w-4 transition-transform ${historyOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>
               {historyOpen ? (
@@ -536,11 +538,11 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
                 </div>
               ) : null}
             </>
-          ) : idle ? <PanelNote>Nothing yet. When I work on a request of yours, it shows up here.</PanelNote> : null}
-          {failed ? <PanelNote className="pt-3">Couldn’t refresh this just now; it may be out of date.</PanelNote> : null}
+          ) : idle ? <PanelNote><Message id="community:nothing_yet_when_i_work_on_a_request_of_yours_it_bf90bb46" /></PanelNote> : null}
+          {failed ? <PanelNote className="pt-3"><Message id="community:couldn_t_refresh_this_just_now_it_may_be_out_of__279155b5" /></PanelNote> : null}
         </>
       )}
-    </section>
+    </section>} messages={{"aria-label":"community:homeroom_bot_activity_5bfda20d"}} />
   );
 }
 

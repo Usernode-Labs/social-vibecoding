@@ -59,8 +59,8 @@
 import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
-import { Shell } from './Shell';
 import './lib/i18n/runtime';
+import { Shell } from './Shell';
 import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';

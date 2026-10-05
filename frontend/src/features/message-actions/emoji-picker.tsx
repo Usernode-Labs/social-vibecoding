@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr, ensureNamespace } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 
 import {
@@ -64,6 +67,8 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
   /** Put the caret in the search field on open — a pointer's picker, not a phone's. */
   autoFocus?: boolean;
 }) {
+  const languageText = useUiLanguage();
+  useEffect(() => { void ensureNamespace('emoji').catch(() => {}); }, []);
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<EmojiEntry | null>(null);
   const [tab, setTab] = useState('recent');
@@ -74,7 +79,7 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
   const recentEntries = useMemo(() => recents.slice(0, RECENT_SHOWN).map((emoji) => (
     ALL_EMOJI.find((entry) => entry.emoji === emoji) || { emoji, name: emojiName(emoji), terms: emoji }
   )), [recents]);
-  const hits = useMemo(() => searchEmoji(query), [query]);
+  const hits = useMemo(() => searchEmoji(query), [query, languageText]);
   const searching = query.trim().length > 0;
 
   useEffect(() => {
@@ -101,32 +106,29 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
     if (current !== tab) setTab(current);
   }
 
-  const sections = [{ id: 'recent', label: 'Recently used', emoji: recentEntries }, ...EMOJI_CATEGORIES];
+  const sections = [{ id: 'recent', get label() { return tr("core:recently_used_1e7cf8df"); }, emoji: recentEntries }, ...EMOJI_CATEGORIES];
 
   return (
-    <div
+    <Localized element={<div
       className={`msgx-picker msgx-picker-${placement} ${className}`}
-      role="dialog"
-      aria-label="Add a reaction"
+      role="dialog" aria-label={catalogText("core:add_a_reaction_4ae871eb")}
       onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
       }}
     >
       <label className="msgx-picker-search">
         <SearchIcon className="w-4 h-4" aria-hidden="true" />
-        <input
+        <Localized element={<input
           ref={search}
           type="search"
-          value={query}
-          placeholder="Search emoji"
-          aria-label="Search emoji"
+          value={query} placeholder={catalogText("core:search_emoji_87fafa72")} aria-label={catalogText("core:search_emoji_87fafa72")}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && hits[0]) { event.preventDefault(); onPick(hits[0].emoji); }
           }}
-        />
+        />} messages={{"placeholder":"core:search_emoji_87fafa72","aria-label":"core:search_emoji_87fafa72"}} />
       </label>
-      <div className="msgx-picker-tabs" role="tablist" aria-label="Emoji categories">
+      <Localized element={<div className="msgx-picker-tabs" role="tablist" aria-label={catalogText("core:emoji_categories_fed48f97")}>
         {sections.map((section) => {
           const Icon = TAB_ICONS[section.id] || FaceSmileIcon;
           const selected = !searching && tab === section.id;
@@ -145,14 +147,14 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
             </button>
           );
         })}
-      </div>
+      </div>} messages={{"aria-label":"core:emoji_categories_fed48f97"}} />
       <div ref={scroller} className="msgx-picker-scroll" onScroll={onScroll}>
         {searching ? (
           hits.length ? (
-            <div className="msgx-picker-grid" role="group" aria-label="Matching emoji">
+            <Localized element={<div className="msgx-picker-grid" role="group" aria-label={catalogText("core:matching_emoji_2a7a222b")}>
               {hits.map((entry) => <EmojiButton key={entry.emoji} entry={entry} onPick={onPick} onPreview={setPreview} />)}
-            </div>
-          ) : <p className="msgx-picker-empty">No emoji match “{query.trim()}”.</p>
+            </div>} messages={{"aria-label":"core:matching_emoji_2a7a222b"}} />
+          ) : <p className="msgx-picker-empty"><Message id="core:no_emoji_match_648368db" />{query.trim()}”.</p>
         ) : sections.map((section) => (
           <section key={section.id} data-emoji-section={section.id} aria-label={section.label}>
             <h4 className="msgx-picker-head">{section.label}</h4>
@@ -163,8 +165,8 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
         ))}
       </div>
       <div className="msgx-picker-foot" aria-hidden="true">
-        {preview ? <><span className="msgx-picker-foot-emoji">{preview.emoji}</span><span>{preview.name}</span></> : <span>Pick a reaction</span>}
+        {preview ? <><span className="msgx-picker-foot-emoji">{preview.emoji}</span><span>{preview.name}</span></> : <span><Message id="core:pick_a_reaction_f32a1950" /></span>}
       </div>
-    </div>
+    </div>} messages={{"aria-label":"core:add_a_reaction_4ae871eb"}} />
   );
 }

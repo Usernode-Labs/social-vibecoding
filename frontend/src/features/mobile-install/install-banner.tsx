@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -79,6 +83,7 @@ function writeDismissed(): void {
 }
 
 export function MobileInstallBanner() {
+  useUiLanguage();
   const ref = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -149,16 +154,16 @@ export function MobileInstallBanner() {
     >
       <img src="/icons/v3/icon-192.png" alt="" aria-hidden="true" className="w-8 h-8 rounded-lg shrink-0" />
       <div className="min-w-0 flex-1 text-left leading-tight">
-        <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">Homeroom</div>
+        <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate"><Message id="core:homeroom_c9149977" /></div>
         <div className="text-zinc-500 dark:text-zinc-400 truncate">
           {/* Three states, and the middle one is the whole of #1513: with no
               store listing published this used to read "Get the app" over a
               link to nowhere. */}
-          {offer === null
-            ? 'Get the app'
+          <LocalizedValue render={() => (offer === null
+            ? tr("core:get_the_app_ec196e05")
             : offer.kind === 'store'
-              ? `Get the app on ${storeLabel(offer.os, offer.url)}`
-              : (showSteps ? A2HS_STEPS[offer.os] : 'Add it to your home screen')}
+              ? tr("core:get_the_app_on_value1_7a343655", { value1: storeLabel(offer.os, offer.url) })
+              : (showSteps ? A2HS_STEPS[offer.os] : tr("core:add_it_to_your_home_screen_05ddfdd9")))} />
         </div>
       </div>
       {offer && offer.kind === 'a2hs' ? (
@@ -181,7 +186,7 @@ export function MobileInstallBanner() {
           ink="solid"
           className="inline-flex items-center h-7 un-touch-target"
         >
-          {showSteps ? 'Got it' : 'How'}
+          <LocalizedValue render={() => (showSteps ? tr("core:got_it_5ad3dbd1") : tr("core:how_7470bd3b"))} />
         </Button>
       ) : (
         <a
@@ -190,19 +195,16 @@ export function MobileInstallBanner() {
           target="_blank"
           rel="noopener noreferrer"
           className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
-        >
-          Get
-        </a>
+        ><Message id="core:get_5fb9c3ab" /></a>
       )}
-      <button
+      <Localized element={<button
         id="mobile-install-dismiss"
         type="button"
-        onClick={dismiss}
-        aria-label="Dismiss install banner"
+        onClick={dismiss} aria-label={catalogText("core:dismiss_install_banner_0fb03ab9")}
         className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />
-      </button>
+      </button>} messages={{"aria-label":"core:dismiss_install_banner_0fb03ab9"}} />
     </div>
   );
 }

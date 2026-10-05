@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The ACTION and the update NOTICE, which is all that outlived the Improve
  * panel (#2718 review). There were two actions until the UI overhaul; see
@@ -78,11 +81,10 @@ export function ImproveQuickActions(): ReactNode {
       id="improve-quick-actions"
       className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
     >
-      <QuickAction
-        id="improve-row-feedback"
-        label="Ask for a change"
+      <Localized element={<QuickAction
+        id="improve-row-feedback" label={catalogText("apps:ask_for_a_change_f445fc4f")}
         onClick={() => Improve.giveFeedback()}
-      />
+      />} messages={{"label":"apps:ask_for_a_change_f445fc4f"}} />
     </div>
   );
 }
@@ -119,6 +121,7 @@ export function ImproveQuickActions(): ReactNode {
  * the wording.
  */
 function UpdateStatus(): ReactNode {
+  useUiLanguage();
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   const platformBusy = versionState === 'deploying' || versionState === 'downloading';
   const ready = versionState === 'ready' || versionState === 'failed';
@@ -134,9 +137,7 @@ function UpdateStatus(): ReactNode {
         onClick={() => window.location.reload()}
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          There is a new version available. Click here to get the new version.
-        </span>
+        <span className="min-w-0 flex-1"><Message id="apps:there_is_a_new_version_available_click_here_to_g_0b55f203" /></span>
       </button>
     );
   }
@@ -152,9 +153,7 @@ function UpdateStatus(): ReactNode {
         onClick={() => Improve.reloadApp()}
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          This app has a new version. Click here to reload it.
-        </span>
+        <span className="min-w-0 flex-1"><Message id="apps:this_app_has_a_new_version_click_here_to_reload__a839b5b6" /></span>
       </button>
     );
   }
@@ -164,9 +163,9 @@ function UpdateStatus(): ReactNode {
     // says the more surprising of the two.
     const line = platformBusy
       ? (versionState === 'downloading'
-        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
-        : 'A new version of the platform is being built.')
-      : 'A new version of this app is being built.';
+        ? tr("apps:a_new_version_of_the_platform_is_downloading_the_2e8d453f")
+        : tr("apps:a_new_version_of_the_platform_is_being_built_128723ce"))
+      : tr("apps:a_new_version_of_this_app_is_being_built_ac0584d3");
     return (
       <div
         id="improve-update-note"

@@ -224,11 +224,11 @@ const TopochainLeaderboard = {
         // event bar's default pick covers "none is currently running").
         // That's an empty world, not a failure — render it neutrally.
         TopochainLeaderboard._error = null;
-        TopochainLeaderboard._empty = 'No events have been published yet.';
+        TopochainLeaderboard._empty = globalThis.PlatformI18n.t("apps:no_events_have_been_published_yet_baed0bc4");
       } else {
         TopochainLeaderboard._empty = null;
         TopochainLeaderboard._error = (data && data.error)
-          || 'Failed to load the leaderboard.';
+          || globalThis.PlatformI18n.t("apps:failed_to_load_the_leaderboard_db88a437");
       }
     }
     TopochainLeaderboard._renderBody();
@@ -346,11 +346,11 @@ const TopochainLeaderboard = {
       ? ['rank', 'user', 'points', 'blocks']
       : ['rank', 'user', 'points', 'blocks', 'success'];
     const headers = {
-      rank: 'Rank',
-      user: 'User',
-      points: isSeason ? 'Season points' : 'Points',
-      blocks: 'Blocks produced',
-      success: 'Success rate',
+      get rank() { return globalThis.PlatformI18n.t("apps:rank_a4130d7d"); },
+      get user() { return globalThis.PlatformI18n.t("apps:user_b512d97e"); },
+      points: isSeason ? globalThis.PlatformI18n.t("apps:season_points_035c8057") : globalThis.PlatformI18n.t("apps:points_77deabe2"),
+      get blocks() { return globalThis.PlatformI18n.t("apps:blocks_produced_029e436b"); },
+      get success() { return globalThis.PlatformI18n.t("apps:success_rate_49da60f8"); },
     };
 
     const rows = leaderboard.map((r, i) => ({
@@ -359,7 +359,7 @@ const TopochainLeaderboard = {
       nonPodium: !!r.is_non_podium,
       // The server resolves a name for every account it can (#2394); a row
       // it still cannot name says so rather than showing only its points.
-      user: str(r.display_name) || 'Anonymous',
+      user: str(r.display_name) || globalThis.PlatformI18n.t("apps:anonymous_e7a8aa2d"),
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),
@@ -436,14 +436,14 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillActivities = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillActivities = {
-            loading: false, error: (data && data.error) || 'Could not load activities.', data: null,
+            loading: false, error: (data && data.error) || globalThis.PlatformI18n.t("apps:could_not_load_activities_b56e7348"), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
       });
     } else {
       TopochainLeaderboard._drillActivities = {
-        loading: false, error: 'No identifier available for this row.', data: null,
+        loading: false, get error() { return globalThis.PlatformI18n.t("apps:no_identifier_available_for_this_row_54990277"); }, data: null,
       };
     }
 
@@ -457,7 +457,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillEpoch = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillEpoch = {
-            loading: false, error: (data && data.error) || 'Could not load the epoch breakdown.', data: null,
+            loading: false, error: (data && data.error) || globalThis.PlatformI18n.t("apps:could_not_load_the_epoch_breakdown_f5f39922"), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -473,8 +473,8 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._drillEpoch = {
         loading: false,
         error: TopochainLeaderboard._isSeasonBoard()
-          ? 'The epoch breakdown is per event. Pick a single event above to see it.'
-          : 'No wallet linked for this row.',
+          ? globalThis.PlatformI18n.t("apps:the_epoch_breakdown_is_per_event_pick_a_single_e_8d47d61c")
+          : globalThis.PlatformI18n.t("apps:no_wallet_linked_for_this_row_5439198e"),
         data: null,
       };
     }
@@ -495,7 +495,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillProfile = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillProfile = {
-            loading: false, error: (data && data.error) || 'Could not load your profile.', data: null,
+            loading: false, error: (data && data.error) || globalThis.PlatformI18n.t("apps:could_not_load_your_profile_fd2a9a95"), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -572,7 +572,7 @@ const TopochainLeaderboard = {
     };
 
     return {
-      displayName: str(row.display_name) || 'Anonymous',
+      displayName: str(row.display_name) || globalThis.PlatformI18n.t("apps:anonymous_e7a8aa2d"),
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,

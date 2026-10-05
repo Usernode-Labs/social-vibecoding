@@ -222,8 +222,8 @@
           }
         };
         req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
-        req.onblocked = () => reject(new Error('indexedDB blocked'));
+        req.onerror = () => reject(req.error || new Error(globalThis.PlatformI18n.t("core:indexeddb_open_failed_2b45ca52")));
+        req.onblocked = () => reject(new Error(globalThis.PlatformI18n.t("core:indexeddb_blocked_3a39441a")));
       });
       // A rejected open must not be cached as a permanent failure state that
       // later calls keep awaiting — ensureStore() falls back instead.
@@ -237,8 +237,8 @@
       const req = run(store);
       if (req) req.onsuccess = () => { out = req.result; };
       t.oncomplete = () => resolve(out);
-      t.onerror = () => reject(t.error || new Error('indexedDB transaction failed'));
-      t.onabort = () => reject(t.error || new Error('indexedDB transaction aborted'));
+      t.onerror = () => reject(t.error || new Error(globalThis.PlatformI18n.t("core:indexeddb_transaction_failed_46fb60f2")));
+      t.onabort = () => reject(t.error || new Error(globalThis.PlatformI18n.t("core:indexeddb_transaction_aborted_5e2b1edb")));
     }));
     return {
       kind: 'idb',
@@ -379,13 +379,13 @@
             remaining.splice(remaining.indexOf(shot), 1);
             saveProgress();
           } else if (classifyFailure({ status: res.status }) !== 'permanent') {
-            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || 'screenshot upload failed' };
+            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || globalThis.PlatformI18n.t("core:screenshot_upload_failed_f4dd2027") };
           } else {
             remaining.splice(remaining.indexOf(shot), 1);
             saveProgress();
           }
         } catch (err) {
-          return { ok: false, status: 0, networkError: true, error: 'network error' };
+          return { ok: false, status: 0, networkError: true, get error() { return globalThis.PlatformI18n.t("core:network_error_b026fa61"); } };
         }
       }
       if (ids.length) body.screenshotIds = ids;
@@ -406,7 +406,7 @@
         error: (data && data.error) || null,
       };
     } catch (err) {
-      return { ok: false, status: 0, networkError: true, error: 'network error' };
+      return { ok: false, status: 0, networkError: true, get error() { return globalThis.PlatformI18n.t("core:network_error_b026fa61"); } };
     }
   }
 
@@ -441,7 +441,7 @@
       const verdict = classifyFailure(res);
       const next = Object.assign({}, claimed, {
         sendingSince: null,
-        lastError: res.error || 'Could not send',
+        lastError: res.error || globalThis.PlatformI18n.t("core:could_not_send_e42c42e0"),
       });
       if (verdict === 'permanent') {
         next.status = 'failed';
@@ -589,7 +589,7 @@
     flush(reason) {
       if (flushing) return flushing;
       flushing = flushOnce(reason)
-        .catch((err) => ({ sent: 0, failed: 0, remaining: 0, filed: [], error: (err && err.message) || 'flush failed' }))
+        .catch((err) => ({ sent: 0, failed: 0, remaining: 0, filed: [], error: (err && err.message) || globalThis.PlatformI18n.t("core:flush_failed_1e694883") }))
         .then((res) => { flushing = null; return res; });
       return flushing;
     },

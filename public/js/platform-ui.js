@@ -187,7 +187,7 @@
       return un.alert({
         title: o.title || '',
         message: o.message || undefined,
-        buttons: o.buttons || [{ label: o.okLabel || 'OK', style: 'default' }],
+        buttons: o.buttons || [{ label: o.okLabel || globalThis.PlatformI18n.t("core:ok_565339bc"), style: 'default' }],
       });
     },
 
@@ -202,11 +202,11 @@
       }
       return un
         .alert({
-          title: o.title || 'Are you sure?',
+          title: o.title || globalThis.PlatformI18n.t("core:are_you_sure_f0762c4f"),
           message: o.message || undefined,
           buttons: [
-            { label: o.cancelLabel || 'Cancel', style: 'cancel' },
-            { label: o.confirmLabel || 'OK', style: o.danger ? 'destructive' : 'default' },
+            { label: o.cancelLabel || globalThis.PlatformI18n.t("core:cancel_19766ed6"), style: 'cancel' },
+            { label: o.confirmLabel || globalThis.PlatformI18n.t("core:ok_565339bc"), style: o.danger ? 'destructive' : 'default' },
           ],
         })
         .then((res) => !!(res && res.button && res.button.style !== 'cancel'));
@@ -235,8 +235,8 @@
             ...(o.maxLength > 0 ? { maxLength: o.maxLength } : {}),
           },
           buttons: [
-            { label: o.cancelLabel || 'Cancel', style: 'cancel' },
-            { label: o.confirmLabel || 'OK', style: 'default' },
+            { label: o.cancelLabel || globalThis.PlatformI18n.t("core:cancel_19766ed6"), style: 'cancel' },
+            { label: o.confirmLabel || globalThis.PlatformI18n.t("core:ok_565339bc"), style: 'default' },
           ],
         })
         .then((res) => {

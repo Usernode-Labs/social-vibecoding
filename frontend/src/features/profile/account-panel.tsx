@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Profile's two lists of rows (UI overhaul): "Your work", then "More".
  *
@@ -92,38 +96,35 @@ function plainClick(event: { defaultPrevented: boolean; button: number; metaKey:
 export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
   return (
     <section id="profile-work" className="mt-2">
-      <SectionHeader>Your work</SectionHeader>
+      <SectionHeader><Message id="account:your_work_ef14cf0d" /></SectionHeader>
       <GroupedList className="mx-0" tone="plane">
-        <ListRow
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-proposals"
           href="#profile/your-changes"
-          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
-          title="Your changes"
+          leading={<IconTile size="sm"><BallotIcon /></IconTile>} title={catalogText("account:your_changes_96b37574")}
           titleClassName={TITLE}
-          subtitle={rows.changes || 'Everything you have started'}
+          subtitle={rows.changes || tr("account:everything_you_have_started_c238d9c3")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} resolve={() => ({ "subtitle": rows.changes || tr("account:everything_you_have_started_c238d9c3") })} />} messages={{"title":"account:your_changes_96b37574"}} />
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-feedback"
           href="#profile/your-requests"
-          leading={<IconTile size="sm"><ChatIcon /></IconTile>}
-          title="Your requests"
+          leading={<IconTile size="sm"><ChatIcon /></IconTile>} title={catalogText("account:your_requests_4c64a2a1")}
           titleClassName={TITLE}
-          subtitle={rows.requests || 'What you asked for, and where it stands'}
+          subtitle={rows.requests || tr("account:what_you_asked_for_and_where_it_stands_55cc2394")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} resolve={() => ({ "subtitle": rows.requests || tr("account:what_you_asked_for_and_where_it_stands_55cc2394") })} />} messages={{"title":"account:your_requests_4c64a2a1"}} />
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-votes"
           href="#profile/your-votes"
-          leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>}
-          title="Your votes"
+          leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>} title={catalogText("account:your_votes_ca7f0008")}
           titleClassName={TITLE}
-          subtitle={rows.votes || 'The changes and decisions you voted on'}
+          subtitle={rows.votes || tr("account:the_changes_and_decisions_you_voted_on_47fe9205")}
           subtitleClassName={SUBTITLE}
-        />
+        />} resolve={() => ({ "subtitle": rows.votes || tr("account:the_changes_and_decisions_you_voted_on_47fe9205") })} />} messages={{"title":"account:your_votes_ca7f0008"}} />
       </GroupedList>
     </section>
   );
@@ -132,6 +133,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
 export function MorePanel({ rows }: {
   rows: ProfileRows;
 }): ReactNode {
+  useUiLanguage();
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
   // public/js/app.js writes it after the session resolves. The Admin console
   // is a Settings row now; the flag only decides whether the Settings row's
@@ -142,15 +144,15 @@ export function MorePanel({ rows }: {
   const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
   const allowance = useAppAllowance();
   const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
-  const settingsLine = ['Account', 'alerts', 'keys']
+  const settingsLine = [tr("account:account_7e1b0d56"), 'alerts', 'keys']
     .concat(wallet ? ['wallet'] : [], isAdmin ? ['admin'] : [])
     .join(', ');
   return (
     <section id="profile-more" className="mt-2">
       {/* SectionHeader's own `px-4`, on the rows' content edge (#2832). */}
-      <SectionHeader>More</SectionHeader>
+      <SectionHeader><Message id="account:more_d47d7cb0" /></SectionHeader>
       <GroupedList className="mx-0" tone="plane">
-        <ListRow
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-app-slots"
           href="#create"
@@ -159,35 +161,32 @@ export function MorePanel({ rows }: {
             event.preventDefault();
             (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
           }}
-          leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
-          title="App slots"
+          leading={<IconTile size="sm"><AppWindowIcon /></IconTile>} title={catalogText("account:app_slots_1be05f8f")}
           titleClassName={TITLE}
-          subtitle={slotsLine || 'How many apps you can create'}
+          subtitle={slotsLine || tr("account:how_many_apps_you_can_create_cc6f6baf")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} resolve={() => ({ "subtitle": slotsLine || tr("account:how_many_apps_you_can_create_cc6f6baf") })} />} messages={{"title":"account:app_slots_1be05f8f"}} />
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-challenges"
           href="#leaderboard/challenges"
-          leading={<IconTile size="sm"><TrophyIcon /></IconTile>}
-          title="Challenges & standings"
+          leading={<IconTile size="sm"><TrophyIcon /></IconTile>} title={catalogText("account:challenges_standings_13cb5a88")}
           titleClassName={TITLE}
-          subtitle={rows.challenges || 'This season’s challenges and standings'}
+          subtitle={rows.challenges || tr("account:this_season_s_challenges_and_standings_b42ac32a")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} resolve={() => ({ "subtitle": rows.challenges || tr("account:this_season_s_challenges_and_standings_b42ac32a") })} />} messages={{"title":"account:challenges_standings_13cb5a88"}} />
+        <Localized element={<ListRow
           as="a"
           id="profile-row-kudos"
           href="#leaderboard/kudos"
-          leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
-          title="Kudos"
+          leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>} title={catalogText("account:kudos_51483eb0")}
           titleClassName={TITLE}
           // The number is the stat card's at the top of the screen; the row
           // says what is behind it.
-          subtitle="Kudos on your changes"
+          subtitle={tr("core:kudos_on_your_changes_6ab9a514")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} messages={{"title":"account:kudos_51483eb0"}} />
+        <Localized element={<LocalizedDynamic element={<ListRow
           as="a"
           id="profile-row-friends"
           href="#profile?friends"
@@ -196,22 +195,20 @@ export function MorePanel({ rows }: {
             event.preventDefault();
             Profile.showFriends();
           }}
-          leading={<IconTile size="sm"><UserGroupIcon /></IconTile>}
-          title="Friends"
+          leading={<IconTile size="sm"><UserGroupIcon /></IconTile>} title={catalogText("account:friends_bd104d1b")}
           titleClassName={TITLE}
-          subtitle={rows.friends || 'Only you can see your friends'}
+          subtitle={rows.friends || tr("account:only_you_can_see_your_friends_37b5f2bd")}
           subtitleClassName={SUBTITLE}
-        />
-        <ListRow
+        />} resolve={() => ({ "subtitle": rows.friends || tr("account:only_you_can_see_your_friends_37b5f2bd") })} />} messages={{"title":"account:friends_bd104d1b"}} />
+        <Localized element={<ListRow
           as="a"
           id="profile-row-settings"
           href="#settings"
-          leading={<IconTile size="sm"><CogIcon /></IconTile>}
-          title="Settings"
+          leading={<IconTile size="sm"><CogIcon /></IconTile>} title={catalogText("account:settings_74a883a0")}
           titleClassName={TITLE}
           subtitle={settingsLine}
           subtitleClassName={SUBTITLE}
-        />
+        />} messages={{"title":"account:settings_74a883a0"}} />
       </GroupedList>
     </section>
   );

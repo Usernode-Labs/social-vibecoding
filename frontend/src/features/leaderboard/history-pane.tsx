@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The History pane — `#leaderboard-history-root`, the fourth pane of the
  * Leaderboard screen: the seasons that have ended, one card each.
@@ -42,7 +44,7 @@ const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-400';
 
 function Loading(): ReactNode {
   return (
-    <SkeletonGroup label="Loading past seasons" className="space-y-3">
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_past_seasons_f4963c98")} className="space-y-3">
       {Array.from({ length: 2 }, (_, i) => (
         <div key={i} className={CARD}>
           <div className="flex items-center justify-between gap-3">
@@ -59,7 +61,7 @@ function Loading(): ReactNode {
           </div>
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_past_seasons_f4963c98"}} />
   );
 }
 
@@ -86,7 +88,7 @@ function SeasonCard({ season }: { season: SeasonView }): ReactNode {
         <span className="min-w-0" data-history-result="">{season.line}</span>
       </p>
       {season.events.length ? (
-        <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Event winners">
+        <Localized element={<ul className="mt-3 flex flex-wrap gap-1.5" aria-label={catalogText("apps:event_winners_4643be1b")}>
           {season.events.map((ev) => (
             <li
               key={ev.key}
@@ -96,13 +98,14 @@ function SeasonCard({ season }: { season: SeasonView }): ReactNode {
               {ev.label}
             </li>
           ))}
-        </ul>
+        </ul>} messages={{"aria-label":"apps:event_winners_4643be1b"}} />
       ) : null}
     </article>
   );
 }
 
 export function HistoryPane(): ReactNode {
+  useUiLanguage();
   const view = historyView(useStoreState(historyStore)) as View;
   if (view.kind === 'none') return null;
   if (view.kind === 'loading') return <Loading />;

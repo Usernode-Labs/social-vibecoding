@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n/runtime";
 /**
  * Runs of cards in a transcript (#2884).
  *
@@ -47,5 +48,5 @@ export function cardRunStarts<T>(
 
 /** "… 4 more", the folded row's words. */
 export function cardRunLabel(hidden: number): string {
-  return `… ${hidden} more`;
+  return tr("core:value1_more_e42ce1b2", { value1: hidden });
 }

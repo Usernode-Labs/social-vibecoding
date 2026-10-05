@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "Position your photo": the step between choosing a profile photo and
  * staging it (#3525).
@@ -147,6 +151,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
   onAccept: (crop: CropRect) => Promise<void>;
   onCancel: () => void;
 }): ReactNode {
+  useUiLanguage();
   const { width, height } = source;
   const [crop, setCrop] = useState<CropRect>(() => initialCrop(width, height));
   const [dragging, setDragging] = useState(false);
@@ -340,13 +345,10 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
       aria-describedby="profile-photo-crop-help"
     >
       <DialogCard id="profile-photo-crop-card" ref={cardRef}>
-        <h2 id="profile-photo-crop-title" className="text-lg font-bold">Position your photo</h2>
-        <p id="profile-photo-crop-help" className="mt-1 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Drag to choose the part of your photo that shows in the circle.
-          Nothing is saved until you press Save.
-        </p>
+        <h2 id="profile-photo-crop-title" className="text-lg font-bold"><Message id="account:position_your_photo_34aa480b" /></h2>
+        <p id="profile-photo-crop-help" className="mt-1 mb-4 text-sm text-zinc-600 dark:text-zinc-400"><Message id="account:drag_to_choose_the_part_of_your_photo_that_shows_7f6716a1" /></p>
 
-        <div
+        <Localized element={<div
           id="profile-photo-crop-stage"
           ref={stageRef}
           className={STAGE_CLASS}
@@ -354,8 +356,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
           // `application`, so a screen reader in browse mode hands the arrow
           // keys to the frame instead of reading the next line with them.
           role="application"
-          aria-roledescription="photo position"
-          aria-label="Photo position. Drag to move the photo, or use the arrow keys. Plus and minus zoom."
+          aria-roledescription="photo position" aria-label={catalogText("account:photo_position_drag_to_move_the_photo_or_use_the_8ad65b57")}
           data-dragging={dragging ? '' : undefined}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -380,18 +381,17 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             aria-hidden="true"
             className="absolute inset-0 rounded-full pointer-events-none border-2 border-white/90 shadow-[0_0_0_999px_rgb(0_0_0/0.45)]"
           />
-        </div>
+        </div>} messages={{"aria-label":"account:photo_position_drag_to_move_the_photo_or_use_the_8ad65b57"}} />
 
         <div className="mt-4 flex items-center gap-3">
           <PhotoIcon aria-hidden="true" className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
-          <input
+          <Localized element={<input
             id="profile-photo-zoom"
             type="range"
             min={1}
             max={CROP_MAX_ZOOM}
             step={0.01}
-            value={zoom}
-            aria-label="Zoom"
+            value={zoom} aria-label={catalogText("account:zoom_509c517e")}
             aria-valuetext={`${Math.round(zoom * 100)}%`}
             disabled={busy}
             className="flex-1 min-w-0 h-11 accent-violet-600"
@@ -399,7 +399,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
               const next = Number(e.target.value);
               setCrop((c) => zoomCrop(c, next, width, height));
             }}
-          />
+          />} messages={{"aria-label":"account:zoom_509c517e"}} />
           <PhotoIcon aria-hidden="true" className="w-6 h-6 shrink-0 text-zinc-500 dark:text-zinc-400" />
         </div>
 
@@ -412,9 +412,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             ink="neutral"
             className="min-h-[44px]"
             onClick={() => onCancel()}
-          >
-            Cancel
-          </Button>
+          ><Message id="account:cancel_19766ed6" /></Button>
           <Button
             type="button"
             id="profile-photo-use"
@@ -426,7 +424,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             onClick={() => { void accept(); }}
           >
             {busy ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
-            {busy ? 'Preparing…' : 'Use photo'}
+            <LocalizedValue render={() => (busy ? tr("account:preparing_5d1fa38b") : tr("account:use_photo_66a0773a"))} />
           </Button>
         </div>
       </DialogCard>

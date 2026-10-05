@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#workshop-screen` — the Workshop across all of your communities.
  *
@@ -176,10 +181,10 @@ export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
   const t = row.last_active_at ? Date.parse(row.last_active_at) : NaN;
   if (Number.isNaN(t)) return '';
   const mins = Math.max(0, Math.round((now - t) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 60 * 24) return `${Math.round(mins / 60)}h ago`;
-  return `${Math.round(mins / (60 * 24))}d ago`;
+  if (mins < 1) return tr("workshop:just_now_7ddb44d8");
+  if (mins < 60) return tr("workshop:value1_m_ago_28f5747c", { value1: mins });
+  if (mins < 60 * 24) return tr("workshop:value1_h_ago_51452941", { value1: Math.round(mins / 60) });
+  return tr("workshop:value1_d_ago_0dc906ea", { value1: Math.round(mins / (60 * 24)) });
 }
 
 /** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
@@ -231,7 +236,7 @@ export function tabFromQuery(search: string): TabKey | null {
 export function needsApps(rows: WorkshopRow[], seenToo = false): string {
   const names = rows.filter((row) => ((seenToo ? row.owedCount : row.needs) || 0) > 0).map((row) => row.name || row.slug);
   if (names.length <= 3) return names.join(', ');
-  return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+  return tr("workshop:value1_and_value2_more_5cec6b8d", { value1: names.slice(0, 3).join(', '), value2: names.length - 3 });
 }
 
 /**
@@ -256,16 +261,13 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
       <span
         data-workshop-working={String(working)}
         className={working > 0 ? 'text-zinc-700 dark:text-zinc-300' : 'hidden'}
-      >
-        {working} in progress
-      </span>
+      ><RichMessage id="workshop:sentence_c3dc00ec0a48" values={{ value1: working }} /></span>
       <span
         data-workshop-needs={String(needs)}
         className={needs > 0 ? 'font-semibold text-violet-700 dark:text-violet-300' : 'hidden'}
       >
         {working > 0 ? <span className="font-normal text-zinc-500 dark:text-zinc-400" aria-hidden="true"> · </span> : null}
-        {needs} to vote
-      </span>
+        {needs}<Message before={" "} id="workshop:to_vote_0cce12c2" /></span>
     </>
   );
 }
@@ -334,9 +336,9 @@ function AppRow({ row }: { row: WorkshopRow }) {
       )}
       title={row.name || row.slug}
       trailing={unread > 0 ? (
-        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={`${unread} unread in the channel`}>
+        <LocalizedDynamic element={<span className="messages-unread" data-workshop-unread={String(unread)} aria-label={tr("workshop:value1_unread_in_the_channel_e6ef63be", { value1: unread })}>
           {unread > 99 ? '99+' : unread}
-        </span>
+        </span>} resolve={() => ({ get "aria-label"() { return tr("workshop:value1_unread_in_the_channel_e6ef63be", { value1: unread }); } })} />
       ) : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
@@ -364,7 +366,7 @@ function AppRow({ row }: { row: WorkshopRow }) {
  */
 function RowSkeletons(): ReactNode {
   return (
-    <SkeletonGroup label="Loading your apps">
+    <Localized element={<SkeletonGroup label={catalogText("workshop:loading_your_apps_402e4084")}>
       {[0, 1, 2, 3].map((i) => (
         <ListRow
           key={i}
@@ -374,7 +376,7 @@ function RowSkeletons(): ReactNode {
           subtitle={<Skeleton className="max-w-[30%]" />}
         />
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"workshop:loading_your_apps_402e4084"}} />
   );
 }
 
@@ -397,6 +399,7 @@ function RowSkeletons(): ReactNode {
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
 function Section({ audience, label, rows }: { audience: Audience; label: string; rows: WorkshopRow[] }) {
+  useUiLanguage();
   // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
   // once every row is out the same row folds the section back to three.
   const [limit, setLimit] = useState(SECTION_LIMIT);
@@ -409,7 +412,7 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
       <SectionHeader id={headingId} className="flex items-center gap-1.5">
         <SectionGlyph audience={audience} />
         <span>{label}</span>
-        <span className="ml-auto tabular-nums" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+        <LocalizedDynamic element={<span className="ml-auto tabular-nums" aria-label={tr("workshop:value1_in_value2_7ed6a589", { value1: rows.length, value2: label })}>{rows.length}</span>} resolve={() => ({ get "aria-label"() { return tr("workshop:value1_in_value2_7ed6a589", { value1: rows.length, value2: label }); } })} />
       </SectionHeader>
       <GroupedList tone="plane">
         {shown.map((row) => <AppRow key={row.slug} row={row} />)}
@@ -431,6 +434,7 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
 }
 
 export function WorkshopScreen() {
+  useUiLanguage();
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
@@ -519,9 +523,9 @@ export function WorkshopScreen() {
               nothing, so the row is not drawn over a quiet day. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
-              <SectionHeader id="workshop-needs-heading">Needs you</SectionHeader>
+              <SectionHeader id="workshop-needs-heading"><Message id="workshop:needs_you_74b6abdf" /></SectionHeader>
               <GroupedList tone="plane">
-                <ListRow
+                <LocalizedDynamic element={<ListRow
                   as="button"
                   data-workshop-needs-open=""
                   onClick={() => workshopController.setTab('needs')}
@@ -531,14 +535,16 @@ export function WorkshopScreen() {
                     </span>
                   )}
                   title={totals.needs > 0
-                    ? `${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`
-                    : `${totals.owed} ${totals.owed === 1 ? 'vote' : 'votes'} you skipped`}
+                    ? tr("workshop:message_d9baa90aa589", { value1: totals.needs, count: totals.needs })
+                    : tr("workshop:message_89d6405a357f", { value1: totals.owed, count: totals.owed })}
                   subtitle={needsApps(rows || [], !totals.needs)}
                   // "Review" is the row's affordance; a chevron beside it
                   // would say the same thing twice.
-                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
+                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300"><Message id="workshop:review_aff0766a" /></span>}
                   chevron={false}
-                />
+                />} resolve={() => ({ "title": totals.needs > 0
+                    ? tr("workshop:message_d9baa90aa589", { value1: totals.needs, count: totals.needs })
+                    : tr("workshop:message_89d6405a357f", { value1: totals.owed, count: totals.owed }) })} />
               </GroupedList>
             </section>
           ) : null}
@@ -577,22 +583,20 @@ export function WorkshopScreen() {
                 children, never among this card's. */}
             <div id="workshop-empty" className={empty ? '' : 'hidden'}>
               <GroupedList tone="plane">
-                <ListRow
+                <Localized element={<ListRow
                   as="a"
-                  href="#apps"
-                  title="You haven’t joined anything yet"
-                  subtitle="Browse the directory to find a project to join."
+                  href="#apps" title={catalogText("workshop:you_haven_t_joined_anything_yet_00055bf1")}
+                  subtitle={tr("core:browse_the_directory_to_find_a_project_to_join_dddb1b36")}
                   subtitleClassName="whitespace-normal"
-                />
+                />} messages={{"title":"workshop:you_haven_t_joined_anything_yet_00055bf1"}} />
               </GroupedList>
             </div>
             {state.error
               ? (
                 <GroupedList tone="plane">
-                  <AppsLoadError
-                    title="Couldn't load your communities"
+                  <Localized element={<AppsLoadError title={catalogText("workshop:couldn_t_load_your_communities_bd4a17e2")}
                     onRetry={() => { void workshopController.reload(); }}
-                  />
+                  />} messages={{"title":"workshop:couldn_t_load_your_communities_bd4a17e2"}} />
                 </GroupedList>
               )
               : rows === null
@@ -608,19 +612,17 @@ export function WorkshopScreen() {
                 page's own page head (app.css .dev-ws-pagehead). */}
             <div className="px-4 pb-2">
               <div className="dev-ws-pagehead">
-                <button
+                <Localized element={<button
                   type="button"
                   className="dev-ws-page-back un-touch-target"
-                  data-workshop-needs-back=""
-                  aria-label="Back to Communities"
-                  title="Back to Communities"
+                  data-workshop-needs-back="" aria-label={catalogText("workshop:back_to_communities_6bedf90f")} title={catalogText("workshop:back_to_communities_6bedf90f")}
                   onClick={() => workshopController.setTab('status')}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
-                </button>
+                </button>} messages={{"aria-label":"workshop:back_to_communities_6bedf90f","title":"workshop:back_to_communities_6bedf90f"}} />
                 <div className="dev-ws-pagehead-text">
-                  <span className="dev-ws-pagehead-over">Communities</span>
-                  <h2 className="dev-ws-pagehead-title">Needs you</h2>
+                  <span className="dev-ws-pagehead-over"><Message id="workshop:communities_c864f329" /></span>
+                  <h2 className="dev-ws-pagehead-title"><Message id="workshop:needs_you_74b6abdf" /></h2>
                 </div>
               </div>
             </div>

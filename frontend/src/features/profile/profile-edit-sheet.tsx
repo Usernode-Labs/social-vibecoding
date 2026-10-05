@@ -1,3 +1,7 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#profile-edit-sheet` — the editable profile's card (#982), as React
  * (#1191 slice 6, conversion 1), rebuilt as inset-grouped sections (#1285).
@@ -167,9 +171,9 @@ function Avatar({ url, initial }: { url: string | null; initial: string }): Reac
  * stands, because nothing about a staged photo is saved until Save (#3525).
  */
 function photoNote(pending: 'new' | 'removed' | null): string {
-  if (pending === 'new') return 'New photo, not saved yet. Press Save to use it.';
-  if (pending === 'removed') return 'Your photo will be removed when you press Save.';
-  return 'PNG, JPEG or WebP. You choose the part that shows before it is used.';
+  if (pending === 'new') return tr("account:new_photo_not_saved_yet_press_save_to_use_it_b4617917");
+  if (pending === 'removed') return tr("account:your_photo_will_be_removed_when_you_press_save_62f36c7f");
+  return tr("account:png_jpeg_or_webp_you_choose_the_part_that_shows__77d5a126");
 }
 
 /** The section heading + card pair every group is made of. */
@@ -227,13 +231,13 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
   const published = !!controls.published;
   return (
     <section id="public-profile-controls" className="mb-4">
-      <Group title="Public page">
+      <Localized element={<Group title={catalogText("account:public_page_b191fca3")}>
         <label
           htmlFor="public-profile-publish"
           className="un-group-row flex items-center gap-3 px-4 py-2 min-h-[44px] cursor-pointer select-none"
         >
           <span className="flex-1 min-w-0">
-            <span className={`block ${ROW_LABEL_CLASS}`}>Public profile</span>
+            <span className={`block ${ROW_LABEL_CLASS}`}><Message id="account:public_profile_eaad68e1" /></span>
             <span id="public-profile-visibility" className={`block text-xs ${controls.visibilityClass}`}>
               {controls.visibility}
             </span>
@@ -252,18 +256,14 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
             href={controls.openHref}
             className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
             onClick={() => Profile._dismissSheet()}
-          >
-            Open public page
-          </a>
+          ><Message id="account:open_public_page_193b919d" /></a>
         ) : null}
         {published ? (
           <button
             type="button"
             className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
             onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
-          >
-            Copy public link
-          </button>
+          ><Message id="account:copy_public_link_8a29ed34" /></button>
         ) : null}
         <button
           id="public-profile-preview-toggle"
@@ -273,7 +273,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
           className={`${ROW_ACTION_CLASS} gap-3 text-zinc-900 dark:text-zinc-100`}
           onClick={() => Profile.togglePreview()}
         >
-          <span className="flex-1 text-left font-normal">What&apos;s on it</span>
+          <span className="flex-1 text-left font-normal"><Message id="account:what_s_on_it_1e40e68d" /></span>
           <ChevronDownIcon
             aria-hidden="true"
             className={previewOpen
@@ -281,22 +281,15 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
               : 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform'}
           />
         </button>
-      </Group>
+      </Group>} messages={{"title":"account:public_page_b191fca3"}} />
       {controls.moderationDisabled ? (
-        <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400">
-          You can keep editing or turn it off, but the public page stays unavailable.
-        </p>
+        <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400"><Message id="account:you_can_keep_editing_or_turn_it_off_but_the_publ_8358b8fa" /></p>
       ) : null}
       <p className={status ? FOOTNOTE_CLASS : 'px-4 text-xs text-zinc-500 dark:text-zinc-400'} role="status" aria-live="polite">{status}</p>
       <div id="public-profile-preview" className={previewOpen ? 'mt-3' : 'hidden mt-3'}>
         {previewOpen ? (
           <>
-            <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Only your username, display name, bio, Homeroom-hosted photo and
-              verified social accounts. Never your email, wallet, roles,
-              memberships, unverified handles or private activity. Changes take
-              effect at once, and nobody can search for the page.
-            </p>
+            <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:only_your_username_display_name_bio_homeroom_hos_485767c0" /></p>
             <PublicProfileCard profile={controls.profile} allowReport={false} />
           </>
         ) : null}
@@ -326,6 +319,7 @@ export function ProfileEditSheet({
   /** A staged photo change that Save has not written yet. */
   pendingPhoto?: 'new' | 'removed' | null;
 }): ReactNode {
+  useUiLanguage();
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
 
@@ -411,7 +405,7 @@ export function ProfileEditSheet({
 
   const photoFailed = (err: unknown): void => {
     setPhotoError((err instanceof Error && err.message)
-      || 'That image could not be used. Try a PNG, JPEG or WebP.');
+      || tr("account:that_image_could_not_be_used_try_a_png_jpeg_or_w_37d52c13"));
   };
 
   // A picked file opens the positioning step; nothing is staged yet (#3525).
@@ -447,14 +441,14 @@ export function ProfileEditSheet({
     });
     if (result.ok) return;
     if (result.fieldErrors) setFieldErrors(result.fieldErrors);
-    else setFormError(result.error || 'Could not save your profile.');
+    else setFormError(result.error || tr("account:could_not_save_your_profile_2453823b"));
     setSaving(false);
   };
 
   return (
     <div id="profile-edit-root" ref={rootRef} className={ROOT_CLASS}>
       <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS} inert={cropping}>
-        <div className="text-lg font-bold pt-3 pb-4">Edit profile</div>
+        <div className="text-lg font-bold pt-3 pb-4"><Message id="account:edit_profile_15c4aa13" /></div>
 
         {/*
             The file input lives OUTSIDE .un-group on purpose: it is a real
@@ -471,13 +465,13 @@ export function ProfileEditSheet({
         />
 
         <section className="mb-4">
-          <Group title="Photo">
+          <Localized element={<Group title={catalogText("account:photo_d84eebad")}>
             <div className="un-group-row flex items-center gap-3 px-4 py-2.5">
               <div id="profile-edit-preview" className="shrink-0">
                 <Avatar url={avatarUrl} initial={initial} />
               </div>
               <div className="min-w-0">
-                <div className={ROW_LABEL_CLASS}>Profile photo</div>
+                <div className={ROW_LABEL_CLASS}><Message id="account:profile_photo_ac8a7318" /></div>
                 <p id="profile-edit-photo-note" className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
                   {photoNote(pendingPhoto)}
                 </p>
@@ -488,9 +482,7 @@ export function ProfileEditSheet({
               ref={chooseRef}
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => fileRef.current?.click()}
-            >
-              Change photo
-            </button>
+            ><Message id="account:change_photo_c5fbcb8b" /></button>
             <button
               id="profile-edit-remove"
               className={
@@ -499,10 +491,8 @@ export function ProfileEditSheet({
                   : `${ROW_ACTION_CLASS} text-red-700 dark:text-red-400 hidden`
               }
               onClick={() => { Profile.stageAvatarRemoval(); setShowRemove(false); }}
-            >
-              Remove photo
-            </button>
-          </Group>
+            ><Message id="account:remove_photo_f46512ab" /></button>
+          </Group>} messages={{"title":"account:photo_d84eebad"}} />
           <p
             id="profile-edit-photo-error"
             className={photoError
@@ -514,12 +504,10 @@ export function ProfileEditSheet({
         </section>
 
         <section className="mb-4">
-          <Group title="Your name">
+          <Localized element={<Group title={catalogText("account:your_name_2c6b2e25")}>
             <div className={ROW_CLASS}>
               <div className="flex items-baseline gap-2">
-                <Label htmlFor="profile-edit-name" className={`${ROW_LABEL_CLASS} flex-1`}>
-                  Display name
-                </Label>
+                <Label htmlFor="profile-edit-name" className={`${ROW_LABEL_CLASS} flex-1`}><Message id="account:display_name_2b7f6a84" /></Label>
                 <span className={COUNTER_CLASS}>
                   {`${name.length}/${Profile.MAX_DISPLAY_NAME}`}
                 </span>
@@ -534,20 +522,16 @@ export function ProfileEditSheet({
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
-          </Group>
-          <p className={FOOTNOTE_CLASS}>
-            The name other people see. Leave it empty to show your @handle.
-          </p>
+          </Group>} messages={{"title":"account:your_name_2c6b2e25"}} />
+          <p className={FOOTNOTE_CLASS}><Message id="account:the_name_other_people_see_leave_it_empty_to_show_657568dc" /></p>
           <FieldError message={fieldErrors.displayName} />
         </section>
 
         <section className="mb-4">
-          <Group title="About">
+          <Localized element={<Group title={catalogText("account:about_4efca0d1")}>
             <div className={ROW_CLASS}>
               <div className="flex items-baseline gap-2">
-                <Label htmlFor="profile-edit-bio" className={`${ROW_LABEL_CLASS} flex-1`}>
-                  Bio
-                </Label>
+                <Label htmlFor="profile-edit-bio" className={`${ROW_LABEL_CLASS} flex-1`}><Message id="account:bio_3933b180" /></Label>
                 <span className={COUNTER_CLASS}>
                   {`${bio.length}/${Profile.MAX_BIO}`}
                 </span>
@@ -563,7 +547,7 @@ export function ProfileEditSheet({
                 onChange={(e) => setBio(e.target.value)}
               />
             </div>
-          </Group>
+          </Group>} messages={{"title":"account:about_4efca0d1"}} />
           <FieldError message={fieldErrors.bio} />
         </section>
 
@@ -577,48 +561,40 @@ export function ProfileEditSheet({
         ) : null}
 
         <section className="mb-4">
-          <Group title="Verified social accounts">
+          <Localized element={<Group title={catalogText("account:verified_social_accounts_0afe08e1")}>
             <div id="profile-edit-github" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
-              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>GitHub</span>
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}><Message id="account:github_f911e414" /></span>
               {links.github ? (
                 <span className="text-right min-w-0">
-                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
-                    Verified
-                  </span>
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400"><Message id="account:verified_4f783840" /></span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
                     {String(links.github)}
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:not_shown_a08f0f94" /></span>
               )}
             </div>
             <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
-              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>X</span>
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}><Message id="account:x_4b68ab38" /></span>
               {links.x ? (
                 <span className="text-right min-w-0">
-                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
-                    Verified
-                  </span>
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400"><Message id="account:verified_4f783840" /></span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
                     {`@${String(links.x)}`}
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:not_shown_a08f0f94" /></span>
               )}
             </div>
             <a
               href="#settings/linked-accounts"
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => Profile._dismissSheet()}
-            >
-              Connect or change social accounts
-            </a>
-          </Group>
-          <p className={FOOTNOTE_CLASS}>
-            Provider verification and public visibility are managed separately in Settings.
-          </p>
+            ><Message id="account:connect_or_change_social_accounts_60d4c4c2" /></a>
+          </Group>} messages={{"title":"account:verified_social_accounts_0afe08e1"}} />
+          <p className={FOOTNOTE_CLASS}><Message id="account:provider_verification_and_public_visibility_are__04555f6c" /></p>
         </section>
 
         {/*
@@ -633,11 +609,9 @@ export function ProfileEditSheet({
             a refusal.
         */}
         <section className="mb-4">
-          <Group title="Username">
+          <Localized element={<Group title={catalogText("account:username_e3b89e9d")}>
             <div className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
-              <Label htmlFor="profile-edit-username" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                Username
-              </Label>
+              <Label htmlFor="profile-edit-username" className={`${ROW_LABEL_CLASS} shrink-0`}><Message id="account:username_e3b89e9d" /></Label>
               <Input
                 id="profile-edit-username"
                 type="text"
@@ -650,21 +624,13 @@ export function ProfileEditSheet({
                 disabled
               />
             </div>
-          </Group>
-          <p className={FOOTNOTE_CLASS}>
-            {'Your @handle is your sign-in name and your public page address. To change it, go to '}
-            <a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">Settings → Username</a>
-            {'. To change only how your name appears, set a display name above.'}
-          </p>
+          </Group>} messages={{"title":"account:username_e3b89e9d"}} />
+          <p className={FOOTNOTE_CLASS}><RichMessage id="account:sentence_184b595b3dc7" components={[<a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400" />]} /></p>
         </section>
 
         <section className="mb-4">
-          <Group title="Account email">
-            <a href="#settings/email" className={ROW_ACTION_CLASS} onClick={() => Profile._dismissSheet()}>
-              Email &amp; recovery
-            </a>
-          </Group>
-          <p className={FOOTNOTE_CLASS}>Add or verify a private email address in Settings.</p>
+          <Localized element={<Group title={catalogText("account:account_email_316ef5f9")}><RichMessage id="account:sentence_210692ef77d0" components={[<a href="#settings/email" className={ROW_ACTION_CLASS} onClick={() => Profile._dismissSheet()} />]} /></Group>} messages={{"title":"account:account_email_316ef5f9"}} />
+          <p className={FOOTNOTE_CLASS}><Message id="account:add_or_verify_a_private_email_address_in_setting_46e5960b" /></p>
         </section>
 
         <p
@@ -683,15 +649,11 @@ export function ProfileEditSheet({
           className="disabled:opacity-60"
           disabled={saving}
           onClick={() => { void onSave(); }}
-        >
-          Save
-        </Button>
+        ><Message id="account:save_1509f561" /></Button>
         <button
           className="w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400"
           onClick={() => Profile._dismissSheet()}
-        >
-          Cancel
-        </button>
+        ><Message id="account:cancel_19766ed6" /></button>
       </div>
       {/*
           LAST, after the card: the card has been lifted into the kit and a

@@ -63,18 +63,18 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
    */
   solo: false,
   loaderVisible: false,
-  loaderTitle: 'Opening preview…',
+  get loaderTitle() { return globalThis.PlatformI18n.t("workshop:opening_preview_57aa96ab"); },
   loaderSub: '',
   loaderRetry: false,
   /** #3413: "Retry preview" after a failed build; the shipped markup's text otherwise. */
-  loaderRetryLabel: 'Retry sign-in',
+  get loaderRetryLabel() { return globalThis.PlatformI18n.t("core:message_0338e01471b8"); },
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,
   /** Sanitized markdown from DevChat.renderMarkdown, or escaped plain text. */
   testHtml: '',
   fsBtnHidden: true,
-  fsBtnText: 'Full screen',
+  get fsBtnText() { return globalThis.PlatformI18n.t("workshop:full_screen_674fe2ac"); },
   fsBtnTitle: '',
 }));
 

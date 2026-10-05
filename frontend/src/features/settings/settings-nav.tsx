@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Settings screen's two navigation hosts, as React (#1191 slice 6,
  * conversion 8).
@@ -181,18 +185,16 @@ function FilterField({ id, query, setQuery, hits }: {
     }
   };
   return (
-    <Input
+    <Localized element={<Input
       id={id}
       type="search"
-      data-settings-filter=""
-      aria-label="Find a setting"
-      placeholder="Find a setting"
+      data-settings-filter="" aria-label={catalogText("settings:find_a_setting_556e1493")} placeholder={catalogText("settings:find_a_setting_556e1493")}
       autoComplete="off"
       spellCheck={false}
       value={query}
       onChange={(e) => setQuery(e.currentTarget.value)}
       onKeyDown={onKeyDown}
-    />
+    />} messages={{"aria-label":"settings:find_a_setting_556e1493","placeholder":"settings:find_a_setting_556e1493"}} />
   );
 }
 
@@ -200,7 +202,7 @@ function FilterField({ id, query, setQuery, hits }: {
 function NoMatch({ query, className }: { query: string; className: string }) {
   return (
     <p data-settings-filter-empty="" role="status" className={className}>
-      {`No settings match “${query.trim()}”.`}
+      <LocalizedValue render={() => (tr("settings:no_settings_match_value1_74eb5005", { value1: query.trim() }))} />
     </p>
   );
 }
@@ -246,13 +248,14 @@ function NavRow({ item }: { item: NavItem }) {
  * ../index.tsx so the whole subtree has one owner.
  */
 export function SettingsNavDesktop() {
+  useUiLanguage();
   const { desktop, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
   const groups = desktop || [];
   const hits = filterPages(groups, query);
   const filtering = query.trim() !== '';
   return (
-    <nav id="settings-nav-desktop" aria-label="Settings sections" className="space-y-1">
+    <Localized element={<nav id="settings-nav-desktop" aria-label={catalogText("settings:settings_sections_e26d51d3")} className="space-y-1">
       {desktop ? (
         <div className="pb-3">
           <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} />
@@ -284,7 +287,7 @@ export function SettingsNavDesktop() {
           {group.items.map((item) => <NavRow key={item.key} item={item} />)}
         </div>
       ))}
-    </nav>
+    </nav>} messages={{"aria-label":"settings:settings_sections_e26d51d3"}} />
   );
 }
 
@@ -294,6 +297,7 @@ export function SettingsNavDesktop() {
  * that a viewport change without a repaint still cannot show two navs.
  */
 export function SettingsMobileMenu() {
+  useUiLanguage();
   const { mobile, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
   const groups = mobile || [];

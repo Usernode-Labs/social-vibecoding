@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 import { useState } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
@@ -39,14 +43,14 @@ export function isReadyMessage(message: ConversationMessage): boolean {
 
 /** "Plant Pal is ready to try", or in a group "Your change to Supper Club is ready to try". */
 export function readyTitle(meta: HomeroomBotMeta): string {
-  const app = meta.appName || meta.appSlug || 'Your project';
-  return meta.ready?.group && !meta.firstVersion ? `Your change to ${app} is ready to try` : `${app} is ready to try`;
+  const app = meta.appName || meta.appSlug || tr("community:your_project_131a8553");
+  return meta.ready?.group && !meta.firstVersion ? tr("community:your_change_to_value1_is_ready_to_try_b8f36931", { value1: app }) : tr("community:value1_is_ready_to_try_98e09f89", { value1: app });
 }
 
 /** Pure: "a", "a and b", "a, b and c". */
 function listWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return tr("community:value1_and_value2_f4780f76", { value1: items.slice(0, -1).join(', '), value2: items[items.length - 1] });
 }
 
 /**
@@ -56,16 +60,16 @@ function listWords(items: string[]): string {
 export function waitingLine(ready: HomeroomBotReady | undefined, canApprove: boolean): string | null {
   if (!ready?.group || ready.last) return null;
   const who = [...(canApprove ? ['you'] : []), ...ready.waitingOn.map((name) => `@${name}`)];
-  if (ready.more) who.push(`${ready.more} more`);
-  return who.length ? `Waiting for approval from ${listWords(who)}` : null;
+  if (ready.more) who.push(tr("community:value1_more_90959ba4", { value1: ready.more }));
+  return who.length ? tr("community:waiting_for_approval_from_value1_5424ba7c", { value1: listWords(who) }) : null;
 }
 
 /** What the line under a card that is not open says. */
 export function readyLine(state: ReadyCardState, last: boolean): string | null {
-  if (state === 'approved') return last ? 'You approved it. It’s going live.' : 'You approved it.';
-  if (state === 'stale') return 'This change was updated. Try the new version first.';
-  if (state === 'updated') return 'This change was updated. Its newer version is below.';
-  if (state === 'closed') return 'No longer needed.';
+  if (state === 'approved') return last ? tr("community:you_approved_it_it_s_going_live_8f8d8143") : tr("community:you_approved_it_62187898");
+  if (state === 'stale') return tr("community:this_change_was_updated_try_the_new_version_firs_fc0e1f5f");
+  if (state === 'updated') return tr("community:this_change_was_updated_its_newer_version_is_bel_fbe52612");
+  if (state === 'closed') return tr("community:no_longer_needed_ace70031");
   return null;
 }
 
@@ -97,13 +101,13 @@ export function ReadyCardView({ meta, state, actions, error = null, busy = false
         </IconTile>
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
-          {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
+          {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("community:you_asked_value1_a9b97b24", { value1: meta.askedText }))} /></p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
         </div>
       </div>
       {line ? <p className="messages-bot-answered" role="status">{line}</p> : null}
       {actions.length ? (
-        <div className="messages-bot-answers" role="group" aria-label="Choices">
+        <Localized element={<div className="messages-bot-answers" role="group" aria-label={catalogText("community:choices_2f75b64a")}>
           {actions.map((action) => (
             <button
               key={action.id}
@@ -116,7 +120,7 @@ export function ReadyCardView({ meta, state, actions, error = null, busy = false
               <span>{action.label}</span>
             </button>
           ))}
-        </div>
+        </div>} messages={{"aria-label":"community:choices_2f75b64a"}} />
       ) : null}
       {error ? <p className="text-sm text-red-700 dark:text-red-400" role="alert">{error}</p> : null}
     </div>
@@ -134,6 +138,7 @@ function tryChange(meta: HomeroomBotMeta, sessionId: number) {
 }
 
 export function BotReadyCard({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  useUiLanguage();
   const meta = botMeta(message);
   // What happened here, until the message's own update says it everywhere.
   const [approved, setApproved] = useState(false);

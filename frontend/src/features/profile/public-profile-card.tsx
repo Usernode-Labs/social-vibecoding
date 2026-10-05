@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 import { openReport } from '../dialogs/report';
 /**
  * The opt-in public profile card (#582) and its report form, as React
@@ -35,6 +37,7 @@ import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
+  useUiLanguage();
   const { initial, url } = publicAvatarView(profile);
   const [failed, setFailed] = useState(false);
   return (
@@ -61,7 +64,7 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
 }
 
 function ReportForm({ username }: { username: string }): ReactNode {
-  return <div id="public-profile-report" className="mt-4 text-sm"><button type="button" className="min-h-[44px] text-red-700 dark:text-red-400" onClick={() => openReport({ targetType: 'user', target: username, label: `@${username}` })}>Report user</button></div>;
+  return <div id="public-profile-report" className="mt-4 text-sm"><button type="button" className="min-h-[44px] text-red-700 dark:text-red-400" onClick={() => openReport({ targetType: 'user', target: username, label: `@${username}` })}><Message id="account:report_user_82016f1f" /></button></div>;
 }
 
 export function PublicProfileCard({

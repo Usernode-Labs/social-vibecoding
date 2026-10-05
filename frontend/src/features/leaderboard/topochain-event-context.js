@@ -174,7 +174,7 @@ const TopochainEventContext = {
     eventBarStore.set({
       mounted: true,
       options: [],
-      placeholder: 'Loading…',
+      get placeholder() { return globalThis.PlatformI18n.t("apps:loading_ba3bbbe1"); },
       selectedId: null,
       hero: null,
       history: TopochainEventContext._history,
@@ -260,7 +260,7 @@ const TopochainEventContext = {
     } else {
       TopochainEventContext._detail = null;
       TopochainEventContext._detailError = (data && data.error)
-        || 'Failed to load this event.';
+        || globalThis.PlatformI18n.t("apps:failed_to_load_this_event_f0c7d194");
     }
     TopochainEventContext._renderHero();
   },
@@ -279,7 +279,7 @@ const TopochainEventContext = {
   _renderOptions() {
     const events = TopochainEventContext._events;
     if (!events.length) {
-      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null, currentSeasonId: null });
+      eventBarStore.set({ options: [], get placeholder() { return globalThis.PlatformI18n.t("apps:no_events_2197f620"); }, selectedId: null, currentSeasonId: null });
       return;
     }
     eventBarStore.set({
@@ -344,9 +344,9 @@ const TopochainEventContext = {
           ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
           : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
     const statusLabel = isSeason ? 'season'
-      : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
+      : (ev.is_current ? globalThis.PlatformI18n.t("apps:active_now_0c32f71c") : (ev.is_active ? 'active' : 'past'));
     const fmt = (iso) => (iso
-      ? new Date(iso).toLocaleDateString(undefined,
+      ? new Date(iso).toLocaleDateString(globalThis.PlatformI18n.getLanguage(),
         { year: 'numeric', month: 'short', day: 'numeric' })
       : '—');
     eventBarStore.set({
@@ -358,7 +358,7 @@ const TopochainEventContext = {
         description: ev.description ? String(ev.description) : null,
         // An en dash between the two dates, as the `&ndash;` entity drew.
         dates: `${fmt(ev.starts_at)} – ${fmt(ev.ends_at)}`,
-        participants: ev.users_count != null ? ` · ${ev.users_count} taking part` : null,
+        participants: ev.users_count != null ? globalThis.PlatformI18n.t("apps:value1_taking_part_f64802c1", { value1: ev.users_count }) : null,
         seasonNote: isSeason,
         fallbackNote: !!TopochainEventContext._endedFallback,
       },

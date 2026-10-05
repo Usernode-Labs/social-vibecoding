@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
@@ -58,11 +62,12 @@ export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
 
 /** "Homeroom request #12", the place an answer is posted. */
 export function requestPlace(meta: HomeroomBotMeta): string {
-  const app = meta.appName || meta.appSlug || 'the project';
-  return meta.firstVersion ? `${app}’s first-version request` : `${app} request #${meta.issueNumber}`;
+  const app = meta.appName || meta.appSlug || tr("community:the_project_059df477");
+  return meta.firstVersion ? `${app}’s first-version request` : tr("community:value1_request_value2_10a9ffd4", { value1: app, value2: meta.issueNumber });
 }
 
 export function BotQuestion({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  useUiLanguage();
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
@@ -90,7 +95,7 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || 'File this request?') : 'Suggested answers'}>
+        <LocalizedDynamic element={<div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || tr("community:file_this_request_3157f534")) : tr("community:suggested_answers_c9be94c6")}>
           {answers.map((answer, index) => (
             <button
               key={answer}
@@ -100,20 +105,20 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
               onClick={() => choose(answer)}
             >
               <span>{answer}</span>
-              {index === 0 && !offer ? <span className="messages-bot-default">suggested</span> : null}
+              {index === 0 && !offer ? <span className="messages-bot-default"><Message id="community:suggested_8ad70375" /></span> : null}
             </button>
           ))}
-          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
-        </div>
+          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}><Message id="community:something_else_cc728431" /></button>}
+        </div>} resolve={() => ({ "aria-label": offer ? (meta.question || tr("community:file_this_request_3157f534")) : tr("community:suggested_answers_c9be94c6") })} />
       ) : null}
-      {answered ? <p className="messages-bot-answered">{offer ? `You chose: ${answered}` : `You answered: ${answered}`}</p> : null}
+      {answered ? <p className="messages-bot-answered"><LocalizedValue render={() => (offer ? tr("community:you_chose_value1_1aaffd87", { value1: answered }) : tr("community:you_answered_value1_196bdd5e", { value1: answered }))} /></p> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>
+          <span><LocalizedValue render={() => (tr("community:your_answer_is_posted_on_value1_s_public_discuss_422f4666", { value1: requestPlace(meta) }))} /></span>
         </p>
       ) : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered"><Message id="community:no_longer_needed_ace70031" /></p> : null}
     </div>
   );
 }
@@ -127,6 +132,7 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
  * nothing back: that device's choice arrives with the update.
  */
 function BotActions({ message, meta }: { message: ConversationMessage; meta: HomeroomBotMeta }) {
+  useUiLanguage();
   // The button pressed here, until the server's own state comes back.
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   const actions = meta.actions || [];
@@ -151,7 +157,7 @@ function BotActions({ message, meta }: { message: ConversationMessage; meta: Hom
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? 'Questions you can ask' : 'Choices')}>
+        <LocalizedDynamic element={<div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? tr("community:questions_you_can_ask_f9678b43") : tr("community:choices_2f75b64a"))}>
           {actions.map((action, index) => (
             <button
               key={action.id}
@@ -165,10 +171,10 @@ function BotActions({ message, meta }: { message: ConversationMessage; meta: Hom
               <span>{action.label}</span>
             </button>
           ))}
-        </div>
+        </div>} resolve={() => ({ "aria-label": meta.question || (prompts ? tr("community:questions_you_can_ask_f9678b43") : tr("community:choices_2f75b64a")) })} />
       ) : null}
-      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' ? `You asked: ${chosen}` : `You chose ${chosen}`}</p> : null}
-      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {chosen ? <p className="messages-bot-answered"><LocalizedValue render={() => (chosenAction?.type === 'prompt' ? tr("community:you_asked_value1_a9b97b24", { value1: chosen }) : tr("community:you_chose_value1_e2fdede6", { value1: chosen }))} /></p> : null}
+      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered"><Message id="community:no_longer_needed_ace70031" /></p> : null}
     </div>
   );
 }

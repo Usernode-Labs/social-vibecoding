@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { AppPermissionsList } from '../app-permissions-list';
@@ -23,9 +24,7 @@ export function AppPermissionsSection() {
   return (
     <div data-settings-section="app-permissions" className="hidden">
       <div id="app-permissions-section">
-        <SectionHeading title="App device permissions">
-          Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. Revoking stops the app the next time it opens, because a running app keeps what it was given until then.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:app_device_permissions_bad62fc7")}><Message id="settings:apps_you_ve_allowed_to_use_your_location_microph_eeb288be" /></SectionHeading>} messages={{"title":"settings:app_device_permissions_bad62fc7"}} />
         <div id="app-permissions-list" className="space-y-2">
           <AppPermissionsList />
         </div>

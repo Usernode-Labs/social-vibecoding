@@ -6,10 +6,10 @@ export async function openNativeSocialConnect({
   if (!['github', 'x'].includes(provider)
       || !['connect', 'refresh', 'replace'].includes(intent)
       || !Number.isSafeInteger(accountId) || accountId <= 0) {
-    throw new Error('Your account could not be identified. Reopen Settings and try again.');
+    throw new Error(globalThis.PlatformI18n.t("settings:your_account_could_not_be_identified_reopen_sett_e3cdf105"));
   }
   if (typeof bridge?.openExternal !== 'function') {
-    throw new Error('Update the Homeroom app to open account connections in your browser.');
+    throw new Error(globalThis.PlatformI18n.t("settings:update_the_homeroom_app_to_open_account_connecti_bd710b81"));
   }
   const url = new URL(`/api/me/social-identities/${provider}/connect`, origin);
   url.searchParams.set('account', String(accountId));
@@ -18,7 +18,7 @@ export async function openNativeSocialConnect({
     const opened = await bridge.openExternal(url.href);
     if (opened !== true) throw new Error('browser_not_opened');
   } catch {
-    throw new Error('Could not open your browser. Tap Connect to try again.');
+    throw new Error(globalThis.PlatformI18n.t("settings:could_not_open_your_browser_tap_connect_to_try_a_e647128b"));
   }
 }
 

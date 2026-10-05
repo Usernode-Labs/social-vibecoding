@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#leaderboard-event-bar` — the picker and hero the two Topochain-domain
  * panes share.
@@ -135,7 +138,7 @@ function context(): any {
 
 function Hero({ hero }: { hero: HeroView }) {
   if (hero.kind === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="apps:loading_ba3bbbe1" /></p>;
   }
   if (hero.kind === 'error') {
     return (
@@ -145,7 +148,7 @@ function Hero({ hero }: { hero: HeroView }) {
     );
   }
   if (hero.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">No event selected.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="apps:no_event_selected_7718c83d" /></p>;
   }
   return (
     <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
@@ -168,15 +171,10 @@ function Hero({ hero }: { hero: HeroView }) {
           still the dataset on screen.
       */}
       {hero.seasonNote ? (
-        <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          {'Whole-season standings: every public event in this season, combined. '}
-          Pick a single event above to see just its results.
-        </p>
+        <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2"><RichMessage id="apps:sentence_1eb3c0c9aaf7" /></p>
       ) : null}
       {hero.fallbackNote ? (
-        <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          Nothing is running right now, so this shows the most recent event.
-        </p>
+        <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2"><Message id="apps:nothing_is_running_right_now_so_this_shows_the_m_86b8da11" /></p>
       ) : null}
     </div>
   );
@@ -208,9 +206,8 @@ export function EventBarView({
     <div className="w-full mb-4">
       {showPicker ? (
         <div className="relative w-full sm:max-w-xs">
-          <select
-            id="tc-ev-select"
-            aria-label="Event"
+          <Localized element={<select
+            id="tc-ev-select" aria-label={catalogText("apps:event_4e1f49a9")}
             className={PICKER}
             // A `<select>`'s onChange IS the native `change` event — it fires
             // on commit, not per keystroke — so the paged-query rule that
@@ -226,7 +223,7 @@ export function EventBarView({
             {choices.map((ev) => (
               <option key={ev.id} value={String(ev.id)}>{ev.label}</option>
             ))}
-          </select>
+          </select>} messages={{"aria-label":"apps:event_4e1f49a9"}} />
           <ChevronDownIcon
             aria-hidden="true"
             className="pointer-events-none absolute right-4 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 text-violet-600 dark:text-violet-400"
@@ -239,9 +236,7 @@ export function EventBarView({
           id="tc-ev-past-seasons"
           className={showPicker ? `mt-3 ${PAST_LINK}` : PAST_LINK}
           onClick={openHistory}
-        >
-          Past seasons →
-        </button>
+        ><Message id="apps:past_seasons_e9c5ec65" /></button>
       ) : null}
       <div id="tc-ev-hero" className={showHero ? 'mt-3' : undefined}>
         {showHero && hero ? <Hero hero={hero} /> : null}
@@ -251,6 +246,7 @@ export function EventBarView({
 }
 
 export function EventBar() {
+  useUiLanguage();
   const { section } = useLeaderboardSection();
   return <EventBarView {...useStoreState<EventBarState>(eventBarStore)} section={section} />;
 }

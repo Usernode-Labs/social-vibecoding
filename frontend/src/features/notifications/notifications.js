@@ -500,7 +500,7 @@ const Notifications = {
     // Nothing is cleared until the server answers, so a failed request leaves
     // every unread mark where it was. It still has to say so: a tap that
     // silently did nothing reads as a broken button.
-    const failed = () => window.PlatformUI?.toast?.('Couldn’t mark notifications as read. Try again.');
+    const failed = () => window.PlatformUI?.toast?.(globalThis.PlatformI18n.t("community:couldn_t_mark_notifications_as_read_try_again_4684b79d"));
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
@@ -631,7 +631,7 @@ const Notifications = {
     Notifications._renderBadge();
     Notifications._renderList();
     window.GroupChat?.reconcileDotsFromNotifications?.();
-    window.PlatformUI?.toast?.('Couldn’t clear this notification. Try again.');
+    window.PlatformUI?.toast?.(globalThis.PlatformI18n.t("community:couldn_t_clear_this_notification_try_again_fb3e0e07"));
     return false;
   },
 
@@ -783,7 +783,7 @@ const Notifications = {
         : await fetch(`/api/friends/${userId}/decline`, init);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast(data.error && res.status === 429 ? data.error : 'Couldn’t answer this friend request. Try again.');
+        toast(data.error && res.status === 429 ? data.error : globalThis.PlatformI18n.t("community:couldn_t_answer_this_friend_request_try_again_c64b0dae"));
         return false;
       }
       item.friendRequestPending = false;
@@ -797,12 +797,12 @@ const Notifications = {
         window.dispatchEvent(new CustomEvent('usernode:friends-changed'));
       }
       const who = item.sourceUsername ? `@${item.sourceUsername}` : 'them';
-      if (accept) toast(data.state === 'friends' ? `You and ${who} are friends` : 'This request was withdrawn');
-      else toast('Request declined');
+      if (accept) toast(data.state === 'friends' ? globalThis.PlatformI18n.t("community:you_and_value1_are_friends_01331405", { value1: who }) : globalThis.PlatformI18n.t("community:this_request_was_withdrawn_47feb580"));
+      else toast(globalThis.PlatformI18n.t("community:request_declined_1df48b2d"));
       return true;
     } catch (err) {
       console.warn('[notifications] friend answer failed', err);
-      toast('Couldn’t answer this friend request. Try again.');
+      toast(globalThis.PlatformI18n.t("community:couldn_t_answer_this_friend_request_try_again_c64b0dae"));
       return false;
     }
   },
@@ -938,7 +938,7 @@ const Notifications = {
         GroupChat._writeSpecPanelOpen(item.appSlug, {
           sessionId: item.sessionId,
           version,
-          title: `Spec v${version}`,
+          get title() { return globalThis.PlatformI18n.t("community:spec_v_value1_507f703d", { value1: version }); },
         });
       }
       Notifications._dismissSheetForNav();
@@ -1379,7 +1379,7 @@ const Notifications = {
       const res = await fetch(`${base}/${appId}/accept`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || `Accept failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("community:accept_failed_http_value1_fd19613c", { value1: res.status }));
         // The invite may have been revoked — re-sync.
         Notifications.refresh();
         return;
@@ -1708,10 +1708,10 @@ function savedView(s) {
     messageId: s.messageId,
     slug: s.appSlug || '',
     conversationId,
-    who: s.author ? `@${s.author}` : 'System',
+    who: s.author ? `@${s.author}` : globalThis.PlatformI18n.t("community:system_6725e7bb"),
     appName: conversationId
       ? (s.conversationTitle || 'a conversation')
-      : (s.appName || s.appSlug || 'an app'),
+      : (s.appName || s.appSlug || globalThis.PlatformI18n.t("community:an_app_66e93a7c")),
     ...stampFields(s.savedAt),
     text: (s.content || '').slice(0, 140),
   };
@@ -1728,9 +1728,9 @@ function inviteView(inv) {
     slug: inv.appSlug || '',
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
-    who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
-    verb: isApprover ? 'asked you to help approve changes to' : 'invited you to build',
-    appName: inv.appName || inv.appSlug || 'an app',
+    who: inv.invitedBy ? `@${inv.invitedBy}` : globalThis.PlatformI18n.t("community:someone_864c855e"),
+    verb: isApprover ? globalThis.PlatformI18n.t("community:asked_you_to_help_approve_changes_to_73fa5923") : globalThis.PlatformI18n.t("community:invited_you_to_build_75b9fb6c"),
+    appName: inv.appName || inv.appSlug || globalThis.PlatformI18n.t("community:an_app_66e93a7c"),
     ...stampFields(inv.createdAt),
   };
 }
@@ -1742,20 +1742,20 @@ function inviteView(inv) {
 // used to name previewText too — that was the collapsed group header's
 // one-liner, which #1385 retired with the rest of the group chrome.)
 function completionAlertInfo(n) {
-  const appName = n.appName || 'your app';
+  const appName = n.appName || globalThis.PlatformI18n.t("community:your_app_4696a335");
   if (n.kind === 'auto_solve_done') {
-    const issue = n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request';
+    const issue = n.headlessIssueNumber ? globalThis.PlatformI18n.t("community:request_value1_06eaf7b2", { value1: n.headlessIssueNumber }) : 'a request';
     let title;
     let body;
     if (n.detail === 'failed') {
-      title = 'Change failed';
-      body = `The change for ${issue} in ${appName} failed. You can retry`;
+      title = globalThis.PlatformI18n.t("community:change_failed_3c3e8bc5");
+      body = globalThis.PlatformI18n.t("community:the_change_for_value1_in_value2_failed_you_can_r_89e9dcf5", { value1: issue, value2: appName });
     } else if (n.detail === 'question') {
-      title = 'Change has a question';
-      body = `The change for ${issue} in ${appName} is waiting for your input`;
+      title = globalThis.PlatformI18n.t("community:change_has_a_question_5e64654e");
+      body = globalThis.PlatformI18n.t("community:the_change_for_value1_in_value2_is_waiting_for_y_b77a0e0e", { value1: issue, value2: appName });
     } else {
-      title = 'Change ready to try';
-      body = `The change for ${issue} in ${appName} is ready`;
+      title = globalThis.PlatformI18n.t("community:change_ready_to_try_542c811b");
+      body = globalThis.PlatformI18n.t("community:the_change_for_value1_in_value2_is_ready_e1116378", { value1: issue, value2: appName });
     }
     return {
       kind: n.kind,
@@ -1775,13 +1775,13 @@ function completionAlertInfo(n) {
       sessionId: n.sessionId || null,
       ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
       headlessIssueNumber: null,
-      title: 'Session stopped before finishing',
-      body: `Your session on ${appName} stopped before finishing. Open it to continue`,
+      get title() { return globalThis.PlatformI18n.t("community:session_stopped_before_finishing_5ba6f649"); },
+      body: globalThis.PlatformI18n.t("community:your_session_on_value1_stopped_before_finishing__bfc0084e", { value1: appName }),
     };
   }
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
-  const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
+  const label = n.sessionTitle || n.prTitle || n.branchName || globalThis.PlatformI18n.t("community:your_session_41aa2577");
   if (n.agentSessionId) {
     // #2779: a run in an agent session (a spec drafted or a build done).
     return {
@@ -1790,8 +1790,8 @@ function completionAlertInfo(n) {
       sessionId: n.sessionId || null,
       agentSessionId: n.agentSessionId,
       headlessIssueNumber: null,
-      title: 'The coding agent finished',
-      body: `The coding agent finished on ${appName}: ${label}`,
+      get title() { return globalThis.PlatformI18n.t("community:the_coding_agent_finished_9f88c5ae"); },
+      body: globalThis.PlatformI18n.t("community:the_coding_agent_finished_on_value1_value2_100dc6c6", { value1: appName, value2: label }),
     };
   }
   return {
@@ -1799,8 +1799,8 @@ function completionAlertInfo(n) {
     appSlug: n.appSlug || null,
     sessionId: n.sessionId || null,
     headlessIssueNumber: null,
-    title: 'Agent session finished',
-    body: `Your agent session in ${appName} finished: ${label}`,
+    get title() { return globalThis.PlatformI18n.t("community:agent_session_finished_2286d252"); },
+    body: globalThis.PlatformI18n.t("community:your_agent_session_in_value1_finished_value2_85593f19", { value1: appName, value2: label }),
   };
 }
 
@@ -1948,21 +1948,21 @@ function botMomentLine(detail, message) {
   if (!m) return null;
   const app = m[2].replace(/\s+/g, ' ').trim();
   const words = {
-    question: app ? `${app}: I have a question` : 'I have a question',
-    ready: app ? `${app} is ready to try` : 'Your change is ready to try',
-    ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
-    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
-    stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
-    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
-    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
-    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
-    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
-    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
-    held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
-    live: app ? `Your change to ${app} is live` : 'Your change is live',
-    live_first: app ? `${app} is live` : 'Your project is live',
-    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
-    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
+    question: app ? globalThis.PlatformI18n.t("community:value1_i_have_a_question_48892b88", { value1: app }) : globalThis.PlatformI18n.t("community:i_have_a_question"),
+    ready: app ? globalThis.PlatformI18n.t("community:value1_is_ready_to_try_98e09f89", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_ready_to_try_ee2fdd6b"),
+    ready_group: app ? globalThis.PlatformI18n.t("community:your_change_to_value1_is_ready_to_try_b8f36931", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_ready_to_try_ee2fdd6b"),
+    stopped: app ? globalThis.PlatformI18n.t("community:value1_your_change_stopped_i_said_why_in_our_cha_00b0b83f", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_stopped_i_said_why_in_our_chat_936317fb"),
+    stopped_build: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_finish_building_it_a_person_ca_2e6a09a2", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_finish_building_it_a_person_can_pick__a35e58e1"),
+    stopped_blocked: app ? globalThis.PlatformI18n.t("community:value1_i_can_t_build_it_as_written_tell_me_more_95d1e8ac", { value1: app }) : globalThis.PlatformI18n.t("community:i_can_t_build_it_as_written_tell_me_more_28fa7d68"),
+    stopped_person: app ? globalThis.PlatformI18n.t("community:value1_this_needs_a_person_to_decide_b9b710b5", { value1: app }) : globalThis.PlatformI18n.t("community:this_needs_a_person_to_decide_4e5121a6"),
+    stopped_empty: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_find_anything_to_build_tell_me_0a676ecc", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_find_anything_to_build_tell_me_more_11bf0b59"),
+    stopped_first: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_start_building_it_you_can_stil_af93c980", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_start_building_it_fb2999ea"),
+    stopped_preview: app ? globalThis.PlatformI18n.t("community:value1_the_preview_didn_t_start_i_m_trying_again_4741741e", { value1: app }) : globalThis.PlatformI18n.t("community:the_preview_didn_t_start_i_m_trying_again_71bba4ed"),
+    held: app ? globalThis.PlatformI18n.t("community:value1_i_ll_start_it_on_monday_e8e25143", { value1: app }) : globalThis.PlatformI18n.t("community:i_ve_paused_until_monday_7f2b450a"),
+    live: app ? globalThis.PlatformI18n.t("community:your_change_to_value1_is_live_16fbd06c", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_live_53d55fa2"),
+    live_first: app ? globalThis.PlatformI18n.t("community:value1_is_live_558192c9", { value1: app }) : globalThis.PlatformI18n.t("community:your_project_is_live_e14f05ab"),
+    live_soon: app ? globalThis.PlatformI18n.t("community:your_change_to_value1_is_going_live_9b8b6646", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_going_live_484a98e1"),
+    live_first_soon: app ? globalThis.PlatformI18n.t("community:value1_is_going_live_de7bd855", { value1: app }) : globalThis.PlatformI18n.t("community:your_project_is_going_live_5c1cb0c8"),
     reply: plainMarkdown(message).slice(0, 140),
   }[m[1]];
   return words || null;
@@ -1980,13 +1980,13 @@ function headline(label, subject) {
 // what happened.
 function appQuotaChangeText(detail) {
   const m = /^(\d{1,6}):(\d{1,6})$/.exec(String(detail || '').trim());
-  if (!m) return 'Your app allowance changed.';
+  if (!m) return globalThis.PlatformI18n.t("community:your_app_allowance_changed_a81daec7");
   const before = Number(m[1]);
   const after = Number(m[2]);
-  const slots = (count) => `${count} app ${count === 1 ? 'slot' : 'slots'}`;
-  if (after > before) return `Your app allowance went up from ${before} to ${slots(after)}.`;
-  if (after < before) return `Your app allowance went down from ${before} to ${slots(after)}.`;
-  return `Your app allowance is ${slots(after)}.`;
+  const slots = (count) => globalThis.PlatformI18n.t("community:count_app_slots_b7d271fe", { count: count });
+  if (after > before) return globalThis.PlatformI18n.t("community:your_app_allowance_went_up_from_value1_to_value2_779de90d", { value1: before, value2: slots(after) });
+  if (after < before) return globalThis.PlatformI18n.t("community:your_app_allowance_went_down_from_value1_to_valu_f008109e", { value1: before, value2: slots(after) });
+  return globalThis.PlatformI18n.t("community:your_app_allowance_is_value1_ecc75ef9", { value1: slots(after) });
 }
 
 function rowView(n) {
@@ -2030,8 +2030,8 @@ function rowView(n) {
   };
 
   if (n.kind === 'test_alert') {
-    return { ...base, label: 'Homeroom test alert', icon: '🔔',
-      segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
+    return { ...base, get label() { return globalThis.PlatformI18n.t("community:homeroom_test_alert_6358ce2c"); }, icon: '🔔',
+      segments: [{ t: 'text', get v() { return globalThis.PlatformI18n.t("community:you_requested_a_push_notification_test_open_aler_522c6129"); } }] };
   }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
@@ -2040,7 +2040,7 @@ function rowView(n) {
     // the surface, not who wrote. The person on the other end of a DM is
     // the sender, so it is headed with them.
     const conversation = n.conversationTitle
-      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : 'Messages');
+      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : globalThis.PlatformI18n.t("community:messages_04d7b483"));
     const snippet = (n.messageContent || '').slice(0, 140);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part
@@ -2052,20 +2052,20 @@ function rowView(n) {
     // alone above its object is a sentence cut in half, and the line below is
     // plainly what it is in.
     const copy = {
-      conversation_invite: headline('Invite', conversation),
+      conversation_invite: headline(globalThis.PlatformI18n.t("community:invite_1fd9ae16"), conversation),
       // The only kind whose label is not a fixed category. A message's kind
       // IS its thread — "Message" over the snippet would name the surface,
       // which the meta line already does.
       conversation_message: headline(conversation, snippet),
-      conversation_mention: headline('Mentioned you', conversation),
-      conversation_reply: headline('Replied', conversation),
-      conversation_thread_reply: headline('Replied in thread', conversation),
-      conversation_reaction: headline('Reacted', conversation),
+      conversation_mention: headline(globalThis.PlatformI18n.t("community:mentioned_you_44c08b55"), conversation),
+      conversation_reply: headline(globalThis.PlatformI18n.t("community:replied_1cd7fa93"), conversation),
+      conversation_thread_reply: headline(globalThis.PlatformI18n.t("community:replied_in_thread_f1f2b38d"), conversation),
+      conversation_reaction: headline(globalThis.PlatformI18n.t("community:reacted_964ec337"), conversation),
       // WP-E: a build moment without its detail (botMomentLine words the rest).
-      build_ready: headline('Homeroom bot', 'Your change is ready to try'),
-      build_needs_you: headline('Homeroom bot', 'I have a question'),
-      build_stopped: headline('Homeroom bot', 'Your change stopped. I said why in our chat'),
-      build_live: headline('Homeroom bot', 'Your change is live'),
+      build_ready: headline(globalThis.PlatformI18n.t("community:homeroom_bot_dbcdaf67"), globalThis.PlatformI18n.t("community:your_change_is_ready_to_try_ee2fdd6b")),
+      build_needs_you: headline(globalThis.PlatformI18n.t("community:homeroom_bot_dbcdaf67"), 'I have a question'),
+      build_stopped: headline(globalThis.PlatformI18n.t("community:homeroom_bot_dbcdaf67"), globalThis.PlatformI18n.t("community:your_change_stopped_i_said_why_in_our_chat_936317fb")),
+      build_live: headline(globalThis.PlatformI18n.t("community:homeroom_bot_dbcdaf67"), globalThis.PlatformI18n.t("community:your_change_is_live_53d55fa2")),
     }[n.kind];
     const icons = {
       conversation_invite: '✉️',
@@ -2091,9 +2091,9 @@ function rowView(n) {
         by: null,
         conversation: true,
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
-        appLine: 'Messages',
+        get appLine() { return globalThis.PlatformI18n.t("community:messages_04d7b483"); },
         botMoment: true,
-        ...headline('Homeroom bot', bot),
+        ...headline(globalThis.PlatformI18n.t("community:homeroom_bot_dbcdaf67"), bot),
       };
     }
     return {
@@ -2117,7 +2117,7 @@ function rowView(n) {
       // Deliberately the SURFACE and not the conversation's title: the title
       // is the headline's own subject, and repeating it under itself reads as
       // a rendering fault rather than as attribution.
-      appLine: 'Messages',
+      get appLine() { return globalThis.PlatformI18n.t("community:messages_04d7b483"); },
       ...copy,
     };
   }
@@ -2131,15 +2131,15 @@ function rowView(n) {
     const request = n.kind === 'friend_request';
     return {
       ...base,
-      appLine: 'Friends',
+      get appLine() { return globalThis.PlatformI18n.t("community:friends_bd104d1b"); },
       wrap: true,
       icon: request ? '👋' : '🤝',
-      label: request ? 'Friend request' : 'Accepted your friend request',
+      label: request ? globalThis.PlatformI18n.t("community:friend_request_d67dac88") : globalThis.PlatformI18n.t("community:accepted_your_friend_request_81e161e7"),
       segments: [{ t: 'who', v: who }],
       ...(request && n.friendRequestPending ? {
         actions: [
-          { key: 'friend_accept', label: 'Accept', primary: true },
-          { key: 'friend_decline', label: 'Decline' },
+          { key: 'friend_accept', get label() { return globalThis.PlatformI18n.t("community:accept_89713b9c"); }, primary: true },
+          { key: 'friend_decline', get label() { return globalThis.PlatformI18n.t("community:decline_a2d285b3"); } },
         ],
       } : {}),
     };
@@ -2154,38 +2154,38 @@ function rowView(n) {
       wrap: true,
       icon: '🗑️',
       by: n.sourceUsername || null,
-      ...headline('Tried to delete this shared app', null),
+      ...headline(globalThis.PlatformI18n.t("community:tried_to_delete_this_shared_app_2ced5ce6"), null),
     };
   }
   if (n.kind === 'app_deleted') {
     return {
       ...base,
-      appLine: 'Account',
+      get appLine() { return globalThis.PlatformI18n.t("community:account_7e1b0d56"); },
       wrap: true,
       icon: '🗑️',
       by: n.sourceUsername || null,
-      ...headline('Deleted a shared app you contributed to', n.detail || 'an app'),
+      ...headline(globalThis.PlatformI18n.t("community:deleted_a_shared_app_you_contributed_to_1bce0ac4"), n.detail || globalThis.PlatformI18n.t("community:an_app_66e93a7c")),
     };
   }
 
   if (n.kind === 'moderation_report' || n.kind === 'moderation_action') {
-    return { ...base, appLine: 'Account', wrap: true, icon: '⚑',
-      ...headline(n.kind === 'moderation_report' ? 'Report update' : 'Moderation action', n.detail || '') };
+    return { ...base, get appLine() { return globalThis.PlatformI18n.t("community:account_7e1b0d56"); }, wrap: true, icon: '⚑',
+      ...headline(n.kind === 'moderation_report' ? globalThis.PlatformI18n.t("community:report_update_1cb4c806") : globalThis.PlatformI18n.t("community:moderation_action_f9bb667d"), n.detail || '') };
   }
 
   if (n.kind === 'app_quota_changed') {
-    return { ...base, appLine: 'Account', wrap: true, icon: '＋',
-      label: 'App allowance changed',
+    return { ...base, get appLine() { return globalThis.PlatformI18n.t("community:account_7e1b0d56"); }, wrap: true, icon: '＋',
+      get label() { return globalThis.PlatformI18n.t("community:app_allowance_changed_073325ba"); },
       segments: [{ t: 'text', v: appQuotaChangeText(n.detail) }] };
   }
   if (n.kind === 'app_quota_requested') {
-    return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
-      label: 'Requested more app slots', segments: [{ t: 'who', v: who }] };
+    return { ...base, get appLine() { return globalThis.PlatformI18n.t("community:admin_c1c224b0"); }, wrap: true, icon: '＋',
+      get label() { return globalThis.PlatformI18n.t("community:requested_more_app_slots_95ca8bbb"); }, segments: [{ t: 'who', v: who }] };
   }
   if (n.kind === 'app_quota_request_declined') {
-    return { ...base, appLine: 'Account', wrap: true, icon: 'ℹ️',
-      label: 'App allowance request declined',
-      segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
+    return { ...base, get appLine() { return globalThis.PlatformI18n.t("community:account_7e1b0d56"); }, wrap: true, icon: 'ℹ️',
+      get label() { return globalThis.PlatformI18n.t("community:app_allowance_request_declined_07bd8f2a"); },
+      segments: [{ t: 'text', get v() { return globalThis.PlatformI18n.t("community:your_app_allowance_is_unchanged_67a13413"); } }] };
   }
 
   // Managed OpenRouter review alerts, plus historical successful-issuance
@@ -2196,10 +2196,10 @@ function rowView(n) {
     const review = n.kind === 'openrouter_key_review';
     return {
       ...base,
-      appLine: 'Admin',
+      get appLine() { return globalThis.PlatformI18n.t("community:admin_c1c224b0"); },
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
+      label: review ? globalThis.PlatformI18n.t("community:openrouter_key_needs_admin_review_f5fd3921") : globalThis.PlatformI18n.t("community:openrouter_access_enabled_36cb5f41"),
       segments: [{ t: 'who', v: who }],
     };
   }
@@ -2211,45 +2211,45 @@ function rowView(n) {
   if (n.kind === 'platform_limit') {
     const limit = parsePlatformLimitDetail(n.detail);
     if (!limit) {
-      return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
-        ...headline('Platform limit', 'the server is nearing one of its limits') };
+      return { ...base, get appLine() { return globalThis.PlatformI18n.t("community:admin_c1c224b0"); }, wrap: true, icon: '\u26A0\uFE0F',
+        ...headline(globalThis.PlatformI18n.t("community:platform_limit_9118ac91"), globalThis.PlatformI18n.t("community:the_server_is_nearing_one_of_its_limits_5ff890cc")) };
     }
     const full = limit.level === 'full';
     // GitHub's hourly budget (services/github-budget.js): the bot token's,
     // or the GitHub App's. The card under Admin → Limits has the figures.
     if (limit.limit === 'github' || limit.limit === 'github_app') {
       const app = limit.limit === 'github_app';
-      const noun = app ? 'GitHub App requests' : 'GitHub requests';
+      const noun = app ? globalThis.PlatformI18n.t("community:github_app_requests_2587118b") : globalThis.PlatformI18n.t("community:github_requests_8b9c565e");
       return {
         ...base,
-        appLine: 'Admin',
+        get appLine() { return globalThis.PlatformI18n.t("community:admin_c1c224b0"); },
         wrap: true,
         icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
-        label: full ? `${noun} used up` : `${noun} running low`,
+        label: full ? globalThis.PlatformI18n.t("community:value1_used_up_94cd130e", { value1: noun }) : globalThis.PlatformI18n.t("community:value1_running_low_5d2a6027", { value1: noun }),
         segments: [
-          { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} used this hour.` },
-          { t: 'text', v: app ? ' It resets within the hour.'
-            : (full ? ' Work that needs GitHub fails until the hour resets.'
-              : ' Background work waits so people\'s work keeps the rest.') },
+          { t: 'strong', v: globalThis.PlatformI18n.t("community:value1_of_value2_value3_used_this_hour_9168976c", { value1: limit.used, value2: limit.cap, value3: noun }) },
+          { t: 'text', v: app ? globalThis.PlatformI18n.t("community:it_resets_within_the_hour_4ff977a2")
+            : (full ? globalThis.PlatformI18n.t("community:work_that_needs_github_fails_until_the_hour_rese_777e12c1")
+              : globalThis.PlatformI18n.t("community:background_work_waits_so_people_s_work_keeps_the_602104b2")) },
         ],
       };
     }
-    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
+    const noun = limit.limit === 'apps' ? 'apps' : globalThis.PlatformI18n.t("community:coding_sessions_e02d0758");
     const consequence = limit.limit === 'apps'
-      ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
-        : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
-      : (full ? ' New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.'
-        : ' At the limit, idle sessions are paused to make room.');
+      ? (full ? globalThis.PlatformI18n.t("community:new_apps_are_refused_until_the_app_limit_is_rais_99fa8843")
+        : globalThis.PlatformI18n.t("community:raise_the_app_limit_in_admin_limits_before_new_a_02e3137b"))
+      : (full ? globalThis.PlatformI18n.t("community:new_sessions_pause_idle_ones_or_wait_until_max_g_6431c386")
+        : globalThis.PlatformI18n.t("community:at_the_limit_idle_sessions_are_paused_to_make_ro_e07f6365"));
     return {
       ...base,
-      appLine: 'Admin',
+      get appLine() { return globalThis.PlatformI18n.t("community:admin_c1c224b0"); },
       wrap: true,
       icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
       label: full
-        ? (limit.limit === 'apps' ? 'App limit reached' : 'Session limit reached')
-        : (limit.limit === 'apps' ? 'Nearing the app limit' : 'Nearing the session limit'),
+        ? (limit.limit === 'apps' ? globalThis.PlatformI18n.t("community:app_limit_reached_f7e1c689") : globalThis.PlatformI18n.t("community:session_limit_reached_13439b08"))
+        : (limit.limit === 'apps' ? globalThis.PlatformI18n.t("community:nearing_the_app_limit_bf64e475") : globalThis.PlatformI18n.t("community:nearing_the_session_limit_f3042c0f")),
       segments: [
-        { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} in use.` },
+        { t: 'strong', v: globalThis.PlatformI18n.t("community:value1_of_value2_value3_in_use_89607a08", { value1: limit.used, value2: limit.cap, value3: noun }) },
         { t: 'text', v: consequence },
       ],
     };
@@ -2262,7 +2262,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
-      ...headline('Kudos', prLabel || 'your change'),
+      ...headline(globalThis.PlatformI18n.t("community:kudos_51483eb0"), prLabel || globalThis.PlatformI18n.t("community:your_change_af7f8c29")),
     };
   }
 
@@ -2271,7 +2271,7 @@ function rowView(n) {
       ...base,
       icon: n.detail || '❤️',
       by: n.sourceUsername || null,
-      ...headline('Reacted', (n.messageContent || '').slice(0, 140)),
+      ...headline(globalThis.PlatformI18n.t("community:reacted_964ec337"), (n.messageContent || '').slice(0, 140)),
     };
   }
 
@@ -2283,7 +2283,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
-      ...headline('Needs votes', prLabel || n.sessionTitle || 'your change'),
+      ...headline(globalThis.PlatformI18n.t("community:needs_votes_05cc11b0"), prLabel || n.sessionTitle || globalThis.PlatformI18n.t("community:your_change_af7f8c29")),
     };
   }
 
@@ -2293,7 +2293,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⚠️',
-      ...headline('Testing couldn\'t run', prLabel || n.sessionTitle || 'your change'),
+      ...headline(globalThis.PlatformI18n.t("community:testing_couldn_t_run_814b8ad7"), prLabel || n.sessionTitle || globalThis.PlatformI18n.t("community:your_change_af7f8c29")),
     };
   }
 
@@ -2306,7 +2306,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
-      ...headline('New change', prLabel || 'a change'),
+      ...headline(globalThis.PlatformI18n.t("community:new_change_1e986694"), prLabel || 'a change'),
     };
   }
 
@@ -2317,7 +2317,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F440}',
       by: n.sourceUsername || null,
-      ...headline('Ready to try', prLabel || n.sessionTitle || 'a change'),
+      ...headline(globalThis.PlatformI18n.t("community:ready_to_try_5eff2e7b"), prLabel || n.sessionTitle || 'a change'),
     };
   }
 
@@ -2332,8 +2332,8 @@ function rowView(n) {
   // the change those are the same event with very different meanings.
   if (n.kind === 'pr_merged') {
     const head = headline(
-      n.detail === 'forced' ? 'Made live by an admin' : 'Live',
-      prLabel || n.sessionTitle || 'your change',
+      n.detail === 'forced' ? globalThis.PlatformI18n.t("community:made_live_by_an_admin_840ae13d") : globalThis.PlatformI18n.t("community:live_b64ac05f"),
+      prLabel || n.sessionTitle || globalThis.PlatformI18n.t("community:your_change_af7f8c29"),
     );
     // #1688: on a merge the vote carried, `detail` names who backed and
     // shaped it. An admin override's marker is not a sentence to show.
@@ -2351,8 +2351,8 @@ function rowView(n) {
   // usually long enough to push it off the row.
   if (n.kind === 'proposal_vote') {
     const head = headline(
-      n.detail === 'no' ? 'Voted no' : 'Voted yes',
-      prLabel || n.sessionTitle || 'your change',
+      n.detail === 'no' ? globalThis.PlatformI18n.t("community:voted_no_9dfd1ccc") : globalThis.PlatformI18n.t("community:voted_yes_3393ce52"),
+      prLabel || n.sessionTitle || globalThis.PlatformI18n.t("community:your_change_af7f8c29"),
     );
     // #1688: the voter's own line rides after the subject, quoted — the
     // proposer's first sight of an objection is the sentence, not the thumb.
@@ -2377,8 +2377,8 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F501}',
-      ...headline('Still good?', prLabel || n.sessionTitle || 'a change you backed'),
-      actions: n.readAt ? [] : [{ key: 'still_yes', label: 'Still yes', primary: true }],
+      ...headline(globalThis.PlatformI18n.t("community:still_good_4d975c76"), prLabel || n.sessionTitle || globalThis.PlatformI18n.t("community:a_change_you_backed_5b160ef2")),
+      actions: n.readAt ? [] : [{ key: 'still_yes', get label() { return globalThis.PlatformI18n.t("community:still_yes_1ab9570b"); }, primary: true }],
     };
   }
 
@@ -2390,15 +2390,15 @@ function rowView(n) {
     const merged = counts ? Number(counts[1]) : 0;
     const open = counts ? Number(counts[2]) : 0;
     const shipped = merged === 0
-      ? 'Nothing landed this week'
-      : `${merged} ${merged === 1 ? 'change' : 'changes'} went live`;
+      ? globalThis.PlatformI18n.t("community:nothing_landed_this_week_871c4020")
+      : globalThis.PlatformI18n.t("community:count_changes_went_live_a73051dc", { count: merged });
     const waiting = open
-      ? `${open} ${open === 1 ? 'change is' : 'changes are'} waiting for approval`
+      ? globalThis.PlatformI18n.t("community:value1_value2_waiting_for_approval_0fbf5eaf", { value1: open, value2: open === 1 ? globalThis.PlatformI18n.t("community:change_is_64647725") : globalThis.PlatformI18n.t("community:changes_are_a21803be") })
       : '';
     return {
       ...base,
       icon: '\u{1F4F0}',
-      ...headline(`This week on ${n.appName || 'the app'}`, [shipped, waiting].filter(Boolean).join(' · ')),
+      ...headline(globalThis.PlatformI18n.t("community:this_week_on_value1_bc004b3e", { value1: n.appName || globalThis.PlatformI18n.t("community:the_app_ecf6410c") }), [shipped, waiting].filter(Boolean).join(' · ')),
     };
   }
 
@@ -2411,7 +2411,7 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F4DD}',
-      ...headline('New request', n.detail ? `#${n.detail}` : 'filed'),
+      ...headline(globalThis.PlatformI18n.t("community:new_request_5977ded3"), n.detail ? `#${n.detail}` : 'filed'),
     };
   }
 
@@ -2430,13 +2430,13 @@ function rowView(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
-    const appName = n.appName || 'Your app';
+    const appName = n.appName || globalThis.PlatformI18n.t("community:your_app_9c3728a7");
     if (n.detail === 'storage_warn') {
       return {
         ...base,
         wrap: true,
         icon: '\u{1F4BE}',
-        ...headline('App storage', `${appName} has used most of its storage`),
+        ...headline(globalThis.PlatformI18n.t("community:app_storage_27e2347e"), globalThis.PlatformI18n.t("community:value1_has_used_most_of_its_storage_2a7e3ce1", { value1: appName })),
       };
     }
     if (n.detail === 'storage_full') {
@@ -2444,24 +2444,24 @@ function rowView(n) {
         ...base,
         wrap: true,
         icon: '\u{1F4BE}',
-        label: 'App storage',
+        get label() { return globalThis.PlatformI18n.t("community:app_storage_27e2347e"); },
         segments: [
-          { t: 'strong', v: `${appName} is out of storage.` },
-          { t: 'text', v: ' New data cannot be saved until an admin raises its limit or allows time to clean up' },
+          { t: 'strong', v: globalThis.PlatformI18n.t("community:value1_is_out_of_storage_bacc60c7", { value1: appName }) },
+          { t: 'text', get v() { return globalThis.PlatformI18n.t("community:new_data_cannot_be_saved_until_an_admin_raises_i_605186e6"); } },
         ],
       };
     }
     // release_stalled: the platform's own app, a merged commit that has not
     // become the running release (services/release-watch.js).
     const APP_HEALTH_COPY = {
-      deploy_failed: 'an update did not go live',
-      release_stalled: 'an approved change has not gone live yet',
+      get deploy_failed() { return globalThis.PlatformI18n.t("community:an_update_did_not_go_live_ffae361e"); },
+      get release_stalled() { return globalThis.PlatformI18n.t("community:an_approved_change_has_not_gone_live_yet_4034302b"); },
     };
     return {
       ...base,
       wrap: true,
       icon: '\u{1F6A8}',
-      ...headline('App problem', APP_HEALTH_COPY[n.detail] || 'something needs looking at'),
+      ...headline(globalThis.PlatformI18n.t("community:app_problem_4614a47f"), APP_HEALTH_COPY[n.detail] || globalThis.PlatformI18n.t("community:something_needs_looking_at_b7adea75")),
     };
   }
 
@@ -2474,8 +2474,8 @@ function rowView(n) {
       ...base,
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
-        'Waiting for your approval',
-        count === 1 ? '1 change' : `${count} changes`,
+        globalThis.PlatformI18n.t("community:waiting_for_your_approval_af7a94b9"),
+        count === 1 ? '1 change' : globalThis.PlatformI18n.t("community:value1_changes_d3f1e65e", { value1: count }),
       ),
     };
   }
@@ -2491,8 +2491,8 @@ function rowView(n) {
       wrap: true,
       icon: shared ? '\u{1F441}️' : '\u{1F4E4}',
       ...headline(
-        shared ? 'Shared by your agent' : 'Submitted by your agent',
-        n.sessionTitle || prLabel || 'your change',
+        shared ? globalThis.PlatformI18n.t("community:shared_by_your_agent_0fcd7a76") : globalThis.PlatformI18n.t("community:submitted_by_your_agent_83c2df66"),
+        n.sessionTitle || prLabel || globalThis.PlatformI18n.t("community:your_change_af7f8c29"),
       ),
     };
   }
@@ -2509,7 +2509,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: '\u{1F4AC}',
-      ...headline('Claude asked you something', n.sessionTitle || null),
+      ...headline(globalThis.PlatformI18n.t("community:claude_asked_you_something_e893e9f6"), n.sessionTitle || null),
     };
   }
 
@@ -2526,8 +2526,8 @@ function rowView(n) {
       icon: '✅',
       ...headline(
         // #2779: a run in an agent session says what finished, not "session".
-        n.agentSessionId ? 'The coding agent finished' : 'Session finished',
-        n.sessionTitle || prLabel || n.branchName || 'your session',
+        n.agentSessionId ? globalThis.PlatformI18n.t("community:the_coding_agent_finished_9f88c5ae") : globalThis.PlatformI18n.t("community:session_finished_ad28fe4c"),
+        n.sessionTitle || prLabel || n.branchName || globalThis.PlatformI18n.t("community:your_session_41aa2577"),
       ),
     };
   }
@@ -2542,8 +2542,8 @@ function rowView(n) {
       wrap: true,
       icon: '⏸️',
       ...headline(
-        n.agentSessionId ? 'The coding agent stopped before finishing' : 'Session stopped before finishing',
-        n.sessionTitle || prLabel || n.branchName || 'your session',
+        n.agentSessionId ? globalThis.PlatformI18n.t("community:the_coding_agent_stopped_before_finishing_1d6ebdd4") : globalThis.PlatformI18n.t("community:session_stopped_before_finishing_5ba6f649"),
+        n.sessionTitle || prLabel || n.branchName || globalThis.PlatformI18n.t("community:your_session_41aa2577"),
       ),
     };
   }
@@ -2553,15 +2553,15 @@ function rowView(n) {
   // label says so.
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    const label = failed ? 'Change failed'
-      : (n.detail === 'question' ? 'Change has a question' : 'Change ready to try');
+    const label = failed ? globalThis.PlatformI18n.t("community:change_failed_3c3e8bc5")
+      : (n.detail === 'question' ? globalThis.PlatformI18n.t("community:change_has_a_question_5e64654e") : globalThis.PlatformI18n.t("community:change_ready_to_try_542c811b"));
     return {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
       ...headline(
         label,
-        n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request',
+        n.headlessIssueNumber ? globalThis.PlatformI18n.t("community:request_value1_06eaf7b2", { value1: n.headlessIssueNumber }) : 'a request',
       ),
     };
   }
@@ -2576,7 +2576,7 @@ function rowView(n) {
       icon: '\u{1F4CB}',
       by: n.sourceUsername || null,
       ...headline(
-        'Spec shared',
+        globalThis.PlatformI18n.t("community:spec_shared_6630a0ba"),
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
     };
@@ -2588,14 +2588,14 @@ function rowView(n) {
   // never anybody's name.
   if (n.kind === 'invite_opened' || n.kind === 'member_joined' || n.kind === 'first_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
-    const more = count > 1 ? `, with ${count - 1} ${count === 2 ? 'other' : 'others'}` : '';
+    const more = count > 1 ? globalThis.PlatformI18n.t("community:with_value1_value2_79e2a0a3", { value1: count - 1, value2: count === 2 ? globalThis.PlatformI18n.t("community:message_d9298a10d1b0") : globalThis.PlatformI18n.t("community:message_01db91d06032") }) : '';
     if (n.kind === 'invite_opened') {
       return {
         ...base,
         wrap: true,
         icon: '\u{1F517}',
         by: null,
-        ...headline(count > 1 ? `${count} people opened your invite` : 'Someone opened your invite', null),
+        ...headline(count > 1 ? globalThis.PlatformI18n.t("community:value1_people_opened_your_invite_a359cb14", { value1: count }) : globalThis.PlatformI18n.t("community:someone_opened_your_invite_05c4550f"), null),
       };
     }
     return {
@@ -2604,8 +2604,8 @@ function rowView(n) {
       icon: '\u{1F44B}',
       by: n.sourceUsername || null,
       ...(n.kind === 'member_joined'
-        ? headline(`Joined through your invite${more}`, null)
-        : headline(`Said hi${more}`, (n.messageContent || '').slice(0, 140))),
+        ? headline(globalThis.PlatformI18n.t("community:joined_through_your_invite_value1_5a6fee92", { value1: more }), null)
+        : headline(globalThis.PlatformI18n.t("community:said_hi_value1_93b7ebba", { value1: more }), (n.messageContent || '').slice(0, 140))),
     };
   }
 
@@ -2616,12 +2616,12 @@ function rowView(n) {
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? 'Invited you to build with them'
+      ? globalThis.PlatformI18n.t("community:invited_you_to_build_with_them_aade4739")
       : n.kind === 'collab_invite_accepted'
-        ? 'Accepted your invite'
+        ? globalThis.PlatformI18n.t("community:accepted_your_invite_c2ffd2e0")
         : n.kind === 'approver_invite'
-          ? 'Asked you to help approve changes'
-          : 'Can approve changes now';
+          ? globalThis.PlatformI18n.t("community:asked_you_to_help_approve_changes_e6164b0a")
+          : globalThis.PlatformI18n.t("community:can_approve_changes_now_c60f3ce2");
     return {
       ...base,
       mb: false,
@@ -2639,10 +2639,10 @@ function rowView(n) {
     metaFlex: false,
     by: n.sourceUsername || null,
     ...headline(
-      n.kind === 'mention' ? 'Mentioned you'
-        : n.kind === 'reply' ? 'Replied to you'
+      n.kind === 'mention' ? globalThis.PlatformI18n.t("community:mentioned_you_44c08b55")
+        : n.kind === 'reply' ? globalThis.PlatformI18n.t("community:replied_to_you_8f4e90a9")
           // #2387: somebody answered in a reply thread you started or joined.
-          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
+          : n.kind === 'thread_reply' ? globalThis.PlatformI18n.t("community:replied_in_thread_f1f2b38d") : globalThis.PlatformI18n.t("community:posted_afd80c5a"),
       (n.messageContent || '').slice(0, 140),
     ),
   };
@@ -2684,3 +2684,12 @@ Notifications._screenViews = screenViews;
 // from a DOMContentLoaded handler — that runs during hydration, i.e. EARLIER
 // than the old handler did, so it still lands before app.js's init.
 if (typeof window !== 'undefined') window.Notifications = Notifications;
+
+// Recompute platform-authored labels without refetching or replacing the panel.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    Notifications._renderList();
+    Notifications._renderInvites();
+    Notifications._renderSaved();
+  });
+}

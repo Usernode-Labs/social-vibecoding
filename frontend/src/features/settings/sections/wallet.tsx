@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
@@ -16,14 +17,10 @@ export function WalletSection() {
     <div data-settings-section="wallet" className="hidden">
       {/* Wallet linking section */}
       <div id="wallet-section" className="hidden">
-        <SectionHeading title="Homeroom Wallet">
-          Link your on-chain identity. Scan the QR code with the Homeroom mobile app.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:homeroom_wallet_6e5f658a")}><Message id="settings:link_your_on_chain_identity_scan_the_qr_code_wit_3d798ec2" /></SectionHeading>} messages={{"title":"settings:homeroom_wallet_6e5f658a"}} />
         {/* Unlinked: show link button */}
         <div id="wallet-unlinked" className="hidden">
-          <Button id="wallet-link-btn" layout="full">
-            Link Homeroom Wallet
-          </Button>
+          <Button id="wallet-link-btn" layout="full"><Message id="settings:link_homeroom_wallet_ad511b14" /></Button>
         </div>
         {/* Linking: show QR */}
         <div id="wallet-linking" className="hidden text-center">
@@ -34,9 +31,7 @@ export function WalletSection() {
           <button
             id="wallet-link-cancel"
             className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
-          >
-            Cancel
-          </button>
+          ><Message id="settings:cancel_19766ed6" /></button>
         </div>
         {/* Linked: show pubkey + unlink */}
         <div id="wallet-linked" className="hidden">

@@ -123,7 +123,7 @@
       return 'Connect GitHub or X to unlock $10.00/day of Homeroom credits.';
     }
     if (s.level === 'unavailable') {
-      return 'Credit eligibility is temporarily unavailable.';
+      return globalThis.PlatformI18n.t("core:credit_eligibility_is_temporarily_unavailable_9cc7d523");
     }
     var weekly = s.capWindow === 'weekly';
     var RT = resetTime();
@@ -131,17 +131,17 @@
     if (at && !Number.isFinite(at.getTime())) at = null;
     var parts;
     if (RT) {
-      parts = 'Free credits reset ' + RT.resetWhen(weekly ? 'weekly' : 'daily',
+      parts = globalThis.PlatformI18n.t("core:free_credits_reset_77e8b21d") + RT.resetWhen(weekly ? 'weekly' : 'daily',
         { at: at, now: nowMs == null ? undefined : nowMs });
     } else {
-      var resetLabel = s.resetLabel || 'midnight UTC';
+      var resetLabel = s.resetLabel || globalThis.PlatformI18n.t("core:midnight_utc_59408c85");
       parts = weekly
-        ? 'Free credits reset ' + resetLabel
-        : 'Free credits reset at ' + resetLabel;
+        ? globalThis.PlatformI18n.t("core:free_credits_reset_77e8b21d") + resetLabel
+        : globalThis.PlatformI18n.t("core:free_credits_reset_at_cf964f25") + resetLabel;
     }
     if (at) {
       var left = resetIn(s.resetsAt, nowMs);
-      if (left) parts += ', about ' + left + ' from now';
+      if (left) parts += ', about ' + left + globalThis.PlatformI18n.t("core:from_now_55c1b7f6");
     }
     return parts + '.';
   }
@@ -184,8 +184,8 @@
         globalOut: false, resetsAt: (s && s.resetsAt) || null,
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
         capWindow: (s && s.capWindow) || 'daily',
-        windowLabel: (s && s.windowLabel) || 'Today',
-        resetLabel: (s && s.resetLabel) || 'midnight UTC',
+        windowLabel: (s && s.windowLabel) || globalThis.PlatformI18n.t("core:today_2b065c7c"),
+        resetLabel: (s && s.resetLabel) || globalThis.PlatformI18n.t("core:midnight_utc_59408c85"),
       };
     }
     var verificationRequired = !!s.verificationRequired;
@@ -229,8 +229,8 @@
       // right boundary; the daily spellings survive only as the fallback
       // for a payload that carries no window at all.
       capWindow: s.capWindow || 'daily',
-      windowLabel: s.windowLabel || 'Today',
-      resetLabel: s.resetLabel || 'midnight UTC',
+      windowLabel: s.windowLabel || globalThis.PlatformI18n.t("core:today_2b065c7c"),
+      resetLabel: s.resetLabel || globalThis.PlatformI18n.t("core:midnight_utc_59408c85"),
       lowPct: lowPct,
       verificationRequired: verificationRequired,
       entitlementAvailable: entitlementAvailable,
@@ -250,10 +250,10 @@
   function meterParts(state) {
     var s = state || {};
     if (s.level === 'locked') {
-      return [{ key: 'locked', text: 'verify account · unlock $10/day' }];
+      return [{ key: 'locked', get text() { return globalThis.PlatformI18n.t("core:verify_account_unlock_10_day_a683560b"); } }];
     }
     if (s.level === 'unavailable') {
-      return [{ key: 'unavailable', text: 'credits temporarily unavailable' }];
+      return [{ key: 'unavailable', get text() { return globalThis.PlatformI18n.t("core:credits_temporarily_unavailable_b028cfa7"); } }];
     }
     var spent = money(s.spentCents);
     var limit = money(s.limitCents);
@@ -262,12 +262,12 @@
     // halves, and neither should be re-deriving the formatting.
     var parts = [{ key: 'pair', text: spent + '/' + limit, spent: spent, limit: limit }];
     if (s.level === 'exhausted') {
-      parts.push({ key: 'remaining', text: s.globalOut ? 'shared budget spent' : 'none left' });
+      parts.push({ key: 'remaining', text: s.globalOut ? globalThis.PlatformI18n.t("core:shared_budget_spent_ba1908c9") : globalThis.PlatformI18n.t("core:none_left_b684b475") });
     } else if (s.level === 'ok' || s.level === 'low') {
       parts.push({ key: 'remaining', text: money(s.remainingCents) + ' left' });
     }
     if (s.byokCents > 0) {
-      parts.push({ key: 'byok', text: 'your key ' + money(s.byokCents) });
+      parts.push({ key: 'byok', text: globalThis.PlatformI18n.t("core:your_key_08f79e7b") + money(s.byokCents) });
     }
     return parts;
   }
@@ -288,8 +288,8 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
-    var when = s.capWindow === 'weekly' ? 'this week' : 'today';
-    return 'Running low on free AI credits: ' + money(s.remainingCents)
+    var when = s.capWindow === 'weekly' ? globalThis.PlatformI18n.t("core:this_week_7d76655e") : 'today';
+    return globalThis.PlatformI18n.t("core:running_low_on_free_ai_credits_f5cc1ec0") + money(s.remainingCents)
       + ' of ' + money(s.limitCents) + ' left ' + when + '.';
   }
 
@@ -353,12 +353,12 @@
     return {
       id: 'api-key',
       title: hasApiKey
-        ? "Your saved key couldn't be used"
-        : 'Use your own Anthropic API key',
+        ? globalThis.PlatformI18n.t("core:your_saved_key_couldn_t_be_used_5bd1e9b3")
+        : globalThis.PlatformI18n.t("core:use_your_own_anthropic_api_key_ab8e55a6"),
       blurb: hasApiKey
         ? 'Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. Your weekly allowance is bypassed entirely while a working key is on file.'
-        : 'Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your weekly allowance.',
-      cta: hasApiKey ? 'Check API key' : 'Add API key',
+        : globalThis.PlatformI18n.t("core:paste_a_key_in_settings_api_key_and_homeroom_kee_ec207825"),
+      cta: hasApiKey ? globalThis.PlatformI18n.t("core:check_api_key_ef993ae6") : globalThis.PlatformI18n.t("core:add_api_key_6f2d3db3"),
       hash: SETTINGS_HASHES.apiKey,
       developer: false,
     };
@@ -367,9 +367,9 @@
   function socialOption() {
     return {
       id: 'social-identity',
-      title: 'Unlock $10/day with a social account',
+      get title() { return globalThis.PlatformI18n.t("core:unlock_10_day_with_a_social_account_3d533fa6"); },
       blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Homeroom keeps no provider token.',
-      cta: 'Connect GitHub or X',
+      get cta() { return globalThis.PlatformI18n.t("core:connect_github_or_x_62e01e13"); },
       hash: SETTINGS_HASHES.connector,
       developer: false,
     };
@@ -435,9 +435,9 @@
     if (!s.externalFlowsAvailable) {
       out.push({
         id: 'connector',
-        title: 'Use your Claude.ai or ChatGPT subscription',
-        blurb: 'Connect Homeroom to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
-        cta: 'Connect Claude or ChatGPT',
+        get title() { return globalThis.PlatformI18n.t("core:use_your_claude_ai_or_chatgpt_subscription_03801b39"); },
+        get blurb() { return globalThis.PlatformI18n.t("core:connect_homeroom_to_claude_or_chatgpt_and_let_cl_55ad4bd2"); },
+        get cta() { return globalThis.PlatformI18n.t("core:connect_claude_or_chatgpt_749513a5"); },
         hash: SETTINGS_HASHES.connector,
         developer: false,
       });
@@ -458,7 +458,7 @@
     var n = list.length;
     var word = NUMERALS[n] || String(n);
     return word.charAt(0).toUpperCase() + word.slice(1)
-      + (n === 1 ? ' way' : ' ways') + ' to keep building right now:';
+      + (n === 1 ? ' way' : ' ways') + globalThis.PlatformI18n.t("core:to_keep_building_right_now_965ddca6");
   }
 
   // Lead sentence. `globalOut` means the PLATFORM's shared daily budget is
@@ -472,10 +472,10 @@
     if (s.verificationRequired) {
       return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
     }
-    if (s.globalOut) return "The platform's shared daily AI budget is used up.";
+    if (s.globalOut) return globalThis.PlatformI18n.t("core:the_platform_s_shared_daily_ai_budget_is_used_up_2ca88a7e");
     return s.capWindow === 'daily'
-      ? "You're out of today's free AI credits."
-      : "You're out of this week's free AI credits.";
+      ? globalThis.PlatformI18n.t("core:you_re_out_of_today_s_free_ai_credits_b0fcca18")
+      : globalThis.PlatformI18n.t("core:you_re_out_of_this_week_s_free_ai_credits_dc484e94");
   }
 
   function optionRowHtml(opt) {
@@ -509,12 +509,7 @@
   // honest about offering the same ways out.
   function developerHtml(list) {
     if (!list || !list.length) return '';
-    return ''
-      + '<details class="dc-credits-dev" data-credits-dev="1">'
-      + '<summary class="dc-credits-dev-summary">Are you a developer?</summary>'
-      + '<div class="dc-credits-dev-hint">'
-      + 'Build it with the tools on your own computer instead.'
-      + '</div>'
+    return `<details class="dc-credits-dev" data-credits-dev="1"><summary class="dc-credits-dev-summary">${globalThis.PlatformI18n.htmlText("core:are_you_a_developer_80ca32a9")}</summary><div class="dc-credits-dev-hint">${globalThis.PlatformI18n.htmlText("core:build_it_with_the_tools_on_your_own_computer_ins_309d94dc")}</div>`
       + optionsHtml(list)
       + '</details>';
   }
@@ -574,7 +569,7 @@
       s.verificationRequired ? socialOption() : apiKeyOption(s),
       {
         id: 'venue',
-        cta: 'Change session type',
+        get cta() { return globalThis.PlatformI18n.t("core:change_session_type_67e5288d"); },
         // No hash: this one opens the sheet in place. The fallback exists
         // because wire() falls through to a hash for surfaces that handle
         // nothing, and Settings is where a venue is otherwise changed.

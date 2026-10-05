@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * Settings → Welcome tour: the way back to the five-step tour that Home's
  * Getting started card offers a new account (../../home/tour, #3240).
@@ -38,21 +39,15 @@ export function TourSection() {
   return (
     <div data-settings-section="tour" className="hidden">
       <div id="settings-tour-section">
-        <SectionHeading title="Welcome tour">
-          A one-minute walk through your apps and the Homeroom menu.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:welcome_tour_5155b987")}><Message id="settings:a_one_minute_walk_through_your_apps_and_the_home_d8be7f27" /></SectionHeading>} messages={{"title":"settings:welcome_tour_5155b987"}} />
         <Button
           id="settings-tour-replay"
           type="button"
           layout="shrink"
           size="narrow"
           onClick={replay}
-        >
-          Replay the tour
-        </Button>
-        <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
-          It starts again on your home screen.
-        </p>
+        ><Message id="settings:replay_the_tour_dc494df1" /></Button>
+        <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500"><Message id="settings:it_starts_again_on_your_home_screen_1036e65e" /></p>
       </div>
     </div>
   );

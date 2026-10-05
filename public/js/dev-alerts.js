@@ -183,7 +183,7 @@
     //  - Browser: a Web Notification, only when permission is granted.
     systemNotify(info) {
       if (!DevAlerts.enabled() || !info) return;
-      const title = info.title || 'Agent session';
+      const title = info.title || globalThis.PlatformI18n.t("core:agent_session_da3d3fb8");
       const body = info.body || '';
       if (DevAlerts._isNative()) {
         // The canonical notification already has an FCM delivery. Avoid a
@@ -252,11 +252,11 @@
         credentials: 'same-origin',
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not queue the test push. Please try again.');
+      if (!response.ok) throw new Error(result.error || globalThis.PlatformI18n.t("core:could_not_queue_the_test_push_please_try_again_237ab0ed"));
       const info = {
         kind: 'test_alert',
-        title: 'Homeroom test alert',
-        body: 'This is a test of your agent session sound and alerts.',
+        get title() { return globalThis.PlatformI18n.t("core:homeroom_test_alert_6358ce2c"); },
+        get body() { return globalThis.PlatformI18n.t("core:this_is_a_test_of_your_agent_session_sound_and_a_f885d5af"); },
       };
       setTimeout(() => {
         // A native background test is delivered by the server, even when

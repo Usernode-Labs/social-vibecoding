@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 import type { ReactNode } from 'react';
 
 import { ChevronRightIcon, ThreadIcon } from '@/components/ui/icons';
@@ -38,15 +40,15 @@ export function ThreadActivityCard({ rootText, rootDeleted = false, time, timeTi
   onOpen: () => void;
 }) {
   const count = replies.length;
-  const what = count === 1 ? 'Replied in thread' : `${count} replies in thread`;
-  const root = rootDeleted ? 'Message deleted' : (rootText || 'a message');
+  const what = count === 1 ? tr("core:replied_in_thread_f1f2b38d") : tr("core:value1_replies_in_thread_d4ea91db", { value1: count });
+  const root = rootDeleted ? tr("core:message_deleted_7e94d4b9") : (rootText || 'a message');
   return (
     <div className="msgx-thread-activity">
       <span className="msgx-thread-activity-glyph" aria-hidden="true"><ThreadIcon /></span>
       <button
         type="button"
         className="msgx-thread-activity-card"
-        aria-label={`${what}: ${root}, ${time}. Open thread`}
+        aria-label={tr("core:value1_value2_value3_open_thread_0b32f805", { value1: what, value2: root, value3: time })}
         onClick={(event) => { event.stopPropagation(); onOpen(); }}
       >
         <span className="msgx-thread-activity-head">
@@ -59,7 +61,7 @@ export function ThreadActivityCard({ rootText, rootDeleted = false, time, timeTi
           <span key={reply.key} className="msgx-thread-line">
             {reply.face}
             <strong className="msgx-thread-line-name">@{reply.name}</strong>
-            <span className="msgx-thread-line-text">{reply.text || 'Attachment'}</span>
+            <span className="msgx-thread-line-text"><LocalizedValue render={() => (reply.text || tr("core:attachment_040d2b36"))} /></span>
           </span>
         ))}
       </button>

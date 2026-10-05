@@ -1,3 +1,4 @@
+import { Message } from "../../lib/i18n/react";
 /**
  * "Skip to navigation" — the first thing a keyboard reaches on every screen
  * (QA 2026-09-24 Q18).
@@ -43,8 +44,6 @@ function skipToNavigation(event: MouseEvent<HTMLAnchorElement>): void {
 export function SkipToNavigation() {
   const railOnRoute = useVisibility('platform-tabs', true);
   return (
-    <a href="#platform-tabs" className={CLS} hidden={!railOnRoute} onClick={skipToNavigation}>
-      Skip to navigation
-    </a>
+    <a href="#platform-tabs" className={CLS} hidden={!railOnRoute} onClick={skipToNavigation}><Message id="core:skip_to_navigation_3c0ac196" /></a>
   );
 }

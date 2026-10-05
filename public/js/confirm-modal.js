@@ -21,10 +21,10 @@
 (function () {
   function show(opts) {
     const {
-      title = 'Are you sure?',
+      title = globalThis.PlatformI18n.t("core:are_you_sure_f0762c4f"),
       message = '',
       confirmLabel = 'OK',
-      cancelLabel = 'Cancel',
+      cancelLabel = globalThis.PlatformI18n.t("core:cancel_19766ed6"),
       danger = false,
     } = opts || {};
 

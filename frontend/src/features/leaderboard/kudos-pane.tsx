@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Kudos pane — `#leaderboard-root` (#1191 slice 6, conversion 6, the
  * second of the Leaderboard screen's three panes).
@@ -228,7 +232,7 @@ function Dot(): ReactNode {
  */
 function Loading(): ReactNode {
   return (
-    <SkeletonGroup label="Loading the leaderboard" className="space-y-2">
+    <Localized element={<SkeletonGroup label={catalogText("apps:loading_the_leaderboard_44f14e7f")} className="space-y-2">
       {Array.from({ length: 5 }, (_, i) => (
         <div key={i} className={ROW}>
           <div className="w-7 flex justify-center">
@@ -242,7 +246,7 @@ function Loading(): ReactNode {
           <Skeleton shape="block" className="w-12 h-6 rounded-full" />
         </div>
       ))}
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"apps:loading_the_leaderboard_44f14e7f"}} />
   );
 }
 
@@ -261,7 +265,7 @@ function More({ more }: { more: MoreView }): ReactNode {
         disabled={more.loading}
         onClick={() => controller()?._loadMore()}
       >
-        {more.loading ? 'Loading…' : 'Load more'}
+        <LocalizedValue render={() => (more.loading ? tr("apps:loading_ba3bbbe1") : tr("apps:load_more_ac8991ef"))} />
       </button>
     </div>
   );
@@ -297,9 +301,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
           // hashchange route clears profileUser via _setSub('users').
           window.location.hash = '#leaderboard/users';
         }}
-      >
-        ← Top users
-      </a>
+      ><Message id="apps:top_users_431b557c" /></a>
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
           {view.initial}
@@ -308,9 +310,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
           </h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            All changes this user has proposed, newest first.
-          </p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="apps:all_changes_this_user_has_proposed_newest_first_9c6ebf68" /></p>
         </div>
         {/*
             The prototype's person page carries "Message" beside the name.
@@ -414,7 +414,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
               <StatusBadge badge={row.badge} />
-              <span>{`by @${row.author}`}</span>
+              <span><LocalizedValue render={() => (tr("apps:by_value1_363778f7", { value1: row.author }))} /></span>
               <Dot />
               <span>{row.appName}</span>
             </div>
@@ -447,7 +447,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
             <div className={ROW_TITLE}>{`@${row.who}`}</div>
             <div className={ROW_META}>
               {row.meta.map((bit, i) => (
-                <Fragment key={bit.text}>
+                <Fragment key={i}>
                   {i > 0 ? <Dot /> : null}
                   <span title={bit.title}>{bit.text}</span>
                 </Fragment>
@@ -455,17 +455,16 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
             </div>
           </div>
           {row.unmergedNote ? (
-            <span
-              className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
-              title="Kudos on changes that aren’t live yet, not counted toward ranking"
+            <Localized element={<span
+              className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400" title={catalogText("apps:kudos_on_changes_that_aren_t_live_yet_not_counte_aa06f1c0")}
             >
               {row.unmergedNote}
-            </span>
+            </span>} messages={{"title":"apps:kudos_on_changes_that_aren_t_live_yet_not_counte_aa06f1c0"}} />
           ) : null}
-          <div className={KUDOS_PILL} title="Kudos earned on live changes">
+          <Localized element={<div title={catalogText("apps:kudos_earned_on_live_changes_8afe2780")} className={KUDOS_PILL}>
             <span aria-hidden="true">{CLAP}</span>
             <span>{row.mergedKudos}</span>
-          </div>
+          </div>} messages={{"title":"apps:kudos_earned_on_live_changes_8afe2780"}} />
         </button>
       ))}
     </div>
@@ -507,18 +506,17 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
             </div>
           </div>
           {row.extUrl ? (
-            <a
+            <Localized element={<a
               href={row.extUrl}
               target="_blank"
               rel="noopener"
-              data-lb-ext=""
-              title="Open on GitHub"
+              data-lb-ext="" title={catalogText("apps:open_on_github_03f69885")}
               className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-violet-600 dark:hover:text-violet-400 dark:text-zinc-400"
               onClick={(e) => e.stopPropagation()}
             >
               <span aria-hidden="true">↗</span>
-              <span className="sr-only">Open on GitHub</span>
-            </a>
+              <span className="sr-only"><Message id="apps:open_on_github_03f69885" /></span>
+            </a>} messages={{"title":"apps:open_on_github_03f69885"}} />
           ) : null}
           <div className={KUDOS_PILL}>
             <span aria-hidden="true">{CLAP}</span>
@@ -534,16 +532,15 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
   return (
     <>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title="Kudos earned on live changes: the leaderboard ranking score"
+        <Localized element={<span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold" title={catalogText("apps:kudos_earned_on_live_changes_the_leaderboard_ran_584f39b2")}
         >
           <span aria-hidden="true">{CLAP}</span>
           <span>{view.stats.kudosMerged}</span>
-        </span>
-        {view.stats.chips.map((chip) => (
+        </span>} messages={{"title":"apps:kudos_earned_on_live_changes_the_leaderboard_ran_584f39b2"}} />
+        {view.stats.chips.map((chip, index) => (
           <span
-            key={chip.label}
+            key={index}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs font-medium"
             title={chip.title}
           >
@@ -553,7 +550,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       </div>
       {view.rows
         ? <ProfileRows rows={view.rows} />
-        : <div className={HINT}>No changes proposed yet.</div>}
+        : <div className={HINT}><Message id="apps:no_changes_proposed_yet_e8eb63b5" /></div>}
       <More more={view.more} />
     </>
   );
@@ -567,14 +564,14 @@ function Marker({ marker }: { marker: HistoryRow['marker'] }): ReactNode {
     return (
       <span className="inline-flex items-center gap-1">
         <span className="text-base" aria-hidden="true">{CLAP}</span>
-        <StatusBadge badge={{ tone: 'amber', label: 'bounty' }} />
+        <StatusBadge badge={{ tone: 'amber', get label() { return tr("apps:bounty_721152d9"); } }} />
       </span>
     );
   }
   if (marker.kind === 'pr_vote') {
     return marker.yes
-      ? <StatusBadge badge={{ tone: 'emerald', label: 'yes' }} />
-      : <StatusBadge badge={{ tone: 'red', label: 'no' }} />;
+      ? <StatusBadge badge={{ tone: 'emerald', get label() { return tr("apps:yes_8a798890"); } }} />
+      : <StatusBadge badge={{ tone: 'red', get label() { return tr("apps:no_9390298f"); } }} />;
   }
   return marker.up
     ? <span className="text-emerald-700 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>
@@ -674,6 +671,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
 }
 
 export function KudosPane(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(kudosPaneStore) as {
     mounted: boolean;
     chrome: ChromeView | null;

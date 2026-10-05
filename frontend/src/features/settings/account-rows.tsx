@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Settings' account block — Admin & moderation and the native wallet, node
  * and staking rows, above Log out.
@@ -69,6 +71,7 @@ const ADMIN_ROW = 'flex w-full items-center gap-4 px-4 min-h-[44px] py-2 text-[1
   + 'md:hover:bg-zinc-100 md:dark:hover:bg-zinc-800';
 
 export function SettingsAccountRows(): ReactNode {
+  useUiLanguage();
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
@@ -97,8 +100,8 @@ export function SettingsAccountRows(): ReactNode {
   return (
     <div id="settings-account-rows" className={isAdmin || native ? 'mb-6 space-y-5' : undefined}>
       {isAdmin ? (
-        <section aria-label="Admin">
-          <SectionHeader className={HEADING}>Admin</SectionHeader>
+        <Localized element={<section aria-label={catalogText("settings:admin_c1c224b0")}>
+          <SectionHeader className={HEADING}><Message id="settings:admin_c1c224b0" /></SectionHeader>
           <div className={ADMIN_CARD}>
             {/*
                 A real anchor, like every row that navigates: #admin is a hash
@@ -107,20 +110,20 @@ export function SettingsAccountRows(): ReactNode {
                 safe here for the reason above: none of this is prerendered.
             */}
             <a id="settings-row-admin" href="#admin" className={ADMIN_ROW}>
-              <span className="min-w-0 flex-1 truncate">Admin &amp; moderation</span>
+              <span className="min-w-0 flex-1 truncate"><Message id="settings:admin_moderation_a89dfdf8" /></span>
               <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 md:hidden" aria-hidden="true" />
             </a>
           </div>
-        </section>
+        </section>} messages={{"aria-label":"settings:admin_c1c224b0"}} />
       ) : null}
-      <section aria-label="Wallet and node">
-        {native ? <SectionHeader className={HEADING}>Wallet &amp; node</SectionHeader> : null}
+      <Localized element={<section aria-label={catalogText("settings:wallet_and_node_c64502e6")}>
+        {native ? <SectionHeader className={HEADING}><Message id="settings:wallet_node_130fe869" /></SectionHeader> : null}
         <GroupedList className="mx-0">
           <NodePillRow />
           <WalletRow />
           <StakingRow />
         </GroupedList>
-      </section>
+      </section>} messages={{"aria-label":"settings:wallet_and_node_c64502e6"}} />
     </div>
   );
 }

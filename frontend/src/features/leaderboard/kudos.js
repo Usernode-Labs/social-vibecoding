@@ -78,17 +78,17 @@ const Kudos = {
     const readOnly = !!(window.AppView && AppView.readOnly);
     const direct = !!entry.my_kudos_direct;
     const disabledReason = readOnly
-      ? 'Only collaborators can give kudos'
+      ? globalThis.PlatformI18n.t("apps:only_collaborators_can_give_kudos_d875ad37")
       : opts.disabled
         ? opts.disabledReason || ''
         : isSelf
-          ? 'You can\u2019t give kudos to your own change'
+          ? globalThis.PlatformI18n.t("apps:you_can_t_give_kudos_to_your_own_change_c147332b")
           : mine && !direct
-            ? 'Credited via a bounty award, so it can\u2019t be retracted'
+            ? globalThis.PlatformI18n.t("apps:credited_via_a_bounty_award_so_it_can_t_be_retra_81b87a63")
             : '';
     const disabled = !!disabledReason;
     const tip = disabledReason || (mine && direct
-      ? 'You gave kudos to this change. Click again to retract'
+      ? globalThis.PlatformI18n.t("apps:you_gave_kudos_to_this_change_click_again_to_ret_cbf8396b")
       : '');
 
     // Locked = disabled for a reason no later state change can lift
@@ -116,9 +116,9 @@ const Kudos = {
     // name and hides the tail, then the whole label (dev-card.tsx
     // useFoldedActions, `data-thanks`), so the button carries the whole
     // line as its name and tooltip at every face.
-    const line = thanks ? `Thank ${thanks} for putting this up` : '';
+    const line = thanks ? globalThis.PlatformI18n.t("apps:thank_value1_for_putting_this_up_a8c6683d", { value1: thanks }) : '';
     const face = thanks
-      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
+      ? `<span aria-hidden="true">👏</span><span class="dev-thanks-label">${globalThis.PlatformI18n.htmlText("core:thank_value0_2680114a", { value0: thanks })}<span class="dev-thanks-tail"> ${globalThis.PlatformI18n.htmlText("core:for_putting_this_up_b9a8ccb6")}</span></span><span data-kudos-count class="hidden">${count}</span>`
       : `<span aria-hidden="true">\u{1F44F}</span>
           <span data-kudos-count>${count}</span>`;
 
@@ -191,7 +191,7 @@ const Kudos = {
           popover.classList.remove('hidden');
           const entry = Kudos._ensureCache(sid);
           if (entry.count === 0) {
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+            popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_kudos_yet_be_the_first_0781f6f7")}</span>`;
             return;
           }
           if (!entry.givers) {
@@ -203,7 +203,7 @@ const Kudos = {
                 else popover.innerHTML = Kudos.GIVERS_ERROR_HTML;
               });
             }
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
+            popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:loading_ba3bbbe1")}</span>`;
             return;
           }
           Kudos._renderPopover(sid, popover);
@@ -218,7 +218,7 @@ const Kudos = {
   _renderPopover(sid, popover) {
     const entry = Kudos._ensureCache(sid);
     if (!entry.givers || !entry.givers.length) {
-      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+      popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_kudos_yet_be_the_first_0781f6f7")}</span>`;
       return;
     }
     const items = entry.givers.map((g) => {
@@ -233,11 +233,11 @@ const Kudos = {
         ${stamp}
       </div>`;
     }).join('');
-    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
+    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:kudos_givers_value0_7401565e", { value0: entry.givers.length })}</div>${items}`;
   },
 
   // Shown in place of the giver list when it couldn't be fetched (#2994).
-  GIVERS_ERROR_HTML: '<span class="text-zinc-500 dark:text-zinc-400">Couldn\u2019t load who gave kudos.</span>',
+  GIVERS_ERROR_HTML: `<span class="text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:couldn_t_load_who_gave_kudos_ef76b1b5")}</span>`,
 
   // Resolves true once the giver list is cached, false when the request
   // failed (non-2xx or network error), so a caller can tell "no givers"
@@ -304,19 +304,19 @@ const Kudos = {
         // its cached panes so the next visit re-fetches.
         if (window.Leaderboard?.invalidateHistory) Leaderboard.invalidateHistory();
       } else if (res.status === 429) {
-        Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
+        Kudos._toast(data.error || globalThis.PlatformI18n.t("apps:weekly_kudos_quota_exceeded_1a098775"));
       } else if (res.status === 403) {
-        Kudos._toast('You can\u2019t give kudos to your own change.');
+        Kudos._toast(globalThis.PlatformI18n.t("apps:you_can_t_give_kudos_to_your_own_change_8ff163a3"));
       } else if (res.status === 409) {
-        Kudos._toast('You already gave kudos to this change.');
+        Kudos._toast(globalThis.PlatformI18n.t("apps:you_already_gave_kudos_to_this_change_03a23755"));
       } else if (res.status === 404) {
-        Kudos._toast(data.error || 'This change isn\u2019t eligible for kudos.');
+        Kudos._toast(data.error || globalThis.PlatformI18n.t("apps:this_change_isn_t_eligible_for_kudos_ba733a61"));
       } else {
-        Kudos._toast('Failed to give kudos. Try again?');
+        Kudos._toast(globalThis.PlatformI18n.t("apps:failed_to_give_kudos_try_again_e8adf142"));
       }
     } catch (err) {
       console.warn('[kudos] give failed', err);
-      Kudos._toast('Network error giving kudos.');
+      Kudos._toast(globalThis.PlatformI18n.t("apps:network_error_giving_kudos_bec56a18"));
     }
   },
 
@@ -351,16 +351,16 @@ const Kudos = {
         // the budget endpoint is authoritative either way.
         Kudos.Budget.refresh();
       } else if (res.status === 404) {
-        Kudos._toast(data.error || 'No kudos to retract.');
+        Kudos._toast(data.error || globalThis.PlatformI18n.t("apps:no_kudos_to_retract_161752a2"));
         // Cache was stale (e.g. bounty-derived credit, or already
         // retracted in another tab) — reconcile from the server.
         Kudos.fetchGivers(sessionId);
       } else {
-        Kudos._toast('Failed to retract kudos. Try again?');
+        Kudos._toast(globalThis.PlatformI18n.t("apps:failed_to_retract_kudos_try_again_f79f5a87"));
       }
     } catch (err) {
       console.warn('[kudos] retract failed', err);
-      Kudos._toast('Network error retracting kudos.');
+      Kudos._toast(globalThis.PlatformI18n.t("apps:network_error_retracting_kudos_9cfb2450"));
     }
   },
 
@@ -513,16 +513,16 @@ const Kudos = {
       // instant beside it, since this text is the hover.
       const RT = window.ResetTime;
       const resets = RT
-        ? `Resets ${RT.resetWhen('weekly')} (${RT.resetUtc('weekly')}).`
+        ? globalThis.PlatformI18n.t("apps:resets_value1_value2_b3572e8e", { value1: RT.resetWhen('weekly'), value2: RT.resetUtc('weekly') })
         : 'Resets Monday 00:00 UTC.';
       const tip = bounties
-        ? `${remaining} of ${limit} thanks and ${bounties.remaining} of ${bounties.limit} bounties left this week. ${resets}`
-        : `${remaining} of ${limit} kudos left this week. ${resets}`;
+        ? globalThis.PlatformI18n.t("apps:value1_of_value2_thanks_and_value3_of_value4_bou_3b01d5d0", { value1: remaining, value2: limit, value3: bounties.remaining, value4: bounties.limit, value5: resets })
+        : globalThis.PlatformI18n.t("apps:value1_of_value2_kudos_left_this_week_value3_e96c6226", { value1: remaining, value2: limit, value3: resets });
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
         : 'text-violet-700 dark:text-violet-400';
       const bountyPart = bounties
-        ? `<span class="drawer-meter-dim"> · </span><span class="drawer-meter-part"><span class="drawer-meter-strong">${bounties.remaining}</span><span class="drawer-meter-dim"> of ${bounties.limit} bounties</span></span>`
+        ? `<span class="drawer-meter-dim"> · </span><span class="drawer-meter-part"><span class="drawer-meter-strong">${bounties.remaining}</span><span class="drawer-meter-dim"> ${globalThis.PlatformI18n.htmlText("core:of_value1_bounties_6e1a633a", { value1: bounties.limit })}</span></span>`
         : '';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
@@ -535,7 +535,7 @@ const Kudos = {
       // longer has to account for this slot's width.
       slot.innerHTML = `
         <a href="#leaderboard/prs" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
-          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} ${bounties ? 'thanks' : 'left'}</span></span>${bountyPart}
+          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> ${globalThis.PlatformI18n.htmlText("core:of_value3_value4_ecee7858", { value3: limit, value4: bounties ? globalThis.PlatformI18n.t("core:message_a6a2729cbf6b") : globalThis.PlatformI18n.t("core:message_360f84035942") })}</span></span>${bountyPart}
         </a>`;
     },
   },

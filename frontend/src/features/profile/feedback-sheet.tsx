@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#profile-feedback-sheet` — "Your feedback" (#3186): what the viewer sent
  * through the feedback dialog, where it went, its status, and a link to the
@@ -60,16 +61,12 @@ export interface FeedbackListView {
 function Rows({ view }: { view: FeedbackListView }): ReactNode {
   if (!view.loaded) {
     return (
-      <p id="profile-feedback-error" className={`${NOTE_CLASS} py-6 text-center`}>
-        Your feedback could not be loaded. Check your connection and try again.
-      </p>
+      <p id="profile-feedback-error" className={`${NOTE_CLASS} py-6 text-center`}><Message id="account:your_feedback_could_not_be_loaded_check_your_con_28a173d0" /></p>
     );
   }
   if (!view.rows.length) {
     return (
-      <p id="profile-feedback-empty" className={`${NOTE_CLASS} py-6 text-center`}>
-        Nothing sent yet. Feedback you send shows up here, with its status.
-      </p>
+      <p id="profile-feedback-empty" className={`${NOTE_CLASS} py-6 text-center`}><Message id="account:nothing_sent_yet_feedback_you_send_shows_up_here_453e4a21" /></p>
     );
   }
   return (
@@ -102,7 +99,7 @@ function Rows({ view }: { view: FeedbackListView }): ReactNode {
         ))}
       </GroupedList>
       {view.truncated ? (
-        <p className={`${NOTE_CLASS} mt-3`}>Showing the 50 you sent most recently.</p>
+        <p className={`${NOTE_CLASS} mt-3`}><Message id="account:showing_the_50_you_sent_most_recently_603fbebc" /></p>
       ) : null}
     </>
   );
@@ -146,26 +143,22 @@ export function FeedbackSheet({ view }: { view: FeedbackListView }): ReactNode {
     <div id="profile-feedback-root" ref={rootRef} className={ROOT_CLASS}>
       <div id="profile-feedback-sheet" ref={panelRef} className={CARD_CLASS}>
         <div className="flex items-center justify-between gap-3 pt-3">
-          <h2 className="text-lg font-bold">Your feedback</h2>
-          <Button
+          <h2 className="text-lg font-bold"><Message id="account:your_feedback_cdb1c0a5" /></h2>
+          <Localized element={<Button
             id="profile-feedback-close"
             variant="neutral"
             size="sm"
-            ink="neutral"
-            aria-label="Close your feedback"
+            ink="neutral" aria-label={catalogText("account:close_your_feedback_6a10f917")}
             onClick={() => Profile._dismissFeedback()}
           >
             {TIMES}
-          </Button>
+          </Button>} messages={{"aria-label":"account:close_your_feedback_6a10f917"}} />
         </div>
         {view.summary ? (
           <p id="profile-feedback-summary" className={`${NOTE_CLASS} mt-0.5`}>{view.summary}</p>
         ) : null}
         {/* What the two statuses mean, once, above the rows that wear them. */}
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 mb-3">
-          Received: it was filed as a request. Counted: it earned points in the
-          feedback challenge.
-        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 mb-3"><Message id="account:received_it_was_filed_as_a_request_counted_it_ea_00bcf6ab" /></p>
         <Rows view={view} />
       </div>
     </div>

@@ -621,18 +621,36 @@ function discoverSettings() {
   // nested array, so the first `],` at the object's own indent closes it.
   const sectionBlock = text.match(/\bSECTIONS:\s*\[([\s\S]*?)\n {4}\],/);
   if (!sectionBlock) throw new Error('Could not locate Settings.SECTIONS');
-  // One entry per PART (a [data-settings-section] wrapper). `page` groups
-  // parts into one nav row; every part's own #settings/<key> still resolves,
-  // so each part stays an inspectable settings group of its own.
-  return [...sectionBlock[1].matchAll(
-    /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
-  )].map((match) => ({
-    key: match[1],
-    label: match[2],
-    group: match[3],
-    gate: match[5] || null,
-    capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
-    classicPath: `#settings/${match[1]}`,
+  // Display names are live language getters now. Read their registered
+  // English source without executing the browser module or losing entries.
+  const tree = ts.createSourceFile(file, `const sections = [${sectionBlock[1]}];`, ts.ScriptTarget.Latest, true);
+  const array = tree.statements[0].declarationList.declarations[0].initializer;
+  const catalogs = new Map();
+  const textOf = node => {
+    if (ts.isStringLiteral(node)) return node.text;
+    if (ts.isCallExpression(node) && /PlatformI18n\.t$/.test(node.expression.getText(tree))
+        && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+      const [namespace, key] = node.arguments[0].text.split(':');
+      if (!catalogs.has(namespace)) catalogs.set(namespace, JSON.parse(fs.readFileSync(
+        path.join(ROOT, 'frontend/locales/en', `${namespace}.json`), 'utf8')));
+      const text = catalogs.get(namespace)[key];
+      if (typeof text === 'string') return text;
+    }
+    throw new Error(`Unsupported Settings inventory value: ${node.getText(tree)}`);
+  };
+  const entries = array.elements.map(element => Object.fromEntries(element.properties.map(property => {
+    const expression = ts.isGetAccessorDeclaration(property)
+      ? property.body?.statements[0]?.expression : property.initializer;
+    return [property.name.getText(tree), textOf(expression)];
+  })));
+  if (!entries.length) throw new Error('Settings inventory is empty');
+  return entries.map(entry => ({
+    key: entry.key,
+    label: entry.label,
+    group: entry.group,
+    gate: entry.gate || null,
+    capabilityId: `settings.open.${entry.key.replace(/[^a-z0-9]+/g, '_')}`,
+    classicPath: `#settings/${entry.key}`,
     mobileSupported: true,
   }));
 }

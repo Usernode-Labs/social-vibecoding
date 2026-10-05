@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#staging-overlay` — the staging-preview overlay, as a React island
  * (#1085 chunk H, step 1).
@@ -49,11 +52,12 @@ import { useStoreState } from '../../lib/use-store-state';
  */
 export function previewBannerText(solo: boolean): string {
   return solo
-    ? "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over."
-    : "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.";
+    ? tr("workshop:preview_of_your_change_it_goes_live_when_you_vot_6c8954c4")
+    : tr("workshop:preview_of_this_change_members_can_try_it_before_5fab03e3");
 }
 
 export function StagingOverlay(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const loaderRef = useRef<HTMLDivElement | null>(null);
@@ -175,9 +179,7 @@ export function StagingOverlay(): ReactNode {
           className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
           onClick={() => stagingHandlers.onBack?.()}
         >
-          <ChevronLeftIcon className="w-4 h-4" />
-          Back
-        </button>
+          <ChevronLeftIcon className="w-4 h-4" /><Message id="workshop:back_76900f1b" /></button>
         <span className="flex-1">
         </span>
         {/*
@@ -190,9 +192,7 @@ export function StagingOverlay(): ReactNode {
           className="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
           title={state.testBtnTitle || undefined}
           onClick={() => stagingHandlers.onTest?.()}
-        >
-          Test this change
-        </button>
+        ><Message id="workshop:test_this_change_cf4a1f03" /></button>
         {/*
             #771: docked-mode toggle. In the docked side panel it reads
             "Full screen" (expand to today's fullscreen overlay); in
@@ -228,10 +228,9 @@ export function StagingOverlay(): ReactNode {
             binds the click and owns this button's `hidden` class and the
             badge's text: see the note in the file header.
         */}
-        <button
+        <Localized element={<button
           id="staging-dev-console-btn"
-          className="relative text-zinc-400 hover:text-zinc-200"
-          aria-label="Open developer console"
+          className="relative text-zinc-400 hover:text-zinc-200" aria-label={catalogText("workshop:open_developer_console_dd573bcc")}
         >
           <TerminalIcon className="w-5 h-5" />
           <span
@@ -239,20 +238,19 @@ export function StagingOverlay(): ReactNode {
             className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
           >
           </span>
-        </button>
+        </button>} messages={{"aria-label":"workshop:open_developer_console_dd573bcc"}} />
         {/*
             #771: close button for the docked side panel. CSS shows it only
             in docked mode (where "Back" is hidden: closing the
             panel IS going back to the session, which never left).
         */}
-        <button
+        <Localized element={<button
           id="staging-dock-close"
-          className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-          aria-label="Close preview"
+          className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0" aria-label={catalogText("workshop:close_preview_7d8ab368")}
           onClick={() => stagingHandlers.onDockClose?.()}
         >
           &times;
-        </button>
+        </button>} messages={{"aria-label":"workshop:close_preview_7d8ab368"}} />
       </div>
       {/*
           Explains why this change isn't live yet, a common point of
@@ -304,19 +302,16 @@ export function StagingOverlay(): ReactNode {
           className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
         >
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-violet-300">
-              How to test
-            </span>
+            <span className="text-xs font-semibold text-violet-300"><Message id="workshop:how_to_test_925cc738" /></span>
             <span className="flex-1">
             </span>
-            <button
+            <Localized element={<button
               id="staging-testing-close"
-              className="text-zinc-400 hover:text-zinc-200 text-sm leading-none px-1"
-              aria-label="Dismiss testing instructions"
+              className="text-zinc-400 hover:text-zinc-200 text-sm leading-none px-1" aria-label={catalogText("workshop:dismiss_testing_instructions_11291def")}
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
               &times;
-            </button>
+            </button>} messages={{"aria-label":"workshop:dismiss_testing_instructions_11291def"}} />
           </div>
           <div
             id="staging-testing-content"

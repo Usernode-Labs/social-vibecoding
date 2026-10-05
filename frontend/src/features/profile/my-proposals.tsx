@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#profile-proposals-screen` — Your work (UI overhaul): Your changes, Your
  * requests or Your votes, the three rows of Profile's "Your work", one list
@@ -63,15 +67,15 @@ const READS: Record<WorkKind, string> = {
 
 /** What each view is called, on the bar and in its messages. */
 export const WORK_TITLES: Record<WorkKind, string> = {
-  changes: 'Your changes',
-  requests: 'Your requests',
-  votes: 'Your votes',
+  get changes() { return tr("account:your_changes_96b37574"); },
+  get requests() { return tr("account:your_requests_4c64a2a1"); },
+  get votes() { return tr("account:your_votes_ca7f0008"); },
 };
 
 const EMPTY: Record<WorkKind, string> = {
-  changes: 'You have not started a change yet.',
-  requests: 'You have not asked for a change yet.',
-  votes: 'You have not voted on anything yet.',
+  get changes() { return tr("account:you_have_not_started_a_change_yet_ed4f426e"); },
+  get requests() { return tr("account:you_have_not_asked_for_a_change_yet_38553fd4"); },
+  get votes() { return tr("account:you_have_not_voted_on_anything_yet_e7bcf734"); },
 };
 
 /** A folded group shows this many rows until "Show all" is pressed. */
@@ -79,8 +83,8 @@ export const FOLD_AT = 5;
 
 /** The groups that fold, and what their "Show all" says. */
 const FOLDS: Record<string, string> = {
-  'changes:merged': 'Show all live',
-  'votes:decided': 'Show all',
+  get 'changes:merged'() { return tr("account:show_all_live_0c123d00"); },
+  get 'votes:decided'() { return tr("account:show_all_2150d8df"); },
 };
 
 const TITLE = 'text-base font-semibold whitespace-normal line-clamp-2';
@@ -116,6 +120,7 @@ function viewOf(kind: WorkKind, data: unknown): { loaded: boolean; sections: Sec
 }
 
 function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNode {
+  useUiLanguage();
   const foldLabel = FOLDS[`${kind}:${section.key}`];
   const [all, setAll] = useState(false);
   const folded = !!foldLabel && !all && section.rows.length > FOLD_AT;
@@ -166,6 +171,7 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
 }
 
 export function ProfileProposalsScreen(): ReactNode {
+  useUiLanguage();
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(profileProposalsStore) as WorkState;
   useVisibilityHiddenClass(screenRef, 'profile-proposals-screen', false);
@@ -193,17 +199,15 @@ export function ProfileProposalsScreen(): ReactNode {
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
         {state.error ? (
           <div className={NOTE}>
-            <p>{`${WORK_TITLES[kind]} could not be loaded.`}</p>
+            <p><LocalizedValue render={() => (tr("account:value1_could_not_be_loaded_05c2e067", { value1: WORK_TITLES[kind] }))} /></p>
             <button
               type="button"
               className="mt-2 font-medium text-violet-600 dark:text-violet-400"
               onClick={() => { void profileProposalsController.reload(); }}
-            >
-              Try again
-            </button>
+            ><Message id="account:try_again_d8b8392e" /></button>
           </div>
         ) : data == null || !view.loaded ? (
-          state.open ? <p className={NOTE}>Loading…</p> : null
+          state.open ? <p className={NOTE}><Message id="account:loading_ba3bbbe1" /></p> : null
         ) : view.empty ? (
           <p className={NOTE}>{EMPTY[kind]}</p>
         ) : (
@@ -213,9 +217,7 @@ export function ProfileProposalsScreen(): ReactNode {
           ))
         )}
         {kind === 'votes' && view.loaded && !view.empty ? (
-          <p className="px-4 mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-            A vote can be changed while it is open, so each row says your vote as it stands.
-          </p>
+          <p className="px-4 mt-3 text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:a_vote_can_be_changed_while_it_is_open_so_each_r_2f10066a" /></p>
         ) : null}
         {/* Your requests ends on the way to make another, the dialog every
             other door opens (App.openFeedbackModal). */}
@@ -226,9 +228,7 @@ export function ProfileProposalsScreen(): ReactNode {
               data-profile-work-ask=""
               className="w-full"
               onClick={() => { (window as any).App?.openFeedbackModal?.(); }}
-            >
-              Ask for a change
-            </Button>
+            ><Message id="account:ask_for_a_change_f445fc4f" /></Button>
           </div>
         ) : null}
       </div>

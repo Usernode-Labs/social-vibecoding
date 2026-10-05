@@ -54,7 +54,7 @@
   // One generic message for every failed lookup — a distinguishable
   // "unknown client" vs "bad redirect" would let someone probe which
   // client ids exist.
-  var GENERIC_INVALID = 'This connection request is invalid or has expired. Start a new one from Claude or ChatGPT.';
+  var GENERIC_INVALID = () => globalThis.PlatformI18n.t("core:this_connection_request_is_invalid_or_has_expire_57b0bb1a");
 
   function looksComplete() {
     return request.clientId
@@ -65,9 +65,10 @@
   }
 
   async function load() {
+    await globalThis.PlatformI18n.ready;
     if (!looksComplete()) {
       showEntry(
-        'Start the connection from Claude or ChatGPT and the approval details will open here automatically.',
+        globalThis.PlatformI18n.t("core:start_the_connection_from_claude_or_chatgpt_and__b5786bc6"),
         false
       );
       return;
@@ -86,7 +87,7 @@
         cache: 'no-store',
       });
     } catch (err) {
-      showEntry('Could not reach Homeroom. Check your connection and reload.', true);
+      showEntry(globalThis.PlatformI18n.t("core:could_not_reach_homeroom_check_your_connection_a_322cbed7"), true);
       return;
     }
 
@@ -123,26 +124,24 @@
     // back to Claude or ChatGPT to retry something that cannot yet succeed.
     if (resp.status === 403) {
       showEntry(
-        'Your Homeroom account has not been released off the waitlist yet, so it '
-        + 'cannot approve a connection. Once it is, start the connection again '
-        + 'from Claude or ChatGPT.',
+        globalThis.PlatformI18n.t("core:your_homeroom_account_has_not_been_released_off__bf60a865"),
         true
       );
       return;
     }
     if (!resp.ok) {
-      showEntry(GENERIC_INVALID, true);
+      showEntry(GENERIC_INVALID(), true);
       return;
     }
 
     var data = await resp.json().catch(function () { return null; });
     if (!data) {
-      showEntry(GENERIC_INVALID, true);
+      showEntry(GENERIC_INVALID(), true);
       return;
     }
 
     document.getElementById('intro').textContent =
-      data.client_name + ' is asking to connect to your Homeroom account.';
+      globalThis.PlatformI18n.t("authorization:client_asks_to_connect", { client: data.client_name });
     document.getElementById('confirm-client').textContent = data.client_name;
     document.getElementById('confirm-origin').textContent = data.redirect_origin;
     document.getElementById('confirm-user').textContent = data.username;
@@ -152,9 +151,14 @@
     (data.scopes || []).forEach(function (scope) {
       var li = document.createElement('li');
       var label = document.createElement('strong');
-      label.textContent = scope.label;
+      var copy = scope.id === 'usernode:apps:read'
+        ? { label: 'authorization:scope_read_label', detail: 'authorization:scope_read_detail' }
+        : scope.id === 'usernode:proposals:write'
+          ? { label: 'authorization:scope_write_label', detail: 'authorization:scope_write_detail' }
+          : null;
+      label.textContent = copy ? globalThis.PlatformI18n.t(copy.label) : scope.label;
       var detail = document.createElement('span');
-      detail.textContent = scope.detail;
+      detail.textContent = copy ? globalThis.PlatformI18n.t(copy.detail) : scope.detail;
       li.appendChild(label);
       li.appendChild(detail);
       list.appendChild(li);
@@ -189,26 +193,26 @@
     } catch (err) {
       approve.disabled = false;
       reject.disabled = false;
-      showResult('Could not reach Homeroom. Try again.', true);
+      showResult(globalThis.PlatformI18n.t("core:could_not_reach_homeroom_try_again_acac223c"), true);
       return;
     }
 
     if (!resp.ok) {
       approve.disabled = false;
       reject.disabled = false;
-      showResult(GENERIC_INVALID, true);
+      showResult(GENERIC_INVALID(), true);
       return;
     }
 
     var data = await resp.json().catch(function () { return null; });
     if (!data || !data.redirect_to) {
-      showResult(GENERIC_INVALID, true);
+      showResult(GENERIC_INVALID(), true);
       return;
     }
     showResult(
       decision === 'approve'
-        ? 'Connected. Returning you to your chat…'
-        : 'Cancelled. Returning you to your chat…',
+        ? globalThis.PlatformI18n.t("core:connected_returning_you_to_your_chat_2009e14d")
+        : globalThis.PlatformI18n.t("core:cancelled_returning_you_to_your_chat_1a6f8033"),
       false
     );
     window.location.href = data.redirect_to;

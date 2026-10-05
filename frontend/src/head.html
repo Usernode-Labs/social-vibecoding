@@ -50,20 +50,14 @@
     html[data-language-loading] body { visibility: hidden; }
   </style>
   <script>
-    // Keep English prerender/hydration intact, but do not flash it before a
-    // selected language is ready. A dead bundle must not leave the page hidden.
+    // Hydrate the English document behind the mask until the session resolves
+    // its account language, including on a device with no cached preference.
+    // A dead bundle must not leave sign-in hidden indefinitely.
     (function () {
-      try {
-        var language = localStorage.getItem('homeroom:language:account')
-          || localStorage.getItem('homeroom:language:device')
-          || navigator.language || 'en';
-        if (!/^en(?:-|$)/i.test(language)) {
-          document.documentElement.setAttribute('data-language-loading', '');
-          setTimeout(function () {
-            document.documentElement.removeAttribute('data-language-loading');
-          }, 10000);
-        }
-      } catch (e) { /* Storage can be unavailable; English remains usable. */ }
+      document.documentElement.setAttribute('data-language-loading', '');
+      setTimeout(function () {
+        document.documentElement.removeAttribute('data-language-loading');
+      }, 10000);
     }());
   </script>
   <!-- The browser-chrome colour, and the ground the shell paints on before

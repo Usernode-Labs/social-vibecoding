@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#github-link-body` — the social-account ownership proofs and the daily
  * credit tier, as the only React writer below that host.
@@ -264,7 +269,7 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
       {...(provider === 'github' ? { id: 'github-link-audit-note' } : null)}
       className="mt-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-500"
     >
-      {'Review or revoke this authorization at '}
+      <Message id="settings:review_or_revoke_this_authorization_at_07c03ecd" />
       <a
         href={href}
         target="_blank"
@@ -285,6 +290,7 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
  * the pair against the token endpoint.
  */
 function Diagnostics({ view }: { view: DiagnosticsView }) {
+  useUiLanguage();
   const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
   const [verdict, setVerdict] = useState<{ tone: string; text: string } | null>(null);
@@ -296,7 +302,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
     >
       <div className="font-medium text-zinc-700 dark:text-zinc-300">{view.source}</div>
       <div className="mt-1 flex items-center gap-2 min-w-0">
-        <span className="text-zinc-500 dark:text-zinc-400 shrink-0">Callback URI:</span>
+        <span className="text-zinc-500 dark:text-zinc-400 shrink-0"><Message id="settings:callback_uri_ae2d8e2d" /></span>
         <code className="truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5">
           {view.callbackUrl}
         </code>
@@ -311,7 +317,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
             } catch { /* clipboard unavailable — the address is still visible */ }
           }}
         >
-          {copied ? 'Copied' : 'Copy'}
+          <LocalizedValue render={() => (copied ? tr("settings:copied_8d525e5f") : tr("settings:copy_e21f935f"))} />
         </button>
       </div>
       <p className="mt-1 text-zinc-500 dark:text-zinc-400">{view.warning}</p>
@@ -323,7 +329,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
           className="shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors"
           onClick={async () => {
             setChecking(true);
-            setVerdict({ tone: 'text-zinc-500 dark:text-zinc-400', text: 'Checking…' });
+            setVerdict({ tone: 'text-zinc-500 dark:text-zinc-400', get text() { return tr("settings:checking_ec963ffc"); } });
             try {
               let answer;
               if (view.demo) {
@@ -334,40 +340,38 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
                   credentials: 'same-origin',
                   cache: 'no-store',
                 });
-                if (!response.ok) throw new Error(`Check failed (${response.status})`);
+                if (!response.ok) throw new Error(tr("settings:check_failed_value1_0654d358", { value1: response.status }));
                 answer = await response.json();
               }
               if (answer.clientAuth === 'ok') {
                 setVerdict({
                   tone: 'text-emerald-700 dark:text-emerald-400',
-                  text: `${view.name} accepted the platform’s client credentials. `
-                    + `If connecting still fails on ${view.name}’s own page, the callback address above `
-                    + `is not registered on the ${view.name} app.`,
+                  text: tr("settings:value1_accepted_the_platform_s_client_credential_d0bf5c37", { value1: view.name })
+                    + tr("settings:if_connecting_still_fails_on_value1_s_own_page_t_c60fea59", { value1: view.name })
+                    + tr("settings:is_not_registered_on_the_value1_app_05cac2c8", { value1: view.name }),
                 });
               } else if (answer.clientAuth === 'rejected') {
                 setVerdict({
                   tone: 'text-red-700 dark:text-red-400',
-                  text: `${view.name} rejected the platform’s client ID or secret. `
-                    + 'the configured credential pair is wrong.',
+                  text: tr("settings:value1_rejected_the_platform_s_client_id_or_secr_d8c2d2c1", { value1: view.name })
+                    + tr("settings:the_configured_credential_pair_is_wrong_474d44ba"),
                 });
               } else {
                 setVerdict({
                   tone: 'text-amber-800 dark:text-amber-400',
-                  text: `Couldn’t reach ${view.name} to verify the credentials. Try again shortly.`,
+                  get text() { return tr("settings:couldn_t_reach_value1_to_verify_the_credentials__166daa37", { value1: view.name }); },
                 });
               }
             } catch {
               setVerdict({
                 tone: 'text-red-700 dark:text-red-400',
-                text: 'The configuration check failed to run. Try again shortly.',
+                get text() { return tr("settings:the_configuration_check_failed_to_run_try_again__b10496d3"); },
               });
             } finally {
               setChecking(false);
             }
           }}
-        >
-          Run configuration check
-        </button>
+        ><Message id="settings:run_configuration_check_13d45a0d" /></button>
         <span className={`${verdict ? verdict.tone : 'text-zinc-500 dark:text-zinc-400'} pt-1`}>
           {verdict ? verdict.text : null}
         </span>
@@ -386,6 +390,7 @@ async function errorMessage(response: Response, fallback: string) {
 }
 
 function ProviderRow({ row }: { row: ProviderRowView }) {
+  useUiLanguage();
   const opening = useRef(false);
   const [actionStatus, setActionStatus] = useState('');
   const [actionFailed, setActionFailed] = useState(false);
@@ -409,7 +414,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     if (opening.current) return;
     opening.current = true;
     setActionFailed(false);
-    setActionStatus('Opening your browser…');
+    setActionStatus(tr("settings:opening_your_browser_fe059f40"));
     try {
       await openNativeSocialConnect({
         bridge,
@@ -419,8 +424,8 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         origin: window.location.origin,
       });
       setActionStatus(
-        `Finish ${action.intent === 'connect' ? 'connecting' : 'verification'} in your browser, `
-        + 'then return to the app. Sign in with the same Homeroom account if asked.'
+        tr("settings:finish_value1_in_your_browser_fb697fc0", { value1: action.intent === 'connect' ? tr("settings:message_3d6df245178e") : tr("settings:message_4183b7793fd2") })
+        + tr("settings:then_return_to_the_app_sign_in_with_the_same_hom_c9bd3fc4")
       );
     } catch (err) {
       setActionFailed(true);
@@ -451,7 +456,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     setPublicVisible(next);
     setBusy('visibility');
     setActionFailed(false);
-    setActionStatus('Saving profile visibility…');
+    setActionStatus(tr("settings:saving_profile_visibility_5ba20300"));
     try {
       const response = await fetch(
         `/api/me/social-identities/${encodeURIComponent(row.provider)}/visibility`,
@@ -464,10 +469,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not change profile visibility.'));
+        throw new Error(await errorMessage(response, tr("settings:could_not_change_profile_visibility_07759818")));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(next ? 'Shown on your public profile.' : 'Hidden from your public profile.');
+      setActionStatus(next ? tr("settings:shown_on_your_public_profile_f221e7cd") : tr("settings:hidden_from_your_public_profile_f27c2de3"));
     } catch (err) {
       setPublicVisible(previous);
       setActionFailed(true);
@@ -480,7 +485,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
   const confirmReplacement = async () => {
     setBusy('replace');
     setActionFailed(false);
-    setActionStatus('Replacing account…');
+    setActionStatus(tr("settings:replacing_account_2c0a642e"));
     try {
       const response = await fetch(
         `/api/me/social-identities/${encodeURIComponent(row.provider)}/replacement`,
@@ -493,10 +498,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not replace this account.'));
+        throw new Error(await errorMessage(response, tr("settings:could_not_replace_this_account_bd9e7baf")));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(`${row.name} account replaced.`);
+      setActionStatus(tr("settings:value1_account_replaced_f87c67dc", { value1: row.name }));
     } catch (err) {
       setActionFailed(true);
       setActionStatus((err as Error).message);
@@ -514,10 +519,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         { method: 'DELETE', credentials: 'same-origin', cache: 'no-store' }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not cancel this replacement.'));
+        throw new Error(await errorMessage(response, tr("settings:could_not_cancel_this_replacement_1634fdcf")));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(`No changes made. @${row.pendingReplacement?.currentHandle} is still connected.`);
+      setActionStatus(tr("settings:no_changes_made_value1_is_still_connected_fe2b5c1e", { value1: row.pendingReplacement?.currentHandle }));
     } catch (err) {
       setActionFailed(true);
       setActionStatus((err as Error).message);
@@ -580,9 +585,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
             <p className={`mb-3 text-[0.9375rem] ${STATE_TONE.amber}`}>{panelNote}</p>
           ) : null}
           {row.visibility ? (
-            <label className="flex min-h-[44px] items-center justify-between gap-3 text-[0.9375rem] text-zinc-900 dark:text-zinc-100 cursor-pointer select-none">
-              Show on public profile
-              <Switch
+            <label className="flex min-h-[44px] items-center justify-between gap-3 text-[0.9375rem] text-zinc-900 dark:text-zinc-100 cursor-pointer select-none"><Message id="settings:show_on_public_profile_b8e29525" /><Switch
                 id={`${row.provider}-profile-visible`}
                 checked={publicVisible}
                 disabled={row.visibility.disabled || busy === 'visibility'}
@@ -603,9 +606,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
                   if (row.unlink?.disabled) return;
                   controller()?._unlinkGithub?.(e.currentTarget, row.provider);
                 }}
-              >
-                Disconnect
-              </button>
+              ><Message id="settings:disconnect_acfc5be7" /></button>
             ) : null}
           </div>
           {row.linkedAt ? (
@@ -675,25 +676,21 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {head}
 
       {row.pendingReplacement ? (
-        <section
+        <LocalizedDynamic element={<section
           id={`${row.provider}-replacement-confirmation`}
-          aria-label={`Confirm ${row.name} account replacement`}
+          aria-label={tr("settings:confirm_value1_account_replacement_3fc74830", { value1: row.name })}
           className="mx-4 mb-4 rounded-xl border border-violet-300 dark:border-violet-800 bg-white dark:bg-zinc-900 p-3"
         >
-          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-            Replace {row.name} account?
-          </div>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            The new account is verified. Nothing changes until you confirm.
-          </p>
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200"><RichMessage id="settings:sentence_ed5c7062bb31" values={{ value1: row.name }} /></div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:the_new_account_is_verified_nothing_changes_unti_e4912395" /></p>
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <div className="rounded-md border border-zinc-300 dark:border-zinc-700 px-2.5 py-2 min-w-0">
-              <div className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Current</div>
+              <div className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400"><Message id="settings:current_e0d1b682" /></div>
               <div className="text-sm font-medium truncate">@{row.pendingReplacement.currentHandle}</div>
             </div>
             <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">→</span>
             <div className="rounded-md border border-violet-400 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 px-2.5 py-2 min-w-0">
-              <div className="text-[0.65rem] uppercase tracking-wide text-violet-700 dark:text-violet-300">Verified replacement</div>
+              <div className="text-[0.65rem] uppercase tracking-wide text-violet-700 dark:text-violet-300"><Message id="settings:verified_replacement_10fc1a46" /></div>
               <div className="text-sm font-medium truncate">@{row.pendingReplacement.replacementHandle}</div>
             </div>
           </div>
@@ -703,12 +700,8 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               checked={replacementVisible}
               disabled={row.pendingReplacement.disabled || !!busy}
               onChange={(e) => setReplacementVisible(e.currentTarget.checked)}
-            />
-            Show the replacement on my public profile
-          </label>
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Cancelling keeps @{row.pendingReplacement.currentHandle} connected with its current visibility.
-          </p>
+            /><Message id="settings:show_the_replacement_on_my_public_profile_ef2d740b" /></label>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400"><RichMessage id="settings:sentence_b11841ce5a48" values={{ value1: row.pendingReplacement.currentHandle }} /></p>
           <div className="mt-3 flex justify-end gap-2">
             <Button
               type="button"
@@ -719,9 +712,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               disabledStyle="dim"
               className="min-h-[36px]"
               onClick={() => { void cancelReplacement(); }}
-            >
-              Cancel
-            </Button>
+            ><Message id="settings:cancel_19766ed6" /></Button>
             <Button
               type="button"
               disabled={row.pendingReplacement.disabled || !!busy}
@@ -731,10 +722,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               className="min-h-[36px]"
               onClick={() => { void confirmReplacement(); }}
             >
-              {busy === 'replace' ? 'Replacing…' : 'Replace account'}
+              <LocalizedValue render={() => (busy === 'replace' ? tr("settings:replacing_44207eb2") : tr("settings:replace_account_53ac9b29"))} />
             </Button>
           </div>
-        </section>
+        </section>} resolve={() => ({ get "aria-label"() { return tr("settings:confirm_value1_account_replacement_3fc74830", { value1: row.name }); } })} />
       ) : null}
 
       {actionStatus ? (
@@ -768,7 +759,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {row.diagnostics ? (
         <details className="group/diag px-4 pb-3 pl-[3.125rem]" open={!!row.strandedNote || undefined}>
           <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
-            {`${row.name} setup · admins only`}
+            <LocalizedValue render={() => (tr("settings:value1_setup_admins_only_6a80b133", { value1: row.name }))} />
             <ChevronRightIcon
               aria-hidden="true"
               className="h-4 w-4 shrink-0 transition-transform group-open/diag:rotate-90"
@@ -787,9 +778,7 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
   if (phase === 'loading' || phase === 'error') return <>{message}</>;
   return (
     <>
-      <h4 id="github-link-credits-label" className="px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500">
-        Daily credits
-      </h4>
+      <h4 id="github-link-credits-label" className="px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500"><Message id="settings:daily_credits_a6f0c7d1" /></h4>
       <GroupedList className="mx-0 py-1.5" role="group" aria-labelledby="github-link-credits-label">
         {tier ? <TierRow tier={tier} /> : null}
         {providers.map((row) => <ProviderRow key={row.provider} row={row} />)}
@@ -804,6 +793,7 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
 }
 
 export function SocialIdentity() {
+  useUiLanguage();
   useEffect(() => {
     if (!(window as any).usernode?.isNative) return;
     return watchSocialConnectReturn({

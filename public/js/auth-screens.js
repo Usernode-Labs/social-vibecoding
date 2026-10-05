@@ -131,7 +131,7 @@
     try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
     if (!offline) return false;
     if (errorEl) {
-      showError(errorEl, "You're offline. Signing in needs a connection.");
+      showError(errorEl, globalThis.PlatformI18n.t("core:you_re_offline_signing_in_needs_a_connection_9b7e6fd0"));
     }
     try { window.Offline.nudge(); } catch (_) { /* ignore */ }
     return true;

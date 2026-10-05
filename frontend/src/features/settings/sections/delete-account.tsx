@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { SectionHeading } from '@/components/ui/field';
 import { DeleteAccount } from '../delete-account';
 
@@ -6,9 +7,7 @@ export function DeleteAccountSection() {
   // confirmation form beneath it is entirely React-owned.
   return (
     <div data-settings-section="delete-account" className="hidden">
-      <SectionHeading title="Delete account">
-        Anonymise your account and remove your sign-in access. Shared messages and contributions stay under an anonymous “deleted-user” name.
-      </SectionHeading>
+      <Localized element={<SectionHeading title={catalogText("settings:delete_account_a2e20a33")}><Message id="settings:anonymise_your_account_and_remove_your_sign_in_a_7f60f499" /></SectionHeading>} messages={{"title":"settings:delete_account_a2e20a33"}} />
       <DeleteAccount />
     </div>
   );

@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * An image from a chat, full screen and inside the app (#3286).
  *
@@ -61,6 +64,7 @@ export function ImageViewer({ src, alt, onClose }: {
   alt: string;
   onClose: () => void;
 }) {
+  useUiLanguage();
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -90,7 +94,7 @@ export function ImageViewer({ src, alt, onClose }: {
   }, []);
 
   if (typeof document === 'undefined') return null;
-  const name = alt || 'Image';
+  const name = alt || tr("core:image_1aa4cb0b");
   return createPortal(
     <div
       className="fixed inset-0 z-[2200] flex items-center justify-center bg-black/90"
@@ -132,19 +136,16 @@ export function ImageViewer({ src, alt, onClose }: {
           download={alt || true}
           className="inline-flex items-center h-10 px-4 rounded-full bg-white/15 text-white text-sm font-semibold"
           data-image-viewer-download=""
-        >
-          Download
-        </a>
-        <button
+        ><Message id="core:download_d6eafe82" /></a>
+        <Localized element={<button
           ref={closeRef}
           type="button"
-          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-white/15 text-white"
-          aria-label="Close"
+          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-white/15 text-white" aria-label={catalogText("core:close_7d9eb7ac")}
           data-image-viewer-close=""
           onClick={() => onCloseRef.current()}
         >
           <XIcon className="w-6 h-6" aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"core:close_7d9eb7ac"}} />
       </div>
     </div>,
     document.body,

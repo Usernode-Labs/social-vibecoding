@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * "Your communities": the switcher behind the Communities tab.
  *
@@ -69,14 +74,14 @@ function plural(n: number, one: string, many: string): string {
 
 /** "Public · 23 members", "Private · 11 members", "Just you". */
 export function switcherSub(info: Pick<CommunityInfo, 'audience' | 'memberCount'>): string {
-  if (info.audience === 'solo') return 'Just you';
-  const who = info.audience === 'invited' ? 'Private' : 'Public';
+  if (info.audience === 'solo') return tr("workshop:just_you_aeed20a9");
+  const who = info.audience === 'invited' ? tr("core:private_c63eb672") : tr("core:public_591935b1");
   return `${who} · ${plural(Number(info.memberCount) || 0, 'member', 'members')}`;
 }
 
 function Waiting({ n }: { n: number }) {
   if (!n) return null;
-  return <span className="community-switcher-waiting" data-switcher-waiting="">{`${n} to vote`}</span>;
+  return <span className="community-switcher-waiting" data-switcher-waiting=""><LocalizedValue render={() => (tr("workshop:value1_to_vote_18cf7679", { value1: n }))} /></span>;
 }
 
 function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
@@ -122,6 +127,7 @@ function SwitcherSection({ audience, label, rows, current }: {
   rows: CommunityInfo[];
   current: string | null;
 }) {
+  useUiLanguage();
   const floor = sectionFloor(rows, current);
   const [limit, setLimit] = useState(floor);
   const fold = sectionFoldFrom(rows.length, limit, floor);
@@ -140,7 +146,7 @@ function SwitcherSection({ audience, label, rows, current }: {
     <div ref={groupRef} role="group" aria-labelledby={labelId} data-switcher-section={audience}>
       <h3 className="community-switcher-section" id={labelId}>
         <span>{label}</span>
-        <span className="community-switcher-section-n" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+        <LocalizedDynamic element={<span className="community-switcher-section-n" aria-label={tr("workshop:value1_in_value2_7ed6a589", { value1: rows.length, value2: label })}>{rows.length}</span>} resolve={() => ({ get "aria-label"() { return tr("workshop:value1_in_value2_7ed6a589", { value1: rows.length, value2: label }); } })} />
       </h3>
       {shown.map((info) => (
         <Row key={info.slug} info={info} current={current === info.slug} />
@@ -179,6 +185,7 @@ function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
 
 /** The switcher's contents, in either presentation. Exported for tests. */
 export function SwitcherBody(): ReactNode {
+  useUiLanguage();
   const st = useStoreState(communityScopeStore);
   const all = !st.slug;
   const rows = (st.list || []).map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
@@ -192,7 +199,7 @@ export function SwitcherBody(): ReactNode {
   return (
     <>
       <div className="community-switcher-head">
-        <h2 className="community-switcher-title" id="community-switcher-title">Your communities</h2>
+        <h2 className="community-switcher-title" id="community-switcher-title"><Message id="workshop:your_communities_605352da" /></h2>
       </div>
       {/* Up and Down move between the rows, as in the Homeroom menu. */}
       <div className="community-switcher-list" onKeyDown={roveRows}>
@@ -212,9 +219,9 @@ export function SwitcherBody(): ReactNode {
             <UserGroupIcon />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">All communities</span>
+            <span className="community-switcher-name"><Message id="workshop:all_communities_4b597732" /></span>
             <span className="community-switcher-sub">
-              {st.list ? plural(st.list.length, 'community', 'communities') : 'Every community you are in'}
+              <LocalizedValue render={() => (st.list ? plural(st.list.length, 'community', 'communities') : tr("workshop:every_community_you_are_in_1556344e"))} />
             </span>
           </span>
           <Waiting n={Number(st.totalNeeds) || 0} />
@@ -223,7 +230,7 @@ export function SwitcherBody(): ReactNode {
           </span>
         </button>
         {st.list == null ? (
-          <p className="community-switcher-note" data-switcher-loading="">Loading your communities…</p>
+          <p className="community-switcher-note" data-switcher-loading=""><Message id="workshop:loading_your_communities_0c069ebf" /></p>
         ) : sections.map((section) => (
           <SwitcherSection
             key={section.key}
@@ -242,9 +249,7 @@ export function SwitcherBody(): ReactNode {
           <span className="community-switcher-tile community-switcher-tile-add" aria-hidden="true">
             <PlusIcon className="w-5 h-5" />
           </span>
-          <span className="community-switcher-text">
-            <span className="community-switcher-name">Join or start a community</span>
-          </span>
+          <span className="community-switcher-text"><RichMessage id="workshop:sentence_25d33103ff61" components={[<span className="community-switcher-name" />]} /></span>
         </button>
       </div>
     </>
@@ -252,6 +257,7 @@ export function SwitcherBody(): ReactNode {
 }
 
 function SwitcherSheet(): ReactNode {
+  useUiLanguage();
   const panel = useRef<HTMLDivElement | null>(null);
   const [adopted, setAdopted] = useState(false);
   useIsomorphicLayoutEffect(() => {
@@ -293,6 +299,7 @@ function SwitcherSheet(): ReactNode {
 }
 
 function SwitcherMenu(): ReactNode {
+  useUiLanguage();
   const st = useStoreState(communityScopeStore);
   const panel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -340,6 +347,7 @@ function SwitcherMenu(): ReactNode {
 
 /** The switcher, while it is open: a sheet on a phone, a menu on a wide window. */
 export function CommunitySwitcher(): ReactNode {
+  useUiLanguage();
   const st = useStoreState(communityScopeStore);
   const wide = useWide();
   // A route change closes it: the page it was about has gone.

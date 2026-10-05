@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
@@ -343,7 +347,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;
     const swipe = ui.swipeActions(el, {
       actions: [{
-        label: 'Clear',
+        get label() { return tr("community:clear_83b12c22"); },
         // The kit's full swipe belongs to its destructive action, and it
         // takes the row out of the document; only Unread wants that.
         destructive: removes,
@@ -403,7 +407,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
               in `title` (#1808) — the rest of the line is plain text, and the
               separator rides inside it rather than as a whitespace-only
               child, same rule as everywhere else on this row. */}
-          {[view.appLine, view.by ? `by @${view.by}` : null].filter(Boolean)
+          {[view.appLine, view.by ? tr("community:by_value1_363778f7", { value1: view.by }) : null].filter(Boolean)
             .map((part, index) => (index ? ` · ${part}` : part)).join('')}
           {view.time ? (
             <time title={view.timeTitle}>
@@ -419,20 +423,20 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           run is read, violet only while it is still waiting on you.
       */}
       {view.count && view.count > 1 ? (
-        <span
+        <LocalizedDynamic element={<span
           className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[11px] font-semibold '
             + 'flex items-center justify-center '
             + (view.unread
               ? 'bg-violet-600 text-white'
               : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
-          aria-label={`${view.count} notifications`}
+          aria-label={tr("community:value1_notifications_08e2b2c5", { value1: view.count })}
         >
           {view.count > 99 ? '99+' : view.count}
-        </span>
+        </span>} resolve={() => ({ get "aria-label"() { return tr("community:value1_notifications_08e2b2c5", { value1: view.count }); } })} />
       ) : null}
       {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread">
-        </span>
+        <Localized element={<span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label={catalogText("community:unread_1b9f384c")}>
+        </span>} messages={{"aria-label":"community:unread_1b9f384c"}} />
       ) : null}
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
     </>
@@ -480,10 +484,9 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
       {row}
       {clearable && !touch ? (
-        <button
+        <Localized element={<button
           type="button"
-          data-notification-clear={view.id}
-          aria-label="Clear notification"
+          data-notification-clear={view.id} aria-label={catalogText("community:clear_notification_f3936d87")}
           // Hidden until the pointer is over the slot or something in it has
           // keyboard focus, and untouchable while hidden, so a click on the
           // tile's corner opens the row as it always did.
@@ -512,13 +515,14 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           }}
         >
           <XIcon aria-hidden="true" className="h-3 w-3" strokeWidth="2.5" />
-        </button>
+        </button>} messages={{"aria-label":"community:clear_notification_f3936d87"}} />
       ) : null}
     </div>
   );
 }
 
 export function NotificationsSheetView() {
+  useUiLanguage();
   const { open, adopted } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
   };
@@ -638,10 +642,9 @@ export function NotificationsSheetView() {
         onClick={() => NotificationsSheet.close()}
       >
       </div>
-      <div
+      <Localized element={<div
         id="notifications-sheet"
-        role="dialog"
-        aria-label="Notifications"
+        role="dialog" aria-label={catalogText("community:notifications_78801183")}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className={'fixed z-50 flex flex-col dc-lift dc-lift-panel nav-sheet-transition'}
@@ -667,9 +670,7 @@ export function NotificationsSheetView() {
           and the close disc. The tabs under it are the chip rail.
       */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0">
-        <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          Notifications
-        </h2>
+        <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100"><Message id="community:notifications_78801183" /></h2>
         {tab === 'unread' ? (
           <button
             id="notifications-screen-mark-all"
@@ -679,27 +680,23 @@ export function NotificationsSheetView() {
               + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
             disabled={!unread.length}
             onClick={() => controller()?.markAllRead()}
-          >
-            Mark all read
-          </button>
+          ><Message id="community:mark_all_read_3bc62a9e" /></button>
         ) : null}
-        <button
+        <Localized element={<button
           id="notifications-sheet-close"
           type="button"
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
-            + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
-          aria-label="Close"
+            + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'} aria-label={catalogText("community:close_7d9eb7ac")}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
-        </button>
+        </button>} messages={{"aria-label":"community:close_7d9eb7ac"}} />
       </div>
-      <div
+      <Localized element={<div
         id="notifications-screen-tabs"
         className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
           + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
-        role="tablist"
-        aria-label="Notification filters"
+        role="tablist" aria-label={catalogText("community:notification_filters_2c59fc9a")}
       >
         <button
           id="notifications-tab-unread"
@@ -708,7 +705,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
+          <LocalizedValue render={() => (unreadCount ? tr("community:unread_value1_d75b9a49", { value1: unreadCount }) : tr("community:unread_1b9f384c"))} />
         </button>
         {/*
             Messages, SECOND. One place to catch up on conversations regardless
@@ -726,19 +723,15 @@ export function NotificationsSheetView() {
           aria-selected={tab === 'messages'}
           className={tabCls(tab === 'messages')}
           onClick={() => setTab('messages')}
-        >
-          Messages
-        </button>
+        ><Message id="community:messages_04d7b483" /></button>
         <button
           id="notifications-tab-all"
           role="tab"
           aria-selected={tab === 'all'}
           className={tabCls(tab === 'all')}
           onClick={() => setTab('all')}
-        >
-          All
-        </button>
-      </div>
+        ><Message id="community:all_a52ace42" /></button>
+      </div>} messages={{"aria-label":"community:notification_filters_2c59fc9a"}} />
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
@@ -795,9 +788,7 @@ export function NotificationsSheetView() {
           }}
         >
           <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-          <span className="flex-1 min-w-0">
-            All messages
-          </span>
+          <span className="flex-1 min-w-0"><Message id="community:all_messages_5eb8f655" /></span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
         </button>
       ) : (
@@ -805,23 +796,19 @@ export function NotificationsSheetView() {
       )}
       {today.length ? (
         <>
-          <SectionHead>
-            Today
-          </SectionHead>
+          <SectionHead><Message id="community:today_2b065c7c" /></SectionHead>
           {today.map(renderEntry)}
         </>
       ) : null}
       {earlier.length ? (
         <>
-          <SectionHead>
-            Earlier
-          </SectionHead>
+          <SectionHead><Message id="community:earlier_e10ae990" /></SectionHead>
           {earlier.map(renderEntry)}
         </>
       ) : null}
       {!entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
+          <LocalizedValue render={() => (tab === 'unread' ? tr("community:you_re_all_caught_up_47aa1e80") : tr("community:nothing_here_yet_you_ll_get_pinged_here_d49bf867"))} />
         </p>
       ) : null}
       {/*
@@ -857,7 +844,7 @@ export function NotificationsSheetView() {
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
-            {snap.loadingOlderMessages ? 'Loading…' : 'See older message notifications'}
+            <LocalizedValue render={() => (snap.loadingOlderMessages ? tr("community:loading_ba3bbbe1") : tr("community:see_older_message_notifications_9e9efd37"))} />
           </button>
         </div>
       ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
@@ -867,9 +854,7 @@ export function NotificationsSheetView() {
             type="button"
             className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
             onClick={() => setTab('all')}
-          >
-            See older notifications
-          </button>
+          ><Message id="community:see_older_notifications_e6e2b91e" /></button>
         </div>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
@@ -880,12 +865,12 @@ export function NotificationsSheetView() {
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >
-            {snap.loadingMore ? 'Loading…' : 'See older notifications'}
+            <LocalizedValue render={() => (snap.loadingMore ? tr("community:loading_ba3bbbe1") : tr("community:see_older_notifications_e6e2b91e"))} />
           </button>
         </div>
       ) : null}
       </div>
-      </div>
+      </div>} messages={{"aria-label":"community:notifications_78801183"}} />
       <OverlayScrim panelId="notifications-sheet" backdropId="notifications-sheet-overlay" />
     </>
   );

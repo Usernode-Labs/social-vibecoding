@@ -1,3 +1,4 @@
+import { Message } from "../../../lib/i18n/react";
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { CliSetupGuide } from '../cli-setup-guide';
@@ -15,9 +16,7 @@ export function CliSection() {
   return (
     <div data-settings-section="cli" className="hidden">
       <div id="cli-tokens-section">
-        <SectionHeading title={<>CLI &amp; coding-agent access</>}>
-          Credentials approved for the Homeroom CLI, Codex, Claude Code, or OpenCode. Revoking an active credential takes effect immediately.
-        </SectionHeading>
+        <SectionHeading title={<><Message id="settings:cli_coding_agent_access_f5b96ef5" /></>}><Message id="settings:credentials_approved_for_the_homeroom_cli_codex__d72becb6" /></SectionHeading>
         <CliSetupGuide />
         <div id="cli-tokens-list" className="space-y-2">
           <CliTokensList />
@@ -26,9 +25,7 @@ export function CliSection() {
           id="cli-tokens-more"
           type="button"
           className="hidden mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-        >
-          Load more
-        </button>
+        ><Message id="settings:load_more_ac8991ef" /></button>
         <StatusLine id="cli-tokens-status" size="xs" />
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * Channels as things a message can NAME (#2783).
  *
@@ -167,7 +168,7 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
         chip.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
         chip.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
         chip.setAttribute('data-ref-number', seg.num);
-        chip.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+        chip.textContent = seg.isPr ? tr("community:pr_value1_8d7f966f", { value1: seg.num }) : `#${seg.num}`;
         frag.appendChild(chip);
       } else {
         const link = doc.createElement('a');

@@ -1,3 +1,5 @@
+import { RichMessage } from "../../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { SwitchRow } from '@/components/ui/switch';
 
@@ -41,39 +43,23 @@ export function ExperimentalSection() {
   return (
     <div data-settings-section="experimental" className="hidden">
       <div id="settings-experimental-section">
-        <SectionHeading title="Experimental">
-          Early features we're still testing. They may change or disappear.
-        </SectionHeading>
-        <SwitchRow id="ai-progress-estimate">
-          AI progress estimate
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
-        </p>
+        <Localized element={<SectionHeading title={catalogText("settings:experimental_3dc9f569")}><Message id="settings:early_features_we_re_still_testing_they_may_chan_18b10e0c" /></SectionHeading>} messages={{"title":"settings:experimental_3dc9f569"}} />
+        <SwitchRow id="ai-progress-estimate"><Message id="settings:ai_progress_estimate_84af6dff" /></SwitchRow>
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed"><Message id="settings:while_the_coding_agent_works_a_small_ai_model_sk_c1f62fff" /></p>
         <StatusLine id="ai-progress-estimate-status" size="xs" />
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="session-bridge-enabled">
-            Session bridge (run this chat on your computer)
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Adds <span className="font-mono">Your computer &middot; Homeroom session</span> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
-          </p>
+          <SwitchRow id="session-bridge-enabled"><Message id="settings:session_bridge_run_this_chat_on_your_computer_a7de0058" /></SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed"><RichMessage id="settings:sentence_8e3af0c1eee6" components={[<span className="font-mono" />]} /></p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="homeroom-bot-dm-enabled">
-            Homeroom bot (build with it in Messages)
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Create a project and describe what it should do, and Homeroom bot builds the first version. On the projects it works on, it asks you its questions about your requests in Messages, with answers you can tap, and tells you when something is building, ready to vote on, and live. Your answers are still posted on the request, where everyone can see them. You can also write to it to ask what it's working on. The platform pays for its work for you, up to a weekly limit. Turning this off stops it, including on projects it built for you.
-          </p>
+          <SwitchRow id="homeroom-bot-dm-enabled"><Message id="settings:homeroom_bot_build_with_it_in_messages_09675ab3" /></SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed"><Message id="settings:create_a_project_and_describe_what_it_should_do__c7e403c1" /></p>
           <StatusLine id="homeroom-bot-dm-status" size="xs" />
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-        <SectionHeading title="Local coding agent">
-          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's spec and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; spec turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:local_coding_agent_c95fa225")}><RichMessage id="settings:sentence_f3e68128c7f5" components={[<span className="font-mono" />]} /></SectionHeading>} messages={{"title":"settings:local_coding_agent_c95fa225"}} />
         <div id="settings-local-agents-list" className="space-y-2">
           <LocalAgentsList />
         </div>

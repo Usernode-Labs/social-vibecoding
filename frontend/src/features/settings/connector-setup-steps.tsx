@@ -1,3 +1,5 @@
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import * as React from 'react';
 
 /**
@@ -65,24 +67,12 @@ export function SetupStep({ n, title, children }: {
 export function ClaudeSetupSteps() {
   return (
     <ol className="space-y-2">
-      <SetupStep n={1} title="Open connector settings.">
-        Go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Customize &rarr; Connectors</strong> in Claude (<code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>). This is where both directory connectors and your own custom ones live.
-      </SetupStep>
-      <SetupStep n={2} title="Start a custom connector.">
-        Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. In the dialog, put <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code> in the Name field, exactly that spelling: Claude Code builds its permission rules from what you type here, and the read-only allowlist Homeroom ships in every app repo matches only the names it knows. On Team or Enterprise plans this option isn&rsquo;t there for members, so an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
-      </SetupStep>
-      <SetupStep n={3} title="Paste your MCP server URL.">
-        For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
-      </SetupStep>
-      <SetupStep n={4} title="Add OAuth credentials if needed.">
-        If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Homeroom: it uses dynamic client registration, so there is nothing to enter.
-      </SetupStep>
-      <SetupStep n={5} title="Save and authenticate.">
-        Click &ldquo;Add&rdquo; to finish configuring, then click &ldquo;Connect&rdquo; next to the connector. You&rsquo;ll be redirected through the OAuth flow; review the scopes it asks for before approving.
-      </SetupStep>
-      <SetupStep n={6} title="Enable it in a conversation.">
-        In a chat, use the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button at the lower left, then &ldquo;Connectors&rdquo;, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.
-      </SetupStep>
+      <Localized element={<SetupStep n={1} title={catalogText("settings:open_connector_settings_b334fccc")}><RichMessage id="settings:sentence_8edd2303b5cb" components={[<strong className="font-semibold text-zinc-600 dark:text-zinc-400" />, <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>]} /></SetupStep>} messages={{"title":"settings:open_connector_settings_b334fccc"}} />
+      <Localized element={<SetupStep n={2} title={catalogText("settings:start_a_custom_connector_99c6955d")}><RichMessage id="settings:sentence_749f372c8ade" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>]} /></SetupStep>} messages={{"title":"settings:start_a_custom_connector_99c6955d"}} />
+      <Localized element={<SetupStep n={3} title={catalogText("settings:paste_your_mcp_server_url_99cf1764")}><RichMessage id="settings:sentence_2f30cf620635" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>]} /></SetupStep>} messages={{"title":"settings:paste_your_mcp_server_url_99cf1764"}} />
+      <Localized element={<SetupStep n={4} title={catalogText("settings:add_oauth_credentials_if_needed_a0e89f67")}><Message id="settings:if_a_server_requires_oauth_open_advanced_setting_6f6fdf73" /></SetupStep>} messages={{"title":"settings:add_oauth_credentials_if_needed_a0e89f67"}} />
+      <Localized element={<SetupStep n={5} title={catalogText("settings:save_and_authenticate_25e1b137")}><Message id="settings:click_add_to_finish_configuring_then_click_conne_6b8cf6fa" /></SetupStep>} messages={{"title":"settings:save_and_authenticate_25e1b137"}} />
+      <Localized element={<SetupStep n={6} title={catalogText("settings:enable_it_in_a_conversation_2824bdbd")}><RichMessage id="settings:sentence_2886bdc0f8cd" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>]} /></SetupStep>} messages={{"title":"settings:enable_it_in_a_conversation_2824bdbd"}} />
     </ol>
   );
 }
@@ -97,31 +87,16 @@ export function ChatgptSetupSteps() {
   return (
     <>
       <ol className="space-y-2">
-        <SetupStep n={1} title="Use ChatGPT on the web.">
-          Open ChatGPT in your browser. Custom MCP setup is currently a web feature.
-        </SetupStep>
-        <SetupStep n={2} title="Turn on Developer mode.">
-          In ChatGPT, go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Profile &rarr; Settings &rarr; Security and login &rarr; Developer mode</strong> and turn Developer mode on.
-        </SetupStep>
-        <SetupStep n={3} title="Open the ChatGPT Plugins page.">
-          After Developer mode is enabled, open <strong className="font-semibold text-zinc-600 dark:text-zinc-400">ChatGPT Plugins</strong>.
-        </SetupStep>
-        <SetupStep n={4} title="Click the + button.">
-          The <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button lets you add your own MCP-backed app.
-        </SetupStep>
-        <SetupStep n={5} title="Enter your MCP server details.">
-          Enter the URL of the remote MCP server (for Homeroom, the MCP server URL above) and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
-        </SetupStep>
-        <SetupStep n={6} title="Create the app.">
-          ChatGPT connects to the MCP server and discovers the tools it exposes. Once that succeeds, save/create the app.
-        </SetupStep>
-        <SetupStep n={7} title="Use the MCP server in a chat.">
-          Start a <strong className="font-semibold text-zinc-600 dark:text-zinc-400">new ChatGPT conversation</strong> and open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / tools menu next to the message box. Select Developer mode, then select the MCP app you just created. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
-        </SetupStep>
+        <Localized element={<SetupStep n={1} title={catalogText("settings:use_chatgpt_on_the_web_64173a4f")}><Message id="settings:open_chatgpt_in_your_browser_custom_mcp_setup_is_7bdf8b45" /></SetupStep>} messages={{"title":"settings:use_chatgpt_on_the_web_64173a4f"}} />
+        <Localized element={<SetupStep n={2} title={catalogText("settings:turn_on_developer_mode_3c71c2d5")}><RichMessage id="settings:sentence_76a8ea6c17eb" components={[<strong className="font-semibold text-zinc-600 dark:text-zinc-400" />]} /></SetupStep>} messages={{"title":"settings:turn_on_developer_mode_3c71c2d5"}} />
+        <Localized element={<SetupStep n={3} title={catalogText("settings:open_the_chatgpt_plugins_page_1aefddc5")}><Message after={" "} id="settings:after_developer_mode_is_enabled_open_1dacb350" /><strong className="font-semibold text-zinc-600 dark:text-zinc-400"><Message id="settings:chatgpt_plugins_4b78aac7" /></strong>.
+        </SetupStep>} messages={{"title":"settings:open_the_chatgpt_plugins_page_1aefddc5"}} />
+        <Localized element={<SetupStep n={4} title={catalogText("settings:click_the_button_3e4873d7")}><RichMessage id="settings:sentence_adb32bd5ff48" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>]} /></SetupStep>} messages={{"title":"settings:click_the_button_3e4873d7"}} />
+        <Localized element={<SetupStep n={5} title={catalogText("settings:enter_your_mcp_server_details_ee2fdbc4")}><RichMessage id="settings:sentence_6988314532c0" components={[<code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code>]} /></SetupStep>} messages={{"title":"settings:enter_your_mcp_server_details_ee2fdbc4"}} />
+        <Localized element={<SetupStep n={6} title={catalogText("settings:create_the_app_863f4ba3")}><Message id="settings:chatgpt_connects_to_the_mcp_server_and_discovers_79236277" /></SetupStep>} messages={{"title":"settings:create_the_app_863f4ba3"}} />
+        <Localized element={<SetupStep n={7} title={catalogText("settings:use_the_mcp_server_in_a_chat_be834331")}><RichMessage id="settings:sentence_c1ffcd628670" components={[<strong className="font-semibold text-zinc-600 dark:text-zinc-400" />, <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>, <em />]} /></SetupStep>} messages={{"title":"settings:use_the_mcp_server_in_a_chat_be834331"}} />
       </ol>
-      <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>
-        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> Settings &rarr; Security and login &rarr; Developer mode ON &rarr; ChatGPT Plugins &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Enter MCP server URL &rarr; Create &rarr; New chat &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Developer mode &rarr; select your MCP app &rarr; Ask ChatGPT to use it.
-      </p>
+      <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}><RichMessage id="settings:sentence_7233037f21f2" components={[<strong className="font-semibold text-zinc-600 dark:text-zinc-400" />, <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code>]} /></p>
     </>
   );
 }

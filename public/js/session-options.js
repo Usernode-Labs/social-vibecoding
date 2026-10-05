@@ -91,16 +91,9 @@
   function leadHtml(state) {
     var s = state || {};
     if (s.hasBranch === false) {
-      return 'This session stays right here: same transcript, same proposal. '
-        + 'Nothing has run in it yet, so it has no branch on GitHub. Homeroom '
-        + 'creates one when the first turn pushes. The turns run through Claude '
-        + 'Code on your machine, on your own Claude plan, and each one asks in '
-        + 'your terminal before it starts.';
+      return globalThis.PlatformI18n.t("core:this_session_stays_right_here_same_transcript_sa_8c01330b");
     }
-    return 'This session stays right here: same transcript, same branch, same '
-      + 'proposal. Its turns just run through Claude Code on your machine, on '
-      + 'your own Claude plan, and each one asks in your terminal before it '
-      + 'starts.';
+    return globalThis.PlatformI18n.t("core:this_session_stays_right_here_same_transcript_sa_596bbdf2");
   }
 
   function instructionsHtml(state) {
@@ -109,8 +102,8 @@
     return ''
       + '<div class="dc-options-card w-full max-w-xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl flex flex-col max-h-[85vh]">'
       + '  <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">'
-      + '    <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Run this session on your computer</h2>'
-      + '    <button type="button" id="dc-options-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">'
+      + `    <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">${globalThis.PlatformI18n.htmlText("core:run_this_session_on_your_computer_03976e19")}</h2>`
+      + `    <button type="button" id="dc-options-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="${globalThis.PlatformI18n.htmlText("core:close_7d9eb7ac")}">`
       + '      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>'
       + '    </button>'
       + '  </div>'
@@ -121,10 +114,10 @@
       + '    <pre id="dc-options-commands" class="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">'
       + escapeHtml(cmdText)
       + '</pre>'
-      + '    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Homeroom still opens the pull request, builds the preview and runs the checks. Hand the turns back to Homeroom at any time from the composer’s &#8220;Run on&#8221; selector.</p>'
+      + `    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:homeroom_still_opens_the_pull_request_builds_the_df7d503f")}</p>`
       + '  </div>'
       + '  <div class="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">'
-      + '    <button type="button" id="dc-options-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">Copy commands</button>'
+      + `    <button type="button" id="dc-options-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">${globalThis.PlatformI18n.htmlText("core:copy_commands_e614ef15")}</button>`
       + '  </div>'
       + '</div>';
   }
@@ -183,8 +176,8 @@
       copyBtn.addEventListener('click', function () {
         var text = commands(state).join('\n');
         var done = function (ok) {
-          copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-          setTimeout(function () { copyBtn.textContent = 'Copy commands'; }, 1500);
+          copyBtn.textContent = ok ? globalThis.PlatformI18n.t("core:copied_ea61bc15") : globalThis.PlatformI18n.t("core:copy_failed_5b50e7a6");
+          setTimeout(function () { copyBtn.textContent = globalThis.PlatformI18n.t("core:copy_commands_e614ef15"); }, 1500);
         };
         if (kit && typeof kit.copyText === 'function') {
           kit.copyText(text).then(done);

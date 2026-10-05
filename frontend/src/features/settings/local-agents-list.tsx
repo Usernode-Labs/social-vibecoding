@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#settings-local-agents-list` — the attached machines (#907), as the only
  * React writer below that host.
@@ -50,10 +54,10 @@ function AgentRow({ agent }: { agent: LocalAgentView }) {
               anyone chasing down a lease.
           */}
           <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {`${agent.runtime} · last seen `}
-            {seen.text ? (
+            <LocalizedValue render={() => (tr("settings:value1_last_seen_f563e42d", { value1: agent.runtime }))} />
+            <LocalizedValue render={() => (seen.text ? (
               <time dateTime={agent.lastSeenAt || undefined} title={seen.title}>{seen.text}</time>
-            ) : 'unknown'}
+            ) : tr("settings:unknown_b23a6a84"))} />
           </div>
         </div>
         {/*
@@ -65,9 +69,7 @@ function AgentRow({ agent }: { agent: LocalAgentView }) {
             type="button"
             className="shrink-0 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 transition-colors"
             onClick={(e) => controller()?._detachLocalAgent?.(agent, e.currentTarget)}
-          >
-            Detach
-          </button>
+          ><Message id="settings:detach_74bc1174" /></button>
         ) : null}
       </div>
     </div>
@@ -86,5 +88,6 @@ export function LocalAgentsListView({ phase, agents }: LocalAgentsState) {
 }
 
 export function LocalAgentsList() {
+  useUiLanguage();
   return <LocalAgentsListView {...useStoreState<LocalAgentsState>(localAgentsStore)} />;
 }

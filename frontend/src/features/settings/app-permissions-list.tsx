@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#app-permissions-list` — the App device permissions rows (#2219).
  *
@@ -56,9 +58,7 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
           variant="compact"
           size="xs"
           onClick={() => { void controller()?._onPermissionReenable?.(app.appId, app.appSlug, item.capability); }}
-        >
-          Re-enable
-        </Button>
+        ><Message id="settings:re_enable_63de4217" /></Button>
       ) : (
         /*
             The red-tinted box from grants-list.tsx's Revoke, not an outlined
@@ -71,28 +71,25 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onPermissionRevoke?.(app.appId, item.capability); }}
-        >
-          Revoke
-        </button>
+        ><Message id="settings:revoke_87e6d00b" /></button>
       )}
     </div>
   );
 }
 
 export function AppPermissionsList() {
+  useUiLanguage();
   const state = useStoreState<AppPermissionsState>(appPermissionsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:loading_ba3bbbe1" /></p>;
   }
   if (state.phase === 'error') {
-    return <p className="text-xs text-red-700 dark:text-red-400">Could not load app permissions.</p>;
+    return <p className="text-xs text-red-700 dark:text-red-400"><Message id="settings:could_not_load_app_permissions_65968b17" /></p>;
   }
   if (!state.apps.length) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        No app has asked for your camera, microphone, location or devices yet.
-      </p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="settings:no_app_has_asked_for_your_camera_microphone_loca_b84a618b" /></p>
     );
   }
   return (

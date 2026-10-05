@@ -321,7 +321,7 @@
       const body = await response.json().catch(() => ({}));
       if (!response.ok || body.success !== true || !body.data) {
         const error = new Error(
-          (body && body.error) || 'Native session handoff request failed'
+          (body && body.error) || globalThis.PlatformI18n.t("core:native_session_handoff_request_failed_5ab3c2f7")
         );
         if (body && typeof body.code === 'string') {
           error.usernodeCode = body.code;
@@ -332,7 +332,7 @@
           body.data.protocol !== 2 ||
           body.data.attemptId !== attempt.attemptId ||
           body.data.desiredRuntime !== 'running') {
-        throw new Error('Native session handoff was stale or mismatched');
+        throw new Error(globalThis.PlatformI18n.t("core:native_session_handoff_was_stale_or_mismatched_1ceeb732"));
       }
     },
 
@@ -382,7 +382,7 @@
             result.identity.participantId !== String(App.user.id)) {
           NativeChrome._closeRealm({ discardAttempt: true });
           throw new Error(
-            'Native session result did not match the current participant'
+            globalThis.PlatformI18n.t("core:native_session_result_did_not_match_the_current__0c09c35d")
           );
         }
         NativeChrome._publicSessionStatus = result;
@@ -439,7 +439,7 @@
     // the ordinary explicit logout flow; the server enforces that boundary.
     prepareForLogin() {
       if (window.App && App.user) {
-        return Promise.reject(new Error('Sign out before signing in again.'));
+        return Promise.reject(new Error(globalThis.PlatformI18n.t("core:sign_out_before_signing_in_again_982c2c16")));
       }
       const bridge = window.usernode;
       if (!bridge || bridge.isNative !== true) return Promise.resolve(false);
@@ -451,7 +451,7 @@
       let run;
       run = NativeChrome.getInfo().then((info) => {
         if (window.App && App.user) {
-          throw new Error('Sign out before signing in again.');
+          throw new Error(globalThis.PlatformI18n.t("core:sign_out_before_signing_in_again_982c2c16"));
         }
         const capabilities = Array.isArray(info && info.capabilities)
           ? info.capabilities : [];
@@ -496,18 +496,18 @@
       let run;
       run = (async () => {
         const info = await NativeChrome.getInfo();
-        if (!info || info.degraded) throw new Error('Native session recovery is unavailable');
+        if (!info || info.degraded) throw new Error(globalThis.PlatformI18n.t("core:native_session_recovery_is_unavailable_ab086aae"));
         if (!Array.isArray(info.capabilities) || !info.capabilities.includes('restoreWebSession')) return false;
         if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) return false;
         const result = await bridge.restoreWebSession();
         if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) {
-          throw new Error('Native web session recovery was superseded');
+          throw new Error(globalThis.PlatformI18n.t("core:native_web_session_recovery_was_superseded_75c2559f"));
         }
         if (result && result.status === 'absent') return false;
         if (!result || result.status !== 'restored' || result.protocol !== 2 ||
             typeof result.userId !== 'string' || !/^[1-9][0-9]*$/.test(result.userId) ||
             typeof result.attemptId !== 'string' || !/^nsa_[A-Za-z0-9_-]{43}$/.test(result.attemptId)) {
-          throw new Error('Invalid native web session recovery');
+          throw new Error(globalThis.PlatformI18n.t("core:invalid_native_web_session_recovery_2085d479"));
         }
         NativeChrome._writeStoredAttempt({
           protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
@@ -724,8 +724,8 @@
           verdict: 'no-bridge',
           settings: false,
           reason: s.isNative !== true
-            ? 'not running inside the Homeroom app'
-            : 'the bridge exposes no requestPermissions()',
+            ? globalThis.PlatformI18n.t("core:not_running_inside_the_homeroom_app_4876969d")
+            : globalThis.PlatformI18n.t("core:the_bridge_exposes_no_requestpermissions_92d74462"),
         };
       }
       // `supported` is tri-state: false only when the build positively
@@ -736,7 +736,7 @@
         return {
           verdict: 'unsupported',
           settings: s.canOpenSettings === true,
-          reason: 'this app build does not advertise requestPermissions',
+          get reason() { return globalThis.PlatformI18n.t("core:this_app_build_does_not_advertise_requestpermiss_27d8ba4c"); },
         };
       }
       if (s.isAndroid === true) return { verdict: 'request', settings: false };
@@ -744,15 +744,14 @@
         return {
           verdict: 'already',
           settings: false,
-          reason: 'the notification permission is already granted',
+          get reason() { return globalThis.PlatformI18n.t("core:the_notification_permission_is_already_granted_39fe16f6"); },
         };
       }
       if (s.pushStatus === 'denied') {
         return {
           verdict: 'settings',
           settings: s.canOpenSettings === true,
-          reason: 'the notification permission is denied, so iOS shows no ' +
-            'prompt for a determined permission',
+          get reason() { return globalThis.PlatformI18n.t("core:the_notification_permission_is_denied_so_ios_sho_10df03fc"); },
         };
       }
       return { verdict: 'request', settings: false };
@@ -772,7 +771,7 @@
           : {
               verdict: 'declined',
               settings: false,
-              reason: 'the alarm permission was not granted',
+              get reason() { return globalThis.PlatformI18n.t("core:the_alarm_permission_was_not_granted_3c3329b6"); },
             };
       }
       if (s.granted === true) return { verdict: 'granted', settings: false };
@@ -780,14 +779,13 @@
         return {
           verdict: 'settings',
           settings: s.canOpenSettings === true,
-          reason: 'the notification permission was denied',
+          get reason() { return globalThis.PlatformI18n.t("core:the_notification_permission_was_denied_c730c90c"); },
         };
       }
       return {
         verdict: 'silent',
         settings: s.canOpenSettings === true,
-        reason: 'the app answered without granting and the permission is ' +
-          'still un-determined, no OS prompt was presented',
+        get reason() { return globalThis.PlatformI18n.t("core:the_app_answered_without_granting_and_the_permis_70f77639"); },
       };
     },
 
@@ -1054,22 +1052,16 @@
       };
 
       const panel = el('div', 'px-4 pb-5');
-      panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
+      panel.appendChild(el('div', 'text-lg font-bold py-3', globalThis.PlatformI18n.t("core:set_up_your_device_be470ccb")));
       // iOS: requestPermissions() maps to the notification prompt, and v4
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         isAndroid && producerAsks
-          ? 'Your phone helps run Homeroom: your node can produce blocks ' +
-            'while the app is in the background. For that, Android needs ' +
-            'to wake it at exact slot times and leave it free of battery ' +
-            'optimization. These settings only schedule wake-ups. They ' +
-            'give Homeroom no access to your data.'
+          ? globalThis.PlatformI18n.t("core:your_phone_helps_run_homeroom_your_node_can_prod_8954db94")
           : isAndroid
-            ? 'Allow notifications so Homeroom can tell you about activity ' +
-              'on your apps and your node.'
-            : 'Allow notifications so Homeroom can alert you about node ' +
-            'and account activity.'));
+            ? globalThis.PlatformI18n.t("core:allow_notifications_so_homeroom_can_tell_you_abo_35a0ec0c")
+            : globalThis.PlatformI18n.t("core:allow_notifications_so_homeroom_can_alert_you_ab_9d98f246")));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -1079,7 +1071,7 @@
         row.appendChild(el('span', 'ml-auto text-xs ' + (ok
           ? 'text-emerald-700 dark:text-emerald-400'
           : 'text-amber-800 dark:text-amber-400'),
-        ok ? 'Granted' : 'Not granted'));
+        ok ? globalThis.PlatformI18n.t("core:granted_62026a42") : globalThis.PlatformI18n.t("core:not_granted_352a5b4c")));
         return row;
       };
 
@@ -1101,14 +1093,14 @@
           : !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
-        if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
+          isAndroid ? globalThis.PlatformI18n.t("core:exact_alarms_b39f0e41") : globalThis.PlatformI18n.t("core:notifications_78801183"), alarmOk));
+        if (isAndroid) body.appendChild(statusRow(globalThis.PlatformI18n.t("core:battery_optimization_e2c2b8ef"), batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          isAndroid ? 'Grant permissions' : 'Allow notifications');
+          isAndroid ? globalThis.PlatformI18n.t("core:grant_permissions_6d6a893f") : globalThis.PlatformI18n.t("core:allow_notifications_001559c8"));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1149,7 +1141,7 @@
           const b = el('button', 'w-full rounded-lg border border-zinc-300 ' +
             'dark:border-zinc-700 px-4 py-2 text-sm font-medium ' +
             'text-zinc-700 dark:text-zinc-200',
-          'Open battery settings');
+          globalThis.PlatformI18n.t("core:open_battery_settings_3163b5dd"));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
@@ -1158,7 +1150,7 @@
         }
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
           'text-zinc-500 dark:text-zinc-400',
-        (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
+        (alarmOk && (!isAndroid || batteryOk)) ? globalThis.PlatformI18n.t("core:done_11a6767d") : globalThis.PlatformI18n.t("core:skip_for_now_b58eb52c"));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1190,16 +1182,16 @@
       const renderAndroid = (p) => {
         const missing = androidMissing(p);
         if (notificationsAskable) {
-          body.appendChild(statusRow('Notifications', !missing.notifications));
+          body.appendChild(statusRow(globalThis.PlatformI18n.t("core:notifications_78801183"), !missing.notifications));
         }
         if (producerAsks) {
-          body.appendChild(statusRow('Exact alarms', !missing.alarm));
-          body.appendChild(statusRow('Battery optimization', !missing.battery));
+          body.appendChild(statusRow(globalThis.PlatformI18n.t("core:exact_alarms_b39f0e41"), !missing.alarm));
+          body.appendChild(statusRow(globalThis.PlatformI18n.t("core:battery_optimization_e2c2b8ef"), !missing.battery));
         }
 
         const btns = el('div', 'mt-4 space-y-2');
         if (missing.notifications && !notificationsAsked) {
-          const b = primaryButton('Allow notifications');
+          const b = primaryButton(globalThis.PlatformI18n.t("core:allow_notifications_001559c8"));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1227,20 +1219,17 @@
             renderAndroid(nextPerms);
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may send ' +
-            'you notifications. Tap Allow. You can turn them off any time ' +
-            'in Settings.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:android_will_ask_whether_homeroom_may_send_you_n_b51da97e")));
         } else if (missing.notifications) {
-          const b = primaryButton('Open notification settings');
+          const b = primaryButton(globalThis.PlatformI18n.t("core:open_notification_settings_c6885c8e"));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openNotificationSettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Notifications are off for Homeroom. Turn ' +
-            'them on in Android settings, then come back here.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:notifications_are_off_for_homeroom_turn_them_on__caf3b42d")));
         } else if (missing.alarm) {
-          const b = primaryButton('Allow exact alarms');
+          const b = primaryButton(globalThis.PlatformI18n.t("core:allow_exact_alarms_fe8bbe78"));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1258,28 +1247,22 @@
             // when the page is visible again.
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android opens the "Alarms & reminders" ' +
-            'page. Turn on Allow for Homeroom, then come back here. Your ' +
-            'node only wakes a few minutes before each of its slots.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:android_opens_the_alarms_reminders_page_turn_on__5ed1f948")));
         } else if (missing.battery) {
-          const b = primaryButton('Allow background use');
+          const b = primaryButton(globalThis.PlatformI18n.t("core:allow_background_use_5bdfdc55"));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may ' +
-            'always run in the background, and warn that this can use more ' +
-            'battery. Tap Allow. Your node still sleeps between slots, so ' +
-            'the real impact is small, and you can change it any time in ' +
-            'Settings.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:android_will_ask_whether_homeroom_may_always_run_421a0c28")));
         }
 
         if ((missing.alarm || missing.battery) &&
             typeof window.usernode.manageStaking === 'function') {
           const delegate = el('button', 'w-full rounded-lg border ' +
             'border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm ' +
-            'font-medium text-zinc-700 dark:text-zinc-200', 'Delegate instead');
+            'font-medium text-zinc-700 dark:text-zinc-200', globalThis.PlatformI18n.t("core:delegate_instead_355b9239"));
           delegate.addEventListener('click', async () => {
             interacted = true;
             delegate.disabled = true;
@@ -1295,22 +1278,17 @@
               console.warn('[native-chrome] manageStaking failed:', e);
             } finally { delegate.disabled = false; }
           });
-          btns.appendChild(hint('Prefer not to change these settings? ' +
-            'Delegate your stake to the server instead. You still earn ' +
-            'half the block-production points, and you can switch back any ' +
-            'time.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:prefer_not_to_change_these_settings_delegate_you_e9d9991f")));
           btns.appendChild(delegate);
         }
 
         if (productionDeferred) {
-          btns.appendChild(hint('Block production settings (exact alarms ' +
-            'and battery) come later, when you ask to produce blocks in ' +
-            'Settings, Homeroom app.'));
+          btns.appendChild(hint(globalThis.PlatformI18n.t("core:block_production_settings_exact_alarms_and_batte_ca0d2f91")));
         }
 
         const allDone = !missing.notifications && !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400', allDone ? 'Done' : 'Skip for now');
+          'text-zinc-500 dark:text-zinc-400', allDone ? globalThis.PlatformI18n.t("core:done_11a6767d") : globalThis.PlatformI18n.t("core:skip_for_now_b58eb52c"));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1436,8 +1414,8 @@
     // same way).
     _PING_ASK_COPY: {
       'app-building': {
-        title: 'Get a ping when your app is ready?',
-        message: 'Homeroom bot will message you when it’s ready to try.',
+        get title() { return globalThis.PlatformI18n.t("core:get_a_ping_when_your_app_is_ready_0980bf4c"); },
+        get message() { return globalThis.PlatformI18n.t("core:homeroom_bot_will_message_you_when_it_s_ready_to_2c9059b9"); },
       },
     },
     // Written once "Notify me" has called requestPermissions() on this
@@ -1478,7 +1456,7 @@
     decidePingAsk(state) {
       const s = state || {};
       if (s.isNative !== true || s.hasRequestMethod !== true) {
-        return { verdict: 'skip', reason: 'not running inside the Homeroom app' };
+        return { verdict: 'skip', get reason() { return globalThis.PlatformI18n.t("core:not_running_inside_the_homeroom_app_4876969d"); } };
       }
       if (s.platform !== 'ios') {
         return {
@@ -1489,7 +1467,7 @@
       if (s.supported === false) {
         return {
           verdict: 'skip',
-          reason: 'this app build does not advertise requestPermissions',
+          get reason() { return globalThis.PlatformI18n.t("core:this_app_build_does_not_advertise_requestpermiss_27d8ba4c"); },
         };
       }
       const reported = NativeChrome._permissionStatusOf(s.notificationPermission);
@@ -1498,23 +1476,22 @@
         return {
           verdict: 'skip',
           reason: reported === 'granted'
-            ? 'notifications are already allowed'
-            : 'notifications are denied, and iOS shows no prompt for that',
+            ? globalThis.PlatformI18n.t("core:notifications_are_already_allowed_e633c7ce")
+            : globalThis.PlatformI18n.t("core:notifications_are_denied_and_ios_shows_no_prompt_35d6fe5a"),
         };
       }
       if (s.pushStatus !== 'undetermined') {
         return {
           verdict: 'skip',
           reason: s.pushStatus == null
-            ? 'the notification permission could not be read'
-            : 'the notification permission is already ' + s.pushStatus,
+            ? globalThis.PlatformI18n.t("core:the_notification_permission_could_not_be_read_c45b9a6d")
+            : globalThis.PlatformI18n.t("core:the_notification_permission_is_already_c2e248a5") + s.pushStatus,
         };
       }
       if (s.promptedBefore === true) {
         return {
           verdict: 'skip',
-          reason: 'this build cannot report the permission, and it was ' +
-            'already asked for on this device',
+          get reason() { return globalThis.PlatformI18n.t("core:this_build_cannot_report_the_permission_and_it_w_0c8b245f"); },
         };
       }
       return { verdict: 'ask' };
@@ -1568,15 +1545,15 @@
         ? NativeChrome._PING_ASK_COPY[reason] : null;
       if (!copy) {
         console.warn('[native-chrome] askForPing: unknown reason', reason);
-        return { shown: false, outcome: 'skipped', reason: 'unknown reason' };
+        return { shown: false, outcome: 'skipped', get reason() { return globalThis.PlatformI18n.t("core:unknown_reason_2767f149"); } };
       }
       if (NativeChrome._pingAskOpen) {
-        return { shown: false, outcome: 'skipped', reason: 'already asking' };
+        return { shown: false, outcome: 'skipped', get reason() { return globalThis.PlatformI18n.t("core:already_asking_40c77958"); } };
       }
       if (NativeChrome._pingAskDeclined) {
         return {
           shown: false, outcome: 'skipped',
-          reason: 'the answer was "Not now" earlier in this session',
+          get reason() { return globalThis.PlatformI18n.t("core:the_answer_was_not_now_earlier_in_this_session_d4732c5d"); },
         };
       }
       const startedAt = Date.now();
@@ -1590,14 +1567,14 @@
           return { shown: false, outcome: 'skipped', reason: plan.reason };
         }
         if (Date.now() - startedAt > NativeChrome._PING_ASK_STALE_MS) {
-          return { shown: false, outcome: 'skipped', reason: 'the moment passed' };
+          return { shown: false, outcome: 'skipped', get reason() { return globalThis.PlatformI18n.t("core:the_moment_passed_84ab4554"); } };
         }
         const ui = window.PlatformUI;
         // No kit, no ask: PlatformUI.confirm would fall back to the
         // browser's own confirm(), which a native WebView may not draw.
         if (!ui || typeof ui.confirm !== 'function' ||
             typeof ui.hasKit !== 'function' || !ui.hasKit()) {
-          return { shown: false, outcome: 'skipped', reason: 'no UI kit' };
+          return { shown: false, outcome: 'skipped', get reason() { return globalThis.PlatformI18n.t("core:no_ui_kit_1c30ee05"); } };
         }
         shown = true;
         // The first-session plan's guardrail: how the ask is answered
@@ -1608,8 +1585,8 @@
         const yes = await ui.confirm({
           title: copy.title,
           message: copy.message,
-          confirmLabel: 'Notify me',
-          cancelLabel: 'Not now',
+          get confirmLabel() { return globalThis.PlatformI18n.t("core:notify_me_a5b3a748"); },
+          get cancelLabel() { return globalThis.PlatformI18n.t("core:not_now_a0e63d7c"); },
         });
         if (!yes) {
           NativeChrome._pingAskDeclined = true;

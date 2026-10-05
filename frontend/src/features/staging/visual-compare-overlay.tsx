@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#visual-compare-overlay` — #353's before/after comparison, as a React island
  * (#1085 chunk H, step 1).
@@ -24,18 +26,18 @@ import { useStoreState } from '../../lib/use-store-state';
 import { visualCompareHandlers, visualCompareStore } from './staging-store.js';
 
 export function VisualCompareOverlay(): ReactNode {
+  useUiLanguage();
   const state = useStoreState(visualCompareStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   useHiddenClass(overlayRef, !state.open);
 
   return (
-    <div
+    <Localized element={<div
       id="visual-compare-overlay"
       ref={overlayRef}
       className="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col"
       role="dialog"
-      aria-modal="true"
-      aria-label="Before / after comparison"
+      aria-modal="true" aria-label={catalogText("workshop:before_after_comparison_5a34812b")}
       data-opened-at={state.openedAt ? String(state.openedAt) : undefined}
       onClick={(event) => {
         // Backdrop only: the overlay root itself, never a child (same test the
@@ -50,9 +52,7 @@ export function VisualCompareOverlay(): ReactNode {
           className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
           onClick={() => visualCompareHandlers.onBack?.()}
         >
-          <ChevronLeftIcon className="w-4 h-4" />
-          Close
-        </button>
+          <ChevronLeftIcon className="w-4 h-4" /><Message id="workshop:close_7d9eb7ac" /></button>
         <span className="flex-1">
         </span>
         <span id="visual-compare-label" className="text-xs text-zinc-400 font-mono truncate">
@@ -69,6 +69,6 @@ export function VisualCompareOverlay(): ReactNode {
         dangerouslySetInnerHTML={{ __html: state.bodyHtml }}
       >
       </div>
-    </div>
+    </div>} messages={{"aria-label":"workshop:before_after_comparison_5a34812b"}} />
   );
 }

@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { SectionHeading } from '@/components/ui/field';
 
 import { AiBudgetRow } from '../../header/ai-budget';
@@ -17,9 +18,7 @@ import { AiBudgetRow } from '../../header/ai-budget';
 export function UsageSection() {
   return (
     <div data-settings-section="usage" className="hidden">
-      <SectionHeading title="Usage">
-        How much of your AI allowance is left and, once you add your own key, what it has spent this week.
-      </SectionHeading>
+      <Localized element={<SectionHeading title={catalogText("settings:usage_8d59829c")}><Message id="settings:how_much_of_your_ai_allowance_is_left_and_once_y_a9cad60a" /></SectionHeading>} messages={{"title":"settings:usage_8d59829c"}} />
       {/*
           The viewer's own weekly AI allowance (#555, #2571), used vs. remaining.
 
@@ -51,21 +50,15 @@ export function UsageSection() {
           week's platform spend beside a day's own-key spend.
       */}
       <div id="settings-spend" className="hidden mb-3">
-        <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
-          This week's spend
-        </div>
+        <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500"><Message id="settings:this_week_s_spend_921b881f" /></div>
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
-            <span>
-              Platform weekly limit
-            </span>
+            <span><Message id="settings:platform_weekly_limit_a83f14f0" /></span>
             <span id="settings-spend-platform" className="tabular-nums text-zinc-500 dark:text-zinc-400">
             </span>
           </div>
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
-            <span>
-              Your key
-            </span>
+            <span><Message id="settings:your_key_10d7b222" /></span>
             <span id="settings-spend-byok" className="tabular-nums text-zinc-500 dark:text-zinc-400">
             </span>
           </div>
@@ -74,9 +67,7 @@ export function UsageSection() {
               Settings._refreshSpend() rewrites them in the viewer's own
               clock, with the UTC instant on `title`, as it reveals the card.
           */}
-          <div id="settings-spend-reset" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500">
-            Resets Monday 00:00 UTC.
-          </div>
+          <div id="settings-spend-reset" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500"><Message id="settings:resets_monday_00_00_utc_8260c594" /></div>
         </div>
       </div>
     </div>

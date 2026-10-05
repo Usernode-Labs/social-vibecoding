@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 import {
   useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent,
 } from 'react';
@@ -44,6 +48,7 @@ export function MessageActionSheet({
   /** The message, a line of it, so the sheet says what it acts on. */
   preview?: { who: string; text: string } | null;
 }) {
+  useUiLanguage();
   const [picking, setPicking] = useState(false);
   const sheet = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!open) setPicking(false); }, [open]);
@@ -57,41 +62,41 @@ export function MessageActionSheet({
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
     <div className="msgx-sheet-layer">
-      <button type="button" className="msgx-sheet-scrim" aria-label="Close" onClick={onClose} />
-      <div ref={sheet} className="msgx-sheet platform-safe-sheet" role="dialog" aria-label="Message actions" tabIndex={-1}>
+      <Localized element={<button type="button" className="msgx-sheet-scrim" aria-label={catalogText("core:close_7d9eb7ac")} onClick={onClose} />} messages={{"aria-label":"core:close_7d9eb7ac"}} />
+      <Localized element={<div ref={sheet} className="msgx-sheet platform-safe-sheet" role="dialog" aria-label={catalogText("core:message_actions_f532ee1f")} tabIndex={-1}>
         <span className="msgx-sheet-grabber" aria-hidden="true" />
         {picking && onPick ? (
           <EmojiPicker placement="inline" autoFocus={false} onPick={(emoji) => { onClose(); onPick(emoji); }} onClose={() => setPicking(false)} />
         ) : (
           <>
             {preview ? (
-              <p className="msgx-sheet-preview"><strong>@{preview.who}</strong> {preview.text || 'Attachment'}</p>
+              <p className="msgx-sheet-preview"><strong>@{preview.who}</strong> <LocalizedValue render={() => (preview.text || tr("core:attachment_040d2b36"))} /></p>
             ) : null}
             {onReact ? (
               <div className="msgx-sheet-reactions">
                 {recents.slice(0, 3).map((emoji) => {
                   const on = !!reacted?.(emoji);
                   return (
-                    <button
+                    <LocalizedDynamic element={<button
                       key={emoji}
                       type="button"
                       className={`msgx-sheet-emoji ${on ? 'msgx-sheet-emoji-on' : ''}`}
                       aria-pressed={on}
-                      aria-label={on ? `Remove your ${emojiName(emoji)} reaction` : `React with ${emojiName(emoji)}`}
+                      aria-label={on ? tr("core:remove_your_value1_reaction_5f6c5fa3", { value1: emojiName(emoji) }) : tr("core:react_with_value1_509e60e8", { value1: emojiName(emoji) })}
                       onClick={() => { onClose(); onReact(emoji); }}
                     >
                       {emoji}
-                    </button>
+                    </button>} resolve={() => ({ "aria-label": on ? tr("core:remove_your_value1_reaction_5f6c5fa3", { value1: emojiName(emoji) }) : tr("core:react_with_value1_509e60e8", { value1: emojiName(emoji) }) })} />
                   );
                 })}
                 {onPick ? (
-                  <button type="button" className="msgx-sheet-emoji" aria-label="Add reaction" onClick={() => setPicking(true)}>
+                  <Localized element={<button type="button" className="msgx-sheet-emoji" aria-label={catalogText("core:add_reaction_d97239a6")} onClick={() => setPicking(true)}>
                     <FaceSmileIcon className="w-6 h-6" strokeWidth="1.6" aria-hidden="true" />
-                  </button>
+                  </button>} messages={{"aria-label":"core:add_reaction_d97239a6"}} />
                 ) : null}
               </div>
             ) : null}
-            <div className="msgx-sheet-list" role="menu" aria-label="Message actions">
+            <Localized element={<div className="msgx-sheet-list" role="menu" aria-label={catalogText("core:message_actions_f532ee1f")}>
               {items.map((item) => (
                 <button
                   key={item.key}
@@ -105,10 +110,10 @@ export function MessageActionSheet({
                   <span>{item.label}</span>
                 </button>
               ))}
-            </div>
+            </div>} messages={{"aria-label":"core:message_actions_f532ee1f"}} />
           </>
         )}
-      </div>
+      </div>} messages={{"aria-label":"core:message_actions_f532ee1f"}} />
     </div>,
     document.body,
   );

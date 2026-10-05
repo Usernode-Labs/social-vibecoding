@@ -1,3 +1,4 @@
+import { t as tr, getLanguage } from "./i18n/runtime";
 /**
  * When an allowance comes back, in the reader's own clock (#3230).
  *
@@ -61,16 +62,16 @@ function resolve(cadence: ResetCadence, opts: ResetOptions = {}): Date {
  */
 export function resetWhen(cadence: ResetCadence, opts: ResetOptions = {}): string {
   const at = resolve(cadence, opts);
-  const time = new Intl.DateTimeFormat(opts.locale, { hour: 'numeric', minute: '2-digit' }).format(at);
-  if (cadence !== 'weekly') return `at ${time}`;
-  const day = new Intl.DateTimeFormat(opts.locale, { weekday: 'long' }).format(at);
-  return `${day} at ${time}`;
+  const time = new Intl.DateTimeFormat(opts.locale || getLanguage(), { hour: 'numeric', minute: '2-digit' }).format(at);
+  if (cadence !== 'weekly') return tr("core:at_value1_e995934a", { value1: time });
+  const day = new Intl.DateTimeFormat(opts.locale || getLanguage(), { weekday: 'long' }).format(at);
+  return tr("core:value1_at_value2_cb704c30", { value1: day, value2: time });
 }
 
 /** The same instant in UTC, for `title`: "Mon, Oct 5, 00:00 UTC". */
 export function resetUtc(cadence: ResetCadence, opts: ResetOptions = {}): string {
   const at = resolve(cadence, opts);
-  return new Intl.DateTimeFormat(opts.locale, {
+  return new Intl.DateTimeFormat(opts.locale || getLanguage(), {
     timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(at) + ' UTC';
@@ -86,7 +87,7 @@ export function localizeResetText(text: string, opts: Omit<ResetOptions, 'at'> =
   if (!text) return text;
   return String(text)
     .replace(/Monday 00:00 UTC/g, () => resetWhen('weekly', opts))
-    .replace(/the midnight UTC reset/g, () => `the daily reset ${resetWhen('daily', opts)}`)
+    .replace(/the midnight UTC reset/g, () => tr("core:the_daily_reset_value1_0d9b8486", { value1: resetWhen('daily', opts) }))
     .replace(/at midnight UTC/g, () => resetWhen('daily', opts));
 }
 

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useState } from 'react';
 
 import type { HomeroomBotPlan } from './types';
@@ -31,10 +35,10 @@ export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changin
 
 /** What the line under a card that is no longer open says. */
 export const PLAN_STATE_LINES: Record<Exclude<PlanCardState, 'open' | 'replaced'>, string> = {
-  built: 'You chose Build it',
-  stopped: 'I stopped waiting on this plan. Reply to pick it up again.',
-  changing: 'You asked for changes. A new plan is on its way.',
-  closed: 'No longer needed.',
+  get built() { return tr("community:you_chose_build_it_82ff36d0"); },
+  get stopped() { return tr("community:i_stopped_waiting_on_this_plan_reply_to_pick_it__91d435f9"); },
+  get changing() { return tr("community:you_asked_for_changes_a_new_plan_is_on_its_way_9f866b56"); },
+  get closed() { return tr("community:no_longer_needed_ace70031"); },
 };
 
 export interface PlanCardViewProps {
@@ -61,6 +65,7 @@ const SURFACES = {
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, onBuild, onChange, surface = 'messages',
 }: PlanCardViewProps) {
+  useUiLanguage();
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
   const open = state === 'open' && !busy;
   const shown: PlanCardState = busy ? 'built' : state;
@@ -70,13 +75,13 @@ export function PlanCardView({
   }
 
   return (
-    <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
+    <LocalizedDynamic element={<div className={SURFACES[surface]} role="group" aria-label={tr("community:plan_for_value1_434edfa7", { value1: appName })} data-bot-plan={shown}>
       <div>
         <div className={`text-[0.9375rem] font-semibold ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-          {`Here’s my plan for ${appName}:`}
+          <LocalizedValue render={() => (tr("community:here_s_my_plan_for_value1_a3b06f44", { value1: appName }))} />
         </div>
         {shown === 'replaced' ? (
-          <p className="messages-bot-answered">Replaced by a newer plan</p>
+          <p className="messages-bot-answered"><Message id="community:replaced_by_a_newer_plan_c5d17bcc" /></p>
         ) : (
           <ul className="mt-1.5 list-disc space-y-1 pl-5 text-[0.9375rem] leading-[1.35] text-zinc-900 dark:text-zinc-100">
             {plan.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}
@@ -96,7 +101,7 @@ export function PlanCardView({
                 onClick={() => choose(index, answer)}
               >
                 <span>{answer}</span>
-                {j === 0 ? <span className="messages-bot-default">suggested</span> : null}
+                {j === 0 ? <span className="messages-bot-default"><Message id="community:suggested_8ad70375" /></span> : null}
               </button>
             ))}
           </div>
@@ -108,12 +113,12 @@ export function PlanCardView({
         </ul>
       ) : null}
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label="Actions">
-          <button type="button" className="messages-bot-primary" data-bot-plan-build="" onClick={() => onBuild?.(picked)}>Build it</button>
-          <button type="button" className="messages-bot-secondary" data-bot-plan-change="" onClick={() => onChange?.()}>Change something</button>
-        </div>
+        <Localized element={<div className="messages-bot-answers" role="group" aria-label={catalogText("community:actions_ff8059dc")}>
+          <button type="button" className="messages-bot-primary" data-bot-plan-build="" onClick={() => onBuild?.(picked)}><Message id="community:build_it_5e383207" /></button>
+          <button type="button" className="messages-bot-secondary" data-bot-plan-change="" onClick={() => onChange?.()}><Message id="community:change_something_870a8e1a" /></button>
+        </div>} messages={{"aria-label":"community:actions_ff8059dc"}} />
       ) : null}
       {shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{PLAN_STATE_LINES[shown]}</p> : null}
-    </div>
+    </div>} resolve={() => ({ get "aria-label"() { return tr("community:plan_for_value1_434edfa7", { value1: appName }); } })} />
   );
 }

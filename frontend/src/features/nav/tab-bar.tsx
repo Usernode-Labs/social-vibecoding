@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #platform-tabs — the shell's five places, as a permanent bar.
  *
@@ -116,7 +120,7 @@ import { schedulePress, type PendingPress } from './tab-press';
 const TABS = [
   {
     key: 'home' as const,
-    label: 'Home',
+    get label() { return tr("core:home_3a786953"); },
     // A REAL PATH, not a fragment, and that is deliberate: Home is the only
     // one of the five that is a document address rather than a hash route,
     // so a cmd-click on it opens the launcher in a new tab the way the app
@@ -125,12 +129,12 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
-  { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
+  { key: 'discover' as const, get label() { return tr("core:discover_d4a33d5b"); }, href: '#apps', Icon: SearchIcon },
+  { key: 'messages' as const, get label() { return tr("core:messages_04d7b483"); }, href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, get label() { return tr("core:communities_c864f329"); }, href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
-  { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
+  { key: 'me' as const, get label() { return tr("core:me_d30af076"); }, href: '#profile', Icon: UserIcon },
 ];
 
 /**
@@ -160,7 +164,7 @@ export function tabLabel(
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  if (key === 'me' && viewer) return { text: viewer, ariaLabel: tr("core:value1_your_profile_257716d5", { value1: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -178,7 +182,7 @@ export function tabLabel(
  * the prerender ships it.
  */
 export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
-  return scoped ? `Communities, on ${scoped.name}` : undefined;
+  return scoped ? tr("core:communities_on_value1_83acd44b", { value1: scoped.name }) : undefined;
 }
 
 /**
@@ -266,9 +270,9 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
 function VotesBadge({ count }: { count: number }) {
   if (!(count > 0)) return null;
   return (
-    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+    <LocalizedDynamic element={<span className="platform-tab-votes" aria-label={tr("core:message_d9baa90aa589", { value1: count, count: count })}>
       {count > 99 ? '99+' : String(count)}
-    </span>
+    </span>} resolve={() => ({ get "aria-label"() { return tr("core:message_d9baa90aa589", { value1: count, count: count }); } })} />
   );
 }
 
@@ -287,7 +291,7 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label = tr("core:unread_conversations_043836eb") }: {
   count: number;
   id?: string;
   label?: string;
@@ -741,6 +745,7 @@ function goToTab(key: string, href: string): void {
 }
 
 export function PlatformTabs() {
+  useUiLanguage();
   const barRef = useRef<HTMLElement | null>(null);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
@@ -867,11 +872,10 @@ export function PlatformTabs() {
           onPointerLeave={leave}
         />
       ) : null}
-      <nav
+      <Localized element={<nav
         ref={barRef}
         id="platform-tabs"
-        className="platform-tabs"
-        aria-label="Sections"
+        className="platform-tabs" aria-label={catalogText("core:sections_9bae918a")}
         onPointerEnter={enter}
         onPointerLeave={leave}
       >
@@ -954,7 +958,7 @@ export function PlatformTabs() {
                 Homeroom's). The same quiet grey disc, for the same reason.
             */}
             {key === 'workshop' ? (
-              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+              <Localized element={<TabBadge count={communities} id="platform-tabs-badge-communities" label={catalogText("core:channels_with_unread_messages_d78ea0a9")} />} messages={{"label":"core:channels_with_unread_messages_d78ea0a9"}} />
             ) : null}
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
@@ -978,17 +982,15 @@ export function PlatformTabs() {
           the Settings screen itself — the Me row stays lit too, because
           Settings still belongs to the Me section on both bars.
       */}
-      <a
+      <Localized element={<a
         id="platform-rail-settings"
         className="platform-rail-settings"
-        href="#settings"
-        aria-label="Settings"
-        title="Settings"
+        href="#settings" aria-label={catalogText("core:settings_74a883a0")} title={catalogText("core:settings_74a883a0")}
         aria-current={screen === 'settings-screen' ? 'page' : undefined}
       >
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />
-      </a>
-      </nav>
+      </a>} messages={{"aria-label":"core:settings_74a883a0","title":"core:settings_74a883a0"}} />
+      </nav>} messages={{"aria-label":"core:sections_9bae918a"}} />
       <CommunitySwitcher />
     </>
   );

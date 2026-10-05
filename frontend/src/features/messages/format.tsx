@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 import { useMemo, type MouseEvent } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
@@ -115,7 +118,7 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   size?: 'sm' | 'md' | 'lg';
   shape?: 'circle' | 'square';
 }) {
-  const label = title || user?.username || 'Conversation';
+  const label = title || user?.username || tr("community:conversation_ccca1817");
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';
   const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
@@ -141,9 +144,9 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
 
 const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   // B4: a code proposal is a change, as the bot and the rest of the shell say.
-  app: 'App', issue: 'Request', proposal: 'Change', governance: 'Governance proposal', spec: 'Spec version',
+  get app() { return tr("community:app_0d04bfeb"); }, get issue() { return tr("community:request_59f03d64"); }, get proposal() { return tr("community:change_c0bf75bd"); }, get governance() { return tr("community:governance_proposal_5f1d1a55"); }, get spec() { return tr("community:spec_version_cd76c4ed"); },
   // #3660: the two pages a pasted Homeroom link can name that are not items.
-  hub: 'Community hub', discussion: 'Discussion',
+  get hub() { return tr("community:community_hub_c2f9c96f"); }, get discussion() { return tr("community:discussion_5eb6cf64"); },
 };
 
 // The glyph tile a card leads with: the app's diamond for an app and its
@@ -194,7 +197,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
         <span className="messages-object-icon">?</span>
-        <div className="min-w-0"><div className="text-base font-semibold">Unavailable</div><div className="text-sm text-zinc-500 dark:text-zinc-400">You can’t access this item.</div></div>
+        <div className="min-w-0"><div className="text-base font-semibold"><Message id="community:unavailable_ca184496" /></div><div className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="community:you_can_t_access_this_item_2b313470" /></div></div>
       </div>
     );
   }
@@ -203,10 +206,10 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
       <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
         <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
-        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
+        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate"><LocalizedValue render={() => (object.title || tr("community:untitled_f59ab8d1"))} /></div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-            {[object.subtitle, object.state, object.author ? `by ${object.author}` : null].filter(Boolean).join(' · ')}
+            {[object.subtitle, object.state, object.author ? tr("community:by_value1_227ec51b", { value1: object.author }) : null].filter(Boolean).join(' · ')}
           </div>
         ) : null}
       </div>
@@ -221,6 +224,6 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
 export function fileSize(bytes: number): string {
   if (!bytes) return '';
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024) return tr("community:value1_kb_75f92af0", { value1: Math.round(bytes / 1024) });
+  return tr("community:value1_mb_36c9af23", { value1: (bytes / (1024 * 1024)).toFixed(1) });
 }

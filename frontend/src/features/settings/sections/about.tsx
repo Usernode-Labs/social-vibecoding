@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * Settings → About: the three version rows, in the one place that exists to be
  * consulted rather than acted from.
@@ -60,6 +64,7 @@ import { NativeAppVersionRow } from '../../header/native-app-version-row';
  * already names on its own.
  */
 function AppVersionRow() {
+  useUiLanguage();
   const { slug, selfHosted, version, deploying } = useStoreState(improveStore);
   const show = !!slug && !selfHosted;
   return (
@@ -69,13 +74,11 @@ function AppVersionRow() {
         ? 'drawer-ver-row flex items-center gap-2 px-4'
         : 'hidden drawer-ver-row flex items-center gap-2 px-4'}
     >
-      <span className="drawer-ver-label">
-        App version
-      </span>
+      <span className="drawer-ver-label"><Message id="settings:app_version_80a7db3b" /></span>
       <span
         id="about-app-version-slot"
         className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end font-mono truncate"
-      >{deploying ? 'deploying…' : version || 'unknown'}</span>
+      ><LocalizedValue render={() => (deploying ? tr("settings:deploying_9664572e") : version || tr("settings:unknown_b23a6a84"))} /></span>
     </div>
   );
 }
@@ -106,9 +109,7 @@ function PlatformVersionRow() {
   }, []);
   return (
     <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-      <span className="drawer-ver-label">
-        Platform version
-      </span>
+      <span className="drawer-ver-label"><Message id="settings:platform_version_87a77f7b" /></span>
       <span
         id="platform-version-pill-slot"
         className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
@@ -122,9 +123,7 @@ export function AboutSection() {
   return (
     <div data-settings-section="about" className="hidden">
       <div id="settings-about-section">
-        <SectionHeading title="About">
-          Which build of each part of the platform you are running.
-        </SectionHeading>
+        <Localized element={<SectionHeading title={catalogText("settings:about_4efca0d1")}><Message id="settings:which_build_of_each_part_of_the_platform_you_are_271079cc" /></SectionHeading>} messages={{"title":"settings:about_4efca0d1"}} />
 
         <AppVersionRow />
 

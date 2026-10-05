@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * One inbox out of three lists (#2718).
  *
@@ -125,10 +126,10 @@ export interface AgentSession {
 export type InboxFilter = 'all' | 'people' | 'channels' | 'agents';
 
 /** The filter row, in order. Exported so the view and its test share one list. */
-export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
-  ['all', 'All'],
-  ['people', 'People'],
-  ['agents', 'Agents'],
+export const INBOX_FILTERS = (): ReadonlyArray<readonly [InboxFilter, string]> => [
+  ['all', tr("community:all_a52ace42")],
+  ['people', tr("community:people_7db20897")],
+  ['agents', tr("community:agents_279b44d2")],
 ];
 
 /**

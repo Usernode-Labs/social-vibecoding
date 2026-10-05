@@ -1,39 +1,40 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-language-loading>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Authorize Homeroom CLI</title>
+  <title data-message="authorization:authorize_homeroom_cli_2639a575">Authorize Homeroom CLI</title>
   <link rel="stylesheet" href="/css/cli-authorize.css">
+  <script src="/shell/assets/authorization-i18n.js" defer></script>
   <script src="/js/cli-authorize.js" defer></script>
 </head>
 <body>
   <main>
-    <h1>Authorize CLI access</h1>
+    <h1 data-message="authorization:authorize_cli_access_1cc51f5c">Authorize CLI access</h1>
     <section id="entry">
-      <p id="entry-message">Start an authorization request from the Social
+      <p id="entry-message" data-message="authorization:start_an_authorization_request_from_the_social_v_25b3adfb">Start an authorization request from the Social
         Vibecoding CLI, Codex, Claude Code, or OpenCode. The approval details will open here
         automatically.</p>
     </section>
 
     <section id="confirmation" hidden>
-      <p>Homeroom CLI is requesting access to your account.</p>
+      <p data-message="authorization:homeroom_cli_is_requesting_access_to_your_accoun_96ebee52">Homeroom CLI is requesting access to your account.</p>
       <dl>
-        <dt>Code</dt><dd id="confirm-code"></dd>
-        <dt>Client</dt><dd id="confirm-client"></dd>
-        <dt>Access</dt><dd id="confirm-scopes"></dd>
-        <dt>Expires</dt><dd id="confirm-expiry"></dd>
+        <dt data-message="authorization:code_340f4630">Code</dt><dd id="confirm-code"></dd>
+        <dt data-message="authorization:client_0c77fe09">Client</dt><dd id="confirm-client"></dd>
+        <dt data-message="authorization:access_ec5ba0ab">Access</dt><dd id="confirm-scopes"></dd>
+        <dt data-message="authorization:expires_f6725f3a">Expires</dt><dd id="confirm-expiry"></dd>
       </dl>
-      <p class="warning">Approve only if this code matches the Homeroom CLI or coding-agent session you started.</p>
+      <p class="warning" data-message="authorization:approve_only_if_this_code_matches_the_homeroom_c_c04c7d77">Approve only if this code matches the Homeroom CLI or coding-agent session you started.</p>
       <div class="actions">
-        <button id="approve" type="button">Authorize</button>
-        <button id="reject" type="button" class="secondary">Cancel</button>
+        <button id="approve" type="button" data-message="authorization:authorize_b6741b4c">Authorize</button>
+        <button id="reject" type="button" class="secondary" data-message="authorization:cancel_19766ed6">Cancel</button>
       </div>
     </section>
 
     <section id="result" hidden>
       <p id="message"></p>
-      <button id="try-again" type="button" hidden>Start a new request</button>
+      <button id="try-again" type="button" hidden data-message="authorization:start_a_new_request_f80d20dc">Start a new request</button>
     </section>
   </main>
 </body>

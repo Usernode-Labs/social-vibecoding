@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 import type {
   ConversationDetail,
   ConversationMember,
@@ -307,7 +308,7 @@ export function normalizeThreadRoot(input: unknown): ThreadRootRef | null {
   if (!id) return null;
   return {
     id,
-    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || 'Deleted user',
+    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || tr("community:deleted_user_152bc3aa"),
     content: text(pick(row, 'content')),
     deleted: pick(row, 'deleted') === true,
   };
@@ -368,7 +369,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const latestMessage = latestRaw ? normalizeMessage(latestRaw, id) : null;
   const title = text(pick(row, 'title', 'name'))
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
-    || 'Conversation';
+    || tr("community:conversation_ccca1817");
   const canSendValue = pick(row, 'canSend', 'can_send');
   return {
     id,
@@ -440,7 +441,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = record(data);
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), `Request failed (${response.status})`));
+    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), tr("community:request_failed_value1_94dd9f90", { value1: response.status })));
   }
   return data as T;
 }
@@ -613,7 +614,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), `Upload failed (${response.status})`));
+  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), tr("community:upload_failed_value1_c5fcf184", { value1: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -640,7 +641,7 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
     const row = record(item);
     return {
       id: strictId(pick(row, 'number', 'id')) || 0,
-      title: text(pick(row, 'title', 'pr_title', 'session_title'), 'Untitled'),
+      title: text(pick(row, 'title', 'pr_title', 'session_title'), tr("community:untitled_f59ab8d1")),
       status: text(pick(row, 'status')) || undefined,
     };
   }).filter((item) => item.id);
@@ -723,13 +724,13 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
       body: JSON.stringify(epoch === null ? { vote: 'yes' } : { vote: 'yes', expectedEpoch: epoch }),
     });
   } catch {
-    return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
+    return { ok: false, stale: false, epoch: null, get error() { return tr("community:couldn_t_reach_homeroom_try_again_0484b4ab"); } };
   }
   const data = record(await response.json().catch(() => ({})));
   if (response.ok) return { ok: true, stale: false, epoch, error: null };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
-  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };
+  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || tr("community:couldn_t_approve_it_just_now_28cbba46")) };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {
