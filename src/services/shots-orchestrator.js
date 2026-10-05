@@ -363,10 +363,19 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
   }
 }
 
+// Who the guest browser is, by what the app makes of a visitor who is not
+// signed in (shots-identities.js shotsGuestIdentity). Fixed words only.
+const GUEST_WHO = Object.freeze({
+  homeroom: 'a visitor who is not signed in: Homeroom shows it its signed-out pages, such as the landing and sign-in screens',
+  guest: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
+  private: 'a visitor who is not signed in, with no identity here: this app is private, so it shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
+  unavailable: 'a visitor who is not signed in, with no identity here: guests are not available on these copies, so this app shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent, homeTile = null }) {
+function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
   const testingPaths = testingPathsForSession(session);
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
@@ -390,6 +399,10 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, homeTile
       full_admin: {
         tool: 'browser_full_admin',
         who: 'a full administrator that exists only in these two throwaway copies',
+      },
+      guest: {
+        tool: 'browser_guest',
+        who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
       },
     },
     changedFiles: {
@@ -664,7 +677,8 @@ function recordAgentDiagnostic(metrics, raw) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
-    'browserAdminToolCount', 'browserFullAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
+    'browserAdminToolCount', 'browserFullAdminToolCount', 'browserGuestToolCount',
+    'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
     'count', 'catalogCount']) {
@@ -704,7 +718,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
-  if (['member', 'admin', 'full_admin'].includes(raw.persona)) event.persona = raw.persona;
+  if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -739,7 +753,7 @@ function recordAgentDiagnostic(metrics, raw) {
       || kind === 'browser_call_start' || kind === 'browser_call_pending'
       || kind === 'browser_call_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
-    if (['member', 'admin', 'full_admin'].includes(raw.persona)) event.persona = raw.persona;
+    if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
     if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
     if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
         && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
@@ -1070,7 +1084,17 @@ async function executeRun(config, options, injected = {}) {
     }
     failurePhase = 'mint_fixture_identities';
     stage(failurePhase);
-    const authTokens = await deps.identities.mintShotsAuthTokens(pool, app.id);
+    // The guest browser is not signed in. Only a view-public child app also
+    // gets the guest token its own address would give such a visitor; the
+    // token joins the others, so it reaches the worker and is masked with
+    // them, and never enters the brief.
+    const guest = await deps.identities.shotsGuestIdentity(pool, app, {
+      selfApp: app.slug === config.selfAppSlug,
+    });
+    const authTokens = {
+      ...await deps.identities.mintShotsAuthTokens(pool, app.id),
+      ...(guest.token ? { guest: guest.token } : {}),
+    };
     failurePhase = 'persist_exploration';
     stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
@@ -1094,6 +1118,7 @@ async function executeRun(config, options, injected = {}) {
     }
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
+      guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
     });
     const navigationHints = {

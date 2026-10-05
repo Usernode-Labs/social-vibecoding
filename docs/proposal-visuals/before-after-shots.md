@@ -98,6 +98,10 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 - `impact: "none"` with a specific `rationale` means nothing visible changed.
   No run starts and the proposal says so.
 - `animation: "motion"` asks for clips as well as stills.
+- `persona` is who is signed in: `member`, `read_only_admin`, `full_admin`
+  (Homeroom controls hidden from read-only admins), or `guest`, a visitor who
+  is not signed in. Use `guest` for what signed-out people see: Homeroom's
+  landing and sign-in pages, or a public app's guest view.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
   element to point at), so the shots agent can go straight there. They are
@@ -128,7 +132,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    not have to be up for a vote.
 2. **Building before and after** (`provisioning`). Homeroom builds isolated
    copies of the exact base and head revisions. It resets both to the same
-   fixture data and signs in each persona's browser.
+   fixture data and signs in each persona's browser, except the guest's,
+   which stays signed out (see "The guest browser" below).
 
    For Homeroom's own proposals it then writes demo states the copies cannot
    reach by themselves (`src/services/shots-demo-states.js`). The copies have
@@ -152,8 +157,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    brief's `availableFixtures` tells the agent each state's persona, what it
    shows and its path.
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
-   shots worker. It has three browsers, one per persona, and the "shots"
-   tools:
+   shots worker. It has four browsers, one per persona (the guest's is not
+   signed in), and the "shots" tools:
 
    | Tool | What it does |
    | --- | --- |
@@ -264,6 +269,36 @@ people are the judges, which is also how the replay pipeline ended: people
 still had to look. The builds are platform-made from exact revisions with
 fixture data, so no author's local data or credentials can appear in them.
 
+## The guest browser
+
+The `guest` persona is a browser that is not signed in: the bootstrap writes
+it an empty storage state (`guest.json`) instead of exchanging a token, and
+the agent is told not to sign it in. What a signed-out visitor sees depends
+on the app:
+
+- **Homeroom's own copies** have no edge in front of them, so a browser with
+  no session already gets the signed-out landing and sign-in pages (the SPA
+  document loads, `/api/*` answers 401). The guest carries nothing.
+- **A view-public child app** shows a visitor with no account its guest view
+  only when the request carries a guest token, which the production edge adds
+  at the app's own address (`services/edge-gate.js`). The shots copies have no
+  edge, so the platform mints the same token
+  (`shots-identities.shotsGuestIdentity`, `platform-jwt.signGuestToken`, the
+  fixture tokens' 15 minutes) and the shots proxy adds it as
+  `x-usernode-token` on the guest's own listener, only to the pair's two
+  addresses (`SHOTS_GUEST_TOKEN`, optional). It is minted only where the edge
+  would give one: the app is view-public by the edge's own lookup
+  (`app-access.getHostVisibility`) and not suspended, app-host sign-in is on,
+  and the platform has a guest signer (`EDGE_JWT_SECRET`).
+- **A private child app**, or one where guests are unavailable, gets no
+  token: the guest is a visitor outside Homeroom, which the scaffold sends to
+  the production platform, away from the pair. The brief says so in
+  `browsers.guest.who`, and the agent skips such a change with its reason.
+
+No gate is loosened for this: the guest gets only what a signed-out request
+already gets, and a preview still never admits guests. The guest token is
+masked with the other tokens and never enters the brief or the trace.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -349,7 +384,7 @@ started from its brief, including for proposals built on Codex (OpenRouter).
 Clips are recorded only for runs with a `motion` change
 (`SHOTS_RECORD_CLIPS=1` in the worker adds `--save-video=1280x800` to each
 browser). Each persona's browser saves files under
-`SHOTS_DIR/<member|admin|full_admin>` via `--output-dir`.
+`SHOTS_DIR/<member|admin|full_admin|guest>` via `--output-dir`.
 
 ## Where it lives
 
@@ -365,6 +400,7 @@ browser). Each persona's browser saves files under
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| Persona tokens and the guest's (`mintShotsAuthTokens`, `shotsGuestIdentity`) | `src/services/shots-identities.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
@@ -402,8 +438,9 @@ and reason, and a bounded trace:
 
 `npm run shots:pair -- up --before SHA --after SHA` stands up those two
 builds on the local stack the way a hosted reset does (exact images, one
-data dump restored per side, the per-side fixtures, the three personas
-signed in on both) and prints the next command.
+data dump restored per side, the per-side fixtures, the three signed-in
+personas signed in on both; the guest needs nothing) and prints the next
+command.
 `npm run shots:dry-run -- --intent FILE --before URL --after URL` then takes
 the shots outside Homeroom, on the two running builds. Everything
 between the agent and the saved files is the production code: the shots
@@ -415,7 +452,7 @@ otherwise, with no built-in tools and only the shots and browser servers
 allowed. Run from inside a Claude Code session, it starts the agent without
 that session's environment. `--fixtures` passes the seeded fixtures into the
 brief as a hosted reset does. `--state-dir` supplies each persona's signed-in
-storage state; `--base-sha`/`--head-sha` fill in the brief's changed files
+storage state (the guest's browser always starts signed out); `--base-sha`/`--head-sha` fill in the brief's changed files
 and diff. It writes an `index.html` with every change side by side, plus
 `result.json`, the files, and the agent's stream, under `.shots-dry-run/`.
 `--help` lists the rest. It uses no database and publishes nothing.

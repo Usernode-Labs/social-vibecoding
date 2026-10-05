@@ -145,7 +145,7 @@ function createObserver({
   const active = new Map();
   const routes = new Map();
   let callOrdinal = 0;
-  const safePersona = ['admin', 'full_admin'].includes(persona) ? persona : 'member';
+  const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
   const originList = Array.isArray(origins) ? origins.map((value) => {
     try { return new URL(value).origin; } catch { return null; }
   }) : [];
@@ -301,7 +301,7 @@ function start({ persona, args, binary = null,
 
 if (require.main === module) {
   const persona = process.argv[2];
-  if (!['member', 'admin', 'full_admin'].includes(persona)) process.exit(2);
+  if (!['member', 'admin', 'full_admin', 'guest'].includes(persona)) process.exit(2);
   start({ persona, args: process.argv.slice(3) });
 }
 

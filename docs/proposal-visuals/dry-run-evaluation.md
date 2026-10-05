@@ -28,8 +28,9 @@ Candidates are recent `usernode-2d5619` proposals whose replay run failed
 with real declared changes: 4781, 4832, 4842, 4844, 4854, 4868, 4885, 4907,
 4908, 4909, 4911, 4913, 4922, 4935, 4937, 4946, 4947. With `get_proposal`,
 keep those whose `shots.claims` is non-empty, and choose a mix: a
-plain member flow, a `read_only_admin` or `full_admin` change, a `mobile`
-viewport, and anything with `animation: "motion"`. Record each one's old
+plain member flow, a `read_only_admin` or `full_admin` change, a `guest`
+(signed-out) change, a `mobile` viewport, and anything with
+`animation: "motion"`. Record each one's old
 `failureCode` / `failureReason` for comparison.
 
 For each, you need `baseSha`, `branch.headSha`, and the full version-1

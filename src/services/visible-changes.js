@@ -1,11 +1,11 @@
 'use strict';
 
 // The one versioned contract for a proposal's declared before/after changes.
-// The author declares up to three changes; each names who is signed in, the
-// screen sizes, where to start and the steps to reach it. This module is
-// deliberately pure: routes, MCP tools and workers all call the same parser,
-// so a declaration cannot become more permissive as it crosses a process
-// boundary.
+// The author declares up to three changes; each names who is signed in (or
+// `guest`, a visitor who is not), the screen sizes, where to start and the
+// steps to reach it. This module is deliberately pure: routes, MCP tools and
+// workers all call the same parser, so a declaration cannot become more
+// permissive as it crosses a process boundary.
 
 const { z } = require('zod');
 
@@ -18,7 +18,8 @@ const MAX_LOCATOR_VALUE = 256;
 const MAX_PATH = 512;
 
 const IMPACTS = Object.freeze(['ui', 'motion', 'none']);
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+// `guest` is a browser that is not signed in: what a signed-out visitor sees.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
 const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
 const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);
