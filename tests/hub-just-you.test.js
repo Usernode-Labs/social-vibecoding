@@ -75,7 +75,7 @@ test('a just-you project being built: the step, as a ring and in words, and no b
   assert.match(html, /data-ws-first-version-step="">Step 4 of 7: Build it<\/span>/,
     'the made screen\'s and the App tab\'s words for the step');
   // Evan, 5 Oct 2026: no average build time for a first version.
-  assert.match(html, /data-ws-first-version-note="">Homeroom bot messages you when it’s ready to try\.<\/span>/);
+  assert.match(html, /data-ws-first-version-note="">Homeroom bot will message you when it’s ready to try, or if it has any questions\.<\/span>/);
   // The ring the bot's activity cards lead with, hidden from a screen reader
   // because the words beside it say the same.
   assert.match(html, /<svg class="shrink-0" width="38" height="38" viewBox="0 0 38 38" role="img" aria-label="Step 4 of 7: Build it" aria-hidden="true">/);
@@ -211,7 +211,7 @@ test('Your work on a project nobody else is in: how to change something, or noth
 
 test('the Share it card says what an invite is for while it is being built', () => {
   const { shareItLine } = loadTsx(CARD);
-  assert.equal(shareItLine(true), 'Invite people to follow along while it’s built, or make it public so anyone can join.');
+  assert.equal(shareItLine(true), 'Invite people to follow along while it’s being built, or make it public so anyone can join.');
   assert.equal(shareItLine(false), 'Invite people to make it a private community, or make it public so anyone can join.');
   assert.match(read(CARD), /<p className="dev-ws-strip-text">\{shareItLine\(!!data\.first_version && !data\.first_version\.ready\)\}<\/p>/);
 });

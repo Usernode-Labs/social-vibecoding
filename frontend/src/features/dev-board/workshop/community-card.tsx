@@ -897,11 +897,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
  *
  * While Homeroom bot builds its first version (the First version card above
  * it, ./hub-cards.tsx), the line says what an invite is for right now, in
- * the made screen's words: people can follow along while it is built.
+ * the made screen's words: people can follow along while it is being built.
  */
 export function shareItLine(building: boolean): string {
   return building
-    ? 'Invite people to follow along while it’s built, or make it public so anyone can join.'
+    ? 'Invite people to follow along while it’s being built, or make it public so anyone can join.'
     : 'Invite people to make it a private community, or make it public so anyone can join.';
 }
 
