@@ -85,6 +85,10 @@ test('GLM answers: the forced tool carries the helper schema, and Haiku is never
     assert.equal(sent.reasoning, 'low');
     assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.session_title);
     assert.deepEqual(sent.toolChoice, { type: 'function', function: { name: 'answer' } });
+    // #3772: not even `false`, which would route GLM 5.3 Flash to the one
+    // provider that takes parallel_tool_calls.
+    assert.equal(sent.parallelToolCalls, null);
+    assert.equal('parallel_tool_calls' in require('../src/services/global-chat/openrouter').buildRequest(sent), false);
     assert.deepEqual(sent.tools[0].function.parameters, llm.SESSION_TITLE_SCHEMA);
     assert.equal(sent.messages[0].role, 'system');
     assert.equal(sent.messages[1].role, 'user');

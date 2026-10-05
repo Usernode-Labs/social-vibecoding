@@ -183,6 +183,7 @@ test('a head that passes every veto gets one forced GLM call and its verdict is 
   assert.equal(h.calls.request.model, 'z-ai/glm-5.3-flash');
   assert.equal(h.calls.request.apiKey, 'sk-or-test');
   assert.deepEqual(h.calls.request.toolChoice, { type: 'function', function: { name: 'record_verdict' } });
+  assert.equal(h.calls.request.parallelToolCalls, null, 'never sent (#3772): false narrows GLM to one provider');
   assert.match(h.calls.request.messages[1].content, /public\/app\.js \(modified, \+1\/-1\)/);
   assert.equal(h.calls.stored.length, 1);
   assert.equal(h.calls.stored[0].verdict, 'small');
