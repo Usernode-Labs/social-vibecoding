@@ -17316,10 +17316,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-keys { display: none; }
 
 /* ── The Needs-you deck's sheets ──────────────────────────────────────
-   Fixed, which inside the lifted strip means the strip's own box: from
-   under the header to the foot of the screen, which is the area a sheet
-   should cover. The pill hides while one is up — a bar floating over a
-   sheet's answers is a bar in the way.
+   Fixed to the viewport, over the whole screen: the header, the tab bar and
+   the Resume strip go under the scrim with everything else (see "ABOVE THE
+   BARS" below).
 
    KEYED ON `.dev-ws-sheet-modal`, AND NOT ON `.dev-ws-sheet`, WHICH IS A
    DIFFERENT OBJECT. `.dev-ws-sheet` is the OPEN CARD — the sheet a folded
@@ -17353,8 +17352,21 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
    It resolves to 0 with no keyboard, so no `html.un-kb` guard is needed here.
    The wide block below makes these panels `position: relative; inset: auto`,
-   which drops this `bottom` with it — a docked panel has no floor to lift. */
-.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+   which drops this `bottom` with it — a docked panel has no floor to lift.
+
+   ABOVE THE BARS (run-through in the iOS app, 5 October 2026). On a phone a
+   sheet is a dialog over the whole screen, and the tab bar and the Resume
+   strip are part of that screen: they belong under its scrim, as they are
+   under the kit's own sheets (`.un-sheet`, z-index 9991). This was z-index
+   30, the tab bar's own number, so the tie went to the bar, which comes
+   later in <body>; and the vote sheet, rendered inside the rail, was held
+   at the rail's 3 (the rule after the card's). Either way the bar and the
+   strip were drawn over the sheet's foot: Cancel and Vote yes sat under
+   them and a tap there opened Me (at 375x812, elementFromPoint at Vote
+   yes's centre was #platform-tab-me). 40 is the tier `.platform-tabs`
+   leaves for panels, sheets and dialogs. The wide block gives every variant
+   a z-index of its own, so a docked panel and the popover are unchanged. */
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 40; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);
@@ -17369,8 +17381,56 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   box-shadow: 0 -10px 30px rgba(24, 39, 75, .2);
 }
 .dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + var(--platform-safe-bottom, 0px)); }
-/* With the keyboard up the sheet is short; let the card have all of it. */
-.dev-ws-needs[data-ws-kb] .dev-ws-sheet-card { max-height: 100%; }
+/* THE VOTE SHEET LIVES IN THE RAIL (on a wide window it is a popover on the
+   rail's button), and on a phone the rail is `z-index: 3`, a stacking
+   context: whatever the sheet's own z-index said, it painted at the rail's
+   level, under the bars and the header. While it is up the rail is not one,
+   so the sheet stacks with the page. Its buttons are under the scrim then,
+   so their order against the item no longer shows. (Wide, the rail is
+   `z-index: auto` already.) */
+.dev-ws-needs[data-ws-sheet="vote"] > .dev-ws-rail { z-index: auto; }
+/* With the keyboard up the sheet is short; let the card have all of it, short
+   of the status bar. `[data-ws-kb]` is workshop.tsx's, set while the kit's
+   `un-kb` or the page's own `platform-kb-open` is on (lib/keyboard-open.ts:
+   in the Homeroom app the web view ends at the keys and `un-kb` never comes
+   on). The home indicator is behind the keys, so the foot keeps 12px rather
+   than 12px plus the inset. */
+.dev-ws-needs[data-ws-kb] .dev-ws-sheet-card { max-height: calc(100% - var(--platform-safe-top, 0px)); padding-bottom: 12px; }
+/* A SHEET TALLER THAN THE SCREEN SCROLLS, AND THE VOTE KEEPS ITS BUTTONS.
+   The card was capped and its content was not: past the cap it ran out of
+   the card's foot, off the screen, and nothing scrolled. In the Homeroom app
+   with the keyboard up (the web view ends at the keys: 494px at 402x874) the
+   vote form is taller than the cap, and Cancel and Vote no hung below the
+   page's edge, behind the keys.
+
+   So the card scrolls, and on the vote sheet the action row is sticky at its
+   foot: whatever the form's height, Cancel and the send are on screen and
+   the rest scrolls under them. The row takes over the clearance the card's
+   foot had (`--ws-vote-foot`: the home indicator, or 12px with the keys up)
+   and draws on the sheet's own fill, so what scrolls under it never shows
+   below the buttons. The card's scroll padding is the row's height (its
+   10px top padding, a 44px button and the foot), so a field focused or
+   scrolled into view lands above the row rather than under it. `:has()`
+   because the group decision's fallback (Open to decide, Decide later) has
+   no such row and keeps the card's own clearance.
+
+   Phone only: on a wide window the vote is a popover whose arrow hangs
+   outside its card, which a scroller would clip, and the panels scroll
+   their own bodies. */
+@media (max-width: 699.98px) {
+  .dev-ws-sheet-card { overflow-y: auto; overscroll-behavior: contain; }
+  .dev-ws-sheet-vote .dev-ws-sheet-card:has(> .dev-ws-vote-form) {
+    --ws-vote-foot: calc(22px + var(--platform-safe-bottom, 0px));
+    padding-bottom: 0;
+    scroll-padding-bottom: calc(54px + var(--ws-vote-foot));
+  }
+  .dev-ws-needs[data-ws-kb] .dev-ws-sheet-vote .dev-ws-sheet-card:has(> .dev-ws-vote-form) { --ws-vote-foot: 12px; }
+  .dev-ws-sheet-vote .dev-ws-vote-form > .dev-vote-reason-actions {
+    position: sticky; bottom: 0; z-index: 1;
+    padding-bottom: var(--ws-vote-foot);
+    background-color: var(--dc-sheet);
+  }
+}
 /* ── Open and close MOVE. The card rises from the floor and the scrim fades
    in; on the way out (`[data-ws-leaving]`, which workshop.tsx keeps mounted
    for exactly this long) both reverse. The names are variables so the wide
