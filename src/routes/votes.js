@@ -430,6 +430,19 @@ function stagingMockProposals(viewer) {
       needs_other_member_yes: true,
       other_member_yes_count: 0,
     },
+    // (d) #3935: the vote is done — 3 Yes of 3 required — but every Yes so
+    // far is the author's own, so it still cannot merge. This is the one
+    // state the "Needs another member's Yes" tag exists for, and 9000031
+    // beside it shows the tag's absence once the floor is satisfied.
+    {
+      ...mk(9000037, 900137,
+        '[Mock] Explicit-approval test: vote won, waiting on a Yes from another member',
+        24, 3, 0, 3, { required: 3 }),
+      requires_explicit_approval: true,
+      explicit_approval_reason: 'admins',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
+    },
     // ── #1442 freshness fixtures ───────────────────────────────────────
     //
     // The three states the issue is about, each of which used to be

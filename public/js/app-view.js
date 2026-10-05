@@ -13370,14 +13370,17 @@ const AppView = {
     // over: the card caps its state chips at BADGE_MAX, and statusTagSpecs is
     // severity-ordered, so what a cap drops is always the least serious thing
     // wrong with the change rather than whichever chip happened to sort last.
+    // The pill's state is computed BEFORE the badges so the member-yes tag
+    // derives from the very state the bar draws — one derivation, so the tag
+    // and the bar can never disagree (#3935).
+    const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
     const badges = [
-      ...AppView.statusTagSpecs(pr, {}),
+      ...AppView.statusTagSpecs(pr, { pillState, majority, locked: ctx.locked, noNav }),
       ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
     ].filter(Boolean);
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
-    const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
     const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
@@ -19520,6 +19523,35 @@ const AppView = {
     if ((o.kind || 'proposal') === 'gov') return [];
     const out = [];
     const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
+    // #3935: the member floor, up in front. A flagged row whose vote has
+    // reached its threshold but still lacks a Yes from anyone but its author
+    // said so only in the pill's lock tooltip and the card's details; this
+    // tag names the wait on the facts line, in the change page's own words.
+    // It is emitted FIRST, ahead of the conflict and checks chips, because on
+    // one of these changes it is the only thing a person can clear.
+    //
+    // The condition reads the SAME pill state the bar draws — handed in by
+    // _proposalCardModel, computed here otherwise (as the unit tests call
+    // it) — so the tag and the bar can never disagree. The reached-but-
+    // waiting tiers read `progress` while the member floor waits; the
+    // below-threshold tally is excluded by the yes >= majority guard,
+    // contested reads `attention`, and a countdown is unreachable on a
+    // flagged row. Suppressed on the change page's own header card (noNav):
+    // its steps strip already states the wait, and a red chip repeating it
+    // beside the pill would be noise.
+    const pill = o.pillState
+      || AppView.statusPillState(p, { majority: o.majority, locked: o.locked });
+    if (p.status === 'promoted' && !o.noNav && AppView._awaitingOtherMember(p)
+        && pill && pill.lock && pill.tone === 'progress'
+        && (parseInt(pill.yes, 10) || 0) >= (parseInt(pill.majority, 10) || 1)) {
+      out.push({
+        t: 'chip', key: 'tag-member-yes', cls: AppView.STATUS_TAG_CLS.blocking,
+        label: 'Needs another member’s Yes',
+        title: AppView._explicitCopy(p.explicit_approval_reason).sentence,
+        meta: true,
+        data: { 'data-status-tag': 'member_yes' },
+      });
+    }
     // Merge-conflict resolution: in flight, nobody need act, so it reads like
     // a running check rather than like a problem.
     if (p.merge_conflict_state === 'resolving' || p.resolving === true) {

@@ -487,6 +487,70 @@ test('explicit approval is a lock glyph inside the pill, not a chip', () => {
   assert.match(html, /gc-vote-count-lock/);
   assert.match(html, /won’t merge on a timer/, 'the tooltip carries the explanation');
   assert.doesNotMatch(html, /gc-vote-explicit/, 'no separate chip any more');
+  // #3935: the tag on the META line is a different seat, and it does not
+  // change what the pill itself says — the lock glyph and its tooltip stand.
+  const waiting = PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    explicit_approval_reason: 'admins', needs_other_member_yes: true,
+    other_member_yes_count: 0, yes_count: 3, votes_required: 3, my_vote: 'yes',
+  });
+  assert.match(pillHtml(AppView, waiting), /gc-vote-count-lock/);
+});
+
+// #3935: a flagged row whose vote is won but which still lacks a Yes from
+// anyone but its author carries the wait on the card, in the change page's
+// own words, instead of leaving it to the lock's tooltip and the details.
+test('the member floor is a red tag on the card, derived from the bar’s own state', () => {
+  const AppView = makeAppView();
+  // The state the tag exists for: 3 of 3 Yes, the maker's among them, and
+  // nobody else's. The pill keeps its lock and its tally; the tag names the
+  // wait on the facts line.
+  const waiting = PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    explicit_approval_reason: 'admins', needs_other_member_yes: true,
+    other_member_yes_count: 0, yes_count: 3, votes_required: 3, my_vote: 'yes',
+  });
+  const tags = AppView.statusTagSpecs(waiting, {});
+  const tag = tags.find((t) => t.key === 'tag-member-yes');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Needs another member’s Yes');
+  assert.match(tag.cls, /red/, 'a person has to act, so blocking tone');
+  assert.equal(tag.title, 'Changes to who runs this app need a Yes from another member.',
+    'the change page’s own sentence, following the setting');
+  assert.equal(tag.data['data-status-tag'], 'member_yes');
+  assert.ok(tag.meta, 'meta, so it rides the meta line uncapped');
+  assert.equal(tags[0].key, 'tag-member-yes', 'first, ahead of the automated states');
+  // The "1 of 1 approval 🔒" shape from the request: the at-least-N approvals
+  // tier reads progress while the floor waits, and the tag is there too.
+  const approvalsMode = AppView.statusTagSpecs(PR({
+    check_state: 'passing', requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility', needs_other_member_yes: true,
+    other_member_yes_count: 0, approvals_required: 1, yes_count: 1, my_vote: 'yes',
+  }), {});
+  assert.equal(approvalsMode.find((t) => t.key === 'tag-member-yes').title,
+    'Changes to who can see this app need a Yes from another member.');
+  // ...and the card model carries it, derived from the very state the bar
+  // draws (one derivation, so the tag and the bar cannot disagree).
+  assert.ok(AppView._proposalCardModel(waiting).badges.some((b) => b.key === 'tag-member-yes'));
+
+  // The floor is satisfied: the padlock clears and the tag goes with it.
+  const cleared = { ...waiting, other_member_yes_count: 1 };
+  assert.equal(AppView.statusTagSpecs(cleared, {}).find((t) => t.key === 'tag-member-yes'), undefined);
+
+  // Below threshold: the bar's count ("1 of 3") already says what is missing.
+  const short = { ...waiting, yes_count: 1 };
+  assert.equal(AppView.statusTagSpecs(short, {}).find((t) => t.key === 'tag-member-yes'), undefined);
+
+  // Unflagged, or settled: nothing to wait on.
+  const plain = { ...waiting, requires_explicit_approval: false, needs_other_member_yes: false };
+  assert.equal(AppView.statusTagSpecs(plain, {}).find((t) => t.key === 'tag-member-yes'), undefined);
+  assert.equal(AppView.statusTagSpecs({ ...waiting, status: 'merged' })
+    .find((t) => t.key === 'tag-member-yes'), undefined);
+
+  // The change page's header card: its steps strip already states the wait,
+  // so a red chip repeating it beside the pill would be noise.
+  assert.equal(AppView.statusTagSpecs(waiting, { noNav: true })
+    .find((t) => t.key === 'tag-member-yes'), undefined, 'noNav suppresses it');
 });
 
 test('multiple reasons: every one is its own tag, and none of them is the bar', () => {
