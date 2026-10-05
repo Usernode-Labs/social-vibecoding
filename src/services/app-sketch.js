@@ -51,7 +51,9 @@
 const log = require('./logger');
 const sketchDates = require('./sketch-dates');
 
-const SKETCH_MODEL = 'claude-haiku-4-5';
+// GLM 5.3 Flash, and Haiku 4.5 when it does not answer in time (llm.js
+// helperMessage); the card row keeps the model that answered.
+const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
 // How long app creation waits for the card before seeding the repository
 // without it (app-creator.js). A late card is committed on its own.
 const SKETCH_WAIT_MS = 30 * 1000;
@@ -61,6 +63,18 @@ const MODEL_WAIT_MS = 15 * 1000;
 const LATE_COMMIT_WAIT_MS = 3 * 60 * 1000;
 // A reply is three short lines of JSON.
 const CARD_MAX_TOKENS = 400;
+// The card's shape, for a model that answers through a schema (GLM); the
+// prompt asks Haiku for the same object. parseCardReply checks it either way.
+const CARD_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    emoji: { type: 'string' },
+    tagline: { type: 'string' },
+    points: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['emoji', 'tagline', 'points'],
+});
 
 // What the card holds, in characters: a tagline and a point are each at most
 // two lines of the card at 390px (it shows the points that fit four lines,
@@ -544,6 +558,7 @@ async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
       system: SKETCH_SYSTEM,
       user: sketchUserPrompt({ name: app.name, brief, audience, today: now, zone: timeZone, maker }),
       model: SKETCH_MODEL,
+      schema: CARD_SCHEMA,
       maxTokens: CARD_MAX_TOKENS,
       telemetryContext: { pool, appId: app.id },
     });
@@ -676,6 +691,7 @@ async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
 
 module.exports = {
   SKETCH_MODEL,
+  CARD_SCHEMA,
   SKETCH_WAIT_MS,
   MODEL_WAIT_MS,
   SKETCH_SYSTEM,

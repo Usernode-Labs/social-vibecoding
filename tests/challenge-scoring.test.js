@@ -1059,9 +1059,14 @@ test('the rubric, the model and the input limits printed are the ones the grader
   assert.ok(sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS)) && !sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS + 1)));
   assert.ok(step.text.includes('first 200 characters') && step.text.includes('first 2,000'));
 
-  // The transport's fallback names the same model, for a caller that passes none.
+  // The transport's default names the same model, for a caller that passes
+  // none, and its fallback is the one the panel names beside it.
+  const llm = require('../src/services/llm');
   const llmSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/services/llm.js'), 'utf8');
-  assert.match(llmSource, new RegExp(`gradeChallengeUnit\\(\\{[^)]*model = '${grader.GRADE_MODEL}'`));
+  assert.match(llmSource, /gradeChallengeUnit\(\{[^)]*model = HELPER_MODEL/);
+  assert.equal(llm.HELPER_MODEL, grader.GRADE_MODEL);
+  assert.equal(llm.HELPER_FALLBACK_MODEL, grader.GRADE_FALLBACK_MODEL);
+  assert.ok(step.text.includes(`${grader.GRADE_FALLBACK_MODEL} when it does not answer in time`));
 });
 
 test('a measure that calls no model says so, and only feedback has a junk filter', () => {
