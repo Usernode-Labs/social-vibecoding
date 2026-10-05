@@ -475,7 +475,12 @@ function stageOf(row, { activity = null } = {}) {
  * (reading, building, and Live, which only the app's answer after a merge
  * says). `have`, the chip it wears now: a Waiting chip whose hold ended
  * before a moment moved it on (the loop not free yet, or a pick-up that
- * says nothing) becomes the one the request would wear.
+ * says nothing) becomes the one the request would wear, and a Reading chip
+ * whose request is being built, or is past it, says Building. The
+ * production run-through of 5 Oct 2026 saw the chip in the project's chat
+ * say Reading for the whole build while the requester's own card said
+ * "Building it now": the moment that moves it was missed, and nothing put
+ * it right. A chip never moves back to Reading from here.
  */
 function chipFor(row, stage, have = null) {
   const issueNumber = Number(row.issue_number);
@@ -484,9 +489,11 @@ function chipFor(row, stage, have = null) {
   if (['closed', 'stopped', 'person', 'asked', 'answered'].includes(stage)) return null;
   if (stage === 'fixing' && row.kind === 'revise') return { issueNumber, status: 'fixing', ...(sessionId ? { sessionId } : {}) };
   if (stage === 'waiting_first_version') return { issueNumber, status: 'waiting_first_version' };
-  if (have?.status === 'waiting_first_version') {
-    if (['reading', 'waiting', 'question'].includes(stage)) return { issueNumber, status: 'reading' };
-    if (['building', 'checking', 'approved'].includes(stage)) return { issueNumber, status: 'building' };
+  if (have?.status === 'waiting_first_version' && ['reading', 'waiting', 'question'].includes(stage)) {
+    return { issueNumber, status: 'reading' };
+  }
+  if (['waiting_first_version', 'reading'].includes(have?.status) && ['building', 'checking', 'approved'].includes(stage)) {
+    return { issueNumber, status: 'building' };
   }
   return undefined;
 }

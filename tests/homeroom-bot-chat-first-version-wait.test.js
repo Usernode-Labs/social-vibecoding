@@ -72,6 +72,21 @@ test('the chip a held request wears, and the one it gets back once the hold ends
   assert.equal(botChat.chipFor(row, 'reading'), undefined);
 });
 
+test('a Reading chip the moments missed catches up with the card', () => {
+  // Production run-through, 5 Oct 2026: the chip in the project's chat said
+  // Reading through the whole build while the requester's card said
+  // "Building it now". Reading the cards puts it right (cardsOf, reconcile).
+  const row = { kind: 'filed', issue_number: 2, session_id: null };
+  const reading = { issueNumber: 2, status: 'reading' };
+  for (const stage of ['building', 'checking', 'approved']) {
+    assert.deepEqual(botChat.chipFor(row, stage, reading), { issueNumber: 2, status: 'building' }, stage);
+  }
+  assert.equal(botChat.chipFor(row, 'waiting', reading), undefined, 'still before the build: as it is');
+  // Never backwards, and Live is still only the app's answer to say.
+  assert.equal(botChat.chipFor(row, 'reading', { issueNumber: 2, status: 'building' }), undefined);
+  assert.equal(botChat.chipFor(row, 'live', reading), undefined);
+});
+
 test('what the card and the chip say while it waits', () => {
   const { BotStatusChip, BotRequestCardView, cardWords, FIRST_VERSION_WAIT_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   assert.equal(FIRST_VERSION_WAIT_LINE, WAIT);
