@@ -240,7 +240,7 @@
       "key": "language",
       "label": "Language",
       "group": "Preferences",
-      "gate": "settings-language-section",
+      "gate": null,
       "capabilityId": "settings.open.language",
       "classicPath": "#settings/language",
       "mobileSupported": true
