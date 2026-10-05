@@ -4323,6 +4323,11 @@ async function resumeDetachedTurnInner({
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      // The journal's own harness picks its parser (#3296). Without it the
+      // registry falls back to Codex, and a recovered Claude Code turn (every
+      // GLM turn since #3749) came back with no result text, progress or
+      // usage: a recovered spec lost its spec, a triage its verdict.
+      agentHarness: activeTurn.harness || null,
       telemetryComponent: activeTurn.telemetryComponent
         || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
@@ -6150,6 +6155,15 @@ async function cleanup() {
   const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
+  // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
+  // or dispatched on a process whose pool is about to close. Their turns
+  // already running are restart recovery's to finish.
+  try { require('./src/services/homeroom-bot').stop(); } catch (err) {
+    log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
+  }
+  try { require('./src/services/bench/lane').stop(); } catch (err) {
+    log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
+  }
   const retentionStop = require('./src/services/build-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
