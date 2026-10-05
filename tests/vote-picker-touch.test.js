@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The vote picker is ONE panel (dev-card.tsx VoteButton / VotePicker): a
 // two-way switch across the top with Yes on by default, the line box under
@@ -126,17 +127,17 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
   const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
   assert.equal((fn.match(/<VotePicker\b/g) || []).length, 1, 'one VotePicker element');
   assert.equal((fn.match(/\{picker\}/g) || []).length, 2, 'rendered into the popover and into the sheet');
-  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label="Your vote"\s+data-side=\{side\}/,
+  assert.match(englishUiSource(fn), /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label="Your vote"\s+data-side=\{side\}/,
     'desktop: the anchored popover, a dialog now that it holds a form');
-  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
+  assert.match(englishUiSource(fn), /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
     'touch: the same panel inside the kit sheet\'s content element');
-  assert.match(fn, /aria-haspopup="dialog"/, 'the face says what it opens');
-  assert.match(fn, /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
-  assert.match(fn, /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');
-  assert.match(fn, /const canSend = !isVote \|\| side === 'yes' \|\| !!trimmed;/);
-  assert.match(fn, /send\(spec, isVote \? \(trimmed \|\| null\) : null\);/, 'one call: the side\'s spec with the line, null for none');
-  assert.match(fn, /if \(!isVote\) \{ call\(a\.act\); return; \}/, 'anything that is not a vote is the spec\'s own call');
-  assert.doesNotMatch(fn, /dev-vote-reason-box|dev-vote-opt|data-asking|setAsking/, 'the rows and the two-step are gone');
+  assert.match(englishUiSource(fn), /aria-haspopup="dialog"/, 'the face says what it opens');
+  assert.match(englishUiSource(fn), /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
+  assert.match(englishUiSource(fn), /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');
+  assert.match(englishUiSource(fn), /const canSend = !isVote \|\| side === 'yes' \|\| !!trimmed;/);
+  assert.match(englishUiSource(fn), /send\(spec, isVote \? \(trimmed \|\| null\) : null\);/, 'one call: the side\'s spec with the line, null for none');
+  assert.match(englishUiSource(fn), /if \(!isVote\) \{ call\(a\.act\); return; \}/, 'anything that is not a vote is the spec\'s own call');
+  assert.doesNotMatch(englishUiSource(fn), /dev-vote-reason-box|dev-vote-opt|data-asking|setAsking/, 'the rows and the two-step are gone');
 });
 
 test('on touch the kit sheet comes first; the action sheet and the prompt card are the fallback', () => {
@@ -193,14 +194,14 @@ test('the switch has two filled states, the popover one even inset, and the shee
 
 test('a test account\'s vote on an app a real person made says, in one line, that it will not count', () => {
   const html = picker({ uncounted: true });
-  assert.match(html, /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><p class="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count\.<\/p><div class="dev-vote-switch"/,
+  assert.match(englishUiSource(html), /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><p class="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count\.<\/p><div class="dev-vote-switch"/,
     'the line sits under "Your vote", above the switch');
-  assert.doesNotMatch(picker(), /dev-vote-uncounted/, 'nobody else sees it');
+  assert.doesNotMatch(englishUiSource(picker()), /dev-vote-uncounted/, 'nobody else sees it');
   // The flag rides the Yes spec from the /promoted row, as `prior` does.
-  assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
+  assert.match(englishUiSource(SRC), /uncounted=\{!!yes\.uncounted\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
-  assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
-  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
-  assert.match(CSS, /\.dev-vote-uncounted \{/);
-  assert.match(CSS, /\.gc-vote-uncounted \{/);
+  assert.match(englishUiSource(appView), /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
+  assert.match(englishUiSource(appView), /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(englishUiSource(CSS), /\.dev-vote-uncounted \{/);
+  assert.match(englishUiSource(CSS), /\.gc-vote-uncounted \{/);
 });

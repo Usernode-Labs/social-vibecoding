@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The Settings module as a lazy chunk (frontend/src/features/settings/).
 //
 // ./settings.js and the sixteen panes are ~180KB of the shell bundle that
@@ -219,16 +220,16 @@ test('the chunk commits the panes with flushSync before a forwarded open() runs'
 });
 
 test('the chassis gates the panes on the chunk, and init() runs where the panes are', () => {
-  assert.match(indexTsx, /import \{ ensureSettings, prefetchSettings, settingsChunkStore \} from '\.\/facade\.js';/);
-  assert.doesNotMatch(indexTsx, /from '\.\/sections'/, 'the panes must not be a static import of the entry');
-  assert.doesNotMatch(indexTsx, /import '\.\/mount'/, 'nor settings.js (which ./mount imports)');
-  assert.match(indexTsx, /\{mounted && Sections \? <Sections \/> : null\}/);
-  assert.match(indexTsx, /if \(mounted\) ensureSettings\(\);/, 'a reveal without open() still asks for the module');
-  assert.match(indexTsx, /Settings could not be loaded\./, 'a failed load says so in the host instead of leaving it blank');
-  assert.match(sectionsTsx, /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/,
+  assert.match(englishUiSource(indexTsx), /import \{ ensureSettings, prefetchSettings, settingsChunkStore \} from '\.\/facade\.js';/);
+  assert.doesNotMatch(englishUiSource(indexTsx), /from '\.\/sections'/, 'the panes must not be a static import of the entry');
+  assert.doesNotMatch(englishUiSource(indexTsx), /import '\.\/mount'/, 'nor settings.js (which ./mount imports)');
+  assert.match(englishUiSource(indexTsx), /\{mounted && Sections \? <Sections \/> : null\}/);
+  assert.match(englishUiSource(indexTsx), /if \(mounted\) ensureSettings\(\);/, 'a reveal without open() still asks for the module');
+  assert.match(englishUiSource(indexTsx), /Settings could not be loaded\./, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(englishUiSource(sectionsTsx), /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/,
     'init() binds by id once the panes exist: a layout effect of the panes component');
-  assert.match(chunkTs, /^import '\.\/mount';/m, 'the chunk evaluates settings.js (via ./mount) …');
-  assert.match(chunkTs, /export \{ SettingsSections \} from '\.\/sections';/, '… and carries the panes');
+  assert.match(englishUiSource(chunkTs), /^import '\.\/mount';/m, 'the chunk evaluates settings.js (via ./mount) …');
+  assert.match(englishUiSource(chunkTs), /export \{ SettingsSections \} from '\.\/sections';/, '… and carries the panes');
   assert.ok(chunkTs.indexOf("import './mount'") < chunkTs.indexOf("from './sections'"), 'module before panes');
 });
 

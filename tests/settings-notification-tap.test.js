@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The in-app Settings notification row must never be a dead tap (#1193).
 //
 // Reported: inside the Homeroom iOS app, tapping the notification row in
@@ -71,7 +73,7 @@ function boot(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return sandbox;
 }
@@ -270,15 +272,16 @@ test('the row reads the real iOS push permission BEFORE it renders, not ' +
 });
 
 test('every dead end leaves a console error AND a visible notice', () => {
-  assert.match(settingsSource,
+  const settingsSourceEnglish = englishUiSource(settingsSource);
+  assert.match(settingsSourceEnglish,
     /console\.error\(\s*`\[settings\] notification permission dead end/);
-  const start = settingsSource.indexOf('_unNotifDeadEnd(kind, opts) {');
+  const start = settingsSourceEnglish.indexOf('_unNotifDeadEnd(kind, opts) {');
   assert.ok(start !== -1, '_unNotifDeadEnd exists');
-  const body = settingsSource.slice(start, start + 700);
+  const body = settingsSourceEnglish.slice(start, start + 700);
   assert.match(body, /console\.error/);
   assert.match(body, /_unNotifNotice = \{/);
   // The tap acknowledges itself before anything can block, too.
-  assert.match(settingsSource, /Opening the notification prompt…/);
+  assert.match(settingsSourceEnglish, /Opening the notification prompt…/);
 });
 
 test('the screen never renders an Open notification settings button the ' +

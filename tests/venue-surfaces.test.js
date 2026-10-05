@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Where the venue answer is SHOWN.
 //
@@ -44,7 +47,7 @@ const APP_CSS = read('public/css/app.css');
 function loadBuildVenues() {
   const sandbox = { window: {}, module: { exports: {} }, document: undefined };
   sandbox.self = sandbox.window;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(read('public/js/build-venues.js'), sandbox, {
     filename: 'public/js/build-venues.js',
   });
@@ -154,48 +157,48 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
   // The RENDER's site is the model now — `_headerVenue` resolves `disabled`
   // from the same flag, and the component renders it — so the two sites are
   // one derivation and one in-place write rather than two in-place writes.
-  assert.match(DEV_CHAT_SRC, /disabled: DevChat\._chatBusyForPaint\(\)/,
+  assert.match(englishUiSource(DEV_CHAT_SRC), /disabled: DevChat\._chatBusyForPaint\(\)/,
     'the render resolves it from the streaming paint seam');
-  assert.match(HEADER_TSX, /disabled=\{venue\.disabled\}/,
+  assert.match(englishUiSource(HEADER_TSX), /disabled=\{venue\.disabled\}/,
     'and the component is the only thing that writes it on the render path');
-  assert.match(HEADER_TSX, /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
+  assert.match(englishUiSource(HEADER_TSX), /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
     'the disabled state has a stable visible-check hook');
-  assert.match(HEADER_TSX, /<LockIcon[\s\S]*Thinking…/,
+  assert.match(englishUiSource(HEADER_TSX), /<LockIcon[\s\S]*Thinking…/,
     'the disabled state explains itself without relying on a mouse cursor');
   const sites = DEV_CHAT_SRC.match(
     /getElementById\('dc-venue-select'\)/g
   ) || [];
   assert.ok(sites.length >= 1,
     `the streaming sync still finds the button by id (got ${sites.length})`);
-  assert.match(DEV_CHAT_SRC, /_setStreamingUI[\s\S]*?DevChat\._repaintSessionHeader\(\)/,
+  assert.match(englishUiSource(DEV_CHAT_SRC), /_setStreamingUI[\s\S]*?DevChat\._repaintSessionHeader\(\)/,
     'and the streaming sync republishes the strip rather than writing the '
     + 'attribute React would overwrite on its next paint');
-  assert.doesNotMatch(DEV_CHAT_SRC, /venueChange\.disabled/,
+  assert.doesNotMatch(englishUiSource(DEV_CHAT_SRC), /venueChange\.disabled/,
     'no second writer on a node the component renders');
 });
 
 test('in-chat providers share one flat selector, and other venues get none', () => {
-  assert.match(DEV_CHAT_SRC,
+  assert.match(englishUiSource(DEV_CHAT_SRC),
     /venue !== 'usernode-claude' && venue !== 'usernode-openrouter'\) return null;/,
     'only in-chat venues receive the selector');
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
-  assert.match(COMPOSER_TSX, /<select[\s\S]*id="dc-model-select"/,
+  assert.match(englishUiSource(COMPOSER_TSX), /<select[\s\S]*id="dc-model-select"/,
     'the control is inside the composer');
   // #2569: ONE list. Provider provenance is a title, not a heading and not
   // a label prefix.
-  assert.match(COMPOSER_TSX, /s\.models\.options\.map/,
+  assert.match(englishUiSource(COMPOSER_TSX), /s\.models\.options\.map/,
     'the selector renders one flat option list');
-  assert.doesNotMatch(COMPOSER_TSX, /<optgroup/,
+  assert.doesNotMatch(englishUiSource(COMPOSER_TSX), /<optgroup/,
     'no native optgroups, so the closed control asks about models only');
-  assert.doesNotMatch(DEV_CHAT_SRC, /'OpenRouter key \u00b7 |'Anthropic key \u00b7 /,
+  assert.doesNotMatch(englishUiSource(DEV_CHAT_SRC), /'OpenRouter key \u00b7 |'Anthropic key \u00b7 /,
     'no option label names a provider');
-  assert.match(DEV_CHAT_SRC, /title: 'Runs on your OpenRouter key'/,
+  assert.match(englishUiSource(DEV_CHAT_SRC), /title: 'Runs on your OpenRouter key'/,
     'which key pays survives as the option title');
-  assert.match(DEV_CHAT_SRC, /Add more OpenRouter models/,
+  assert.match(englishUiSource(DEV_CHAT_SRC), /Add more OpenRouter models/,
     'the full catalog is reachable from the selector');
   assert.match(
-    DEV_CHAT_SRC,
+    englishUiSource(DEV_CHAT_SRC),
     /_switchCurrentCodingAgent\(null, \{ fixedBackend: 'codex_openrouter' \}\)/,
     'changing the model keeps the chooser locked to OpenRouter',
   );

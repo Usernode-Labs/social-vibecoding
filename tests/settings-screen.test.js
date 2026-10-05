@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Settings as its own screen (settings-modal-to-screen conversion) — the
 // #settings hash route that replaced the #settings-modal overlay, laid out
 // like the Admin & moderation console: a grouped sidebar on md+, a
@@ -40,12 +41,12 @@ const { shellMarkup } = require('./lib/shell-markup');
 // mount on first reveal (tests/lib/shell-markup.js).
 const html = shellMarkup();
 const appJs = read('public/js/app.js');
-const settingsJs = read('frontend/src/features/settings/settings.js');
-const passwordTsx = read('frontend/src/features/settings/sections/password.tsx');
+const settingsJs = englishUiSource(read('frontend/src/features/settings/settings.js'));
+const passwordTsx = englishUiSource(read('frontend/src/features/settings/sections/password.tsx'));
 // #1079: #settings-usernode-section's markup moved to a component; its tests
 // read both halves — the DECISIONS here, the SHAPES there.
-const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
-const usernodeUiTsx = read('frontend/src/features/settings/sections/usernode-ui.tsx');
+const usernodeTsx = englishUiSource(read('frontend/src/features/settings/sections/usernode.tsx'));
+const usernodeUiTsx = englishUiSource(read('frontend/src/features/settings/sections/usernode-ui.tsx'));
 const usernodeStoreTs = read('frontend/src/features/settings/sections/usernode-store.ts');
 
 /** One method's source, by brace matching — stable across reordering. */
@@ -68,7 +69,7 @@ function sliceMethod(src, name) {
   return src.slice(m.index, i);
 }
 // The halves the two nav hosts were split into by #1191 slice 6, conversion 8.
-const navTsx = read('frontend/src/features/settings/settings-nav.tsx');
+const navTsx = englishUiSource(read('frontend/src/features/settings/settings-nav.tsx'));
 const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
 
 // The section a bare #settings resolves to, read from the module rather than
@@ -364,16 +365,18 @@ test('a part address resolves to its page, scrolled to the part', () => {
 });
 
 test('the nav lists pages and hands the filter its terms', () => {
-  const nav = sliceMethod(settingsJs, '_navView');
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const navTsxEnglish = englishUiSource(navTsx);
+  const nav = sliceMethod(settingsJsEnglish, '_navView');
   assert.match(nav, /\.\.\.Settings\._filterTerms\(p\)/, 'the sidebar rows carry filter terms');
-  assert.match(sliceMethod(settingsJs, '_menuView'), /\.\.\.Settings\._filterTerms\(p\)/,
+  assert.match(sliceMethod(settingsJsEnglish, '_menuView'), /\.\.\.Settings\._filterTerms\(p\)/,
     'and so do the menu rows');
-  const terms = sliceMethod(settingsJs, '_filterTerms');
+  const terms = sliceMethod(settingsJsEnglish, '_filterTerms');
   assert.match(terms, /Settings\.KEYWORDS\[s\.key\]/, 'keywords are matched per part');
   assert.match(terms, /toLowerCase\(\)/, 'lower-cased once, in the module');
   // Every part has keywords, so the filter can find it by the words people
   // type rather than only by its label.
-  const keywords = settingsJs.slice(settingsJs.indexOf('    KEYWORDS: {'), settingsJs.indexOf('    DEFAULT_SECTION:'));
+  const keywords = settingsJsEnglish.slice(settingsJsEnglish.indexOf('    KEYWORDS: {'), settingsJsEnglish.indexOf('    DEFAULT_SECTION:'));
   for (const s of registrySections()) {
     assert.match(keywords, new RegExp(`\\n      '?${s.key}'?: '[^']+',`), `KEYWORDS covers ${s.key}`);
   }
@@ -381,14 +384,14 @@ test('the nav lists pages and hands the filter its terms', () => {
   // The component: a search field on both hosts, ids distinct because both
   // hosts are in the document at phone width, rendered only beside a
   // descriptor so the prerender stays the two empty hosts.
-  assert.match(navTsx, /id="settings-filter-desktop"/);
-  assert.match(navTsx, /id="settings-filter-mobile"/);
-  assert.match(navTsx, /type="search"/);
-  assert.match(navTsx, /\{desktop \? \(/, 'the sidebar field waits for its descriptor');
-  assert.match(navTsx, /\{mobile \? \(/, 'and so does the menu\'s');
-  assert.match(navTsx, /e\.key === 'Enter' && hits\[0\]/, 'Enter opens the first hit');
-  assert.match(navTsx, /e\.key === 'Escape'/, 'Escape clears');
-  assert.match(navTsx, /No settings match/, 'an empty result says so');
+  assert.match(navTsxEnglish, /id="settings-filter-desktop"/);
+  assert.match(navTsxEnglish, /id="settings-filter-mobile"/);
+  assert.match(navTsxEnglish, /type="search"/);
+  assert.match(navTsxEnglish, /\{desktop \? \(/, 'the sidebar field waits for its descriptor');
+  assert.match(navTsxEnglish, /\{mobile \? \(/, 'and so does the menu\'s');
+  assert.match(navTsxEnglish, /e\.key === 'Enter' && hits\[0\]/, 'Enter opens the first hit');
+  assert.match(navTsxEnglish, /e\.key === 'Escape'/, 'Escape clears');
+  assert.match(navTsxEnglish, /No settings match/, 'an empty result says so');
 });
 
 test('the filter matches every word, and names the parts that matched', () => {
@@ -420,25 +423,16 @@ test('the filter matches every word, and names the parts that matched', () => {
 
 // ── #1556: Language is gated on an already-saved locale ────────────────
 
-test('the Language section is offered only to a user who already saved a locale', () => {
+test('the Language section is available to every user, including Auto', () => {
   const hit = registrySections().find((s) => s.key === 'language');
-  assert.ok(hit, 'language is still a registered section');
-  assert.equal(hit.gate, 'settings-language-section',
-    'the shell is English-only, so the picker is behind a capability gate');
-  // It ships hidden (the generic gate test above covers the markup), and the
-  // render fn is what reveals it — for a saved value, and only then.
+  assert.ok(hit, 'language is registered');
+  assert.equal(hit.gate, null, 'all users can select a platform language');
   const fn = sliceMethod(settingsJs, '_renderLanguageSection');
-  assert.match(fn, /const value = this\.state\.locale \|\| ''/,
-    'the gate is decided by the stored locale, nothing else');
-  assert.match(fn, /if \(!value\) \{[^}]*section\.classList\.add\('hidden'\);[^}]*return;/,
-    'no saved locale -> the section stays hidden and nothing else renders');
-  assert.match(fn, /section\.classList\.remove\('hidden'\)/,
-    'a saved locale -> the section is revealed, so the preference stays changeable');
-  // state.locale lands with /api/auth/me, which can resolve AFTER a cold-boot
-  // deep link has already painted the menu — so the gate re-renders there too.
+  assert.match(fn, /const value = this\.state\.locale \|\| ''/);
+  assert.match(fn, /section\.classList\.remove\('hidden'\)/);
+  assert.doesNotMatch(fn, /if \(!value\)/, 'Auto does not hide the language picker');
   const refresh = sliceMethod(settingsJs, 'refresh');
-  assert.match(refresh, /this\._renderLanguageSection\(\)/,
-    'refresh() re-runs the gate once the account payload arrives');
+  assert.match(refresh, /this\._renderLanguageSection\(\)/);
 });
 
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
@@ -578,7 +572,8 @@ test('the hash router handles #settings[/section]', () => {
 });
 
 test('navigateToSettings mounts the screen and routes when already mounted', () => {
-  const fn = appJs.slice(appJs.indexOf('  navigateToSettings(section) {'));
+  const appJsEnglish = englishUiSource(appJs);
+  const fn = appJsEnglish.slice(appJsEnglish.indexOf('  navigateToSettings(section) {'));
   assert.ok(fn.length > 0, 'navigateToSettings exists in app.js');
   const head = fn.slice(0, 2600);
   assert.match(head, /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\) \{\s*Settings\.route\(section\);/,
@@ -672,13 +667,13 @@ test('Settings is reached from the Me tab, by a real anchor', () => {
   // because the menu holds the APP's options now and the tab bar carries the
   // platform's places. It is a Profile row again — one entrance, two hops
   // from anywhere: the Me tab, then the row.
-  const panel = read('frontend/src/features/profile/account-panel.tsx');
+  const panel = englishUiSource(read('frontend/src/features/profile/account-panel.tsx'));
   assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
     'navigation rides the anchor hash, like Challenges beside it');
   // The row does not call Settings.open — the hash does the navigating and
   // always did. Nor does it dismiss anything: it is on a screen rather than
   // in a sheet, which is the whole of what changed.
-  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const menu = englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx'));
   assert.doesNotMatch(menu, /id="switcher-row-settings"/,
     'and there is no second entrance left in the menu');
 });
@@ -689,7 +684,7 @@ test('the BYOK dot went with the row it marked', () => {
   // is not rendered anywhere, which is the honest state — a published flag
   // with no reader is dead, and a dot invented on a new row without a design
   // board is worse than none.
-  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const menu = englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx'));
   assert.doesNotMatch(menu, /switcher-byok-dot/);
 });
 
@@ -916,9 +911,9 @@ test('the credits banner deep-links all three ways to keep building', () => {
   // moved from `_wireCreditsBanner` in dev-chat.js to a ref in
   // features/dev-chat/banners.tsx — one delegated click per mounted element,
   // which is what `CreditOptions.wire` has always bound.
-  const bannersTsx = fs.readFileSync(
+  const bannersTsx = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'), 'utf8'
-  );
+  ));
   const fn = bannersTsx.slice(bannersTsx.indexOf('const wireRef'));
   // #1049 added a second argument: the two hand-off routes are handled in
   // place (they start the walkthrough in this chat) rather than navigated.
@@ -945,7 +940,7 @@ test('the "Settings → Change password" prose is a real link', () => {
     'the account-recovery help text links to the Password section');
   // The dialog's markup is React-owned chassis since #1082 chunk E; the copy
   // and the link inside it are unchanged.
-  assert.match(read('frontend/src/features/admin/index.tsx'), /href="#settings\/password"/,
+  assert.match(englishUiSource(read('frontend/src/features/admin/index.tsx')), /href="#settings\/password"/,
     'so does the temporary-password dialog');
 });
 
@@ -1036,13 +1031,14 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs an explicit CLI review fixture`);
     }
   }
-  // #1556: the Language deep link still has a check, but it asserts that the
-  // route falls back to the default page rather than rendering a pane.
+  // #3659: language settings is available to every signed-in user.
   const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
   assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
-  assert.match(lang[0].expectSelector || '',
-    new RegExp(`data-settings-section="${DEFAULT_PART}"\\]:not\\(\\.hidden\\)`),
-    'the Language deep link lands on the default page, not on a Language pane');
+  assert.ok(lang[0].expectSelector.includes('[data-settings-section="language"]:not(.hidden) #settings-locale'),
+    'the Language deep link shows its picker');
+  for (const value of ['es', 'ar', 'zh-TW', '']) {
+    assert.ok(lang[0].expectSelector.includes(`option[value="${value}"]`));
+  }
 
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to
@@ -1062,23 +1058,25 @@ test('dapp.json covers the settings screen and its deep links', () => {
 });
 
 test('the native-only password creation link has a read-only browser review state (#2282)', () => {
+  const passwordTsxEnglish = englishUiSource(passwordTsx);
+  const settingsJsEnglish = englishUiSource(settingsJs);
   const checks = (manifest.tests || []).filter((t) =>
     (t.path || '').includes('shot=password-create'));
   assert.equal(checks.length, 1,
     'exactly one declared check drives the password-creation screenshot state');
   assert.equal(checks[0].path, '/?shot=password-create#settings/password');
   assert.equal(checks[0].expectText, 'Don’t have a password? Create one');
-  assert.match(passwordTsx, /Don’t have a password\? Create one/,
+  assert.match(passwordTsxEnglish, /Don’t have a password\? Create one/,
     'the component renders the user-facing copy the check expects');
 
-  assert.match(sliceMethod(settingsJs, '_passwordCreateDemo'),
+  assert.match(sliceMethod(settingsJsEnglish, '_passwordCreateDemo'),
     /this\._demoParam\('shot'\) === 'password-create'/,
     'the fixed UI state is selected only by its own screenshot value');
-  assert.match(sliceMethod(settingsJs, '_renderChangePasswordSection'),
+  assert.match(sliceMethod(settingsJsEnglish, '_renderChangePasswordSection'),
     /this\._passwordCreateDemo\(\)\s*\|\|\s*\(isNative && !!this\.state\.usernodePubkey\)/,
     'the screenshot state reveals the same link without weakening the real native gate');
 
-  const submit = sliceMethod(settingsJs, 'changePasswordWithWallet');
+  const submit = sliceMethod(settingsJsEnglish, 'changePasswordWithWallet');
   const nativeGate = submit.indexOf("typeof window.signMessage !== 'function'");
   const firstRequest = submit.indexOf('fetch(');
   assert.ok(nativeGate > -1 && firstRequest > nativeGate,
@@ -1182,39 +1180,43 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
 // entirely by settings.js, so its controls are bound per render.
 
 test('the usernode section renders a reason, not just "could not load"', () => {
-  assert.match(settingsJs, /USERNODE_READ_ERROR_REASONS: \{/,
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  assert.match(settingsJsEnglish, /USERNODE_READ_ERROR_REASONS: \{/,
     'the kind -> sentence map exists');
   for (const kind of [
     'timeout', 'rejected', 'probe-inconclusive', 'no-transport', 'not-native',
   ]) {
-    assert.match(settingsJs, new RegExp(`'${kind}':`),
+    assert.match(settingsJsEnglish, new RegExp(`'${kind}':`),
       `${kind} has a plain-language sentence`);
   }
-  assert.match(settingsJs, /USERNODE_READ_ERROR_FALLBACK: '[^']+'/,
+  assert.match(settingsJsEnglish, /USERNODE_READ_ERROR_FALLBACK: '[^']+'/,
     'an unknown/absent kind still says something concrete');
-  assert.match(settingsJs, /_usernodeReadError\(\)\s*\{/,
+  assert.match(settingsJsEnglish, /_usernodeReadError\(\)\s*\{/,
     'the reason is read through one helper');
-  assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
+  assert.match(settingsJsEnglish, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(usernodeTsx, /Could not load Homeroom app settings\./,
+  assert.match(usernodeTsxEnglish, /Could not load Homeroom app settings\./,
     'the headline is unchanged so existing reports stay recognisable');
   // #1079: the box is sections/usernode.tsx now. The MODEL carries the
   // app's own message and the component renders it verbatim in a mono run.
-  assert.match(settingsJs, /message: \(readError && readError\.message\) \|\| null/,
+  assert.match(settingsJsEnglish, /message: \(readError && readError\.message\) \|\| null/,
     "the app's own message reaches the view model verbatim");
-  assert.match(usernodeTsx, /font-mono[^"]*">\{b\.message\}/,
+  assert.match(usernodeTsxEnglish, /font-mono[^"]*">\{b\.message\}/,
     'and is rendered as a mono line, not reworded');
 });
 
 test('the failed read is recoverable in place', () => {
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  const settingsJsEnglish = englishUiSource(settingsJs);
   // #1079: the box is sections/usernode.tsx and the retry is a named module
   // action. The PROPERTIES are unchanged: stable ids, a retry on screen, and
   // a retry that swaps in a progress line rather than blanking the section.
-  assert.match(usernodeTsx, /id="settings-usernode-error"/,
+  assert.match(usernodeTsxEnglish, /id="settings-usernode-error"/,
     'the error box has a stable id');
-  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: 'Try again'/,
+  assert.match(usernodeTsxEnglish, /id: 'settings-usernode-retry', label: 'Try again'/,
     'the retry button has a stable id and is offered on the screen');
-  const retry = sliceMethod(settingsJs, '_retryUsernodeRead');
+  const retry = sliceMethod(settingsJsEnglish, '_retryUsernodeRead');
   assert.match(retry, /this\._usernodeLoading = true;/,
     'a retry swaps the box for a progress line instead of blanking the section');
   assert.match(retry, /await this\._renderUsernodeSection\(\)/,
@@ -1322,20 +1324,23 @@ test('the usernode read is retried once on readiness and never leaks a listener'
 });
 
 test('activity notifications wait for native admission and surface failures', () => {
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  const usernodeUiTsxEnglish = englishUiSource(usernodeUiTsx);
   // #1079: the wording and the gate are the view builder's; the retry is a
   // named action. Every property below is unchanged.
-  const view = sliceMethod(settingsJs, '_socialPushView');
+  const view = sliceMethod(settingsJsEnglish, '_socialPushView');
   assert.match(view, /NativeChrome\.isSessionAdmitted\(\)/,
     'a closed handoff renders recovery instead of a stale toggle');
   assert.match(view, /NativeChrome\.recoverSessionAdmission/,
     'the notification section offers an explicit handoff retry');
   assert.match(view, /Finishing secure app sign-in/);
-  assert.match(sliceMethod(settingsJs, '_retrySocialPush'),
+  assert.match(sliceMethod(settingsJsEnglish, '_retrySocialPush'),
     /NativeChrome\.recoverSessionAdmission\(\)/,
     'and the retry actually re-runs the handoff');
-  assert.match(usernodeTsx, /includeErrorDetail: true/,
+  assert.match(usernodeTsxEnglish, /includeErrorDetail: true/,
     'native storage and admission errors remain visible to the user');
-  assert.match(usernodeUiTsx, /Could not save the setting/,
+  assert.match(usernodeUiTsxEnglish, /Could not save the setting/,
     'a failed setter says so rather than silently reverting');
 });
 
@@ -1452,7 +1457,7 @@ test('detaching is confirmed, and an already-gone lease is not an error', () => 
     settingsJs.indexOf('_detachLocalAgent(')
   );
   assert.match(view, /detachable: !agent\.demo && !!agent\.leaseId/);
-  const list = read('frontend/src/features/settings/local-agents-list.tsx');
+  const list = englishUiSource(read('frontend/src/features/settings/local-agents-list.tsx'));
   assert.match(list, /agent\.detachable \? \(/);
   const withoutLease = renderComponent(
     'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
@@ -1498,13 +1503,15 @@ test('the connection panel renders above the failures it explains', () => {
 });
 
 test('the panel has stable ids and both actions', () => {
-  assert.match(usernodeTsx, /id="settings-usernode-connection"/);
-  assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry'/);
-  assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy'/);
-  assert.match(usernodeTsx, /'Try again'/);
-  assert.match(usernodeTsx, /'Copy diagnostics'/);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  assert.match(usernodeTsxEnglish, /id="settings-usernode-connection"/);
+  assert.match(usernodeTsxEnglish, /id: 'settings-usernode-connection-retry'/);
+  assert.match(usernodeTsxEnglish, /id: 'settings-usernode-connection-copy'/);
+  assert.match(usernodeTsxEnglish, /'Try again'/);
+  assert.match(usernodeTsxEnglish, /'Copy diagnostics'/);
   // PlatformUI.copyText is the real API (async → boolean, never throws).
-  const copy = sliceMethod(settingsJs, '_copyUsernodeDiagnostics');
+  const copy = sliceMethod(settingsJsEnglish, '_copyUsernodeDiagnostics');
   assert.match(copy, /PlatformUI\.copyText\(/);
   assert.doesNotMatch(copy, /PlatformUI\.copy\(/);
   // JS-built, so they must not appear in the static shell.
@@ -1526,10 +1533,12 @@ test('the panel has stable ids and both actions', () => {
 // last sent per entry) is spread across three pieces of state that no
 // log line reports. This box is that state, in one place.
 test('the widget-icon box reports every step of the icon decision', () => {
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
-  const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Homeroom app: widget icons/);
+  const widget = sliceMethod(settingsJsEnglish, '_widgetIconsView');
+  assert.match(usernodeTsxEnglish, /Homeroom app: widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1590,18 +1599,20 @@ test('per-entry rows separate "never sent" from "sent and not kept"', () => {
 // this box reports comes from the iOS widget registry, so without a deep
 // link the row cannot be reviewed or screenshotted from a browser.
 test('?widgeticons=demo opens the box on a plain browser', () => {
-  assert.match(settingsJs, /_widgetIconsDemo\(\) \{\n\s+return this\._demoParam\('widgeticons'\) === 'demo';/);
-  const section = settingsJs.slice(
-    settingsJs.indexOf('    async _renderUsernodeSection() {'),
-    settingsJs.indexOf('    // The row’s truth, read BEFORE it can mislead.'),
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  assert.match(settingsJsEnglish, /_widgetIconsDemo\(\) \{\n\s+return this\._demoParam\('widgeticons'\) === 'demo';/);
+  const section = settingsJsEnglish.slice(
+    settingsJsEnglish.indexOf('    async _renderUsernodeSection() {'),
+    settingsJsEnglish.indexOf('    // The row’s truth, read BEFORE it can mislead.'),
   );
   assert.match(section, /this\._widgetIconsDemo\(\) \|\|/,
     'the demo link opens the Homeroom section it lives in');
   // A fixed snapshot: no bridge call, no writes — and deliberately the
   // interesting state rather than the healthy one.
-  const demo = settingsJs.slice(
-    settingsJs.indexOf('    DEMO_WIDGET_ICON_DIAGNOSTICS: {'),
-    settingsJs.indexOf('    _widgetIconDiagnostics() {'),
+  const demo = settingsJsEnglish.slice(
+    settingsJsEnglish.indexOf('    DEMO_WIDGET_ICON_DIAGNOSTICS: {'),
+    settingsJsEnglish.indexOf('    _widgetIconDiagnostics() {'),
   );
   assert.match(demo, /capability: null/, 'the probe could not say');
   assert.match(demo, /verdict: 'supported'/, 'but the widget proved it stores pairs');
@@ -1612,10 +1623,10 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   // #1079: the GATE is the model's, the button and the label are the
   // component's. The property — no bridge I/O from a browser pretending to be
   // a device — is unchanged.
-  const widget = sliceMethod(settingsJs, '_widgetIconsView');
+  const widget = sliceMethod(settingsJsEnglish, '_widgetIconsView');
   assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
-  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
-  assert.match(usernodeTsx, /Staging demo: sample data/);
+  assert.match(usernodeTsxEnglish, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
+  assert.match(usernodeTsxEnglish, /Staging demo: sample data/);
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1669,9 +1680,11 @@ test('the read error vocabulary covers a refused privileged bridge', () => {
 });
 
 test('a refused bridge changes what the dependent messages say', () => {
-  assert.match(settingsJs, /_nativeActionMessage\(err, fallback\) \{/);
-  const helper = settingsJs.slice(
-    settingsJs.indexOf('    _nativeActionMessage(err, fallback) {'),
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeUiTsxEnglish = englishUiSource(usernodeUiTsx);
+  assert.match(settingsJsEnglish, /_nativeActionMessage\(err, fallback\) \{/);
+  const helper = settingsJsEnglish.slice(
+    settingsJsEnglish.indexOf('    _nativeActionMessage(err, fallback) {'),
   ).slice(0, 500);
   assert.match(helper, /err\.usernodePrivileged === true/,
     'it keys off the bridge tag, not English pattern-matching');
@@ -1679,12 +1692,12 @@ test('a refused bridge changes what the dependent messages say', () => {
   // #1079: the row/button/toggle trio hand-copied this wrapper three times;
   // sections/usernode-ui.tsx's `useAction` is the single copy, and it routes
   // through the SAME helper by name across the seam.
-  assert.match(usernodeUiTsx, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
+  assert.match(usernodeUiTsxEnglish, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
     'the shared control wrapper routes through the helper');
   for (const fallback of ['Could not save the setting', 'Action failed']) {
-    assert.ok(usernodeUiTsx.includes(fallback), `${fallback} is a fallback message`);
+    assert.ok(usernodeUiTsxEnglish.includes(fallback), `${fallback} is a fallback message`);
   }
-  assert.ok(settingsJs.includes('this._nativeActionMessage(err, failMsg)'),
+  assert.ok(settingsJsEnglish.includes('this._nativeActionMessage(err, failMsg)'),
     'the native-screen opener still routes through the helper');
 });
 
@@ -1709,9 +1722,11 @@ test('the diagnostics text carries no token and no user data', () => {
 // Read-only staging/screenshot hook. It must be incapable of touching a real
 // bridge, a real session, or any state at all.
 test('the bridgediag demo hook is read-only and reads the HASH query', () => {
-  const flag = settingsJs.slice(
-    settingsJs.indexOf('    _bridgeDiagDemo() {'),
-    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  const usernodeTsxEnglish = englishUiSource(usernodeTsx);
+  const flag = settingsJsEnglish.slice(
+    settingsJsEnglish.indexOf('    _bridgeDiagDemo() {'),
+    settingsJsEnglish.indexOf('    _bridgeDiagnostics() {'),
   );
   assert.ok(flag, '_bridgeDiagDemo exists');
   // The self-app is hash-routed: #settings?bridgediag=demo puts the query
@@ -1724,19 +1739,19 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
 
   // #1079: the panel's `demo` bit is the model's and the label is the
   // component's — a demo snapshot still says so on screen.
-  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+  assert.match(sliceMethod(settingsJsEnglish, '_usernodeConnectionView'),
     /demo: !!this\._bridgeDiagDemo\(\)/);
-  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo: sample data'/,
+  assert.match(usernodeTsxEnglish, /c\.demo \? <UnP note=\{\{ text: 'Staging demo: sample data'/,
     'the demo snapshot is labelled as fake on screen');
   // Read-only hook: the buttons render so the screenshot shows the real
   // panel, but they must not touch a bridge or a session.
-  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+  assert.match(sliceMethod(settingsJsEnglish, '_usernodeConnectionView'),
     /retryDisabled: !!this\._bridgeDiagDemo\(\)/,
     'the demo may not drive the real bridge');
 
-  const snapshot = settingsJs.slice(
-    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
-    settingsJs.indexOf('    _bridgeDiagDemo() {'),
+  const snapshot = settingsJsEnglish.slice(
+    settingsJsEnglish.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
+    settingsJsEnglish.indexOf('    _bridgeDiagDemo() {'),
   );
   assert.match(snapshot, /Staging demo/,
     'the synthetic values say so in the data itself');
@@ -1760,7 +1775,7 @@ test('the demo deep link is a declared test path', () => {
 // pageshow / visibilitychange, so the modal kept coming back over what is a
 // minor feature. It is offered from the connection panel now, and only there.
 
-const walletRecoveryTsx = read('frontend/src/features/dialogs/wallet-recovery.tsx');
+const walletRecoveryTsx = englishUiSource(read('frontend/src/features/dialogs/wallet-recovery.tsx'));
 const nativeChromeJs = read('public/js/native-chrome.js');
 
 test('the connection panel offers wallet recovery off the recorded failure', () => {
@@ -1904,15 +1919,16 @@ test('the credential list renders its three host states', () => {
 });
 
 test('the local-agent setup guide is always-visible section markup', () => {
+  const settingsJsEnglish = englishUiSource(settingsJs);
   const guide = renderComponent(CLI_GUIDE, 'CliSetupGuide');
-  assert.match(guide, /Set up a local coding agent/);
-  assert.match(guide, /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
-  assert.match(guide, /cd social-vibecoding/);
-  assert.match(guide, /<code>codex<\/code>/);
-  assert.match(guide, /<code>claude<\/code>/);
-  assert.match(guide,
+  assert.match(englishUiSource(guide), /Set up a local coding agent/);
+  assert.match(englishUiSource(guide), /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
+  assert.match(englishUiSource(guide), /cd social-vibecoding/);
+  assert.match(englishUiSource(guide), /<code>codex<\/code>/);
+  assert.match(englishUiSource(guide), /<code>claude<\/code>/);
+  assert.match(englishUiSource(guide),
     /Create a proposal for &lt;app name&gt; that &lt;describe the change you want&gt;\./);
-  assert.match(guide, /authorize access on a Homeroom web page/);
+  assert.match(englishUiSource(guide), /authorize access on a Homeroom web page/);
   assert.equal((guide.match(/>Copy<\/button>/g) || []).length, 4,
     'repository setup, each alternative agent, and the prompt copy separately');
   const copyLabels = guide.match(/aria-label="Copy [^"]+"/g) || [];
@@ -1923,16 +1939,16 @@ test('the local-agent setup guide is always-visible section markup', () => {
   assert.equal((guide.match(/border-l border-zinc-200/g) || []).length, 4,
     'each integrated Copy control is separated from its code by one divider');
   const source = read(CLI_GUIDE);
-  assert.match(source, /PlatformUI/);
-  assert.match(source, /copyText\?\.\(value\)/,
+  assert.match(englishUiSource(source), /PlatformUI/);
+  assert.match(englishUiSource(source), /copyText\?\.\(value\)/,
     'the shared helper keeps the clipboard fallback used elsewhere in the shell');
-  assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
+  assert.match(englishUiSource(source), /ok \? 'Copied' : 'Copy failed'/,
     'a rejected copy never claims success');
   const shell = shellMarkup();
-  assert.match(shell, /id="cli-setup-guide"/,
+  assert.match(englishUiSource(shell), /id="cli-setup-guide"/,
     'the SSG output contains the guide before capability detection or credential loading');
-  const load = sliceMethod(settingsJs, '_loadCliTokens');
-  assert.doesNotMatch(load, /section\.classList\.add\('hidden'\)/,
+  const load = sliceMethod(settingsJsEnglish, '_loadCliTokens');
+  assert.doesNotMatch(englishUiSource(load), /section\.classList\.add\('hidden'\)/,
     'an unavailable credential API never hides the setup guide with its parent section');
 });
 

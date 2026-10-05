@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -11,7 +12,7 @@ function appView(user = { id: 42 }) {
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval };
   context.window = context;
-  vm.createContext(context);
+  vm.createContext(withLanguage(context));
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8') + '\n;globalThis.av = AppView;', context);
   return context.av;
 }

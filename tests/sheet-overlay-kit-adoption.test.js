@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The sheets' web overlay stays DOWN while the kit presents the surface.
 //
 // The app-context sheet and the Notifications sheet each pair a full-screen
@@ -49,7 +50,7 @@ function makeSandbox(panelIds) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   return sandbox;
 }
 

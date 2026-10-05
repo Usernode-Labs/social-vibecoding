@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The reload button downloads the update BEFORE it offers to switch to it.
 //
 // ── What was wrong ─────────────────────────────────────────────────────
@@ -174,7 +175,7 @@ function harness({
       }
     },
   };
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
 
   const App = Object.assign({
     loadedPlatformSha: null,

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Community-voted priority + assigned-person feature.
 //
 // Three layers:
@@ -819,44 +820,44 @@ test('category dropdown offers a text box + the app custom block', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   // The dropdown's markup is features/dev-board/attr-popover.tsx since #1191;
   // what app-view.js still decides is the SHAPE it hands over.
-  const pop = read('frontend/src/features/dev-board/attr-popover.tsx');
-  assert.match(fe, /inputId: 'attr-category-input'/, 'the type-a-category box exists');
-  assert.match(fe, /maxLength: AppView\.ATTR_CATEGORY_MAX_LEN/,
+  const pop = englishUiSource(read('frontend/src/features/dev-board/attr-popover.tsx'));
+  assert.match(englishUiSource(fe), /inputId: 'attr-category-input'/, 'the type-a-category box exists');
+  assert.match(englishUiSource(fe), /maxLength: AppView\.ATTR_CATEGORY_MAX_LEN/,
     'the box caps typed length from the mirrored constant');
-  assert.match(fe, /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
-  assert.match(fe, /buttonId: 'attr-category-add'/, 'the Add button exists');
-  assert.match(pop, /maxLength=\{add\.maxLength\}/, 'the component applies that cap');
-  assert.match(fe, /head: 'Custom', divided: true/, 'customs sit under a divided "Custom" heading');
-  assert.match(pop, /'attr-pop-head attr-pop-head-divided' : 'attr-pop-head'/,
+  assert.match(englishUiSource(fe), /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
+  assert.match(englishUiSource(fe), /buttonId: 'attr-category-add'/, 'the Add button exists');
+  assert.match(englishUiSource(pop), /maxLength=\{add\.maxLength\}/, 'the component applies that cap');
+  assert.match(englishUiSource(fe), /head: 'Custom', divided: true/, 'customs sit under a divided "Custom" heading');
+  assert.match(englishUiSource(pop), /'attr-pop-head attr-pop-head-divided' : 'attr-pop-head'/,
     'and the component draws the rule above it');
-  assert.match(fe, /_customCategories\(\)/, 'the custom block reads the app vocabulary');
+  assert.match(englishUiSource(fe), /_customCategories\(\)/, 'the custom block reads the app vocabulary');
 
   // The vocabulary is loaded once per Dev mount and refreshed from the
   // GET/POST payloads, so a just-typed category can be labelled immediately.
-  assert.match(fe, /AppView\._loadAppCategories\(pager\)/,
+  assert.match(englishUiSource(fe), /AppView\._loadAppCategories\(pager\)/,
     'Dev data load fetches the vocabulary with the current app-visit guard');
-  assert.match(fe, /topic-categories/, 'hits the vocabulary endpoint');
-  assert.match(fe, /_setAppCategories\(data\.categories\)/, 'a cast adopts the refreshed vocabulary');
+  assert.match(englishUiSource(fe), /topic-categories/, 'hits the vocabulary endpoint');
+  assert.match(englishUiSource(fe), /_setAppCategories\(data\.categories\)/, 'a cast adopts the refreshed vocabulary');
 
   // Escaping: custom labels are user-supplied. The chip is a component now
   // (card/dev-card.tsx's `attr` badge), so its label is a TEXT CHILD and
   // React escapes it — the property `escapeHtml` was there to give it.
   // Rendered, not grepped, exactly like the popover row below.
   assert.match(
-    renderComponent('tests/fixtures/dev-card-api.ts', 'Badge', {
+    englishUiSource(renderComponent('tests/fixtures/dev-card-api.ts', 'Badge', {
       b: {
         t: 'attr', key: 'attr:category', field: 'category', targetType: 'issue',
         targetRef: 5, cls: 'bg-sky-500/10', hover: 'hover:bg-sky-500/20',
         title: 'Vote on this card\'s category', count: 0, readonly: false,
         label: { kind: 'dot', cls: 'bg-sky-500/10', text: '<img src=x onerror=alert(1)>' },
       },
-    }),
+    })),
     /&lt;img src=x onerror=alert\(1\)&gt;/,
     'category chip escapes its label');
   // The popover row is a component now, so its label is a text child — the
   // property `escapeHtml` was there to give it. Rendered, not grepped.
   assert.match(
-    renderComponent('frontend/src/features/dev-board/attr-popover.tsx', 'AttrPopoverView', {
+    englishUiSource(renderComponent('frontend/src/features/dev-board/attr-popover.tsx', 'AttrPopoverView', {
       phase: 'ready',
       field: 'category',
       groups: [{
@@ -867,7 +868,7 @@ test('category dropdown offers a text box + the app custom block', () => {
       emptyNote: null,
       add: null,
       suggestions: [],
-    }),
+    })),
     /&lt;img src=x onerror=alert\(1\)&gt;/,
   );
   // The active-filter chips are features/dev-board/kanban-filters.tsx's
@@ -875,23 +876,23 @@ test('category dropdown offers a text box + the app custom block', () => {
   // the chip button, so React escapes it. The selects the bar used to render
   // live in the Filters dialog, where React does the same for option labels.
   assert.match(
-    renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView', {
+    englishUiSource(renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView', {
       mounted: true, q: '', seq: 0, count: 1,
       chips: [{ key: 'category', label: '<b>hi</b>' }],
-    }),
+    })),
     /&lt;b&gt;hi&lt;\/b&gt;/,
     'the active-category chip escapes its label',
   );
 
   // _categoryMeta must resolve unknown (custom) slugs rather than returning
   // null — every caller dereferences the result.
-  assert.match(fe, /_categoryTint\(/, 'custom categories get a deterministic tint');
-  assert.match(fe, /CATEGORY_CUSTOM_TINTS/, 'a dedicated custom-category palette exists');
+  assert.match(englishUiSource(fe), /_categoryTint\(/, 'custom categories get a deterministic tint');
+  assert.match(englishUiSource(fe), /CATEGORY_CUSTOM_TINTS/, 'a dedicated custom-category palette exists');
 
   // The Filters dialog is vocabulary-driven: choices are computed fresh at
   // every open, so a category created this session appears without a reload.
-  assert.match(fe, /_kanbanCategoryChoices\(\)/, 'the category filter is vocabulary-driven');
-  assert.match(fe, /categories: AppView\._kanbanCategoryChoices\(\)/,
+  assert.match(englishUiSource(fe), /_kanbanCategoryChoices\(\)/, 'the category filter is vocabulary-driven');
+  assert.match(englishUiSource(fe), /categories: AppView\._kanbanCategoryChoices\(\)/,
     'the dialog payload reads the vocabulary at open time');
 });
 
@@ -967,7 +968,7 @@ test('assignee dropdown defaults the name box to the viewer, gated on no prior v
     'only pre-fills when the viewer has no current pick');
   assert.match(fe, /if \(add\.defaultValue\) input\.select\(\);/,
     'selects the pre-filled text so typing replaces it');
-  assert.match(read('frontend/src/features/dev-board/attr-popover.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/attr-popover.tsx')),
     /defaultValue=\{add\.defaultValue\}/, 'the field is uncontrolled, seeded from the model');
 
   // The standalone button + its plumbing are gone.
@@ -1006,8 +1007,8 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   // Every chip in a card's badge row shares ONE geometry class now — the row
   // used to mix three sizes, each computing its own height from its own
   // padding + line-height. The utility classes supply only the tint.
-  const cardTsx = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
-    'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf-8');
+  const cardTsx = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+    'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf-8'));
   assert.match(cardTsx, /`attr-chip dev-badge \$\{b\.cls\}/,
     'chip base uses the shared badge geometry class');
   assert.match(cardTsx, /dev-chat-badge dev-badge /, 'the 💬 badge shares it too');

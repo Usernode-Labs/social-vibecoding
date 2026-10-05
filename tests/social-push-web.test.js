@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -157,7 +158,7 @@ function loadCoordinator({
   }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(source, sandbox);
   return {
     sandbox,
@@ -1141,7 +1142,7 @@ test('opaque id lookup reuses the existing notification click router', async () 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   runNotifications(sandbox);
   sandbox.Notifications.unread = 1;
 
@@ -1190,7 +1191,7 @@ test('native invalidation refresh bypasses the service-worker API cache',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     assert.equal(sandbox.Notifications.nativeInvalidationRefreshVersion, 1);
@@ -1238,7 +1239,7 @@ test('an older ordinary refresh cannot overwrite a newer invalidation result',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     const ordinary = sandbox.Notifications.refresh();
@@ -1292,7 +1293,7 @@ test('later ordinary refreshes cannot fall below a native freshness floor',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
@@ -1338,7 +1339,7 @@ test('an overlapping ordinary refresh inherits the native freshness floor',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     const invalidation = sandbox.Notifications.refreshAfterInvalidation();
@@ -1426,7 +1427,7 @@ test('a hung native invalidation fetch aborts so a later retry can run',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();
@@ -1497,7 +1498,7 @@ test('a stalled invalidation response body is covered by the same deadline',
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Demo rows are found and talked about by id: a declared check's path, a
 // proposal author's steps, the shots agent's notes. So one number must name
@@ -28,11 +30,11 @@ function mockIds(file, name, call) {
   const from = source.slice(source.indexOf(`function ${name}(`));
   assert.ok(from.length, `${file} still has ${name}`);
   const fn = from.slice(0, from.indexOf('\n}\n') + 2);
-  const rows = vm.runInNewContext(`${fn}; ${call}`, {
+  const rows = vm.runInNewContext(`${fn}; ${call}`, withLanguage({
     Date, Math, Number, String, JSON, Array, Object,
     connectionExhaustionMessage: () => 'fixture',
     ROLLOUT_RETRY_DETAIL: 'fixture',
-  });
+  }));
   return rows.map((row) => Number(row.id));
 }
 

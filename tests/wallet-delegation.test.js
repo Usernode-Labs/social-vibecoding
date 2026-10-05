@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -83,7 +84,7 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
   sandbox.WALLET_EMPTY = mod().WALLET_EMPTY;
   sandbox.mountWalletSheet = () => {};
   sandbox.unmountWalletSheet = () => {};
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
   return {
     sandbox,
@@ -228,7 +229,7 @@ test('background service note shows on Android only, active only while producing
     assert.doesNotMatch(html, /FOREGROUND_SERVICE|permission/i,
       'no Android permission wording reaches the user');
   }
-  for (const copy of [mod().BACKGROUND_SERVICE_ACTIVE, mod().BACKGROUND_SERVICE_INACTIVE]) {
+  for (const copy of [mod().BACKGROUND_SERVICE_ACTIVE(), mod().BACKGROUND_SERVICE_INACTIVE()]) {
     assert.ok(copy && !copy.includes('\u2014'), 'no em dashes in user copy');
   }
 });

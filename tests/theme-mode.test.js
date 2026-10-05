@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the Light / Dark / System theme mode selector (#256).
 //
 // Static-assertion style (cf. tests/spec-sections.test.js,
@@ -14,7 +15,7 @@ const { shellMarkup } = require('./lib/shell-markup');
 
 const ROOT = path.join(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
-const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
+const read = (...p) => englishUiSource(fs.readFileSync(path.join(PUBLIC, ...p), 'utf8'));
 
 // #1079 chunk B: public/js/theme.js is gone. The module is an INLINE
 // head-blocking <script> in frontend/src/head.html now, which is also where
@@ -23,7 +24,7 @@ const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 // with the rest of chunk B: that bundle is deferred, and deciding "is this page
 // dark" after the document parses means a visible light-to-dark repaint on
 // every load. The assertions below are unchanged; only their source is.
-const themeSrc = () => fs.readFileSync(path.join(ROOT, 'frontend/src/head.html'), 'utf8');
+const themeSrc = () => englishUiSource(fs.readFileSync(path.join(ROOT, 'frontend/src/head.html'), 'utf8'));
 
 // login.html / register.html dropped: they're redirect stubs into the
 // SPA's hash routes now (fold-auth-pages-into-SPA) — the in-SPA auth
@@ -190,16 +191,16 @@ test('the moved control keeps the ids app.css draws it with', () => {
 // gave Theme the head of the Appearance page, in Preferences, where the
 // developer console's switch joins it.
 test('theme leads the Appearance page in Preferences', () => {
-  const settings = fs.readFileSync(
+  const settings = englishUiSource(fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
     'utf8',
-  );
+  ));
   const list = settings.slice(settings.indexOf('SECTIONS: ['), settings.indexOf('    PAGES: {'));
   const lines = list.split('\n').filter((l) => l.includes("page: 'theme'"));
-  assert.match(lines[0] || '', /\{ key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' \}/,
+  assert.match(englishUiSource(lines[0] || ''), /\{ key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' \}/,
     'theme is the first part of its page');
-  assert.match(settings, /theme: 'Appearance',/, 'and that page is labelled Appearance');
-  assert.doesNotMatch(settings, /DEFAULT_SECTION: 'theme'/,
+  assert.match(englishUiSource(settings), /theme: 'Appearance',/, 'and that page is labelled Appearance');
+  assert.doesNotMatch(englishUiSource(settings), /DEFAULT_SECTION: 'theme'/,
     'a bare #settings opens Account now, not Theme');
 });
 
@@ -246,10 +247,10 @@ test('the selection caret ships exactly once, inside the track', () => {
 // frontend/src/features/header/header-menu.tsx, and app.js no longer touches
 // the control at all. Same three contracts, read from the component.
 
-const themeControlSrc = () => fs.readFileSync(
+const themeControlSrc = () => englishUiSource(fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'sections', 'theme.tsx'),
   'utf8',
-);
+));
 
 test('the theme control wires Theme.get / Theme.set', () => {
   const src = themeControlSrc();
@@ -259,7 +260,7 @@ test('the theme control wires Theme.get / Theme.set', () => {
     'a storage/OS-driven change in another tab must re-highlight here too');
   // The legacy renderer must be gone from BOTH sides, or two owners write the
   // same nodes — which is the failure the migration rule exists to prevent.
-  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const appSrc = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8'));
   assert.ok(!/_renderThemeButtons/.test(appSrc),
     'app.js must not still render the segments');
 });

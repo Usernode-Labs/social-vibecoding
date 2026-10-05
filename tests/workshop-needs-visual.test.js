@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The Needs-you card as a picture first: who over the title, the run's own
 // outlined screen in place of the summary, the facts as one line, and a
@@ -133,35 +134,36 @@ test('the switch sits above the picture, never on it', () => {
 
 test('the picture is the reader\'s own screen size, cropped to the run\'s outlines', () => {
   const pick = body(WORKSHOP, 'function pickScreen(', '\n}\n');
-  assert.match(pick, /screens\.find\(\(s\) => \(wide \? !isPhoneScreen\(s\) : isPhoneScreen\(s\)\)\) \|\| screens\[0\] \|\| null/);
+  assert.match(englishUiSource(pick), /screens\.find\(\(s\) => \(wide \? !isPhoneScreen\(s\) : isPhoneScreen\(s\)\)\) \|\| screens\[0\] \|\| null/);
   const shotsPic = body(WORKSHOP, 'function ShotsPicture(', '\n}\n');
   // The crop covers both sides' outlines, so a flip never moves it.
-  assert.match(shotsPic, /screen\.regions\.flatMap\(\(r\) => \[regionRect\(r, 'before'\), regionRect\(r, 'after'\)\]\)/);
+  assert.match(englishUiSource(shotsPic), /screen\.regions\.flatMap\(\(r\) => \[regionRect\(r, 'before'\), regionRect\(r, 'after'\)\]\)/);
   // Nothing loads for an item far from view.
-  assert.match(shotsPic, /\{near && place \? <img src=\{shot\.url\}/);
+  assert.match(englishUiSource(shotsPic), /\{near && place \? <img src=\{shot\.url\}/);
   // Tapping the picture flips it, from the keyboard too.
-  assert.match(shotsPic, /onClick=\{flip\}/);
-  assert.match(shotsPic, /if \(e\.key === ' ' \|\| e\.key === 'Enter'\) \{ e\.preventDefault\(\); flip\(\); \}/);
+  assert.match(englishUiSource(shotsPic), /onClick=\{flip\}/);
+  assert.match(englishUiSource(shotsPic), /if \(e\.key === ' ' \|\| e\.key === 'Enter'\) \{ e\.preventDefault\(\); flip\(\); \}/);
   // Only the changes this screen shows are listed under it.
-  assert.match(shotsPic, /const changes = \(v\.changes \|\| \[\]\)\.filter\(\(c\) => shown\.has\(c\.n\)\);/);
+  assert.match(englishUiSource(shotsPic), /const changes = \(v\.changes \|\| \[\]\)\.filter\(\(c\) => shown\.has\(c\.n\)\);/);
 });
 
 test('Description is on the rail, second, with its key and its sheet', () => {
-  const rail = body(WORKSHOP, '<aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>', '</aside>');
+  const WORKSHOPEnglish = englishUiSource(WORKSHOP);
+  const rail = body(WORKSHOPEnglish, '<aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>', '</aside>');
   const at = ['data-ws-rail-btn="vote"', 'data-ws-rail-btn="description"', 'data-ws-rail-btn="comments"'].map((s) => rail.indexOf(s));
   assert.ok(at[0] < at[1] && at[1] < at[2], 'after Vote, before Comments');
-  assert.match(rail, /onClick=\{\(\) => toggleSheet\('description'\)\}/);
-  assert.match(rail, /<DescriptionIcon aria-hidden="true" \/>/);
-  assert.match(WORKSHOP, /if \(k === 'd' \|\| k === 'D'\) \{ toggleSheet\('description'\); return; \}/);
-  assert.match(WORKSHOP, /keys\.push\(\[\['D'\], 'description'\]/);
-  const sheet = body(WORKSHOP, '<div className="dev-ws-sheet-modal dev-ws-sheet-description"', '\n      ) : null}');
-  assert.match(sheet, /<Html className="dev-ws-desc-body" html=\{row\.descriptionHtml\} \/>/);
-  assert.match(sheet, /<h4 className="dev-ws-desc-head">What changes<\/h4>/);
-  assert.match(sheet, /<ItemBy row=\{row\} \/>/);
-  assert.match(sheet, /className=\{chipTone\(f\.tone\)\}/, 'the facts in full, as chips');
+  assert.match(englishUiSource(rail), /onClick=\{\(\) => toggleSheet\('description'\)\}/);
+  assert.match(englishUiSource(rail), /<DescriptionIcon aria-hidden="true" \/>/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /if \(k === 'd' \|\| k === 'D'\) \{ toggleSheet\('description'\); return; \}/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /keys\.push\(\[\['D'\], 'description'\]/);
+  const sheet = body(WORKSHOPEnglish, '<div className="dev-ws-sheet-modal dev-ws-sheet-description"', '\n      ) : null}');
+  assert.match(englishUiSource(sheet), /<Html className="dev-ws-desc-body" html=\{row\.descriptionHtml\} \/>/);
+  assert.match(englishUiSource(sheet), /<h4 className="dev-ws-desc-head">What changes<\/h4>/);
+  assert.match(englishUiSource(sheet), /<ItemBy row=\{row\} \/>/);
+  assert.match(englishUiSource(sheet), /className=\{chipTone\(f\.tone\)\}/, 'the facts in full, as chips');
   // A panel beside the rail on a wide window, like Ask and the comments.
-  assert.match(CSS, /\.dev-ws-sheet-ask, \.dev-ws-sheet-comments, \.dev-ws-sheet-description \{\s*position: relative;/);
-  assert.match(read('frontend/@/components/ui/icons.tsx'), /export const DescriptionIcon = stroked\('DescriptionIcon', 'M4 6h16M4 12h16M4 18h10'\);/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-sheet-ask, \.dev-ws-sheet-comments, \.dev-ws-sheet-description \{\s*position: relative;/);
+  assert.match(englishUiSource(read('frontend/@/components/ui/icons.tsx')), /export const DescriptionIcon = stroked\('DescriptionIcon', 'M4 6h16M4 12h16M4 18h10'\);/);
 });
 
 test('the deck\'s top by-line does not move the change page\'s', () => {

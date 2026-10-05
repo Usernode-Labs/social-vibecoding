@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #1085 chunk H, step 1 — THE REHEARSAL for the app viewer's iframe.
 //
 // `#staging-overlay` is a React island now (frontend/src/features/staging/), and
@@ -188,7 +190,7 @@ async function makeHarness() {
     staging: bridgeMod.stagingBridge,
     visualCompare: bridgeMod.visualCompareBridge,
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'usernode-2d5619', self_hosted: false };
@@ -427,17 +429,17 @@ test('`src` is not state, and the store starts from the shipped markup', () => {
     'the store has no src field');
   // The initial values ARE the prerendered document; anything else is a
   // hydration mismatch, which console.errors and fails proposal checks.
-  assert.match(STORE, /open: false,/, 'the overlay ships hidden');
-  assert.match(STORE, /loaderVisible: false,/, 'the loader ships hidden');
-  assert.match(STORE, /loaderTitle: 'Opening preview…',/, '#816 neutral default title');
-  assert.match(STORE, /loaderSub: '',/, 'no sub-line');
-  assert.match(STORE, /testPanelHidden: true,/, 'the testing panel ships hidden');
-  assert.match(STORE, /fsBtnText: 'Full screen',/, "#771's shipped label");
-  assert.match(STORE, /solo: false,/, '#16: the banner ships in its group wording');
+  assert.match(englishUiSource(STORE), /open: false,/, 'the overlay ships hidden');
+  assert.match(englishUiSource(STORE), /loaderVisible: false,/, 'the loader ships hidden');
+  assert.match(englishUiSource(STORE), /loaderTitle: 'Opening preview…',/, '#816 neutral default title');
+  assert.match(englishUiSource(STORE), /loaderSub: '',/, 'no sub-line');
+  assert.match(englishUiSource(STORE), /testPanelHidden: true,/, 'the testing panel ships hidden');
+  assert.match(englishUiSource(STORE), /fsBtnText: 'Full screen',/, "#771's shipped label");
+  assert.match(englishUiSource(STORE), /solo: false,/, '#16: the banner ships in its group wording');
   // The bridge's writes are all store writes, except the two src ones.
-  const srcWrites = BRIDGE.match(/el\.src = /g) || [];
+  const srcWrites = englishUiSource(BRIDGE).match(/el\.src = /g) || [];
   assert.equal(srcWrites.length, 2, 'exactly two src assignments: setSrc and clearSrc');
-  assert.match(BRIDGE, /stagingRefs\.iframe/, 'both go through the registered ref');
+  assert.match(englishUiSource(BRIDGE), /stagingRefs\.iframe/, 'both go through the registered ref');
 });
 
 test('the seam is published before hydration and drives the store synchronously', () => {

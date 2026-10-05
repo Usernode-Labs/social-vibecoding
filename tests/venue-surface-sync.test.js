@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The session type and the screen under it are ONE answer (#1353).
 //
 // A session states where it is being built in its header — the venue
@@ -73,7 +74,7 @@ function makeDevChat() {
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
   sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(LAUNCHPAD_SRC, sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);

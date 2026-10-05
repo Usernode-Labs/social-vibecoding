@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the read-only transcript renderer
 // (public/js/session-transcript.js).
 //
@@ -36,7 +37,7 @@ function load({ withDevChat = true } = {}) {
     sandbox.DevChat = { renderMarkdown: (t) => `<md>${t}</md>` };
   }
   sandbox.relTime = () => '5 minutes ago';
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox);
   return sandbox.SessionTranscript;
 }
@@ -197,7 +198,9 @@ test('headerText labels both the collapsed and expanded states', () => {
   assert.doesNotMatch(ST.headerText(s, { expanded: true }), /read-only/);
   const HEAD = fs.readFileSync(path.join(
     __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'), 'utf8');
-  assert.match(HEAD, /className="st-readonly-tag">read-only</, 'the chip is the one that says it');
+  assert.match(HEAD, /className="st-readonly-tag"/, 'the read-only component retains its chip');
+  const messages = require('../frontend/locales/en/workshop.json');
+  assert.match(messages.sentence_b60fb9285166, /<2>read-only<\/2>/, 'the whole translated sentence assigns read-only to that chip');
   // Singular, and a missing count degrades rather than printing "0 messages".
   assert.strictEqual(
     ST.headerText({ username: 'alice', message_count: 1 }, { expanded: true }),

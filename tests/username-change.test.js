@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Username changes — POST /api/me/username, the retired-handle
 // ledger behind it, and the resolvers that read that ledger back.
 //
@@ -726,7 +727,7 @@ function usernameForm({ respond } = {}) {
     'cu-current': node(),
   };
   const calls = [];
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: {},
     document: {
       addEventListener() {},
@@ -752,7 +753,7 @@ function usernameForm({ respond } = {}) {
     setInterval,
     clearInterval,
     console,
-  });
+  }));
   context.window.window = context.window;
   context.window.document = context.document;
   context.window.App = context.App;

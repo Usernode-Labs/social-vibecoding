@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #1875: the waitlist's Back link was a `position: fixed`, transparent
 // "← Back" text link, so on a phone the step label and form scrolled
@@ -67,8 +68,8 @@ test('it is the same 44px round, opaque chevron on every screen', () => {
   const w = sharedClasses();
   assert.ok(w.includes('h-11') && w.includes('w-11'), '44px');
   assert.ok(w.includes('bg-white'), 'opaque, so nothing reads through it');
-  assert.match(BACK, /data-auth-back=""[\s\S]{0,400}?aria-label="Back"[\s\S]{0,200}?<ChevronLeftIcon/);
-  assert.doesNotMatch(WAITLIST, /&larr; Back/, 'the text link is gone');
+  assert.match(englishUiSource(BACK), /data-auth-back=""[\s\S]{0,400}?aria-label="Back"[\s\S]{0,200}?<ChevronLeftIcon/);
+  assert.doesNotMatch(englishUiSource(WAITLIST), /&larr; Back/, 'the text link is gone');
 });
 
 test('there is one implementation, and only back-button.tsx holds the markup', () => {

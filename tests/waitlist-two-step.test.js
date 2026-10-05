@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The check-my-status errand is two steps, not one form (#1876).
 //
 // `#waitlist?confirm=1` asked for the address and the six-digit code in one
@@ -42,9 +43,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
-const WAITLIST = read('frontend/src/features/auth/waitlist.tsx');
+const WAITLIST = englishUiSource(read('frontend/src/features/auth/waitlist.tsx'));
 const APP = read('public/js/app.js');
 const DAPP = JSON.parse(read('dapp.json'));
 
@@ -93,9 +94,9 @@ test('a request the server accepted advances, whatever the address was', () => {
 
 test('and one it refused stays put, with its own line', () => {
   const body = callback(WAITLIST, 'onRequestCode');
-  assert.match(body, /setRequestNote\(\{ text: 'Enter your email address first\.', tone: 'error' \}\)/);
-  assert.match(body, /setRequestNote\(\{\s*text: \(data && data\.error\) \|\| 'Something went wrong\. Try again\.'/);
-  assert.match(body, /setRequestNote\(\{ text: 'Connection issue\. Try again\.', tone: 'error' \}\)/);
+  assert.match(englishUiSource(body), /setRequestNote\(\{ text: 'Enter your email address first\.', tone: 'error' \}\)/);
+  assert.match(englishUiSource(body), /setRequestNote\(\{\s*text: \(data && data\.error\) \|\| 'Something went wrong\. Try again\.'/);
+  assert.match(englishUiSource(body), /setRequestNote\(\{ text: 'Connection issue\. Try again\.', tone: 'error' \}\)/);
   // The failure paths do not advance: goToCodeStep is called once, in the ok
   // arm asserted above.
   assert.equal((body.match(/goToCodeStep\(\)/g) || []).length, 1);
@@ -135,11 +136,12 @@ test('a code step reached with no address goes back instead of posting', () => {
 });
 
 test('the eyebrow names which step you are on', () => {
-  assert.match(WAITLIST, /'Step 2 of 2 · Enter your code'/);
-  assert.match(WAITLIST, /'Step 1 of 2 · Your email address'/);
+  assert.match(englishUiSource(WAITLIST), /'Step 2 of 2 · Enter your code'/);
+  assert.match(englishUiSource(WAITLIST), /'Step 1 of 2 · Your email address'/);
 });
 
 test('the lede stops instructing the reader to use a field they cannot see', () => {
+  const WAITLISTEnglish = englishUiSource(WAITLIST);
   // Step 2 hides the address input, so the screen's opening sentence keeps the
   // claim and drops the instruction. It must also stay silent about a mail
   // having been sent, because "I already have a code" reaches step 2 with no
@@ -149,14 +151,14 @@ test('the lede stops instructing the reader to use a field they cannot see', () 
   // still says "email you a code" on purpose.
   // Two things branch on the step; the eyebrow's arm is a "Step N of 2" label.
   const arms = Array.from(
-    WAITLIST.matchAll(/\? flowStep === 'code'\s*\n\s*\? '([^']*)'/g), (m) => m[1]);
+    WAITLISTEnglish.matchAll(/\? flowStep === 'code'\s*\n\s*\? '([^']*)'/g), (m) => m[1]);
   const lede = arms.filter((text) => !text.startsWith('Step '));
   assert.equal(lede.length, 1, 'exactly one step-2 sentence, not a label');
   assert.equal(lede[0],
     'This shows where you stand, and confirms your address if it still needs it.');
   assert.ok(!/sent|email/.test(lede[0]),
     'the step-2 lede claims no send: "I already have a code" gets here without one');
-  assert.match(WAITLIST, /Enter the address you joined with and we\\u2019ll email you a code\./,
+  assert.match(englishUiSource(WAITLISTEnglish), /Enter the address you joined with and we’ll email you a code\./,
     'and step 1 says exactly what it always said');
 });
 
@@ -237,19 +239,20 @@ test('a lookup that does not answer falls through to the send', () => {
 });
 
 test('not on the list: say so, offer to join, send nothing', () => {
-  const body = callback(WAITLIST, 'onRequestCode');
+  const WAITLISTEnglish = englishUiSource(WAITLIST);
+  const body = callback(WAITLISTEnglish, 'onRequestCode');
   const arm = body.slice(body.indexOf('if (known && !known.onList)'),
     body.indexOf('if (known && known.status?.confirmed)'));
   // The sentence names the two ways out, because both are on screen: fix
   // the spelling in the field that is still there, or take the address as
   // typed and join with it.
-  assert.match(arm, /We can\\u2019t find that address on the waitlist\. Check the spelling, or join with it\./);
-  assert.match(arm, /tone: 'error'/);
-  assert.match(arm, /setNotFound\(true\)/, 'which is what raises the join control');
-  assert.ok(!arm.includes('fetch('), 'no send: there is nothing to send about');
-  assert.ok(!arm.includes('goToCodeStep'),
+  assert.match(englishUiSource(arm), /We can’t find that address on the waitlist\. Check the spelling, or join with it\./);
+  assert.match(englishUiSource(arm), /tone: 'error'/);
+  assert.match(englishUiSource(arm), /setNotFound\(true\)/, 'which is what raises the join control');
+  assert.ok(!englishUiSource(arm).includes('fetch('), 'no send: there is nothing to send about');
+  assert.ok(!englishUiSource(arm).includes('goToCodeStep'),
     'and no code step: a code field for a code nobody was sent is the dead end');
-  assert.ok(!arm.includes('startCooldown'),
+  assert.ok(!englishUiSource(arm).includes('startCooldown'),
     'nor a cooldown, which would make the dead end a timed one');
 });
 

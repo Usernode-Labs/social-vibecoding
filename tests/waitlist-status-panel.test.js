@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Check my status, on the screen (#1538).
 //
 // Anyone can now read where they stand from a device that never joined: enter
@@ -24,12 +25,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
-const WAITLIST = read('frontend/src/features/auth/waitlist.tsx');
-const MORE = read('frontend/src/features/auth/more.tsx');
-const SHARED = read('frontend/src/features/auth/waitlist-shared.tsx');
-const LANDING = read('frontend/src/features/auth/landing.tsx');
+const WAITLIST = englishUiSource(read('frontend/src/features/auth/waitlist.tsx'));
+const MORE = englishUiSource(read('frontend/src/features/auth/more.tsx'));
+const SHARED = englishUiSource(read('frontend/src/features/auth/waitlist-shared.tsx'));
+const LANDING = englishUiSource(read('frontend/src/features/auth/landing.tsx'));
 const APP = read('public/js/app.js');
 const MIGRATE = read('src/db/migrate.js');
 const DAPP = JSON.parse(read('dapp.json'));
@@ -78,14 +79,15 @@ test('every pill tint is a whole class literal', () => {
 // ─── The panel reads the row, it does not assume one ─────────────────
 
 test('the confirmed panel branches on the response, not on a constant', () => {
-  const panel = WAITLIST.slice(WAITLIST.indexOf('id="waitlist-confirmed"'));
+  const WAITLISTEnglish = englishUiSource(WAITLIST);
+  const panel = WAITLISTEnglish.slice(WAITLISTEnglish.indexOf('id="waitlist-confirmed"'));
   const body = panel.slice(0, panel.indexOf('id="waitlist-more-offer"'));
   // Headline, body copy and the action all move with the row.
-  assert.match(body, /admitted \? "You\\u2019re in/);
-  assert.match(body, /status\?\.has_account/);
-  assert.match(body, /id="waitlist-status-pill"/);
-  assert.match(body, /id="waitlist-status-since"/);
-  assert.match(body, /id="waitlist-status-action"/);
+  assert.match(englishUiSource(body), /admitted \? [\'"]You’re in/);
+  assert.match(englishUiSource(body), /status\?\.has_account/);
+  assert.match(englishUiSource(body), /id="waitlist-status-pill"/);
+  assert.match(englishUiSource(body), /id="waitlist-status-since"/);
+  assert.match(englishUiSource(body), /id="waitlist-status-action"/);
 });
 
 test('the status comes off the confirm response in one round trip', () => {
@@ -102,15 +104,15 @@ test('the status comes off the confirm response in one round trip', () => {
 test('the panel offers a date, never a queue position', () => {
   // services/waitlist-signals.js computes no rank on purpose. A position is a
   // promise, and it can go backwards.
-  assert.match(WAITLIST, /function formatJoinedOn\(/);
-  assert.match(WAITLIST, /'On the list since '/);
+  assert.match(englishUiSource(WAITLIST), /function formatJoinedOn\(/);
+  assert.match(englishUiSource(WAITLIST), /'On the list since '/);
   const panel = WAITLIST.slice(WAITLIST.indexOf('id="waitlist-confirmed"'));
   // Comments in here explain WHY there is no rank, so scan what renders:
   // block comments out, then the remaining source.
   const body = panel.slice(0, panel.indexOf('id="waitlist-more-offer"'))
     .replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const word of ['position', 'in line', 'ahead of', 'you are #']) {
-    assert.doesNotMatch(body.toLowerCase(), new RegExp(word),
+    assert.doesNotMatch(englishUiSource(body.toLowerCase()), new RegExp(word),
       `the panel implies a rank via "${word}"`);
   }
 });
@@ -144,9 +146,10 @@ test('the new nodes are always in the markup, hidden until there is an answer', 
 // ─── Ways in ─────────────────────────────────────────────────────────
 
 test('the landing card offers the way in, and only to a visitor', () => {
-  const at = LANDING.indexOf('id="landing-status-link"');
+  const LANDINGEnglish = englishUiSource(LANDING);
+  const at = LANDINGEnglish.indexOf('id="landing-status-link"');
   assert.ok(at > 0, 'the landing link is missing');
-  const block = LANDING.slice(Math.max(0, at - 400), at + 400);
+  const block = LANDINGEnglish.slice(Math.max(0, at - 400), at + 400);
   assert.match(block, /hiddenLast\(\s*session,/, 'a signed-in visitor is shown it anyway');
   assert.match(block, /href="#waitlist\?confirm=1"/);
   assert.match(block, /Check your status/);

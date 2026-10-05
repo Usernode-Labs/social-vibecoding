@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the platform-level user language preference (issue #757).
 //
 // Three layers:
@@ -22,7 +23,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 // Stub the pool BEFORE requiring the routes: record UPDATE calls, return
 // empty rows for the incidental /api/auth/me lookups (BYOK key, app count).

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The focused topic head is repainted from a model, and two of its sections
 // are filled by loaders the RENDERER calls on every paint: the vote roster
 // (`_loadVoteRoster`, from `_voteRosterView`'s miss) and the shared-chat
@@ -59,7 +60,7 @@ function makeAppView(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`,
     sandbox

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #3114: "Move back to Underway" — POST /api/sessions/:id/unpromote.
 //
 // A proposal in review can be taken back to Underway by its author without
@@ -394,15 +395,15 @@ test('the route is owner-scoped through the lifecycle service', () => {
 });
 
 test('the proposal menu and detail view offer the move to the author only', () => {
-  const menu = APP_VIEW_SRC.match(/_proposalMenuItems\(pr, state\) \{[\s\S]*?\n  \},/);
+  const menu = englishUiSource(APP_VIEW_SRC).match(/_proposalMenuItems\(pr, state\) \{[\s\S]*?\n  \},/);
   assert.ok(menu);
-  assert.match(menu[0],
+  assert.match(englishUiSource(menu[0]),
     /if \(st\.mine && !ro && !isMerged && !isMerging && pr\.status === 'promoted'\) \{\s*items\.push\(\{\s*label: 'Move back to Underway'/);
-  assert.match(APP_VIEW_SRC, /key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway'/);
-  assert.match(APP_VIEW_SRC, /fetch\(`\/api\/sessions\/\$\{sessionId\}\/unpromote`, \{ method: 'POST' \}\)/,
+  assert.match(englishUiSource(APP_VIEW_SRC), /key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway'/);
+  assert.match(englishUiSource(APP_VIEW_SRC), /fetch\(`\/api\/sessions\/\$\{sessionId\}\/unpromote`, \{ method: 'POST' \}\)/,
     'the client path is spelled literally so the Global Chat inventory can see it');
-  const fn = APP_VIEW_SRC.match(/async unpromoteProposal\(sessionId\) \{[\s\S]*?\n  \},/);
+  const fn = englishUiSource(APP_VIEW_SRC).match(/async unpromoteProposal\(sessionId\) \{[\s\S]*?\n  \},/);
   assert.ok(fn);
-  assert.match(fn[0], /Its votes are cleared and it cannot be merged until you propose it again/);
-  assert.doesNotMatch(fn[0], /—/, 'no em dashes in the confirm copy');
+  assert.match(englishUiSource(fn[0]), /Its votes are cleared and it cannot be merged until you propose it again/);
+  assert.doesNotMatch(englishUiSource(fn[0]), /—/, 'no em dashes in the confirm copy');
 });

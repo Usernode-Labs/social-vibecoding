@@ -68,17 +68,17 @@ test('the card renders inside the grid, with the breakdown behind a disclosure',
 
 test('challenge points the standings have not caught up with keep the card, with when they count (#3187)', () => {
   const { standingView, STANDINGS_UPDATE_NOTE } = loadTsx(STANDING);
-  assert.equal(STANDINGS_UPDATE_NOTE,
+  assert.equal(STANDINGS_UPDATE_NOTE(),
     'Standings update every few hours; points from challenges you just finished appear at the next update.');
   const empty = { ...RANKING, rank: null, total_points: 0 };
   const view = standingView({ status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false });
   assert.ok(view, 'someone with 1,500 challenge points still sees the card');
   assert.equal(view.rank, '–');
   assert.equal(view.pending, '1,500 pts earned, not in the standings yet');
-  assert.equal(view.note, STANDINGS_UPDATE_NOTE);
+  assert.equal(view.note, STANDINGS_UPDATE_NOTE());
   assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, pending: 1500 }).pending, null,
     'a ranked viewer is not told about a pending figure the ranking already carries');
-  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, STANDINGS_UPDATE_NOTE,
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, STANDINGS_UPDATE_NOTE(),
     'the card always says how often the standings move');
 
   const real = loadTsx(STANDING);

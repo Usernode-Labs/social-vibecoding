@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The cold paint catches up: what the top bar remembers across a reload.
 //
 // ── The bug ────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ function loadStorage(store) {
       },
     },
   };
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${js}\n;globalThis.__api = { readShellSnapshot, saveShellSnapshot, clearShellSnapshot };`, ctx);
   assert.ok(ctx.__api && typeof ctx.__api.saveShellSnapshot === 'function',
     'the storage module still evaluates as plain functions');

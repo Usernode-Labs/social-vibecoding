@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Guards for #1012: "Copy markdown" on both full-spec surfaces.
 //
 // The button's whole value is that it yields the WHOLE document — both
@@ -96,14 +97,16 @@ test('copyText resolves a boolean instead of throwing', () => {
 // now pinned on BOTH sides: the model must carry the raw document, and the
 // button must copy what the model carried.
 test('the viewer renders a copy button and the model tells it what to copy', () => {
-  const src = methodSource(devChatSrc, '_specViewerView', 'dev-chat.js');
+  const devChatSrcEnglish = englishUiSource(devChatSrc);
+  const viewerTsxEnglish = englishUiSource(viewerTsx);
+  const src = methodSource(devChatSrcEnglish, '_specViewerView', 'dev-chat.js');
   assert.ok(/raw: displayContent,/.test(src),
     'the model must carry displayContent — the raw selected version');
   assert.ok(/copy = isEmpty \? \{ kind: 'blank' \} : \{ kind: 'live' \}/.test(src),
     'an empty spec must blank the copy button, mirroring the share buttons');
 
-  assert.ok(viewerTsx.includes('id="dc-spec-viewer-copy"'), 'the copy button is rendered');
-  assert.ok(/disabled\s*\n?\s*title="No spec to copy yet"/.test(viewerTsx),
+  assert.ok(viewerTsxEnglish.includes('id="dc-spec-viewer-copy"'), 'the copy button is rendered');
+  assert.ok(/disabled\s*\n?\s*title="No spec to copy yet"/.test(viewerTsxEnglish),
     'and its disabled placeholder keeps the same title');
 });
 
@@ -131,11 +134,12 @@ test('the copy button sits after the version select and before the share buttons
 });
 
 test('the copy button flashes its own label and reports failure', () => {
-  assert.ok(viewerTsx.includes("'Copied!'") && viewerTsx.includes("'Copy failed'"),
+  const viewerTsxEnglish = englishUiSource(viewerTsx);
+  assert.ok(viewerTsxEnglish.includes("'Copied!'") && viewerTsxEnglish.includes("'Copy failed'"),
     'both the success and failure labels must be present');
-  assert.ok(/setTimeout\(\(\) => setLabel\('Copy markdown'\), 1500\)/.test(viewerTsx),
+  assert.ok(/setTimeout\(\(\) => setLabel\('Copy markdown'\), 1500\)/.test(viewerTsxEnglish),
     'the label must be restored after the flash');
-  assert.ok(/if \(!ok\) ui\(\)\?\.toast\?\.\(/.test(viewerTsx),
+  assert.ok(/if \(!ok\) ui\(\)\?\.toast\?\.\(/.test(viewerTsxEnglish),
     'a failed copy must also explain the manual fallback via a toast');
 });
 

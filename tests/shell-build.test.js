@@ -108,13 +108,14 @@ test('no shell source renders a bare whitespace expression between text runs', (
 
   const offenders = [];
   for (const file of files) {
-    // Strip comments first: the fix for the original mismatch is documented at
+    // Attribute values such as Message's before={" "} are data, not
+    // whitespace children. Strip comments first: the fix for the original mismatch is documented at
     // the site it happened, and that prose quotes the idiom it forbids.
     const code = fs.readFileSync(file, 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^[ \t]*\/\/.*$/gm, '');
     code.split('\n').forEach((line, i) => {
-      if (/\{\s*(['"]) \1\s*\}/.test(line)) offenders.push(`${path.relative(ROOT, file)}:${i + 1}`);
+      if (/(?<!=)\{\s*(['"]) \1\s*\}/.test(line)) offenders.push(`${path.relative(ROOT, file)}:${i + 1}`);
     });
   }
   assert.deepEqual(

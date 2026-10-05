@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Where your work in progress is (#2779 follow-up).
 //
@@ -157,9 +158,9 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
 
 test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sessions after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
+  assert.match(englishUiSource(sheet), /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
     'never in the prerender (the hydrating render matches it), and not keyed on the app');
-  assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
+  assert.match(englishUiSource(sheet), /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
   const at = (id) => sheet.indexOf(`id="${id}"`);
   assert.ok(at('app-menu-row-workshop') < at('app-menu-row-about')
@@ -169,19 +170,19 @@ test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sess
     'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
   // A plain word since the first-session run-through (4 Oct 2026): it was
   // "Continue", then "Agent sessions", a term a newcomer does not have.
-  assert.match(sheet, /<div className=\{SECTION\}>More<\/div>/, 'it was "Continue", then "Agent sessions"');
-  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/);
-  assert.doesNotMatch(sheet, />Continue</);
+  assert.match(englishUiSource(sheet), /<div className=\{SECTION\}>More<\/div>/, 'it was "Continue", then "Agent sessions"');
+  assert.doesNotMatch(englishUiSource(sheet), /<div className=\{SECTION\}>Agent sessions<\/div>/);
+  assert.doesNotMatch(englishUiSource(sheet), />Continue</);
   // Each session says what app it is on and where it stands, under its title.
-  assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
-  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*Show more\s*<ChevronRightIcon /,
+  assert.match(englishUiSource(sheet), /label=\{row\.title\}\s+sub=\{row\.sub\}/);
+  assert.match(englishUiSource(sheet), /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*Show more\s*<ChevronRightIcon /,
     'only when there are more, and it opens Messages\' Agents list');
   // #3405: a link under the list in the action accent, not one more row.
-  assert.match(sheet, /const CONTINUE_ALL = 'inline-flex[^;]*text-violet-700 dark:text-violet-300/);
-  assert.doesNotMatch(sheet, /<MenuRow\s+id="app-menu-continue-all"/);
-  assert.doesNotMatch(sheet, /See all sessions/);
-  assert.match(sheet, /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
-  assert.doesNotMatch(sheet, /See all your work|continue-change/);
+  assert.match(englishUiSource(sheet), /const CONTINUE_ALL = 'inline-flex[^;]*text-violet-700 dark:text-violet-300/);
+  assert.doesNotMatch(englishUiSource(sheet), /<MenuRow\s+id="app-menu-continue-all"/);
+  assert.doesNotMatch(englishUiSource(sheet), /See all sessions/);
+  assert.match(englishUiSource(sheet), /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
+  assert.doesNotMatch(englishUiSource(sheet), /See all your work|continue-change/);
 });
 
 test('Recents lists open agent sessions on its one clock', () => {
@@ -218,18 +219,18 @@ test('Messages and the bell list paused sessions, and a conversation\'s change o
 test('"paused" is shown nowhere, and nobody is asked to pause or resume anything', () => {
   const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
   assert.equal(transcript.changeStatusLabel('paused'), 'In progress');
-  assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /'Parked'/);
-  assert.doesNotMatch(read('public/js/app-view.js'), /label: 'paused'/, 'no paused chip on the Workshop card');
+  assert.doesNotMatch(englishUiSource(read('frontend/src/features/messages/index.tsx')), /'Parked'/);
+  assert.doesNotMatch(englishUiSource(read('public/js/app-view.js')), /label: 'paused'/, 'no paused chip on the Workshop card');
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.doesNotMatch(devChat, /key: 'pause', label: 'Pause'/);
-  assert.doesNotMatch(devChat, /key: 'resume', label: 'Resume'/);
-  assert.match(devChat, /key: 'free', label: 'Free worker'/, 'a promoted session can still free its worker');
+  assert.doesNotMatch(englishUiSource(devChat), /key: 'pause', label: 'Pause'/);
+  assert.doesNotMatch(englishUiSource(devChat), /key: 'resume', label: 'Resume'/);
+  assert.match(englishUiSource(devChat), /key: 'free', label: 'Free worker'/, 'a promoted session can still free its worker');
   for (const file of ['src/routes/sessions.js', 'src/routes/proposal-handoff.js', 'src/services/connector-limits.js']) {
-    assert.doesNotMatch(read(file), /Pause or archive one first|Pause one first/, `${file} never asks the user to pause`);
+    assert.doesNotMatch(englishUiSource(read(file)), /Pause or archive one first|Pause one first/, `${file} never asks the user to pause`);
   }
   const prompt = read('src/services/mayor/agent-prompt.js');
-  assert.doesNotMatch(prompt, /parking/);
-  assert.match(prompt, /change\.status === 'paused' \? 'active'/, 'the Mayor is never told a change is paused');
+  assert.doesNotMatch(englishUiSource(prompt), /parking/);
+  assert.match(englishUiSource(prompt), /change\.status === 'paused' \? 'active'/, 'the Mayor is never told a change is paused');
 });
 
 test('new work at the cap pauses the user\'s least recently used session instead of refusing', async () => {
@@ -279,13 +280,13 @@ test('a message to a paused session resumes it, with every rule the resume route
 test('an agent session\'s finished run opens the conversation from the bell and from an alert', () => {
   const notifications = read('src/services/notifications.js');
   assert.equal((notifications.match(/cs\.agent_session_id,/g) || []).length, 3, 'every notification read carries it');
-  assert.match(notifications, /agentSessionId: isConversation \? null : \(row\.agent_session_id \|\| null\)/);
+  assert.match(englishUiSource(notifications), /agentSessionId: isConversation \? null : \(row\.agent_session_id \|\| null\)/);
   const client = read('frontend/src/features/notifications/notifications.js');
   // #3181: a change that stopped before finishing opens the same place.
-  assert.match(client, /const sessionTurnEnd = item\.kind === 'session_done' \|\| item\.kind === 'session_stalled';/);
-  assert.match(client, /sessionTurnEnd && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
-  assert.match(client, /n\.agentSessionId \? 'The coding agent finished' : 'Session finished'/);
-  assert.match(read('public/js/dev-alerts.js'), /if \(info && info\.agentSessionId\) return `#messages\/agent\/\$\{info\.agentSessionId\}`;/);
+  assert.match(englishUiSource(client), /const sessionTurnEnd = item\.kind === 'session_done' \|\| item\.kind === 'session_stalled';/);
+  assert.match(englishUiSource(client), /sessionTurnEnd && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
+  assert.match(englishUiSource(client), /n\.agentSessionId \? 'The coding agent finished' : 'Session finished'/);
+  assert.match(englishUiSource(read('public/js/dev-alerts.js')), /if \(info && info\.agentSessionId\) return `#messages\/agent\/\$\{info\.agentSessionId\}`;/);
   assert.equal(typeof require('../src/services/session-bus').subscriberCount, 'function');
 });
 

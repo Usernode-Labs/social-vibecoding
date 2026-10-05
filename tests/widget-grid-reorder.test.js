@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Issue #770: the "Homeroom widget" tile strip's kit drag uses the
 // grid (displacement) mode, matching the app-card grid from #753.
 // These tests pin the attachReorder options _wireWidgetStrip passes —
@@ -57,7 +58,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, attachCalls, reorderCalls, toasts };
 }

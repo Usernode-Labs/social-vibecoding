@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Things that JUMPED during a transition, found by recording the iOS
 // Simulator frame by frame: not slow frames, but items landing in the wrong
@@ -362,7 +364,7 @@ function modalFocusHarness() {
   };
   const timers = [];
   const frames = [];
-  const ctx = vm.createContext({
+  const ctx = vm.createContext(withLanguage({
     window: { visualViewport: {} },
     document: { activeElement: null },
     platform: 'ios',
@@ -376,7 +378,7 @@ function modalFocusHarness() {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
     requestAnimationFrame: (fn) => { frames.push(fn); },
-  });
+  }));
   vm.runInContext(NATIVE_JS.slice(start, end), ctx);
   const detach = ctx.attachModalFieldFocus(card);
   const tap = (target = field, { move = 0 } = {}) => {

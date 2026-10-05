@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The "sign out before signing in again" dead end (#1608).
 //
 // Reported from a browser: the sign-in screen came back although nobody had
@@ -43,13 +44,14 @@ function loadAuthShared(window, fetchImpl) {
     fetch: fetchImpl,
     console: { warn() {} },
     require(specifier) {
+      if (specifier === '../../lib/i18n/runtime') return withLanguage({}).PlatformI18n;
       if (specifier === '../../lib/legacy-dom') {
         return { useIsomorphicLayoutEffect() {} };
       }
       throw new Error(`unexpected auth shared import: ${specifier}`);
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(compiled, sandbox);
   return module.exports;
 }

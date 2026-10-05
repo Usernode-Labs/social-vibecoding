@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #platform-side-panel — the panel BESIDE a running app, on a desktop-width
 // window (frontend/src/features/side-panel/).
@@ -926,7 +928,7 @@ function router({ embedded = false, takes = true } = {}) {
   const noop = () => undefined;
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,
@@ -940,7 +942,7 @@ function router({ embedded = false, takes = true } = {}) {
     addEventListener() {},
     localStorage: { getItem: () => null, setItem: (k) => stored.push(k), removeItem() {} },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
-  });
+  }));
   context.window = context;
   vm.runInContext(APP_JS, context);
   context.UsernodeReact = {
@@ -1087,10 +1089,10 @@ function runHeadCheck({ search = '?panel=1', framed = true, sameOrigin = true, n
   win.top = nested ? {
     get location() { throw new Error('SecurityError: cross-origin preview host'); },
   } : parent;
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: win, URLSearchParams,
     document: { documentElement: { classList: { add: (c) => classes.add(c) } } },
-  });
+  }));
   vm.runInContext(code, context);
   return classes.has('in-side-panel');
 }
@@ -1173,7 +1175,7 @@ test('the shell snapshot really is not written from the panel\'s document', () =
       window: { localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } } },
       document: { documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } },
     };
-    vm.createContext(ctx);
+    vm.createContext(withLanguage(ctx));
     vm.runInContext(`${js}\n;globalThis.__api = { saveShellSnapshot };`, ctx);
     ctx.__api.saveShellSnapshot({ title: 'Messages' });
     assert.equal(Object.keys(store).length, embedded ? 0 : 1, embedded ? 'nothing from the panel' : 'the top window writes');
@@ -1193,7 +1195,7 @@ test('a completion chimes once: the top window\'s, not the panel\'s copy of the 
       },
     };
     sandbox.window = sandbox;
-    vm.runInNewContext(SRC, sandbox);
+    vm.runInNewContext(SRC, withLanguage(sandbox));
     sandbox.DevAlerts.playDoneTone = () => played.push('tone');
     sandbox.DevAlerts.systemNotify = () => played.push('os');
     sandbox.DevAlerts.onCompletion({ kind: 'session_done' });

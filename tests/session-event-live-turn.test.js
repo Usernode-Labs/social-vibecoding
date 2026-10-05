@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2599: the global WebSocket channel (App.handleSessionEvent in
 // public/js/app.js) hands its evidence to the dev chat's one source of truth
 // for "a turn is live" instead of deciding on its own.
@@ -65,7 +66,7 @@ function makeApp(opts) {
   sandbox.WebSocket = function FakeWebSocket(url) { this.url = url; this.readyState = 1; };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox);
   const DevChat = makeDevChat(opts);
   sandbox.DevChat = DevChat;

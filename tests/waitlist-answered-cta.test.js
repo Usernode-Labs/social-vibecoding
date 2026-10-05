@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The stage-2 offer card stops asking for answers once they exist (#1535).
 //
 // The waitlist screen raises "Want in sooner? → Answer them now" the moment an
@@ -60,17 +61,17 @@ test('the survey publishes on save, and the card reads it for both label and cop
     path.join(ROOT, 'frontend/src/features/auth/more.tsx'), 'utf8');
   const saved = more.indexOf('setSaved(true)');
   assert.ok(saved !== -1);
-  assert.match(more.slice(saved, saved + 400), /markSurveyAnswered\(value\)/,
+  assert.match(englishUiSource(more.slice(saved, saved + 400)), /markSurveyAnswered\(value\)/,
     'published only on a successful save, with the token it was saved under');
 
   const screen = fs.readFileSync(
     path.join(ROOT, 'frontend/src/features/auth/waitlist.tsx'), 'utf8');
-  assert.match(screen, /const surveyAnswered = useSurveyAnswered\(moreToken\)/);
-  assert.match(screen, /surveyAnswered \? 'Edit my answers' : 'Answer them now'/);
+  assert.match(englishUiSource(screen), /const surveyAnswered = useSurveyAnswered\(moreToken\)/);
+  assert.match(englishUiSource(screen), /surveyAnswered \? 'Edit my answers' : 'Answer them now'/);
   // The pitch above the button changes with it — "four more questions, about
   // three minutes" over an "Edit my answers" button is the same incoherence
   // one line up.
-  assert.match(screen, /Your answers are saved\./);
+  assert.match(englishUiSource(screen), /Your answers are saved\./);
   // The heading does not: a declared check pins it.
-  assert.match(screen, /Want in sooner\?/);
+  assert.match(englishUiSource(screen), /Want in sooner\?/);
 });

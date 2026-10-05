@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The stage-2 survey refuses a submission that says nothing (#1539).
 //
 // Every question on that form is optional and the endpoint accepts an empty
@@ -76,8 +77,8 @@ test('the submit path checks before it posts, and says so in the status line', (
   const post = submit.indexOf("fetch('/api/public/waitlist/more/");
   assert.ok(guard !== -1, 'the guard is in the submit handler');
   assert.ok(guard < post, 'nothing is posted until the check has run');
-  assert.match(submit, /Answer at least one question before saving\./);
-  assert.match(submit, /tone: 'warn'/,
+  assert.match(englishUiSource(submit), /Answer at least one question before saving\./);
+  assert.match(englishUiSource(submit), /tone: 'warn'/,
     'an empty save is a nudge, not an error the server returned');
   // The spinner must not be left running by the early return.
   assert.ok(submit.indexOf('setSaving(true)') > guard,

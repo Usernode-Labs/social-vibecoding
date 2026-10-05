@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2327: author-only inline title editing on a full open change page.
 
 const test = require('node:test');
@@ -30,7 +31,7 @@ function context(user = { id: 42, username: 'Builder' }) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   vm.runInContext(fs.readFileSync('public/js/merge-status.js', 'utf8'), c);
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);

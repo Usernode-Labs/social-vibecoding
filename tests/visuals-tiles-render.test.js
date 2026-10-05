@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for AppView.visualsTilesHtml (#353): clicking a before/after tile
 // must open the in-app side-by-side comparison overlay
 // (AppView.openVisualComparison) instead of opening the raw asset in a new
@@ -44,7 +45,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }

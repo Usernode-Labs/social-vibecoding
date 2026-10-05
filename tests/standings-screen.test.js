@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Leaderboard screen — the Kudos leaderboard, the Topochain standings, the
 // season's challenges and the past seasons, behind one entry point with a
 // four-tab strip: Challenges, Kudos, Standings, History (the navigation
@@ -203,7 +204,8 @@ test('Leaderboard.section defaults to Challenges (#2374)', () => {
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
 test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prototype)', () => {
-  const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
+  const islandEnglish = englishUiSource(island);
+  const list = islandEnglish.slice(islandEnglish.indexOf('const SECTION_TABS = ['), islandEnglish.indexOf('];', islandEnglish.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
@@ -216,17 +218,17 @@ test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prot
     + 'the prototype\'s words, Standings and History');
   // Four labels have to fit a 390px column: the triggers tighten below `sm`.
   // QA 2026-09-24 Q21: px-2 (was px-2.5), so the four fit a 390px column.
-  assert.match(island, /const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 /,
+  assert.match(englishUiSource(islandEnglish), /const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 /,
     'a phone-width trigger padding, restored from sm up');
   // And where they still do not fit, the strip says it scrolls.
-  assert.match(island, /<TabsList id="standings-tabs" ref=\{stripRef\} className=\{STRIP_LIST\} style=\{stripFade\}>/);
+  assert.match(englishUiSource(islandEnglish), /<TabsList id="standings-tabs" ref=\{stripRef\} className=\{STRIP_LIST\} style=\{stripFade\}>/);
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
   // app.js, dapp.json checks) and must survive both the relabelling and the
   // move: they are the attribute dapp.json selects on.
-  assert.match(island, /data-standings-tab=\{s\.key\}/, 'tab keys are unchanged');
+  assert.match(englishUiSource(islandEnglish), /data-standings-tab=\{s\.key\}/, 'tab keys are unchanged');
   // Clicking a trigger goes back into the module, exactly as the innerHTML'd
   // button's own listener did.
-  assert.match(island, /window\.Leaderboard\?\._setSection\?\.\(key\)/,
+  assert.match(englishUiSource(islandEnglish), /window\.Leaderboard\?\._setSection\?\.\(key\)/,
     'a trigger reports back through _setSection, which owns the hash and the panes');
 });
 
@@ -646,37 +648,37 @@ test('the challenges grid summarises and groups the completed set', () => {
   // The tally is composed in the shaping module and the id that carries it is
   // in the renderer — assert both halves, since either one alone would let the
   // declared dapp.json check lose its anchor.
-  assert.match(chTsx, /id="tc-se-challenge-summary"/,
+  assert.match(englishUiSource(chTsx), /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
   // ITERATION 03 moved the tally into the shared season progress
   // ("3/9 done in Season 2" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
   // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
-  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+  assert.match(englishUiSource(chJs), /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
+  assert.match(englishUiSource(chJs), /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
     'which is what the summary line carries');
-  assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
+  assert.match(englishUiSource(chTsx), /<SeasonProgress id="tc-se-challenge-summary"/,
     'drawn by the component Home shares');
-  assert.match(chTsx, /\{g\.heading\}/,
+  assert.match(englishUiSource(chTsx), /\{g\.heading\}/,
     'the grouping subheading renders');
-  assert.match(chJs, /heading: 'Completed'/,
+  assert.match(englishUiSource(chJs), /heading: 'Completed'/,
     'and the module is what names it');
   // Suppressed when everything (or nothing) is finished — every public event
   // in production is currently 100% completed, where the heading says nothing.
   const fn = chJs.slice(chJs.indexOf('  gridView(ordered) {'), chJs.indexOf('  cardView(c, i) {'));
   assert.ok(fn.length > 0, 'gridView located');
-  assert.match(fn, /firstDone > 0 && doneCount > 0/,
+  assert.match(englishUiSource(fn), /firstDone > 0 && doneCount > 0/,
     'the subheading is gated on BOTH groups being non-empty');
-  assert.match(chJs, /done: TopochainChallenges\._isDone\(c\)/,
+  assert.match(englishUiSource(chJs), /done: TopochainChallenges\._isDone\(c\)/,
     'the card descriptor carries the completed flag');
   // ITERATION 03 retired the dimming: a finished card is marked on its
   // progress rail and stays at full strength, so the pin moved from the
   // card's opacity to the rail's done recipe.
-  assert.doesNotMatch(chTsx, /opacity-60/, 'completed cards are no longer dimmed');
-  assert.match(chCardTsx,
+  assert.doesNotMatch(englishUiSource(chTsx), /opacity-60/, 'completed cards are no longer dimmed');
+  assert.match(englishUiSource(chCardTsx),
     /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
     'completed cards carry the done rail instead');
-  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+  assert.match(englishUiSource(chJs), /state: 'done', stateLabel: 'Done'/,
     'and the rail names the state in the board\'s word for it');
 });
 
@@ -987,13 +989,13 @@ test('the standings tally counts the viewer\'s progress, in the word Home uses',
     topoJs.indexOf('  // ── Rendering'));
   assert.ok(load.length > 0, '_loadChallengeCounts located');
 
-  assert.doesNotMatch(load, /c\.completed === true/,
+  assert.doesNotMatch(englishUiSource(load), /c\.completed === true/,
     'the organiser\'s closed flag is not the viewer\'s progress');
-  assert.match(load, /c\.progress && c\.progress\.done === true/,
+  assert.match(englishUiSource(load), /c\.progress && c\.progress\.done === true/,
     'the tally counts done-ness per row');
-  assert.match(standingsTsx, /challenges done/,
+  assert.match(englishUiSource(standingsTsx), /challenges done/,
     'and says "done", the word Home uses for this same number');
-  assert.doesNotMatch(standingsTsx, /challenges completed/,
+  assert.doesNotMatch(englishUiSource(standingsTsx), /challenges completed/,
     'never "completed", which on a challenge row means the organiser closed it');
 });
 

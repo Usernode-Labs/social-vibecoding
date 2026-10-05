@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the "How voting works" explainer's live status line
 // (app-view.js AppView._votingHelpText). The line must describe the SAME
 // situation the tally pill / countdown shows (voteCountPill), derived from
@@ -48,7 +49,7 @@ function makeAppView(ctx) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = ctx || { majority: 3, activeUsers: 5, locked: false };

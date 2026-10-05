@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2236's intermittent "1 console error on load" on the demo issue page
 // (`NotFoundError: Failed to execute 'removeChild' … [island
@@ -57,7 +59,7 @@ function harness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._ensureAiAvailability = () => Promise.resolve(true);

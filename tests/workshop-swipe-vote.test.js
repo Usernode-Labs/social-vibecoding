@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Swipe to vote on a Needs-you card, on a phone (#3052).
 //
@@ -171,9 +172,9 @@ test('an upward drag is let go, and a sideways one never also clicks', () => {
 
 test('the hints are two aria-hidden stamps, drawn only on a swipeable card', () => {
   const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
-  assert.match(item, /data-ws-swipeable=\{swipe \? '' : undefined\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes<\/span> : null\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No<\/span> : null\}/);
+  assert.match(englishUiSource(item), /data-ws-swipeable=\{swipe \? '' : undefined\}/);
+  assert.match(englishUiSource(item), /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes<\/span> : null\}/);
+  assert.match(englishUiSource(item), /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No<\/span> : null\}/);
   // After the caption, so `.dev-ws-item-by + .dev-ws-item-title +
   // .dev-ws-item-summary ~ .dev-ws-item-caption` (a declared check) still
   // matches.

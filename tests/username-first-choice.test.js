@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // First sign-in asks for a username instead of using the email (#2563).
 //
 // An account created by email sign-in was given its own address as
@@ -41,7 +42,7 @@ const express = require('express');
 
 const usernames = require('../src/services/usernames');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -378,7 +379,7 @@ const termsJs = read('frontend/src/features/settings/terms-first-run.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 test('the gate rides the shell bundle, not a new public/js script', () => {
-  assert.match(read('frontend/src/main.tsx'),
+  assert.match(englishUiSource(read('frontend/src/main.tsx')),
     /import '\.\/features\/auth\/username-first-run\.js';/);
   assert.ok(!read('public/sw.js').includes('username-first-run'),
     'no SHELL_ASSETS entry — the module is bundled, not a shell script');
@@ -405,29 +406,30 @@ test('it presents at once, with an empty field and nothing fetched to fill it (#
 });
 
 test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
+  const gateJsEnglish = englishUiSource(gateJs);
   const shared = read('frontend/src/features/auth/shared.ts');
   const note = 'Your username will be public to other users on Homeroom.';
-  assert.match(shared, /export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom\.';/);
+  assert.match(englishUiSource(shared), /export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom\.';/);
   // The gate is a classic module with no imports, so it spells the words;
   // this is what holds the two copies together.
-  assert.ok(gateJs.includes(`const PUBLIC_NOTE = '${note}';`));
+  assert.ok(englishUiSource(gateJsEnglish).includes(`const PUBLIC_NOTE = '${note}';`));
   // Right after the input, ahead of the error line, so a refusal never
   // displaces it — and the input names it for a screen reader.
-  const inputAt = gateJs.indexOf('panel.appendChild(input);');
-  const noteAt = gateJs.indexOf('panel.appendChild(note);');
-  const errorAt = gateJs.indexOf("status.setAttribute('data-choose-username-error', '');");
+  const inputAt = gateJsEnglish.indexOf('panel.appendChild(input);');
+  const noteAt = gateJsEnglish.indexOf('panel.appendChild(note);');
+  const errorAt = gateJsEnglish.indexOf("status.setAttribute('data-choose-username-error', '');");
   assert.ok(inputAt > 0 && noteAt > inputAt && errorAt > noteAt);
-  assert.match(gateJs, /input\.setAttribute\('aria-describedby', 'choose-username-public'\);/);
-  assert.match(gateJs, /note\.setAttribute\('data-choose-username-public', ''\);/);
+  assert.match(englishUiSource(gateJsEnglish), /input\.setAttribute\('aria-describedby', 'choose-username-public'\);/);
+  assert.match(englishUiSource(gateJsEnglish), /note\.setAttribute\('data-choose-username-public', ''\);/);
 
   // The register form and the email sign-up's set-password step render the
   // shared constant on its own line, directly under the input.
-  const register = read('frontend/src/features/auth/register.tsx');
-  assert.match(register,
-    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
-  const login = read('frontend/src/features/auth/login.tsx');
-  assert.match(login,
-    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p id="otp-username-hint"/);
+  const register = englishUiSource(read('frontend/src/features/auth/register.tsx'));
+  assert.match(englishUiSource(register),
+    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\(\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+  const login = englishUiSource(read('frontend/src/features/auth/login.tsx'));
+  assert.match(englishUiSource(login),
+    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\(\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {
@@ -475,9 +477,9 @@ test('the declared checks reach the step and pin its copy', () => {
   // placeholder is showing) with the public note right after it. It used to
   // assert the opposite — a suggestion already in the field.
   assert.ok(gateJs.includes('data-choose-username-public'));
-  assert.match(visual[0].expectSelector,
+  assert.match(englishUiSource(visual[0].expectSelector),
     /input#choose-username-input:placeholder-shown \+ \[data-choose-username-public\]/);
-  assert.doesNotMatch(JSON.stringify(ours), /data-username-suggested/);
+  assert.doesNotMatch(englishUiSource(JSON.stringify(ours)), /data-username-suggested/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════

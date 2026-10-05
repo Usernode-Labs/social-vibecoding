@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The Workshop screen (#workshop): every app you have, with how much of its
 // own Workshop page is addressed to you.
@@ -653,23 +654,23 @@ test('coming back from an app re-reveals the screen', () => {
 });
 
 test('#communities is a route of its own, and #workshop still lands there', () => {
-  assert.match(appJs, /if \(parts\[0\] === 'communities' \|\| parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
+  assert.match(englishUiSource(appJs), /if \(parts\[0\] === 'communities' \|\| parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
     'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
-  assert.match(appJs, /navigateToWorkshop\(\) \{/);
-  assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  assert.match(englishUiSource(appJs), /navigateToWorkshop\(\) \{/);
+  assert.match(englishUiSource(appJs), /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
+  assert.match(englishUiSource(appJs), /App\.setHeaderTitle\('Communities'\)/);
   // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
   // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');
-  assert.match(html, /id="platform-tab-workshop"[^>]*href="#communities"/,
+  assert.match(englishUiSource(html), /id="platform-tab-workshop"[^>]*href="#communities"/,
     'the unscoped screen is a tab');
   // The app menu keeps the SCOPED entrance — the link-out every mini-app host
   // in the study draws under a mini-app — as a plain "Go to workshop" row
   // (#2761). It spent a round as the App | Workshop strip's segment; the
   // owner asked for a row, not a toggle.
-  assert.match(sheetTsx, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+  assert.match(englishUiSource(sheetTsx), /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
     "and the app's menu links out to it, scoped");
-  assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
+  assert.match(englishUiSource(sheetTsx), /id="app-menu-row-workshop"/, 'as a row');
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
 });
 
@@ -908,16 +909,16 @@ test('the Needs you row names the communities waiting on you, and the tabs are g
   assert.equal(mod.needsApps(rows(['A', 'B', 'C', 'D', 'E'])), 'A, B, C and 2 more');
   // One page: no Current status | Needs you strip, no summary legend, and no
   // list of your own items under the communities (Profile's Your changes).
-  assert.doesNotMatch(src, /id="workshop-tab-(status|needs)"/);
-  assert.doesNotMatch(src, /id="workshop-total-(working|needs)"/);
-  assert.doesNotMatch(src, /\/api\/workshop\/items/, 'the screen no longer reads the items');
-  assert.match(src, /data-workshop-needs-open=""/);
+  assert.doesNotMatch(englishUiSource(src), /id="workshop-tab-(status|needs)"/);
+  assert.doesNotMatch(englishUiSource(src), /id="workshop-total-(working|needs)"/);
+  assert.doesNotMatch(englishUiSource(src), /\/api\/workshop\/items/, 'the screen no longer reads the items');
+  assert.match(englishUiSource(src), /data-workshop-needs-open=""/);
   // #3526: the title counts the votes not yet swiped past; with none new it
   // says how many were skipped, since the row is still the way to them.
-  assert.match(src, /title=\{totals\.needs > 0\s*\? `\$\{totals\.needs\} \$\{totals\.needs === 1 \? 'vote' : 'votes'\} waiting on you`\s*: `\$\{totals\.owed\} \$\{totals\.owed === 1 \? 'vote' : 'votes'\} you skipped`\}/);
-  assert.match(src, /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
-  assert.match(src, /data-workshop-needs-back=""/, 'and the feed has a way back');
-  assert.doesNotMatch(src, /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');
+  assert.match(englishUiSource(src), /title=\{totals\.needs > 0\s*\? `\$\{totals\.needs\} votes waiting on you`\s*: `\$\{totals\.owed\} votes you skipped`\}/);
+  assert.match(englishUiSource(src), /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
+  assert.match(englishUiSource(src), /data-workshop-needs-back=""/, 'and the feed has a way back');
+  assert.doesNotMatch(englishUiSource(src), /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');
 
   assert.equal(mod.tabFromQuery('?demo=1&ws=needs'), 'needs');
   assert.equal(mod.tabFromQuery('?ws=all'), null, 'All items is an app\'s own tab, not this screen\'s');

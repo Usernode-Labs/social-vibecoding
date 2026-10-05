@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The closed VENUE vocabulary.
 //
@@ -58,7 +60,7 @@ const RETIRED_LABELS = [
 function loadBrowserModule(relPath, globalName) {
   const sandbox = { window: {}, module: { exports: {} }, document: undefined };
   sandbox.self = sandbox.window;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   for (const dep of ['public/js/build-venues.js', relPath]) {
     const src = fs.readFileSync(path.join(__dirname, '..', dep), 'utf8');
     sandbox.module = { exports: {} };

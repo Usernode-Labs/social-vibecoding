@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Running a session on your own computer — the local-CLI card (#1055),
 // and what happened to the menu it used to hang off (#1353).
 //
@@ -168,40 +169,40 @@ test('every row the menu carried still has a door', () => {
   // it could not stay a string); what stayed here is every venue the sheet it
   // opens offers.
   assert.ok(Array.isArray(require('../public/js/build-venues').VENUES));
-  assert.match(BUILD_VENUES, /function open\(/, 'and the sheet itself');
+  assert.match(englishUiSource(BUILD_VENUES), /function open\(/, 'and the sheet itself');
   const HEADER = fs.readFileSync(
     path.join(__dirname, '../frontend/src/features/dev-chat/session-header.tsx'), 'utf8'
   );
-  assert.match(HEADER, /data-venue-change="1"/);
-  assert.match(HEADER, /openVenueSheet\?\.\(e\.currentTarget\)/);
+  assert.match(englishUiSource(HEADER), /data-venue-change="1"/);
+  assert.match(englishUiSource(HEADER), /openVenueSheet\?\.\(e\.currentTarget\)/);
   // "Set/Change your API key" → the credits banner's own button, which
   // appears at the moment the allowance actually matters.
   const CREDIT_OPTIONS = fs.readFileSync(
     path.join(__dirname, '../public/js/credit-options.js'), 'utf8'
   );
-  assert.match(CREDIT_OPTIONS, /#settings\/api-key/);
+  assert.match(englishUiSource(CREDIT_OPTIONS), /#settings\/api-key/);
   // "Stop running on <machine>" → the runner select's Homeroom option, which
   // is features/dev-chat/composer-chrome.tsx's since #1191.
   const CHROME = fs.readFileSync(
     path.join(__dirname, '../frontend/src/features/dev-chat/composer-chrome.tsx'), 'utf8'
   );
-  assert.match(CHROME, /_handBackToUsernode\?\.\(\)/);
-  assert.match(CHROME, /id="dc-runner-select"/);
-  assert.match(CHROME, /<option value="platform">Homeroom<\/option>/);
+  assert.match(englishUiSource(CHROME), /_handBackToUsernode\?\.\(\)/);
+  assert.match(englishUiSource(CHROME), /id="dc-runner-select"/);
+  assert.match(englishUiSource(CHROME), /<option value="platform">Homeroom<\/option>/);
   // …and the target id still travels with a hand-off (#1071): without it
   // the prepare call would open new work for a row that said "continue this
   // session". It happens where the sheet dispatches a `flow` pick — read
   // off the shared derivation rather than carried on the row, because
   // #1348's rows are coarse and no longer per-venue.
   assert.match(
-    DEV_CHAT_SRC,
+    englishUiSource(DEV_CHAT_SRC),
     /DevChat\._devFlowFromCredits\(pick\.flow, DevChat\._webHandoffTargetId\(\)\)/
   );
   const target = DEV_CHAT_SRC.match(/_webHandoffTargetId\(\) \{[\s\S]*?\n  \},/);
   assert.ok(target, '_webHandoffTargetId must exist');
-  assert.match(target[0], /BuildVenues\.webTargetKind\(state\) !== 'new'/,
+  assert.match(englishUiSource(target[0]), /BuildVenues\.webTargetKind\(state\) !== 'new'/,
     'a hand-off only carries a target when it is continuing something');
-  assert.match(target[0], /state\.sessionId/);
+  assert.match(englishUiSource(target[0]), /state\.sessionId/);
 });
 
 test('the shell loads the module', () => {

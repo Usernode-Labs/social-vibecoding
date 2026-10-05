@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #2480: one noun for a vote row across the Workshop's row sheets.
 //
@@ -36,15 +37,15 @@ test('no Workshop row sheet calls a vote row a proposal', () => {
 
 test('the sheets that name a vote row all say "change"', () => {
   // The Comments sheet subtitle — the one that disagreed.
-  assert.match(SRC, /kind === 'vote' \? 'on this change' : 'on this request'/);
+  assert.match(englishUiSource(SRC), /kind === 'vote' \? 'on this change' : 'on this request'/);
   // The two that were already right, kept so the pair cannot drift apart.
-  assert.match(SRC, /kind === 'vote' \? 'Ask about this change' : 'Ask about this request'/);
-  assert.match(SRC, /Ask about this change<\/label>/);
-  assert.match(SRC, /No plain-language summary was written for this change\./);
+  assert.match(englishUiSource(SRC), /kind === 'vote' \? 'Ask about this change' : 'Ask about this request'/);
+  assert.match(englishUiSource(SRC), /Ask about this change<\/label>/);
+  assert.match(englishUiSource(SRC), /No plain-language summary was written for this change\./);
 });
 
 test('an issue row is still an issue', () => {
-  assert.match(SRC, /'on this request'/);
-  assert.match(SRC, /'Ask about this request'/);
-  assert.match(SRC, /This request has no description\./);
+  assert.match(englishUiSource(SRC), /'on this request'/);
+  assert.match(englishUiSource(SRC), /'Ask about this request'/);
+  assert.match(englishUiSource(SRC), /This request has no description\./);
 });

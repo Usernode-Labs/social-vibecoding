@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Public Topochain surfaces (Task 14) — the standings table and the
 // seasons/events challenge grid, the two views the migration plan's Global
 // Constraint #8 calls for. They shipped as two standalone SPA screens
@@ -131,7 +132,7 @@ test('one entry point reaches all three surfaces', () => {
   // HomePanels.goToLeaderboard, which is the one owner of the hash.
   assert.ok(!/id="drawer-row-leaderboard"/.test(html),
     'the hamburger row is retired with everything else that was not navigation');
-  assert.match(html, /<section id="home-challenges-section"/,
+  assert.match(englishUiSource(html), /<section id="home-challenges-section"/,
     'the Challenges area is in the shell, above the fold of the home screen');
   const panels = fs.readFileSync(
     path.join(root, 'frontend/src/features/home/home-panels.js'), 'utf8');
@@ -141,11 +142,11 @@ test('one entry point reaches all three surfaces', () => {
     path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
   // #1916: the link reads "Open challenges" and lands on the screen's
   // Challenges tab, one tab from the standings.
-  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open challenges"/,
+  assert.match(englishUiSource(ui), /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open challenges"/,
     'the area\u2019s title bar carries the link');
-  assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
+  assert.match(englishUiSource(panels), /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
     'which is a real hash navigation onto the Leaderboard screen');
-  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,
+  assert.match(englishUiSource(panels), /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,
     'and it is a real hash navigation, so the device back gesture returns home');
 });
 

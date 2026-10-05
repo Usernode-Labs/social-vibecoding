@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The hub's first card: what landed since your last visit, in a sentence or
 // two (dev-board/workshop/since-summary-card.tsx). The server side, the
@@ -47,23 +48,23 @@ test('the heading names the window’s start the way a person would', () => {
 test('the card says who wrote it, is not a link, and the × hides it until something newer lands', () => {
   // "AI summary" on a model's line only; three or fewer changes are their
   // own titles, which nobody needs told are titles.
-  assert.match(SRC, /\{data\.state === 'ai' \? <span className="dev-ws-since-card-tag">AI summary<\/span> : null\}/);
-  assert.match(SRC, /data-ws-since-summary-text="">\{data\.text\}/);
-  assert.match(SRC, /data-ws-since-summary-list=""/);
-  assert.doesNotMatch(SRC, /<a\b|href=/, 'not a link to the Workshop');
+  assert.match(englishUiSource(SRC), /\{data\.state === 'ai' \? <span className="dev-ws-since-card-tag">AI summary<\/span> : null\}/);
+  assert.match(englishUiSource(SRC), /data-ws-since-summary-text="">\{data\.text\}/);
+  assert.match(englishUiSource(SRC), /data-ws-since-summary-list=""/);
+  assert.doesNotMatch(englishUiSource(SRC), /<a\b|href=/, 'not a link to the Workshop');
   // The ×: named for a screen reader, and remembered per device as the
   // newest change the dismissed line covered.
-  assert.match(SRC, /aria-label="Dismiss this summary"/);
-  assert.match(SRC, /export const DISMISS_KEY = 'sinceSummaryDismissed';/);
-  assert.match(SRC, /window\.localStorage\.setItem\(`\$\{DISMISS_KEY\}:\$\{slug\}`, String\(headAt\)\)/);
-  assert.match(SRC, /if \(dismissed && data\.headAt <= dismissed\) return null;/, 'a newer head brings it back');
+  assert.match(englishUiSource(SRC), /aria-label="Dismiss this summary"/);
+  assert.match(englishUiSource(SRC), /export const DISMISS_KEY = 'sinceSummaryDismissed';/);
+  assert.match(englishUiSource(SRC), /window\.localStorage\.setItem\(`\$\{DISMISS_KEY\}:\$\{slug\}`, String\(headAt\)\)/);
+  assert.match(englishUiSource(SRC), /if \(dismissed && data\.headAt <= dismissed\) return null;/, 'a newer head brings it back');
   // Storage can throw (private mode): the card still works for the page.
-  assert.match(SRC, /catch \{ \/\* private mode: dismissed for this page only \*\/ \}/);
+  assert.match(englishUiSource(SRC), /catch \{ \/\* private mode: dismissed for this page only \*\/ \}/);
   // On the hub, first under the hero, measured from the viewer's last visit.
   // Its one way on is a button, not a link: Week by week, the Workshop page
   // (#852).
-  assert.match(LANDER, /\{slug \? \(\s*<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>\s*\) : null\}/);
-  assert.match(SRC, /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week\s*<ChevronRightIcon className="w-3\.5 h-3\.5" aria-hidden="true" \/>/);
+  assert.match(englishUiSource(LANDER), /\{slug \? \(\s*<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>\s*\) : null\}/);
+  assert.match(englishUiSource(SRC), /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week\s*<ChevronRightIcon className="w-3\.5 h-3\.5" aria-hidden="true" \/>/);
   // #3510: in the head's far corner with its arrow, like the Discussion
   // card's Open, and the × after it at the very end; the count and "AI
   // summary" moved under the line to make the room.
@@ -75,6 +76,6 @@ test('the card says who wrote it, is not a link, and the × hides it until somet
   assert.ok(SRC.indexOf('className="dev-ws-since-card-tag"') > SRC.indexOf('data-ws-since-summary-list'), 'the AI tag under the text');
   assert.ok(SRC.indexOf('className="dev-ws-since-card-n"') > SRC.indexOf('data-ws-since-summary-list'), 'and the count with it');
   for (const cls of ['dev-ws-since-card', 'dev-ws-since-card-n', 'dev-ws-since-card-tag', 'dev-ws-since-card-foot', 'dev-ws-since-card-x', 'dev-ws-since-card-text', 'dev-ws-since-card-list']) {
-    assert.match(CSS, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
+    assert.match(englishUiSource(CSS), new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }
 });

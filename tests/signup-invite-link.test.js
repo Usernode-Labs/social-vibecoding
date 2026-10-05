@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Content pins for the waitlist-release invite link (#1548).
 //
 // The reported bug: the "get started" link in the release email lands on a
@@ -21,7 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 const LOGIN_TSX = 'frontend/src/features/auth/login.tsx';
 
@@ -118,33 +119,33 @@ test('a second visit lands back on the code step instead of an empty form', () =
   // from an effect keyed on the address.
   const onShow = tsx.slice(tsx.indexOf('const loginOnShow'), tsx.indexOf('// ── The OTP'));
   assert.ok(onShow.length > 0, 'loginOnShow must still exist');
-  assert.match(onShow, /readAutoSend\(\)/,
+  assert.match(englishUiSource(onShow), /readAutoSend\(\)/,
     'the standing confirmation is restored inside loginOnShow');
-  assert.match(onShow, /setOtpStatus\(CODE_SENT_MSG\)/);
-  assert.match(onShow, /setCooldownUntil\(/,
+  assert.match(englishUiSource(onShow), /setOtpStatus\(CODE_SENT_MSG\(\)\)/);
+  assert.match(englishUiSource(onShow), /setCooldownUntil\(/,
     'the remaining cooldown is restored, not restarted');
 });
 
 test('the resend is held for the same gap the mail layer enforces', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const RESEND_COOLDOWN_MS = 60 \* 1000/);
+  assert.match(englishUiSource(tsx), /const RESEND_COOLDOWN_MS = 60 \* 1000/);
   // The button says how long is left rather than looking broken, and both
   // arms of every conditional class are whole literals — Tailwind's
   // extractor is a regex over source text.
-  assert.match(tsx, /Send a new code in \$\{cooldownLeft\}s/);
-  assert.match(tsx, /Email me a code in \$\{cooldownLeft\}s/);
-  assert.match(tsx, /const QUIET_BUTTON_WAITING =\s*\n?\s*'[^']*'/);
-  assert.doesNotMatch(tsx, /className=\{`[^`]*\$\{[^`]*\}[^`]*`\}/,
+  assert.match(englishUiSource(tsx), /Send a new code in \$\{cooldownLeft\}s/);
+  assert.match(englishUiSource(tsx), /Email me a code in \$\{cooldownLeft\}s/);
+  assert.match(englishUiSource(tsx), /const QUIET_BUTTON_WAITING =\s*\n?\s*'[^']*'/);
+  assert.doesNotMatch(englishUiSource(tsx), /className=\{`[^`]*\$\{[^`]*\}[^`]*`\}/,
     'no computed Tailwind class names');
 
   // Client-side politeness only. The server-side gap is the mail layer's,
   // and requestCode reuses the outstanding code inside it rather than
   // minting one it then refuses to send.
   const rules = read('src/services/mail/rate-limit.js');
-  assert.match(rules, /\n\s*otp: \{ minGapMs: 60 \* 1000,/);
+  assert.match(englishUiSource(rules), /\n\s*otp: \{ minGapMs: 60 \* 1000,/);
   const signup = read('src/services/email-signup.js');
-  assert.match(signup, /const OTP_REUSE_WINDOW_SECONDS = 60;/);
-  assert.match(signup, /RULES\.otp\.minGapMs|rate-limit/,
+  assert.match(englishUiSource(signup), /const OTP_REUSE_WINDOW_SECONDS = 60;/);
+  assert.match(englishUiSource(signup), /RULES\.otp\.minGapMs|rate-limit/,
     'the reuse window must name where its 60 comes from');
 });
 

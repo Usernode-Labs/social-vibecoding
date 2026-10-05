@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the widened GET /api/sessions/:id/spec read path (shared
 // spec versions were invisible to everyone but the session owner — the
 // dev-session spec panel rendered "No spec yet" for a spec that WAS
@@ -331,7 +332,7 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
 test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
   const render = slice(src, '_specViewerView() {', '_publishSpecViewer() {', '_specViewerView');
-  assert.ok(render.includes('DevChat._ownsSession(DevChat.currentSession)'), 'ownership is computed');
+  assert.ok(englishUiSource(render).includes('DevChat._ownsSession(DevChat.currentSession)'), 'ownership is computed');
   // `absent` is the model's word for "a non-owner never sees it" — both
   // share routes are owner-scoped server-side, so for anyone else the
   // buttons could only ever fail.
@@ -339,12 +340,12 @@ test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
     'group-share button is owner-only');
   assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
     'user-share button is owner-only');
-  assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes('No spec has been shared for this session yet.'), 'non-owner empty copy');
-  assert.ok(render.includes('No spec yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  assert.ok(englishUiSource(render).includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
+  assert.ok(englishUiSource(render).includes('No spec has been shared for this session yet.'), 'non-owner empty copy');
+  assert.ok(englishUiSource(render).includes('No spec yet. Ask the AI to draft one.'), 'owner empty copy kept');
   // And the component renders nothing at all for an `absent` action.
   const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
-  assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,
+  assert.ok((englishUiSource(tsx).match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,
     'both share buttons draw nothing for a non-owner');
 });
 

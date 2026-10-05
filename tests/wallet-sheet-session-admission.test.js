@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -23,7 +24,7 @@ function loadWalletSheet() {
   sandbox.WALLET_EMPTY = {};
   sandbox.mountWalletSheet = () => {};
   sandbox.unmountWalletSheet = () => {};
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(walletSheetSource.replace(/^import[^\n]*\n/gm, ''), sandbox);
   return sandbox.WalletSheet;
 }

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The waitlist screens say the same things in less reading (#1541).
 //
 // The report was "text heavy - too much reading" on the waitlist and the
@@ -40,10 +41,11 @@ function wordsIn(text) {
 }
 
 test('stage 1 leads with one sentence, then a list', () => {
-  const pitch = WAITLIST.slice(
-    WAITLIST.indexOf('Describe the app you want'),
-    WAITLIST.indexOf('Just your email to join.'));
-  assert.match(pitch, /<ul/, 'the three supporting claims are a list now');
+  const WAITLISTEnglish = englishUiSource(WAITLIST);
+  const pitch = WAITLISTEnglish.slice(
+    WAITLISTEnglish.indexOf('Describe the app you want'),
+    WAITLISTEnglish.indexOf('Just your email to join.'));
+  assert.match(englishUiSource(pitch), /<ul/, 'the three supporting claims are a list now');
   const items = pitch.match(/<li>/g) || [];
   assert.equal(items.length, 3);
   assert.ok(wordsIn(pitch) < 70,
@@ -51,6 +53,7 @@ test('stage 1 leads with one sentence, then a list', () => {
 });
 
 test('and keeps every claim it used to make', () => {
+  const WAITLISTEnglish = englishUiSource(WAITLIST);
   for (const claim of [
     /Describe the app you want in chat, an AI builds it, and the group votes the changes in\./,
     /built here, by the people who use it/,
@@ -59,32 +62,33 @@ test('and keeps every claim it used to make', () => {
     /public apps are open to everyone now/,
     /Just your email to join\./,
   ]) {
-    assert.match(flat(WAITLIST), claim);
+    assert.match(englishUiSource(flat(WAITLISTEnglish)), claim);
   }
 });
 
 test('the heading and the step line are untouched: checks pin them', () => {
   // "Enter your confirmation code" and "Registered with" are declared-check
   // text on ?shot= routes, and the whole pitch hides on `joined` as before.
-  assert.match(WAITLIST, /Join the waitlist/);
-  assert.match(WAITLIST, /hiddenLast\(joined, 'mt-3 text-sm font-medium/);
+  assert.match(englishUiSource(WAITLIST), /Join the waitlist/);
+  assert.match(englishUiSource(WAITLIST), /hiddenLast\(joined, 'mt-3 text-sm font-medium/);
 });
 
 test('want-in-sooner drops the sentence that said it twice', () => {
-  const intro = MORE.slice(
-    MORE.indexOf('Four questions, about three minutes'),
-    MORE.indexOf('id="more-invalid"'));
+  const MOREEnglish = englishUiSource(MORE);
+  const intro = MOREEnglish.slice(
+    MOREEnglish.indexOf('Four questions, about three minutes'),
+    MOREEnglish.indexOf('id="more-invalid"'));
   assert.ok(wordsIn(intro) < 40, `saw ${wordsIn(intro)} words`);
   // What it must still say.
-  assert.match(flat(intro), /what we read when we pick the next group/);
-  assert.match(flat(intro), /come back and add to them any time/);
+  assert.match(englishUiSource(flat(intro)), /what we read when we pick the next group/);
+  assert.match(englishUiSource(flat(intro)), /come back and add to them any time/);
   // The retired half restated the first clause, and "every one is optional"
   // is the label above the heading already. Asserted on the RENDERED intro
   // rather than the file: the change's own doc comment quotes the sentence it
   // removed, which is exactly the sort of prose a whole-file grep trips on.
-  assert.doesNotMatch(flat(intro), /worth more than the order/);
-  assert.doesNotMatch(flat(intro), /Every one is optional/);
-  assert.match(MORE, /Optional \(moves you up the list\)/,
+  assert.doesNotMatch(englishUiSource(flat(intro)), /worth more than the order/);
+  assert.doesNotMatch(englishUiSource(flat(intro)), /Every one is optional/);
+  assert.match(englishUiSource(MOREEnglish), /Optional \(moves you up the list\)/,
     'the optional label is still there, which is why the sentence could go');
 });
 

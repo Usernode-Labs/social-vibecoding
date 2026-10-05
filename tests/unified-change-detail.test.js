@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -15,7 +17,7 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);
   }
@@ -422,11 +424,11 @@ test('all change routes mount the full card, leaving discussion loading to its p
     GroupChat: { mountThread: () => calls.push('public'), unmountThread: () => calls.push('detach') } };
   av._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage: () => calls.push('change') });
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
-  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
+  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, withLanguage(c));
   assert.deepEqual(calls, ['detach', 'change']);
   av._mySessions[0].shared_at = '2026-09-11';
   calls.length = 0;
-  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
+  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, withLanguage(c));
   assert.deepEqual(calls, ['detach', 'change']);
 });
 
@@ -476,7 +478,7 @@ test('Continue building navigates to the dev session page from every surface', (
   // #2605: there is no sheet and no event — the route is the only answer.
   const c = { AppView: av, document: { querySelector: () => ({}) },
     window: { dispatchEvent: (event) => events.push(event) }, CustomEvent: class { constructor(type, opts) { this.type = type; this.detail = opts.detail; } } };
-  const open = vm.runInNewContext(`({ ${method} }).openChangeWorkspace`, c);
+  const open = vm.runInNewContext(`({ ${method} }).openChangeWorkspace`, withLanguage(c));
   open(4073);
   assert.deepEqual(events, [], 'nothing is dispatched at the page');
   assert.deepEqual(routes, [4073]);
@@ -566,7 +568,7 @@ test('an old ?conversation=workspace link lands on the dev session page', () => 
   let search = '?conversation=workspace';
   const c = { AppView: av, URLSearchParams,
     window: { get location() { return { search }; } } };
-  const redirect = vm.runInNewContext(`({ ${method} })._redirectLegacyBuildLink`, c);
+  const redirect = vm.runInNewContext(`({ ${method} })._redirectLegacyBuildLink`, withLanguage(c));
   assert.equal(redirect(failing), true);
   assert.deepEqual(routes, [4073]);
   // The spelling that preceded it.
@@ -589,7 +591,7 @@ test('an old ?conversation=workspace link lands on the dev session page', () => 
   const reader = context({ id: 99 });
   reader.openChangeWorkspace = (id) => routes.push(id);
   const readerRedirect = vm.runInNewContext(`({ ${method} })._redirectLegacyBuildLink`,
-    { AppView: reader, URLSearchParams, window: { get location() { return { search }; } } });
+    withLanguage({ AppView: reader, URLSearchParams, window: { get location() { return { search }; } } }));
   assert.equal(readerRedirect(failing), false, "somebody else's private change keeps its page");
   assert.equal(readerRedirect({ ...failing, transcript_shared: true }), true,
     'a published chat is a door, so the link follows it');
@@ -679,12 +681,12 @@ test('the issue picker computes bounded add/remove deltas for the existing PATCH
   });
 
   const src = fs.readFileSync('frontend/src/features/dev-board/topic/topic-head.tsx', 'utf8');
-  assert.match(src, /Search by number or title/);
-  assert.match(src, /aria-label={`Remove #\$\{issue\.n}: \$\{issue\.title}`}/);
-  assert.match(src, /event\.key === 'Escape'/);
-  assert.match(src, /if \(suggestions\[0\]\) addIssue/);
-  assert.match(src, /disabled=\{saving \|\| !changed\}/);
-  assert.match(src, /JSON\.stringify\(\{ addIssues, removeIssues \}\)/);
+  assert.match(englishUiSource(src), /Search by number or title/);
+  assert.match(englishUiSource(src), /aria-label={`Remove #\$\{issue\.n}: \$\{issue\.title}`}/);
+  assert.match(englishUiSource(src), /event\.key === 'Escape'/);
+  assert.match(englishUiSource(src), /if \(suggestions\[0\]\) addIssue/);
+  assert.match(englishUiSource(src), /disabled=\{saving \|\| !changed\}/);
+  assert.match(englishUiSource(src), /JSON\.stringify\(\{ addIssues, removeIssues \}\)/);
 });
 
 test('an unlinked owner gets the empty editor affordance while a reader sees no empty aside', () => {

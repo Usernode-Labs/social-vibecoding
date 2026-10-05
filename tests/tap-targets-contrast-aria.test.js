@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // QA 2026-09-24, Q19 and Q20: phone tap targets under 32px, small text under
 // WCAG AA contrast, and a handful of ARIA structure faults, all found by an
@@ -18,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(root, p), 'utf8'));
 const CSS = read('public/css/app.css');
 
 // ── WCAG 2 contrast, on #rrggbb ─────────────────────────────────────────
@@ -114,17 +115,17 @@ test('Q20: the Workshop count chips and the GitHub tag clear AA', () => {
 });
 
 test('Q20: the bell badge, the Discover meta line and the list subtitles use the passing shades', () => {
-  const header = read('frontend/src/features/header/platform-header.tsx');
+  const header = englishUiSource(read('frontend/src/features/header/platform-header.tsx'));
   const badge = header.match(/id="notifications-badge"[\s\S]*?className="([^"]+)"/);
   assert.ok(badge, 'the bell badge renders');
   assert.match(badge[1], /\bbg-red-600\b/, 'white 10.4px on red-500 was 3.76:1');
   assert.ok(contrast('#ffffff', '#dc2626') >= 4.5, 'red-600 carries white text');
 
-  const discover = read('frontend/src/features/home/panels/discover.tsx');
+  const discover = englishUiSource(read('frontend/src/features/home/panels/discover.tsx'));
   assert.match(discover, /className="home-discover-meta [^"]*\btext-zinc-600 dark:text-zinc-400"/,
     'the meta line takes the blurb\'s ink on the pastel tints');
 
-  const list = read('frontend/@/components/ui/grouped-list.tsx');
+  const list = englishUiSource(read('frontend/@/components/ui/grouped-list.tsx'));
   assert.match(list, /cn\('mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/,
     'a list row\'s subtitle is zinc-400 in dark, not zinc-500 (3.54:1 on the page)');
 });
@@ -139,7 +140,7 @@ test('Q19: the dense-row hit-slop helper is the kit\'s trick at 32px, on touch o
 });
 
 test('Q19: each small control named by the audit wears a hit-slop', () => {
-  const has = (file, re, why) => assert.match(read(file), re, why);
+  const has = (file, re, why) => assert.match(englishUiSource(read(file)), re, why);
   const KIT = 'un-touch-target';
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-link ${KIT}"`), 'How voting works');
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-btn ${KIT}"`), 'the ? beside it');
@@ -169,14 +170,14 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
     has(`frontend/src/features/settings/${f}`, /bg-red-50 [^"]*touch-target-32"/, `Revoke in ${f}`);
   }
-  const files = read('frontend/src/features/settings/agent-files-list.tsx');
+  const files = englishUiSource(read('frontend/src/features/settings/agent-files-list.tsx'));
   assert.equal((files.match(/font-medium touch-target-32"/g) || []).length, 2, 'agent files View and Delete');
   // Each row's View and Delete name their file, and View says whether it is
   // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
-  assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
-  assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
-  assert.match(files, /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
-  assert.match(files, /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
+  assert.match(englishUiSource(files), /aria-expanded=\{open\}/, 'agent files View reports open');
+  assert.match(englishUiSource(files), /aria-controls=\{contentId\}/, 'agent files View points at its content');
+  assert.match(englishUiSource(files), /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
+  assert.match(englishUiSource(files), /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -208,31 +209,31 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
 
 test('Q20: form controls the audit found unnamed have names', () => {
-  const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
+  const waitlist = englishUiSource(read('frontend/src/features/auth/waitlist.tsx'));
+  assert.match(englishUiSource(waitlist), /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
     'the Country label points at its select');
-  assert.match(waitlist, /id="waitlist-country"/);
-  const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
+  assert.match(englishUiSource(waitlist), /id="waitlist-country"/);
+  const connectors = englishUiSource(read('frontend/src/features/settings/sections/connectors.tsx'));
+  assert.match(englishUiSource(connectors), /id="settings-dev-flow"\s+aria-label="Where changes get built"/,
     'the dev-flow select is named after its heading');
   // Four text boxes that took focus announcing only "edit text".
-  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/messages/message-row.tsx')),
     /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
-  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
-    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Request title'\}/,
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/card/dev-card.tsx')),
+    /id=\{`dev-\$\{kind\}-title-input`\}\s+aria-label=\{session \? 'Proposal title' : 'Request title'\}/,
     'the card title editor, named by kind');
-  const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this request<\/h4>/);
-  assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
+  const topicHead = englishUiSource(read('frontend/src/features/dev-board/topic/topic-head.tsx'));
+  assert.match(englishUiSource(topicHead), /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this request<\/h4>/);
+  assert.match(englishUiSource(topicHead), /id="dev-issue-body-input"\s+aria-labelledby="dev-issue-body-heading"/,
     'the issue body editor is named after its heading');
-  const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
-  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
-  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
+  const wallet = englishUiSource(read('frontend/src/features/header/wallet-sheet-body.tsx'));
+  assert.match(englishUiSource(wallet), /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
+  assert.match(englishUiSource(wallet), /placeholder="Amount" aria-label="Amount"/);
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {
-  const guide = read('frontend/src/features/settings/cli-setup-guide.tsx');
-  assert.match(guide, /<pre\n\s*tabIndex=\{0\}\n\s*role="region"\n\s*aria-label=\{label\}/);
+  const guide = englishUiSource(read('frontend/src/features/settings/cli-setup-guide.tsx'));
+  assert.match(guide, /<pre\n\s*tabIndex=\{0\}\n\s*role="region"\s+aria-label=\{label\}/);
   assert.match(guide, /focus-visible:ring-2/, 'with a visible focus ring');
 });
 
@@ -242,7 +243,7 @@ test('Q20: the kit modal shell takes its name from the dialog\'s heading', () =>
   const fn = modal.slice(modal.indexOf('function nameKitShell('));
   assert.match(fn, /querySelector\('h1, h2, h3'\)/);
   assert.match(fn, /if \(heading\.id\) shell\.setAttribute\('aria-labelledby', heading\.id\);/);
-  const create = read('frontend/src/features/dialogs/create-app.tsx');
+  const create = englishUiSource(read('frontend/src/features/dialogs/create-app.tsx'));
   assert.match(create, /<h2 id="create-title"/, 'Create app\'s heading has the id the shell points at');
 });
 
@@ -271,7 +272,7 @@ test('Q20: the app frame is titled with the app\'s name, and keeps it when kept 
   bridge.evictAll();
   assert.equal(store.get().title, '');
 
-  const frame = read('frontend/src/features/app-frame/app-frame.tsx');
+  const frame = englishUiSource(read('frontend/src/features/app-frame/app-frame.tsx'));
   assert.match(frame, /title=\{look\.title \|\| undefined\}/, 'the island renders it');
   assert.match(read('public/js/app-view.js'),
     /frame\.mount\(\{ slug: appData\.slug, faded: false, title: appData\.name \|\| '' \}\)/);

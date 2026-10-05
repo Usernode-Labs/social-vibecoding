@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Failing checks on an Underway card: which ones, and re-run them (#1766).
 //
 // The report, from a usernode admin, is two sentences: "On underway
@@ -22,7 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 const { summarizeFailingChecks, buildFailingChecksBlock } = require('../src/routes/sessions');
 
 const results = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
@@ -111,26 +112,26 @@ test('#1766: the Underway card names the failures, and offers the re-run', () =>
   const src = read('public/js/app-view.js');
 
   // The names, on the card's own meta lines.
-  assert.match(src, /_sessionCardMeta\(s, subtitle\)/, 'the card uses the meta builder');
+  assert.match(englishUiSource(src), /_sessionCardMeta\(s, subtitle\)/, 'the card uses the meta builder');
   const meta = src.slice(src.indexOf('_sessionCardMeta(s, subtitle) {'));
   const body = meta.slice(0, meta.indexOf('_sessionStatusTagSpec'));
-  assert.match(body, /s\.failing_checks/);
-  assert.match(body, /`Failing: \$\{names\}`/);
+  assert.match(englishUiSource(body), /s\.failing_checks/);
+  assert.match(englishUiSource(body), /`Failing: \$\{names\}`/);
   // A card is a pointer: two names then a count, not the whole ledger.
-  assert.match(body, /f\.rows\.slice\(0, 2\)/);
-  assert.match(body, /\+\$\{rest\} more/);
+  assert.match(englishUiSource(body), /f\.rows\.slice\(0, 2\)/);
+  assert.match(englishUiSource(body), /\+\$\{rest\} more/);
   // Advisory rows are marked in the detail, for the same reason they are
   // counted apart on the server.
-  assert.match(body, /advisory/);
+  assert.match(englishUiSource(body), /advisory/);
 
   // The re-run, on the card's menu, through the action that already carries
   // every guard: owner-or-admin, never when passing, disabled mid-request.
   const menu = src.slice(src.indexOf("// #1766: the second half of the report"));
-  assert.match(menu.slice(0, 900), /const recheck = AppView\._recheckAction\(s\);/);
-  assert.match(menu.slice(0, 900), /label: 'Re-run checks'/);
-  assert.match(menu.slice(0, 900), /AppView\.castRecheck\(s\.id\)/);
+  assert.match(englishUiSource(menu.slice(0, 900)), /const recheck = AppView\._recheckAction\(s\);/);
+  assert.match(englishUiSource(menu.slice(0, 900)), /label: 'Re-run checks'/);
+  assert.match(englishUiSource(menu.slice(0, 900)), /AppView\.castRecheck\(s\.id\)/);
   // Not offered when the action itself says it would be inert.
-  assert.match(menu.slice(0, 900), /if \(recheck && !recheck\.disabled\)/);
+  assert.match(englishUiSource(menu.slice(0, 900)), /if \(recheck && !recheck\.disabled\)/);
 });
 
 test('#1766: the re-run reuses the existing guards rather than restating them', () => {

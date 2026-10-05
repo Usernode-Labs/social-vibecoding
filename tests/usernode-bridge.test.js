@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -233,22 +234,22 @@ test('the LLM relay answers every frame the shell owns, and always answers', () 
   );
   assert.ok(relay.length > 0);
   // One list, one lookup — not a second allow-list to forget a frame in.
-  assert.match(relay, /AppView\.ownedFrameFor\(e\.source\)/);
-  assert.doesNotMatch(relay, /getElementById\('app-iframe'\)/,
+  assert.match(englishUiSource(relay), /AppView\.ownedFrameFor\(e\.source\)/);
+  assert.doesNotMatch(englishUiSource(relay), /getElementById\('app-iframe'\)/,
     'the frames come from SAFE_AREA_FRAME_IDS, not from a private copy');
-  assert.match(shell, /ownedFrameFor\(source\) \{[\s\S]{0,400}?AppView\.SAFE_AREA_FRAME_IDS\.find/);
+  assert.match(englishUiSource(shell), /ownedFrameFor\(source\) \{[\s\S]{0,400}?AppView\.SAFE_AREA_FRAME_IDS\.find/);
   // The app is named per FRAME: appData is the App tab's record and is null
   // on the landing screen, which keeps its own (see mountViewerCover).
-  assert.match(relay, /AppView\.appSlugForFrame\(frameId\)/);
-  assert.match(shell, /AppView\._viewerApp = \{ frame: iframe, slug:/);
+  assert.match(englishUiSource(relay), /AppView\.appSlugForFrame\(frameId\)/);
+  assert.match(englishUiSource(shell), /AppView\._viewerApp = \{ frame: iframe, slug:/);
   // Ack BEFORE anything that can decline to answer: a request the shell has
   // recognised must never be left to time out as "there is no shell here".
   assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('appSlugForFrame'),
     'the ack precedes the slug resolution');
-  assert.match(relay, /reply\(null, 'This app could not be identified[^']*'\)/);
-  assert.match(relay, /Sign in to Homeroom to give an app access to AI/);
+  assert.match(englishUiSource(relay), /reply\(null, 'This app could not be identified[^']*'\)/);
+  assert.match(englishUiSource(relay), /Sign in to Homeroom to give an app access to AI/);
   // Session-authenticated, same-origin — the bridge holds no credential.
-  assert.match(relay, /credentials: 'same-origin'/);
+  assert.match(englishUiSource(relay), /credentials: 'same-origin'/);
 });
 
 // The Homeroom button on an app opened at its own address (#3657, which

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The scaffolded app must announce itself as a starter template (#1373).
 //
 // A freshly created app used to deploy as a bare "Press!" demo that looked
@@ -106,11 +107,11 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   // B8: the menu leads with Ask for a change; making it yourself is its own row.
-  assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label="Ask for a change"/,
+  assert.match(englishUiSource(read('frontend/src/features/improve/actions.tsx')), /id="improve-row-feedback"\s+label="Ask for a change"/,
     'the menu still has Ask for a change');
-  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it yourself"/,
+  assert.match(englishUiSource(sheet), /id="improve-row-new-session"[\s\S]{0,600}label="Build it yourself"/,
     'and the agent-session row is called Build it yourself');
-  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
+  assert.match(englishUiSource(read('frontend/src/features/header/platform-mark.tsx')), /aria-label="Homeroom menu"/,
     'the header control is still the Homeroom mark');
 });
 

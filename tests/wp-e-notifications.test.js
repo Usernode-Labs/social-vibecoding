@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // WP-E: the words of the new notifications, on a phone and in the bell.
 //
@@ -21,7 +22,7 @@ const { loadTsx } = require('./lib/render-tsx');
 const policy = require('../src/services/mobile-push-policy');
 const dm = require('../src/services/homeroom-bot-dm');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', p), 'utf8'));
 
 test('each ringing moment of the bot has its own kind; an answer stays a message', () => {
   assert.deepEqual({ ...dm.BUILD_KINDS }, {

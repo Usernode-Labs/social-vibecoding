@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The first-run terms-consent gate (issues #1297, #1328), as wiring.
 //
 // New accounts reached the full shell without ever seeing the published
@@ -33,7 +34,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => englishUiSource(fs.readFileSync(path.join(ROOT, ...p), 'utf8'));
 
 const triggerJs = read('frontend', 'src', 'features', 'settings', 'terms-first-run.js');
 const settingsJs = read('frontend', 'src', 'features', 'settings', 'settings.js');
@@ -60,7 +61,7 @@ test('the trigger rides the settings bundle, not a new public/js script', () => 
   // From the chassis island, which is in the shell's entry — NOT from
   // ./mount.ts, which is inside the lazy settings chunk now: a boot listener
   // that only exists once the screen has been opened would never fire.
-  const indexTsx = read('frontend', 'src', 'features', 'settings', 'index.tsx');
+  const indexTsx = englishUiSource(read('frontend', 'src', 'features', 'settings', 'index.tsx'));
   assert.match(indexTsx, /import '\.\/terms-first-run\.js';/);
   assert.doesNotMatch(mountTs, /import '\.\/terms-first-run\.js';/,
     'the trigger must not ride the lazy chunk');
@@ -140,27 +141,30 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
   // Passive, like most apps: the sign-in screens carry "By continuing, you
   // agree to Homeroom's terms" (auth/waitlist-shared.tsx TermsNotice), so a
   // never-answered current version is recorded as accepted here.
-  assert.match(triggerJs, /await TermsFirstRun\._acceptByContinuing\(payload\);/);
-  assert.match(triggerJs,
+  assert.match(englishUiSource(triggerJs), /await TermsFirstRun\._acceptByContinuing\(payload\);/);
+  assert.match(englishUiSource(triggerJs),
     /body: JSON\.stringify\(\{ terms_version_id: payload\.id, status: 'accepted', method: 'continued' \}\),/);
-  assert.doesNotMatch(triggerJs, /showTermsSheet\(/, 'the first run no longer presents the sheet');
+  assert.doesNotMatch(englishUiSource(triggerJs), /showTermsSheet\(/, 'the first run no longer presents the sheet');
   // Only somebody who accepted an earlier version hears about it, once.
-  assert.match(triggerJs, /payload\.consent\.earlier_accepted === true/);
-  assert.match(triggerJs, /We updated our terms\. By continuing to use Homeroom, you agree to them\./);
+  assert.match(englishUiSource(triggerJs), /payload\.consent\.earlier_accepted === true/);
+  assert.match(englishUiSource(triggerJs), /We updated our terms\. By continuing to use Homeroom, you agree to them\./);
   // A failed write is not an answer: the next check records it then.
-  assert.match(triggerJs, /if \(res\.ok && body\.success\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
-  assert.match(triggerJs, /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);
+  assert.match(englishUiSource(triggerJs), /if \(res\.ok && body\.success\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
+  assert.match(englishUiSource(triggerJs), /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);
 });
 
 test('the sign-in screens say continuing is agreeing, linking the current terms', () => {
-  const shared = read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx');
-  assert.match(shared, /export function TermsNotice\(/);
-  assert.match(shared, /\{`By \$\{verb\}, you agree to Homeroom's `\}/);
-  assert.match(shared, /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
-  assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" \/>/);
-  assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
-    /Sign in\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
-  assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
+  const shared = englishUiSource(read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx'));
+  assert.match(englishUiSource(shared), /export function TermsNotice\(/);
+  assert.match(shared, /id=\{verb === 'signing in' \? 'auth:terms_signing_in' : 'auth:terms_continuing'\}/);
+  const catalog = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/auth.json'), 'utf8'));
+  assert.equal(catalog.terms_signing_in, "By signing in, you agree to Homeroom's <0>terms</0>.");
+  assert.equal(catalog.terms_continuing, "By continuing, you agree to Homeroom's <0>terms</0>.");
+  assert.match(englishUiSource(shared), /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
+  assert.match(englishUiSource(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx')), /<TermsNotice className="mt-3" \/>/);
+  assert.match(englishUiSource(read('frontend', 'src', 'features', 'auth', 'login.tsx')),
+    /Sign in\s*<\/Button>\s*<TermsNotice verb="signing in" \/>/);
+  assert.match(englishUiSource(read('src', 'routes', 'public-api.js')), /terms_link: await currentTermsLink\(\),/);
 });
 
 test('the consent route takes an acceptance by continuing, and never lets it replace an answer', () => {
@@ -200,14 +204,15 @@ test('every dead end is silent — console.warn at most, never console.error', (
 // ─── The sheet's first-run + blocking modes (settings.js) ────────────────
 
 test('first-run mode adds the intro line and a Decline that records refusal', () => {
-  assert.match(settingsJs,
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  assert.match(englishUiSource(settingsJsEnglish),
     /Reviewing the terms is part of joining the platform\./);
-  assert.match(settingsJs, /postConsent\('refused',/);
+  assert.match(englishUiSource(settingsJsEnglish), /postConsent\('refused',/);
   // Decline exists only in first-run framing; the settings/profile entry
   // points keep their current Accept + Close shape.
-  const declineAt = settingsJs.indexOf("'Decline'");
+  const declineAt = settingsJsEnglish.indexOf("'Decline'");
   assert.ok(declineAt > 0, 'the Decline button label must exist');
-  const guard = settingsJs.lastIndexOf('if (firstRun) {', declineAt);
+  const guard = settingsJsEnglish.lastIndexOf('if (firstRun) {', declineAt);
   assert.ok(guard > 0 && declineAt - guard < 900,
     'the Decline button must be gated on firstRun');
 });
@@ -242,15 +247,16 @@ test('accept keeps its behaviour, and both answers share one in-flight lock', ()
 });
 
 test('the first-run copy carries no token language (issue #1550)', () => {
+  const settingsJsEnglish = englishUiSource(settingsJs);
   // Feedback triage item #41: the consent ask narrated a reward mechanism.
   // The intro's second sentence ("Your token allocation stays paused until
   // you accept.") and the Decline toast ("Your token allocation stays
   // paused. ...") are gone; the first sentence stays verbatim, and the
   // consent intent — read the published terms, then accept or decline, and
   // a decline is reversible — is carried by the replacements.
-  assert.match(settingsJs,
-    /'Reviewing the terms is part of joining the platform\. Please ' \+\s*\n\s*'read the full terms, then choose whether to accept\.'/);
-  assert.match(settingsJs,
+  assert.match(englishUiSource(settingsJsEnglish),
+    /'Reviewing the terms is part of joining the platform\. Please read the full terms, then choose whether to accept\.'/);
+  assert.match(englishUiSource(settingsJsEnglish),
     /PlatformUI\.toast\(\s*\n\s*'You can accept the terms later from your profile'\)/);
   // The whole dialog, not just the two strings: nothing it renders may
   // mention tokens again. Scoped to the sheet — settings.js elsewhere is
@@ -260,7 +266,7 @@ test('the first-run copy carries no token language (issue #1550)', () => {
   assert.ok(!/token/i.test(sheetBody),
     'the terms dialog must not mention tokens');
   // The backend gate is unchanged — only the copy stopped narrating it.
-  assert.match(settingsJs, /postConsent\('refused',/);
+  assert.match(englishUiSource(settingsJsEnglish), /postConsent\('refused',/);
 });
 
 test('a pre-fetched payload skips the fetch (what makes the shots write-free)', () => {

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Topochain staging seed fixtures (plan Task 4): `seedStagingTopochain`
 // in src/db/migrate.js.
 //
@@ -338,18 +339,18 @@ test('5 challenge_templates', () => {
 test('seeded templates carry registry artwork, and a backfill of untouched rows repeats it for older databases', async () => {
   const registry = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/lib/challenge-illustrations.ts'), 'utf8');
-  const members = new Set([...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
+  const members = new Set([...englishUiSource(registry).matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
   assert.ok(members.size >= 9, 'the registry keys parse out of the source');
 
   const inserted = new Map();
   let statements = 0;
-  for (let start = body.indexOf('INSERT INTO challenge_templates'); start >= 0;
-    start = body.indexOf('INSERT INTO challenge_templates', start + 1)) {
+  for (let start = englishUiSource(body).indexOf('INSERT INTO challenge_templates'); start >= 0;
+    start = englishUiSource(body).indexOf('INSERT INTO challenge_templates', start + 1)) {
     statements += 1;
-    const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+    const block = body.slice(start, englishUiSource(body).indexOf('ON CONFLICT (id) DO NOTHING', start));
     assert.match(block, /metric_label, illustration, created_at, updated_at\)/,
       'illustration sits just before created_at');
-    for (const m of block.matchAll(/\((9005\d\d),\s[\s\S]*?,\s+(NULL|'[a-z0-9-]+'),\s+NOW\(\),\s+NOW\(\)\)/g)) {
+    for (const m of englishUiSource(block).matchAll(/\((9005\d\d),\s[\s\S]*?,\s+(NULL|'[a-z0-9-]+'),\s+NOW\(\),\s+NOW\(\)\)/g)) {
       inserted.set(Number(m[1]), m[2] === 'NULL' ? null : m[2].slice(1, -1));
     }
   }

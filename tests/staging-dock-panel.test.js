@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #771: staging preview docks as a resizable side panel in dev chat.
 //
 // Two halves, two harnesses (mirroring the repo's existing patterns):
@@ -126,7 +127,7 @@ function makeAppViewHarness({ fetchImpl, wideViewport = true, withSlot = true } 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, getEl, sandbox, media };
 }
@@ -369,7 +370,7 @@ function makeDevChatHarness() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: react.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 

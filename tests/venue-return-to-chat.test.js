@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Picking "On-Platform" actually returns the session to the chat (#1348).
 //
 // This is a BEHAVIOURAL test on purpose. The bug it pins shipped once
@@ -72,7 +73,7 @@ function makeDevChat() {
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
   sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(LAUNCHPAD_SRC, sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);

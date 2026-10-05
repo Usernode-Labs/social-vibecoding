@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Settings → Connectors: which of the three "stop the permission prompts"
 // cases a user sees, and what the read-only tip-status line says.
@@ -63,7 +65,7 @@ function node(id) {
 
 function harness(payload) {
   const nodes = new Map(PANEL_IDS.map((id) => [id, node(id)]));
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: {
       location: { search: '', origin: 'https://social-vibecoding.usernodelabs.org' },
     },
@@ -84,7 +86,7 @@ function harness(payload) {
     setInterval,
     clearInterval,
     console,
-  });
+  }));
   context.window.window = context.window;
   context.window.document = context.document;
   vm.runInContext(SETTINGS_SOURCE, context);

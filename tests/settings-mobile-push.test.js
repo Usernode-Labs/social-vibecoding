@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,11 +28,13 @@ const CATEGORIES = [
 ];
 
 test('settings renders clear user-facing category labels and descriptions', () => {
-  assert.match(SETTINGS_SOURCE,
+  const SETTINGS_SOURCEEnglish = englishUiSource(SETTINGS_SOURCE);
+  const ALERTS_SOURCEEnglish = englishUiSource(ALERTS_SOURCE);
+  assert.match(SETTINGS_SOURCEEnglish,
     /\{ key: 'alerts', label: 'Notifications', group: 'Preferences' \}/,
     'the category controls are discoverable from the Settings navigation');
-  const block = ALERTS_SOURCE.slice(
-    ALERTS_SOURCE.indexOf('id="settings-mobile-push-preferences"')
+  const block = ALERTS_SOURCEEnglish.slice(
+    ALERTS_SOURCEEnglish.indexOf('id="settings-mobile-push-preferences"')
   );
   assert.match(block, /Mobile push categories/);
   assert.match(block, /Activity notifications switch remains the master control/);
@@ -70,7 +75,7 @@ function harness(saved) {
     }),
   });
   let serverState = { ...saved };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: {},
     document: {
       addEventListener() {},
@@ -96,7 +101,7 @@ function harness(saved) {
     setInterval,
     clearInterval,
     console,
-  });
+  }));
   context.window.window = context.window;
   context.window.document = context.document;
   vm.runInContext(SETTINGS_SOURCE, context);

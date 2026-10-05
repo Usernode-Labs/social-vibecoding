@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Apple and Google sign-in (src/services/sign-in-providers.js,
 // src/routes/sign-in-providers.js), set up in Admin → Sign-in providers
@@ -471,16 +472,16 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
     '/api/auth/oauth/apple/start?from=story&return=%2F');
   assert.equal(sheet.resumeError('username'), null);
   assert.equal(sheet.resumeError('error-cancelled'), 'Sign-in was cancelled.');
-  assert.match(sheet.resumeError('error-no_verified_email'), /no verified email/);
+  assert.match(englishUiSource(sheet.resumeError('error-no_verified_email')), /no verified email/);
   assert.equal(sheet.resumeError('error-something_new'), 'That did not work. Try again, or use your email.');
   const src = read('frontend/src/features/auth/sign-in-sheet.tsx');
-  assert.match(src, /const firstStep: Step = providers\.length \? 'choose' : 'email';/);
-  assert.match(src, /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
-  assert.match(src, /Continue with email/);
-  assert.match(src, /fetchSessionMint\('\/api\/auth\/oauth\/finish',/);
+  assert.match(englishUiSource(src), /const firstStep: Step = providers\.length \? 'choose' : 'email';/);
+  assert.match(englishUiSource(src), /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
+  assert.match(englishUiSource(src), /Continue with email/);
+  assert.match(englishUiSource(src), /fetchSessionMint\('\/api\/auth\/oauth\/finish',/);
   const icons = read('frontend/@/components/ui/icons.tsx');
-  assert.match(icons, /export const AppleIcon = filled\(/);
-  assert.match(icons, /export const GoogleIcon = \(/);
+  assert.match(englishUiSource(icons), /export const AppleIcon = filled\(/);
+  assert.match(englishUiSource(icons), /export const GoogleIcon = \(/);
 });
 
 test('the landing offers what the options list, never inside the app, and reopens the sheet on the way back', () => {

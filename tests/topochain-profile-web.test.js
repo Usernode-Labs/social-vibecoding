@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Profile belongs to the authenticated Social session: the drawer row works
 // without a native bridge and a signed-out visitor gets a sign-in prompt
 // instead of a generic failure.
@@ -15,20 +16,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(ROOT, p), 'utf8'));
 
 const indexHtml = read('public/index.html');
 // The shell's markup SOURCE. public/index.html is a generated artifact now
 // (the React + shadcn chassis swap), and JSX comments never reach it — so
 // assertions about the explanatory comments around a screen have to read the
 // source they actually live in.
-const shellSource = read('frontend/src/Shell.tsx');
+const shellSource = englishUiSource(read('frontend/src/Shell.tsx'));
 // #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
 // own island — same markup, same comments, new file.
 // The entrance to #profile. It was a row at the foot of Home; Home dropped
 // that area once the chip's menu carried the same door (#1443), so the live
 // one is a row of the menu.
-const switcherSheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const switcherSheet = englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx'));
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('frontend/src/features/profile/profile.js');
 // navigateToProfile, which decides WHEN the load starts relative to the
@@ -39,7 +40,7 @@ const appJs = read('public/js/app.js');
 // the renderer now lives (./profile.js beside it). Shell.tsx keeps the comment
 // describing where the screen's data comes from, above the <ProfileScreen /> it
 // renders in the region's place — so the comment assertions below read both.
-const profileIsland = read('frontend/src/features/profile/index.tsx');
+const profileIsland = englishUiSource(read('frontend/src/features/profile/index.tsx'));
 // #1191 slice 6 finished the conversion: #profile-root is React-owned end to
 // end now, so this module's DOM builders are gone. What it decides — which of
 // the six load states the screen is in, how a completed row reads, what goes in
@@ -47,9 +48,9 @@ const profileIsland = read('frontend/src/features/profile/index.tsx');
 // purpose so this suite can still read it. The markup moved into three .tsx
 // files. Assertions follow the code.
 const profileStoreJs = read('frontend/src/features/profile/profile-store.js');
-const profileViewTsx = read('frontend/src/features/profile/profile-view.tsx');
-const profileSheetTsx = read('frontend/src/features/profile/profile-edit-sheet.tsx');
-const profilePublicTsx = read('frontend/src/features/profile/public-profile-card.tsx');
+const profileViewTsx = englishUiSource(read('frontend/src/features/profile/profile-view.tsx'));
+const profileSheetTsx = englishUiSource(read('frontend/src/features/profile/profile-edit-sheet.tsx'));
+const profilePublicTsx = englishUiSource(read('frontend/src/features/profile/public-profile-card.tsx'));
 
 // ─── The entrance ships visible, in the chip's menu ─────────────────────
 //
@@ -202,10 +203,10 @@ test('the signed-out render offers a sign-in link, not the connection error', ()
     profileViewTsx.indexOf("view.kind === 'signedOut'"),
     profileViewTsx.indexOf("view.kind === 'error'")
   );
-  assert.match(branch, /Sign in to see your profile/);
-  assert.match(branch, /#login/, 'links to the in-SPA login route');
+  assert.match(englishUiSource(branch), /Sign in to see your profile/);
+  assert.match(englishUiSource(branch), /#login/, 'links to the in-SPA login route');
   // The generic copy must survive for REAL failures.
-  assert.match(profileViewTsx, /Could not load your profile/);
+  assert.match(englishUiSource(profileViewTsx), /Could not load your profile/);
 });
 
 test('the signed-out branch is checked before the generic error branch', () => {
@@ -262,32 +263,35 @@ test('the bio is a text node, never innerHTML', () => {
 });
 
 test('outbound handle links are scheme-guarded and rel-protected', () => {
-  const fn = profileStoreJs.slice(
-    profileStoreJs.indexOf('export function verifiedSocialLinksView'),
-    profileStoreJs.indexOf('export function identityView')
+  const profileStoreJsEnglish = englishUiSource(profileStoreJs);
+  const profileViewTsxEnglish = englishUiSource(profileViewTsx);
+  const profilePublicTsxEnglish = englishUiSource(profilePublicTsx);
+  const fn = profileStoreJsEnglish.slice(
+    profileStoreJsEnglish.indexOf('export function verifiedSocialLinksView'),
+    profileStoreJsEnglish.indexOf('export function identityView')
   );
-  assert.match(fn, /safeHref\(href\)/,
+  assert.match(englishUiSource(fn), /safeHref\(href\)/,
     'escaping alone would not stop a javascript: href');
-  assert.match(fn, /encodeURIComponent\(links\.github\)/);
-  assert.match(profileStoreJs, /\^https\?:\\\/\\\//, 'safeHref pins http(s) only');
+  assert.match(englishUiSource(fn), /encodeURIComponent\(links\.github\)/);
+  assert.match(englishUiSource(profileStoreJsEnglish), /\^https\?:\\\/\\\//, 'safeHref pins http(s) only');
   // Only proof-backed provider chips are external; the in-app builder link is
   // not, which is why the flag rides on the chip.
-  assert.match(fn, /external: true/);
-  assert.match(profileViewTsx, /rel: 'noopener noreferrer'/);
-  assert.match(profilePublicTsx, /target="_blank"/);
-  assert.match(profilePublicTsx, /rel="noopener noreferrer"/);
-  assert.match(fn, /Verified GitHub/);
-  assert.match(fn, /Verified X/);
+  assert.match(englishUiSource(fn), /external: true/);
+  assert.match(englishUiSource(profileViewTsxEnglish), /rel: 'noopener noreferrer'/);
+  assert.match(englishUiSource(profilePublicTsxEnglish), /target="_blank"/);
+  assert.match(englishUiSource(profilePublicTsxEnglish), /rel="noopener noreferrer"/);
+  assert.match(englishUiSource(fn), /Verified GitHub/);
+  assert.match(englishUiSource(fn), /Verified X/);
 });
 
 test('social accounts in Edit profile are proof status, not free-text claims', () => {
-  assert.match(profileSheetTsx, /Verified social accounts/);
-  assert.match(profileSheetTsx, /id="profile-edit-github"/);
-  assert.match(profileSheetTsx, /id="profile-edit-x"/);
-  assert.match(profileSheetTsx, /#settings\/linked-accounts/);
-  assert.doesNotMatch(profileSheetTsx, /setGithub|setX/);
+  assert.match(englishUiSource(profileSheetTsx), /Verified social accounts/);
+  assert.match(englishUiSource(profileSheetTsx), /id="profile-edit-github"/);
+  assert.match(englishUiSource(profileSheetTsx), /id="profile-edit-x"/);
+  assert.match(englishUiSource(profileSheetTsx), /#settings\/linked-accounts/);
+  assert.doesNotMatch(englishUiSource(profileSheetTsx), /setGithub|setX/);
   const save = profileJs.slice(profileJs.indexOf('async _save('));
-  assert.doesNotMatch(save.slice(0, 2500), /github|\bx\b/,
+  assert.doesNotMatch(englishUiSource(save.slice(0, 2500)), /github|\bx\b/,
     'the profile PATCH cannot write a social-account claim');
 });
 
@@ -380,8 +384,8 @@ test('the form body is the kit inset-grouped list, by the kit rules (#1285)', ()
   // heading-and-card pair is emitted once, by the local <Group>, so the section
   // count is its call sites.
   const group = sheetCode.slice(sheetCode.indexOf('function Group('));
-  assert.match(group, /className="un-group-header"/);
-  assert.match(group, /className="un-group"/);
+  assert.match(englishUiSource(group), /className="un-group-header"/);
+  assert.match(englishUiSource(group), /className="un-group"/);
   const sections = sheetCode.match(/<Group title="/g) || [];
   assert.ok(sections.length >= 4,
     `four labelled sections at least, saw ${sections.length}`);
@@ -393,7 +397,7 @@ test('the form body is the kit inset-grouped list, by the kit rules (#1285)', ()
   const rows = sheetCode.match(/'[^']*un-group-row[^']*'/g) || [];
   assert.ok(rows.length >= 3, `saw ${rows.length} row class strings`);
   for (const decl of rows) {
-    assert.match(decl, /\bpx-4\b/, `a row must line up with the hairline: ${decl}`);
+    assert.match(englishUiSource(decl), /\bpx-4\b/, `a row must line up with the hairline: ${decl}`);
   }
 
   // No Tailwind fill on a `.un-group` element. `tailwind.css` loads AFTER
@@ -405,7 +409,7 @@ test('the form body is the kit inset-grouped list, by the kit rules (#1285)', ()
     const tokens = decl.slice(1, -1).split(/\s+/);
     if (!tokens.includes('un-group')) continue;
     for (const t of tokens) {
-      assert.doesNotMatch(t, /^(dark:)?bg-/,
+      assert.doesNotMatch(englishUiSource(t), /^(dark:)?bg-/,
         `--un-group-bg draws the card, not ${t}`);
     }
   }
@@ -415,7 +419,7 @@ test('the group rows get their field box from the primitive (#1285)', () => {
   // The row IS the box, so the field contributes no fill, no border and no
   // horizontal padding — routed through inputVariants rather than hand-written,
   // per tests/shell-primitive-adoption.test.js.
-  const input = read('frontend/@/components/ui/input.tsx');
+  const input = englishUiSource(read('frontend/@/components/ui/input.tsx'));
   assert.match(input, /groupRow:\n\s*'[^']*'/,
     'a complete literal — Tailwind extracts class names with a regex');
   const box = input.match(/groupRow:\s*\n?\s*'([^']*)'/);
@@ -441,7 +445,7 @@ test('the hidden file input sits OUTSIDE the group (#1285)', () => {
     sheetCode.indexOf('id="profile-edit-file"'),
     sheetCode.indexOf('id="profile-edit-choose"'),
   );
-  assert.match(group, /<Group title="Photo">/,
+  assert.match(englishUiSource(group), /<Group title="Photo">/,
     'the file input is declared before the group it feeds, not inside it');
 });
 
@@ -502,32 +506,32 @@ test('field-level server errors keep the sheet open', () => {
 });
 
 test('Me counts the viewer’s OWN completions, and its changes link out', () => {
-  assert.doesNotMatch(profileJs, /challenges\.filter\(\(c\) => c\.completed\)/,
+  assert.doesNotMatch(englishUiSource(profileJs), /challenges\.filter\(\(c\) => c\.completed\)/,
     'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
     + '34 live challenges to every signed-in person as their own completions');
   // The prototype's Me counts completions on a stat card (from
   // GET /api/me/summary, the same per-user done rule) instead of listing
   // them; the list is the Challenges tab, where each one is a card.
-  assert.match(profileJs, /\/api\/me\/summary/);
+  assert.match(englishUiSource(profileJs), /\/api\/me\/summary/);
   const stats = profileStoreJs.slice(profileStoreJs.indexOf('export function statsView'),
     profileStoreJs.indexOf('export function moreRowsView'));
-  assert.match(stats, /summary\.challenges && summary\.challenges\.done/);
+  assert.match(englishUiSource(stats), /summary\.challenges && summary\.challenges\.done/);
   // Every change is a real anchor to its proposal's page, on Your changes
   // (UI overhaul; the merged ones were "Your contributions" on Me).
   const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function proposalsView'));
-  assert.match(shaping, /`#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
-  const screen = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/my-proposals.tsx'), 'utf8');
-  assert.match(screen, /as=\{row\.href \? 'a' : 'div'\}\s*href=\{row\.href \|\| undefined\}/);
-  assert.match(screen, /You have not started a change yet\./, 'an empty list says so');
+  assert.match(englishUiSource(shaping), /`#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
+  const screen = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/my-proposals.tsx'), 'utf8'));
+  assert.match(englishUiSource(screen), /as=\{row\.href \? 'a' : 'div'\}\s*href=\{row\.href \|\| undefined\}/);
+  assert.match(englishUiSource(screen), /You have not started a change yet\./, 'an empty list says so');
 });
 
 test('the stale "organiser flag" comments are gone', () => {
   // A comment describing behaviour the code no longer has is worse than no
   // comment: the next reader trusts it.
   const header = profileJs.slice(0, profileJs.indexOf('const Profile = {'));
-  assert.match(header, /ORGANISER flag/,
+  assert.match(englishUiSource(header), /ORGANISER flag/,
     'the header must explain what the list means now, and what it used to mean');
-  assert.doesNotMatch(header, /completed challenges from the in-process/,
+  assert.doesNotMatch(englishUiSource(header), /completed challenges from the in-process/,
     'the old header described the /challenges-api grid read that is gone');
 });
 
@@ -551,7 +555,7 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   // the ceiling and started shedding its tail again.
   const appManifest = require('../src/services/app-manifest');
   const meta = appManifest.readTestsWithMeta(
-    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+    JSON.parse(englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')))
   );
   assert.equal(meta.ceilingDropped, 0,
     `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
@@ -630,8 +634,8 @@ test('the profile no longer fetches the season challenge list via the old route'
   // standing card reads it (features/leaderboard/my-standing.js), with the
   // same two trims.
   assert.doesNotMatch(body, /\/challenges-api\/me\/breakdown/, 'Me draws no breakdown any more');
-  const standing = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
+  const standing = englishUiSource(fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8'));
   assert.match(standing, /\/challenges-api\/me\/breakdown\?season_id=active&include_activity=0&include_progress=0/,
     'the breakdown skips the activity and progress lists nothing draws');
 });
