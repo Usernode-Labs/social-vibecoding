@@ -220,6 +220,7 @@ function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
+  shotsGuestToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -291,6 +292,11 @@ function buildTurnSecretEnv({
     env.SHOTS_MEMBER_TOKEN = requireNonEmptySecret(shotsMemberToken, 'shotsMemberToken');
     env.SHOTS_ADMIN_TOKEN = requireNonEmptySecret(shotsAdminToken, 'shotsAdminToken');
     env.SHOTS_FULL_ADMIN_TOKEN = requireNonEmptySecret(shotsFullAdminToken, 'shotsFullAdminToken');
+    // Optional: the guest browser is not signed in, and carries a guest
+    // token only for a view-public child app (shots-identities.js).
+    if (shotsGuestToken != null) {
+      env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
@@ -540,7 +546,8 @@ function shotsDiagnosticTool(name) {
   if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
   const server = parts.includes('browser_member') ? 'member'
     : parts.includes('browser_full_admin') ? 'full_admin'
-      : parts.includes('browser_admin') ? 'admin' : null;
+      : parts.includes('browser_admin') ? 'admin'
+        : parts.includes('browser_guest') ? 'guest' : null;
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
@@ -840,6 +847,7 @@ function applyStreamEvent(event, onProgress, state) {
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
+      browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -3094,6 +3102,7 @@ async function execInWorker(sessionId, {
       shotsMemberToken: shotsAuthTokens?.member,
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
+      shotsGuestToken: shotsAuthTokens?.guest ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {

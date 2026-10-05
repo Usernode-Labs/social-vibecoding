@@ -97,9 +97,12 @@ function verifyBrowser(server, navigationChecks = []) {
         } else if (message.id >= 5 && message.id < 5 + navigationChecks.length) {
           const index = message.id - 5;
           const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+          // absentText is what must not be there: the signed-out guest must
+          // see no signed-in page and no app frame.
           if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)
-              || (navigationChecks[index].iframeText && !response.includes(navigationChecks[index].iframeText))) {
-            return finish(new Error(`Browser MCP ${phase} did not load its authenticated state: ${response.slice(0, 500)}`));
+              || (navigationChecks[index].iframeText && !response.includes(navigationChecks[index].iframeText))
+              || (navigationChecks[index].absentText || []).some((text) => response.includes(text))) {
+            return finish(new Error(`Browser MCP ${phase} did not load its expected state: ${response.slice(0, 500)}`));
           }
           const next = navigationChecks[index + 1];
           if (!next) return finish(null, tools);
@@ -125,7 +128,7 @@ async function main() {
   try {
     const stateDir = path.join(dir, 'state');
     fs.mkdirSync(stateDir);
-    for (const persona of ['member', 'read_only_admin', 'full_admin']) {
+    for (const persona of ['member', 'read_only_admin', 'full_admin', 'guest']) {
       fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{"cookies":[],"origins":[]}');
     }
     const output = path.join(dir, 'mcp.json');
@@ -150,11 +153,11 @@ async function main() {
         SHOTS_RECORD_CLIPS: '1',
       },
     });
-    for (const persona of ['member', 'admin', 'full_admin']) {
+    for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
       fs.mkdirSync(path.join(dir, 'shots', persona), { recursive: true });
     }
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
-    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
       fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
@@ -164,7 +167,8 @@ async function main() {
           catch { return []; }
         })
         .filter((event) => event.persona === (persona === 'browser_admin' ? 'admin'
-          : persona === 'browser_full_admin' ? 'full_admin' : 'member'));
+          : persona === 'browser_full_admin' ? 'full_admin'
+            : persona === 'browser_guest' ? 'guest' : 'member'));
       if (!records.some((event) => event.kind === 'browser_call_start')
           || !records.some((event) => event.kind === 'browser_call_end')) {
         throw new Error(`Browser observer did not record ${persona} tool timing`);

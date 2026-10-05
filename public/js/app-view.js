@@ -20249,7 +20249,8 @@ const AppView = {
     const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
     const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
     const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
-      : claim.persona === 'full_admin' ? 'full admin' : 'member');
+      : claim.persona === 'full_admin' ? 'full admin'
+        : claim.persona === 'guest' ? 'signed-out visitor' : 'member');
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
 
     // One screen at a time, in a frame that keeps its size: a phone screen

@@ -217,7 +217,11 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
       cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); },
     },
-    identities: { mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; } },
+    identities: {
+      mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; },
+      // A private child app: the guest browser carries no identity.
+      shotsGuestIdentity: async () => ({ kind: 'private', token: null }),
+    },
     shotsAgent: {
       dispatch: async (_config, options) => {
         calls.dispatches += 1;
@@ -723,6 +727,65 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
     { code: 'shots_control_not_found' }, 'the control is unregistered once the run ends');
 });
 
+test('a view-public child app\'s guest token reaches only the agent dispatch, and the brief says who the guest is', async () => {
+  const lookups = [];
+  let brief = null;
+  let dispatchTokens = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      brief = controlFor(options).getContext();
+      return {
+        backend: 'claude_code',
+        result: { lastResultText: 'The guest saw guest.jwt and stopped.', exitCode: 0 },
+      };
+    },
+  });
+  fixture.dependencies.identities.shotsGuestIdentity = async (pool, app, options) => {
+    lookups.push({ pool, app, options });
+    return { kind: 'guest', token: 'guest.jwt' };
+  };
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
+  assert.equal(lookups.length, 1);
+  assert.equal(lookups[0].pool, fixture.pool);
+  assert.equal(lookups[0].app, fixture.app, 'looked up for the proposal\'s own app');
+  assert.deepEqual(lookups[0].options, { selfApp: false });
+  assert.deepEqual(dispatchTokens, { ...TOKENS, guest: 'guest.jwt' });
+  assert.deepEqual(brief.browsers.guest, {
+    tool: 'browser_guest',
+    who: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
+  });
+  assert.doesNotMatch(JSON.stringify(brief), /guest\.jwt/, 'the brief carries no token');
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.doesNotMatch(JSON.stringify(fixture.transitions), /guest\.jwt/, 'no durable trace carries it');
+  assert.equal(trace.agentFinalResponse.excerpt, 'The guest saw **** and stopped.',
+    'the agent\'s final words are masked of it like the other tokens');
+});
+
+test('Homeroom\'s own shots tell the guest lookup so, and the guest carries nothing', async () => {
+  let lookup = null;
+  let dispatchTokens = null;
+  let brief = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.dependencies.identities.shotsGuestIdentity = async (_pool, _app, options) => {
+    lookup = options;
+    return { kind: 'homeroom', token: null };
+  };
+  const result = await execute(fixture, { selfAppSlug: 'demo' });
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(lookup, { selfApp: true });
+  assert.deepEqual(dispatchTokens, TOKENS, 'no guest token without one');
+  assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
+});
+
 test('slow paired environment provisioning does not consume the agent budget', async () => {
   const fixture = setup();
   const preparePair = fixture.dependencies.environment.preparePair;
@@ -808,7 +871,8 @@ test('the brief names the declared changes, both addresses and revisions, and no
       'a testing hint must not rewrite the declared change');
     assert.deepEqual(brief.addresses, { before: 'http://base.internal', after: 'http://head.internal' });
     assert.deepEqual(brief.revisions, { before: BASE.slice(0, 12), after: HEAD.slice(0, 12) });
-    assert.deepEqual(Object.keys(brief.browsers).sort(), ['full_admin', 'member', 'read_only_admin']);
+    assert.deepEqual(Object.keys(brief.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+    assert.deepEqual(brief.browsers.guest, { tool: 'browser_guest', who: 'a visitor who is not signed in' });
     assert.deepEqual(brief.changedFiles, { items: ['frontend/src/Shell.tsx'], complete: true, totalKnown: 1 });
     assert.deepEqual(brief.changeContext.testingPaths, [route],
       'a credential-like testing path never reaches the agent');
@@ -1180,7 +1244,8 @@ test('a completed agent turn without tool calls retains the shots tool surface a
       options.onShotsDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
       options.onShotsDiagnostic({ kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 26,
         briefToolAvailable: true, saveShotToolAvailable: true, skipChangeToolAvailable: true,
-        browserMemberToolCount: 7, browserAdminToolCount: 7, browserFullAdminToolCount: 7 });
+        browserMemberToolCount: 7, browserAdminToolCount: 7, browserFullAdminToolCount: 7,
+        browserGuestToolCount: 7 });
       options.onShotsDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, declaredChangesPresent: true, addressesPresent: true,
         revisionsPresent: true, storyCount: 3 });
@@ -1200,6 +1265,7 @@ test('a completed agent turn without tool calls retains the shots tool surface a
   assert.equal(trace.agentActivity.events[1].briefToolAvailable, true);
   assert.equal(trace.agentActivity.events[1].saveShotToolAvailable, true);
   assert.equal(trace.agentActivity.events[1].browserFullAdminToolCount, 7);
+  assert.equal(trace.agentActivity.events[1].browserGuestToolCount, 7);
   assert.equal(trace.agentActivity.events[2].responseCharacters, 12000);
   assert.equal(trace.agentActivity.events[2].declaredChangesPresent, true);
   assert.equal(trace.agentActivity.events[2].storyCount, 3);
@@ -1713,6 +1779,17 @@ test('a failed shots sign-in reaches the trace and the failure reason with its s
   const runner = fs.readFileSync(path.join(__dirname, '../worker/run-cc.sh'), 'utf8');
   assert.match(runner, /export SHOTS_BOOTSTRAP_FAILURE_FILE="\$SHOTS_TMP\/browser-bootstrap\.failure"/);
   assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
+});
+
+test('the trace names the guest browser as the guest, never as another persona', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_call_start', persona: 'guest',
+    callOrdinal: 1, tool: 'browser_navigate', side: 'head' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_server_exit', persona: 'guest', exitCode: 0 });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_call_start', persona: 'visitor',
+    callOrdinal: 2, tool: 'browser_navigate', side: 'head' });
+  const events = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.deepEqual(events.map((event) => event.persona), ['guest', 'guest', undefined]);
 });
 
 test('the trace keeps whether a hosted app\'s page load carried the persona identity, as a boolean only', () => {

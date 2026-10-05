@@ -5,7 +5,8 @@
 // before the model process starts. The runner unsets the raw tokens
 // immediately afterward; MCP receives only the cookie/local-storage state in
 // a private file and the model has no filesystem or shell tool in shots
-// mode.
+// mode. The guest browser is never signed in: its state is empty, so it
+// sees what a visitor who is not signed in sees.
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -13,8 +14,11 @@ const { SessionBootstrapError, bootstrapInternalSession } = require('./session-b
 const { loadTrustedHostedAppOrigins } = require('./shots-hosted-origins');
 
 const reportedPersona = (persona) => (
-  persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin' : 'admin'
+  persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin'
+    : persona === 'guest' ? 'guest' : 'admin'
 );
+// What the guest browser starts from: no cookie and no storage on any origin.
+const SIGNED_OUT_STATE = '{"cookies":[],"origins":[]}\n';
 
 function reportAuth(persona, side, bootstrap, sessionCookiePresent) {
   // Only fixed booleans and status cross the worker boundary. The token,
@@ -43,7 +47,7 @@ const FAILURE_STAGES = Object.freeze({
   navigate: 'opening the app',
   cookie: 'keeping the session cookie',
   hosted_catalog: 'listing hosted apps',
-  storage_state: 'saving the signed-in browser state',
+  storage_state: 'saving the browser state',
   allowlist: 'writing the hosted-app allowlist',
 });
 
@@ -93,6 +97,8 @@ async function main(progress) {
   const origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]').map((value) => new URL(value).origin);
   const outputDir = String(process.env.SHOTS_BROWSER_STATE_DIR || '');
   const proxy = String(process.env.SHOTS_PROXY_SERVER || '');
+  // The personas that sign in. The guest has no token to exchange (its
+  // optional guest token is the proxy's alone), so none is required for it.
   const personas = {
     member: String(process.env.SHOTS_MEMBER_TOKEN || ''),
     read_only_admin: String(process.env.SHOTS_ADMIN_TOKEN || ''),
@@ -162,6 +168,11 @@ async function main(progress) {
         await fs.chmod(target, 0o600);
       } finally { await context.close(); }
     }
+    progress.persona = 'guest';
+    progress.stage = 'storage_state';
+    const guestState = path.join(outputDir, 'guest.json');
+    await fs.writeFile(guestState, SIGNED_OUT_STATE, { mode: 0o600 });
+    await fs.chmod(guestState, 0o600);
     progress.stage = 'allowlist';
     progress.persona = null;
     const hostedApps = [...(memberCatalogs[0] || new Map())]
@@ -201,4 +212,4 @@ async function run() {
 
 if (require.main === module) run();
 
-module.exports = { FAILURE_STAGES, errorClass, failureEvent, failureSummary };
+module.exports = { FAILURE_STAGES, SIGNED_OUT_STATE, errorClass, failureEvent, failureSummary };

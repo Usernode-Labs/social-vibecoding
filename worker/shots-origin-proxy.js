@@ -44,11 +44,16 @@ const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
 // request comes from: Chromium's --proxy-server cannot carry credentials, so
 // the port is the identity. run-cc.sh names the ports; the verifiers that
 // start this proxy without them get the single shared listener, as before.
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+// The guest is the browser that is not signed in. Its token is optional: the
+// platform mints one only for a view-public child app, as the production
+// edge does for a visitor with no account (services/edge-gate.js), and an
+// empty value leaves the guest with no identity at all.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
 const PERSONA_TOKEN_ENV = Object.freeze({
   member: 'SHOTS_MEMBER_TOKEN',
   read_only_admin: 'SHOTS_ADMIN_TOKEN',
   full_admin: 'SHOTS_FULL_ADMIN_TOKEN',
+  guest: 'SHOTS_GUEST_TOKEN',
 });
 function personaPorts() {
   let parsed;

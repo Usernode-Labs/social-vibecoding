@@ -184,7 +184,7 @@ test('runner: MODE=shots is refused before anything starts', () => {
   // a different server and stays.
   const source = fs.readFileSync(RUNNER, 'utf8');
   assert.doesNotMatch(source,
-    /SHOTS_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_shots|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
+    /SHOTS_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_shots|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin|browser_guest)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
   assert.match(source, /args = \["\/usr\/local\/bin\/visible-changes-mcp\.js"\]/);
 });
 
