@@ -47,6 +47,13 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
+// The screenshot annotation editor (crop + red marker on an attached
+// screenshot). Same arrangement: imported for its side effect — it publishes
+// `window.ScreenshotAnnotate`, which the thumbnail-tap path below reads by
+// name — so its Node-test module.exports branch never replaces this bundle's
+// exports.
+import './screenshot-annotate';
+
 import { publishVisibility } from '../../lib/visibility-store';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
@@ -375,6 +382,81 @@ export function init() {
       } else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
       bountyRow.classList.remove('hidden');
     };
+    // ── request: a draft the AI suggests from an annotated screenshot ──
+    // After a screenshot has been through the editor (a crop or a red
+    // drawing), the annotated image goes to POST /api/feedback/describe and
+    // its answer is offered in this row — the same opt-in shape as the two
+    // above. A tick is the only thing that writes the draft anywhere: into
+    // "What should change?", replacing what is there, from where it can be
+    // edited like any other words. Every failure mode is silent — the route
+    // answers `description: null` on any AI trouble, and the dialog simply
+    // never shows the row.
+    const aiRow = document.getElementById('feedback-ai-row');
+    const aiCheckbox = document.getElementById('feedback-ai-checkbox');
+    const aiNote = document.getElementById('feedback-ai-note');
+    let aiDraft = null;       // the draft text on offer, when one arrived
+    let aiDraftShot = null;   // the attachment the draft was drawn on
+    let aiDraftSeq = 0;       // newer request/reset invalidates an in-flight answer
+
+    const hideAiRow = () => {
+      if (aiCheckbox) aiCheckbox.checked = false;
+      if (aiRow) aiRow.classList.add('hidden');
+    };
+
+    // Cleared on open/reset (via resetScreenshotState) and whenever its image
+    // goes: the row never outlives the picture it was drawn on.
+    const resetAiDraft = () => {
+      aiDraft = null;
+      aiDraftShot = null;
+      aiDraftSeq += 1;
+      hideAiRow();
+    };
+
+    // Ask for a draft for `shot`'s bytes. Latest wins: annotating again
+    // bumps the sequence, and an answer for a superseded request is dropped
+    // — the same guard the title preview's own sequence counter applies.
+    const requestAiDraft = (shot, blob) => {
+      const seq = ++aiDraftSeq;
+      aiDraft = null;
+      aiDraftShot = shot;
+      hideAiRow();
+      // The soft-degrade posture: known-offline, no request at all — the
+      // form works exactly as it always has.
+      if (isOfflineNow()) return;
+      void fetch('/api/feedback/describe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: blob,
+      }).then(async (res) => {
+        const data = res.ok ? await res.json().catch(() => ({})) : {};
+        if (seq !== aiDraftSeq) return;           // superseded, or the dialog closed
+        if (!screenshots.includes(shot)) return;  // its image was removed
+        const description = data && typeof data.description === 'string'
+          ? data.description.slice(0, 2000)       // the textarea's own cap
+          : null;
+        if (!description) return;                 // unavailable/failed: no offer, no error
+        aiDraft = description;
+        if (aiNote) aiNote.textContent = description;
+        hideAiRow();
+        if (aiRow) aiRow.classList.remove('hidden');
+      }).catch(() => { /* soft-degrade: no draft is a fully working state */ });
+    };
+
+    aiCheckbox?.addEventListener('change', () => {
+      // Unticking does nothing: the words are the user's the moment they
+      // land, and unchecking must not clear or restore anything. The box
+      // comes back unchecked, so the same tick can be repeated deliberately.
+      if (!aiCheckbox.checked) return;
+      aiCheckbox.checked = false;
+      const draft = aiDraft;
+      if (!draft || feedbackText.readOnly) return;
+      // Replaces whatever is in the field. A programmatic set fires no
+      // `input` event, so the refusal clear and the title preview are run
+      // by hand — the same two the field's own input listener would run.
+      feedbackText.value = draft;
+      clearDescriptionError();
+      scheduleTitlePreview();
+    });
     // The selected option uses a darker violet on hover so it keeps its
     // active look; the unselected option uses the neutral zinc hover.
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
@@ -839,6 +921,9 @@ export function init() {
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
         shot.img.alt = `Image ${i + 1} preview`;
+        // The thumbnail is the way into the annotation editor now, so its
+        // accessible name says what tapping it does.
+        shot.img.setAttribute('aria-label', `Edit image ${i + 1}`);
         shot.removeBtn.setAttribute('aria-label', `Remove image ${i + 1}`);
       });
     };
@@ -858,6 +943,8 @@ export function init() {
     };
 
     const removeScreenshot = (shot) => {
+      // Its AI draft goes with it: the row never outlives its picture.
+      if (shot === aiDraftShot) resetAiDraft();
       discardScreenshot(shot);
       paintScreenshotActions();
     };
@@ -867,19 +954,23 @@ export function init() {
       screenshots = [];
       screenshotInput.value = '';
       setScreenshotActionsDisabled(false);
+      resetAiDraft();
       paintScreenshotActions();
     };
 
     // One thumbnail: the preview, a status line for this image alone, and a
     // 48px remove button. Class strings are complete literals, so Tailwind's
-    // scan of this file compiles them.
+    // scan of this file compiles them. The preview itself is the way into the
+    // annotation editor — tapping it opens the editor on this image (every
+    // surface: a mouse works as well as a finger).
     const renderScreenshotThumb = (shot) => {
       const item = document.createElement('div');
       item.className = 'flex items-center gap-2';
       item.setAttribute('data-feedback-screenshot', '');
       const img = document.createElement('img');
-      img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+      img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover cursor-pointer';
       img.src = shot.objectUrl;
+      img.addEventListener('click', () => editScreenshot(shot));
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
       const removeBtn = document.createElement('button');
@@ -935,6 +1026,51 @@ export function init() {
       }
     };
 
+    // request: the annotation editor. Tapping a thumbnail opens it on that
+    // image; Done replaces the attachment with the edited one, Cancel leaves
+    // it exactly as it was. The edited image goes through the ordinary
+    // attach path — a fresh upload mints a new id, and the replaced row is
+    // orphaned server-side and swept after 24h, as a removed one is. The
+    // in-flight guard (screenshotUploading) already blocks Submit during the
+    // re-upload.
+    const editScreenshot = async (shot) => {
+      const annotator = window.ScreenshotAnnotate;
+      if (!annotator || typeof annotator.open !== 'function') return;
+      let result;
+      try {
+        result = await annotator.open({ blob: shot.blob });
+      } catch (err) {
+        // The encoder could not fit the drawing inside the upload contract
+        // (or the image refused to open): the original attachment is kept,
+        // and the reason is on screen.
+        showFeedbackNotice("Couldn't save the drawing — the original screenshot is kept.", true);
+        return;
+      }
+      if (!result || result.cancelled || !result.blob) return;  // Cancel keeps the image
+      if (!screenshots.includes(shot)) return;  // removed while the editor was open
+      const index = screenshots.indexOf(shot);
+      discardScreenshot(shot);
+      await attachScreenshotBlob(result.blob);
+      // attachScreenshotBlob appends; put the edited image back where the
+      // old one sat, so what is on screen keeps its attachment order.
+      const fresh = screenshots[screenshots.length - 1];
+      if (fresh && fresh.blob === result.blob) {
+        const from = screenshots.indexOf(fresh);
+        if (from > index) {
+          screenshots.splice(from, 1);
+          screenshots.splice(index, 0, fresh);
+          const next = screenshots[index + 1];
+          if (next && next.node && next.node.parentNode) {
+            screenshotPreview.insertBefore(fresh.node, next.node);
+          }
+          paintScreenshotActions();
+        }
+        // The drawing is what the AI draft is asked about: the first
+        // confirmed annotation of the session, and each newer one after it.
+        requestAiDraft(fresh, result.blob);
+      }
+    };
+
     const waitForHiddenDialogPaint = () => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
@@ -956,6 +1092,13 @@ export function init() {
         nativeCaptureSupported = Array.isArray(info?.capabilities)
           && info.capabilities.includes('captureScreenshot');
         paintScreenshotActions();
+        // request: where the bridge can capture the visible window, the
+        // dialog takes its own screenshot as it opens — the person starts
+        // from the picture they are looking at instead of an empty attach
+        // row. Never the desktop getDisplayMedia path: that needs a user
+        // gesture and a share grant, and a browser must not silently
+        // screenshot itself.
+        if (nativeCaptureSupported) void autoCaptureScreenshot(sequence);
       } catch { /* Photos remains available; the next open probes again. */ }
     };
 
@@ -966,7 +1109,10 @@ export function init() {
     // Extracted from the button handler so the ?shot=feedback-capture-failed
     // reviewable state exercises this exact path — notice copy, dialog
     // restore and draft retention included — rather than a mock of it.
-    const runCapture = async (capture, { nativeAttempt }) => {
+    // `quiet` (the auto-capture on open) writes no notice when the attempt
+    // fails: nobody asked for that capture, and the dialog simply stays as
+    // it was, with the manual button still there.
+    const runCapture = async (capture, { nativeAttempt, quiet = false }) => {
       setScreenshotActionsDisabled(true);
       captureInFlight = true;
       // Where the cursor was. A suspend/resume moves focus off the textarea,
@@ -1028,7 +1174,11 @@ export function init() {
         // Every one of these says what happened to the SCREENSHOT and then
         // says the words are still there, because the words are what a user
         // is afraid of losing — the screenshot they can retake (#1284).
-        if (err && err.code === 'denied') {
+        // The quiet (auto-capture) failure is the one exception: it says
+        // nothing at all, because nobody asked for that attempt.
+        if (quiet) {
+          // silent — the manual "Take screenshot" button is still there.
+        } else if (err && err.code === 'denied') {
           showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
         } else if (err && err.code === 'capture_blank') {
           // The share arrived with nothing in it — on a Mac, what window
@@ -1066,6 +1216,26 @@ export function init() {
         : async (hide) => (await screenshotTools.start({ onCaptureStart: hide })).blob,
       { nativeAttempt });
     });
+
+    // request: the auto-capture on open. Fired by the capability probe once
+    // it resolves with native capture support; the same round trip the
+    // button runs, but quiet — a failure writes no notice, because nobody
+    // asked for this attempt and the manual button is still there. Guards:
+    // not on the first-request confirmation view, not when an image is
+    // already attached, not once the dialog has moved on or closed, and
+    // never on the ?shot= reviewable states (they run on desktop/headless,
+    // where the bridge is absent and this is unreachable).
+    const autoCaptureScreenshot = async (session) => {
+      if (firstFeedback) return;                        // the confirmation view
+      if (screenshots.length > 0) return;               // an image is already attached
+      if (session !== screenshotProbeSequence) return;  // the dialog moved on
+      const modal = document.getElementById('feedback-modal');
+      if (!modal || modal.classList.contains('hidden')) return;  // no longer open
+      await runCapture(
+        async () => screenshotTools.blobFromNativeCapture(await window.usernode.captureScreenshot()),
+        { nativeAttempt: true, quiet: true },
+      );
+    };
 
     screenshotPickerBtn.addEventListener('click', () => {
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;

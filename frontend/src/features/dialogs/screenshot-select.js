@@ -1128,6 +1128,11 @@
       start,
       blobFromNativeCapture,
       prepareFile,
+      // The image decoder and the PNG→JPEG upload encoder, shared with
+      // screenshot-annotate.js: an edited screenshot must land back inside
+      // the same 4 MB contract a fresh capture does, by the same ladder.
+      loadPickedImage,
+      exportBlob,
     }, pure);
   }
 })();

@@ -441,6 +441,53 @@ function feedbackRoutes(config) {
     }
   });
 
+  // request: a draft description read off an ANNOTATED screenshot. The
+  // client sends the image it just drew on (crop or red marker), the model
+  // says what the drawing points at, and the feedback dialog offers the
+  // answer behind a checkbox — the person's tick is what writes it into the
+  // form. Billing is the same resolution the title preview uses, so this is
+  // never a zero-credit platform-spend bypass, and it soft-degrades the same
+  // way: any AI trouble is a 200 with `description: null`, because a missing
+  // suggestion is a fully working state.
+  //
+  // The body is the image's raw bytes (application/octet-stream, like
+  // POST /api/feedback/screenshot — base64-in-JSON would bust the global
+  // 100 KB express.json() parser), validated by the same pure
+  // validateScreenshotUpload. No new limiter: the title preview's
+  // per-user budget fits this one-call endpoint too.
+  router.post(
+    '/api/feedback/describe',
+    feedbackTitleLimiter,
+    express.raw({ type: 'application/octet-stream', limit: '5mb' }),
+    async (req, res) => {
+      try {
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = validateScreenshotUpload(data);
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        const billing = await resolveTitleBilling(req.user?.id);
+        if (billing.error) return res.json({ description: null, note: billing.error });
+        if (!billing.apiKey && !llm.isEnabled()) {
+          return res.json({ description: null, note: 'unavailable' });
+        }
+        const gen = await llm.generateFeedbackDraftFromImage({
+          image: { mediaType: verdict.contentType, base64: data.toString('base64') },
+          apiKey: billing.apiKey || undefined,
+        });
+        if (gen.usage && req.user?.id) {
+          const costCents = llm.estimateCostCents(gen.usage, gen.model);
+          await limits.recordSpend(pool, req.user.id, costCents, { byok: billing.byok });
+        }
+        // Defensive clip to the description field's maxlength; the prompt
+        // asks for one or two sentences.
+        res.json({ description: gen.description.slice(0, 2000) });
+      } catch (err) {
+        log.warn('feedback', 'Drawing description generation failed', { message: err.message });
+        res.json({ description: null, note: 'failed' });
+      }
+    }
+  );
+
   // #683: screenshot upload for the feedback modal. Upload happens
   // BEFORE submit: the client POSTs the captured image's raw bytes here,
   // gets back an id, and passes it in `screenshotIds` to /api/feedback
