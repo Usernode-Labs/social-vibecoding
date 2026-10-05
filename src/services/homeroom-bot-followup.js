@@ -50,6 +50,7 @@
 const log = require('./logger');
 const { parseStopMentioning, failedClaudeTurn } = require('./homeroom-bot-live');
 const shotsState = require('./shots-state');
+const { withoutEmDashes } = require('./em-dashes');
 
 // Revisions the bot makes to one proposal on its own. Each one clears the
 // votes the proposal had, so an unbounded loop of "one more tweak" costs the
@@ -182,6 +183,7 @@ function followUpPrompt({
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
     ...(canRevise && design ? [design, ''] : []),
+    'Write `reply`, `answers`, `summary` and `title` in plain words, without em dashes: use a comma, a colon or a full stop.',
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
     `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "title": "for revise only, when what the proposal does changed: its new short title", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
@@ -208,17 +210,21 @@ function parseFollowUp(text) {
     if (!obj || typeof obj !== 'object') continue;
     const action = typeof obj.action === 'string' ? obj.action.trim().toLowerCase() : '';
     if (!ACTIONS.includes(action)) continue;
-    const reply = clipText(obj.reply, 3000);
+    // Everything here is said to people (the post, the DM, the change's
+    // name): without em dashes, whatever the model wrote (em-dashes.js).
+    const reply = clipText(withoutEmDashes(String(obj.reply || '')), 3000);
     if (!reply) continue;
     // #3767: a revision that changed what the proposal does names it again.
-    const title = action === 'revise' ? clipText(String(obj.title || '').replace(/\s+/g, ' '), MAX_TITLE_CHARS) : '';
+    const title = action === 'revise'
+      ? clipText(withoutEmDashes(String(obj.title || '').replace(/\s+/g, ' ')).replace(/[:.]+$/, ''), MAX_TITLE_CHARS)
+      : '';
     return {
-      action, reply, summary: clipText(obj.summary, 600) || null,
+      action, reply, summary: clipText(withoutEmDashes(String(obj.summary || '')), 600) || null,
       ...(title.length >= 3 ? { title } : {}),
       // #3624: an ask's suggested answers, as a triage question's.
       ...(action === 'ask' ? {
         answers: Array.isArray(obj.answers)
-          ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(a, 200)).filter(Boolean).slice(0, 6)
+          ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(withoutEmDashes(a), 200)).filter(Boolean).slice(0, 6)
           : [],
       } : {}),
       stopMentioning: parseStopMentioning(obj.stop_mentioning),
@@ -416,6 +422,7 @@ function checksFixPrompt({ seed, proposalBlock = '', prNumber = null, failing = 
     '- "revise": the failures come from your change. Either the code does not do what the check expects, or a check your proposal added expects something the code does not do (text, a label, a selector that differs from what you built). Fix whichever one is wrong, and nothing else. Never loosen, skip or delete a check that was there before your proposal, and never change one the group wrote to match your code. Follow the repository\'s own agent instructions, and run the checks or tests that cover the fix. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again.',
     '- "person": the failures are not caused by your change (they fail without it too), a check the group wrote expects behaviour the request asked you to change, or you cannot fix them safely. Say which, and why, in plain words. Change no files.',
     '',
+    'Write `reply` and `summary` in plain words, without em dashes: use a comma, a colon or a full stop.',
     'END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:',
     '{"action": "revise" | "person", "reply": "what to tell the group, in plain language", "summary": "for revise only: one sentence on what you fixed"}',
   ].join('\n');

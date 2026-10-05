@@ -58,6 +58,7 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
+const { withoutEmDashes } = require('./em-dashes');
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
@@ -1051,7 +1052,33 @@ function planQuestions(raw) {
   return out;
 }
 
+/**
+ * 5 Oct 2026: what a verdict says to people (its question and the answers
+ * to tap, a first version's plan, why a person should decide or why there
+ * is nothing to build) without em dashes, whatever the model wrote
+ * (em-dashes.js). Pure.
+ */
+function plainVerdict(v) {
+  if (!v) return v;
+  const plain = (t) => (typeof t === 'string' ? withoutEmDashes(t) : t);
+  return {
+    ...v,
+    question: plain(v.question),
+    questionDefault: plain(v.questionDefault),
+    questionAnswers: Array.isArray(v.questionAnswers) ? v.questionAnswers.map(plain) : v.questionAnswers,
+    plan: v.plan ? {
+      bullets: v.plan.bullets.map(plain),
+      questions: v.plan.questions.map((q) => ({ question: plain(q.question), answers: q.answers.map(plain) })),
+    } : v.plan,
+    reason: plain(v.reason),
+  };
+}
+
 function parseVerdict(text) {
+  return plainVerdict(readVerdict(text));
+}
+
+function readVerdict(text) {
   const raw = String(text || '');
   const candidates = [];
   let m;
