@@ -3637,8 +3637,13 @@ const App = {
     // is showing (the burst's home refresh): an unconditional Home.load()
     // here pulled the whole app list, 670 KB, onto a Workshop nobody had
     // left.
-    if (data.merged && App.currentApp === data.appSlug && App.currentTab === 'app') {
-      AppView.renderAppTab();
+    if (App.currentApp === data.appSlug) {
+      // A first version waiting on its approval is read again past every
+      // cache, now on its App tab and before the next paint anywhere else: a
+      // vote on its project, or the merge, is what changes that screen, and
+      // a render alone repaints the record on hand.
+      const rereading = AppView.recheckFirstVersionNow?.();
+      if (!rereading && data.merged && App.currentTab === 'app') AppView.renderAppTab();
     }
   },
 

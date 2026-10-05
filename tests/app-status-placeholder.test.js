@@ -428,6 +428,50 @@ test('ready: a member whose Yes does not count is told it waits for approval, an
     'with no second button the starter keeps its own look');
 });
 
+test('5 Oct: "Waiting for your approval." is never said to a reader whose own Yes came after the answer', () => {
+  // priya_t1006 had approved Page Turners' first version and was still told
+  // it waited for her approval. The server words it from her own Yes
+  // (firstVersionApproval: mustApprove only while it is not in); an answer
+  // read before that Yes still says it is needed.
+  const { AppView } = makeAppView();
+  const SECOND = 1000;
+  const before = readyApp({ mine: false, conversationId: null }, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(before, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, before).lines[1], 'Waiting for your approval.', 'the server\'s word, until she votes');
+
+  AppView.appData = before;
+  AppView._noteOwnVote(31, 'yes');
+  const v = view(AppView, before);
+  assert.equal(v.lines[1], 'You approved it. Waiting for @sam_t1004.', 'whom it waits on instead');
+  assert.deepEqual([v.action.key, v.alt.key], ['tryChange', 'seeChange']);
+  assert.equal(AppView._firstVersionTrusted(before), false, 'and the screen reads the server again before painting it');
+
+  // Hers was the last Yes it needed: nobody to wait for, and no day promised
+  // for a clock the next read will name.
+  const last = readyApp({}, { mustApprove: true, missing: 1, goesLiveAt: new Date(Date.now() + 2 * DAY).toISOString() });
+  AppView._noteAppRecordRead(last, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, last).lines[1], 'You approved it.');
+
+  // The worker's copy is older than her vote, whenever it arrived.
+  const copy = readyApp({}, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(copy, { headers: { get: (n) => (n === 'sw-cached-at' ? '1' : null) } }, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, copy).lines[1], 'You approved it. Waiting for @sam_t1004.');
+
+  // An answer asked for after her vote is the server's word as it stands (a
+  // revised change asks for her Yes again).
+  const after = readyApp({}, { mustApprove: true });
+  AppView._noteAppRecordRead(after, null, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, after).lines[1], 'Waiting for your approval.');
+
+  // A No, or a Yes on some other change, changes nothing.
+  const { AppView: other } = makeAppView();
+  const asked = readyApp({}, { mustApprove: true });
+  other._noteAppRecordRead(asked, null, Date.now() - 5 * SECOND);
+  other._noteOwnVote(31, 'no');
+  other._noteOwnVote(32, 'yes');
+  assert.equal(view(other, asked).lines[1], 'Waiting for your approval.');
+});
+
 test('ready: the wait line, worded for each state of the gate, in the reader\'s week', () => {
   const { AppView } = makeAppView();
   // A Monday at noon, local time, so the days below are the reader's own.
