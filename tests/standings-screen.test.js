@@ -772,6 +772,124 @@ test('a standings row the server could not name reads "Anonymous", never just it
   assert.equal(TL.drillView().displayName, 'Anonymous', 'and so does its drill-down header');
 });
 
+// ─── #3887: non-podium rows hidden by default, chip to show them grayed ──
+//
+// The server filters by default now and answers `non_podium_count` over the
+// unfiltered scope; the pane filters again on its side so a payload that
+// still carries excluded rows (an older server) can never render one as a
+// ranked row. The toggle is a module flag, session-sticky.
+
+// The excluded row sits ABOVE the ranked one on points, the way staging
+// seeds it — hidden by default, first thing you see when shown.
+const NON_PODIUM_ROW = {
+  ...SEASON_ROW, rank: 3, is_non_podium: true, total_points: 68000, display_name: 'PodiumSkipped',
+};
+
+test('#3887: the default view hides non-podium rows and offers the chip with the count', () => {
+  const view = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.rows.length, 1, 'the excluded row is not in the default table');
+  assert.equal(view.rows[0].rank, '1', 'and the ranked row keeps its stored rank');
+  assert.deepEqual(view.nonPodiumToggle, { count: 1, on: false },
+    'the chip knows both the number and that it is off');
+});
+
+test('#3887: the chip is absent when the board has no excluded user', () => {
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    non_podium_count: 0,
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.nonPodiumToggle, null, 'nothing to show, nothing to offer');
+});
+
+test('#3887: shown, the excluded row is rankless, flagged and grayed — and nobody moved', () => {
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._showNonPodium = true;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  };
+  TL._meta = { page: 1, per_page: 25, total: 2, total_pages: 1 };
+  TL._renderBody();
+  const view = store.state.body;
+  assert.equal(view.state, 'table');
+  assert.deepEqual(view.nonPodiumToggle, { count: 1, on: true }, 'the chip is lit');
+  const excluded = view.rows[0];
+  assert.equal(excluded.rank, '—', 'still no ranking slot of its own');
+  assert.equal(excluded.nonPodium, true);
+  assert.equal(view.rows[1].rank, '1', 'the ranked user keeps the number they had');
+});
+
+test('#3887: a board whose every scorer is excluded reads as the filter working, not as empty', () => {
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [{ ...NON_PODIUM_ROW, rank: 1, total_points: 68000 }],
+    non_podium_count: 1,
+  };
+  TL._meta = { page: 1, per_page: 25, total: 0, total_pages: 0 };
+  TL._renderBody();
+  const view = store.state.body;
+  assert.equal(view.state, 'allexcluded');
+  assert.ok(view.nonPodiumToggle, 'and the chip still offers the rows');
+  // The TSX spell of that state: the chip, then the sentence, and the
+  // sentence carries the same data-tc-lb-empty contract the noentries hint
+  // does — the declared check accepts "table or this hint".
+  assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
+  assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
+  assert.match(standingsTsx, /Everyone with a score on this board is excluded from the ranking\./);
+  assert.match(standingsTsx,
+    /state === 'allexcluded'[\s\S]{0,600}?data-tc-lb-empty/,
+    'the all-excluded hint keeps the declared-check contract');
+});
+
+test('#3887: an older server payload still cannot render an excluded row as ranked', () => {
+  // No non_podium_count key: the payload predates the field and its rows
+  // are the full board. The pane filters on its side, and the chip it
+  // offers carries no count it would have to guess.
+  const view = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.rows.length, 1, 'the excluded row is still hidden');
+  assert.deepEqual(view.nonPodiumToggle, { count: null, on: false }, 'no guessed number');
+});
+
+test('#3887: the drill opens the row the viewer sees, not the payload index', () => {
+  const { TL } = loadStandings();
+  TL._showNonPodium = false;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  };
+  // Index 0 of the SHOWN board is Ocank14 — against the raw payload it
+  // would have been the hidden excluded row.
+  TL._openRowAt(0);
+  assert.equal(TL._drillRow.display_name, 'Ocank14');
+});
+
+test('#3887: the chip goes through the module handler, which restarts at page 1', () => {
+  assert.match(topoJs, /_showNonPodium = !TopochainLeaderboard\._showNonPodium/,
+    'the flag flips in one place');
+  assert.match(topoJs, /_toggleNonPodium\(\) \{[\s\S]{0,300}?_page = 1;/,
+    'and the table restarts at page 1');
+  assert.match(topoJs, /include_non_podium', '1'/,
+    'the fetch carries the ask only while the chip is on');
+});
+
 test('the standings table drops the Success rate column on a season board', () => {
   const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },

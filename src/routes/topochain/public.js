@@ -133,6 +133,16 @@ function eventStatus(startsAt, endsAt, now = new Date()) {
   return { hasStarted, hasEnded, status: hasEnded ? 'ended' : (hasStarted ? 'active' : 'upcoming') };
 }
 
+// Boolean query params read with the truthy-list idiom GET /season-events
+// uses for `include_past` (same list, same case handling). Absent,
+// empty, or anything outside the list reads as FALSE — so a new opt-in
+// param defaults to OFF on both an old client and a garbage value.
+const TRUTHY_QUERY_VALUES = ['1', 'true', 'on', 'yes'];
+
+function truthyQuery(raw) {
+  return typeof raw === 'string' && TRUTHY_QUERY_VALUES.includes(raw.toLowerCase());
+}
+
 // ─── Identifier masking, display names, per-event rows ──────────────────
 //
 // resolveIdentifier / maskIdentifier / resolveDisplayName (SPEC 958, 1246),
@@ -299,15 +309,33 @@ function topochainPublicRoutes(config) {
       // SPEC 961: display_leaderboard=false -> identical envelope, empty
       // list, meta.total 0.
       if (!event.display_leaderboard) {
-        return ok(res, { data: { event: eventPayload, leaderboard: [] } }, { meta: meta(page, perPage, 0) });
+        return ok(res, {
+          data: { event: eventPayload, leaderboard: [], non_podium_count: 0 },
+        }, { meta: meta(page, perPage, 0) });
       }
 
       const rows = await fetchEventLeaderboardRows(pool, event);
-      const total = rows.length;
-      const start = (page - 1) * perPage;
-      const leaderboard = rows.slice(start, start + perPage).map(formatLeaderboardRow);
 
-      return ok(res, { data: { event: eventPayload, leaderboard } }, { meta: meta(page, perPage, total) });
+      // #3887: podium-excluded users are HIDDEN by default and shown only
+      // when the pane's toggle asks for them. The filter sits HERE, after
+      // the ranks were assigned over the FULL board (stored shared ranks
+      // for a regular event, computeStandings for the season aggregate) —
+      // never inside the SQL. Filtering inside the SQL would shift every
+      // ranked user's number when the toggle flips; filtering here means a
+      // ranked user's rank is byte-identical with the toggle on or off, and
+      // an included excluded row still doesn't consume a slot (its own rank
+      // is serialized as-is; the pane renders it "—").
+      const nonPodiumCount = rows.filter((r) => !!r.exclude_podium).length;
+      const includeNonPodium = truthyQuery(req.query.include_non_podium);
+      const visible = includeNonPodium ? rows : rows.filter((r) => !r.exclude_podium);
+
+      const total = visible.length;
+      const start = (page - 1) * perPage;
+      const leaderboard = visible.slice(start, start + perPage).map(formatLeaderboardRow);
+
+      return ok(res, {
+        data: { event: eventPayload, leaderboard, non_podium_count: nonPodiumCount },
+      }, { meta: meta(page, perPage, total) });
     } catch (err) {
       if (err instanceof ValidationError) {
         return fail(res, err.status, err.message, { details: err.details, code: err.code });
