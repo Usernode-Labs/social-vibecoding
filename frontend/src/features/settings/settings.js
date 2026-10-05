@@ -4498,6 +4498,9 @@
         : `New instruction file from "${filename}"`;
       nameInput.value = this._slugifyAgentFileName(filename);
       descWrap.classList.toggle('hidden', kind !== 'skill');
+      // Return in the name goes on to the description when there is one and
+      // saves when there is not (#3907); the key says which.
+      nameInput.enterKeyHint = kind === 'skill' ? 'next' : 'done';
       descInput.value = '';
       form.classList.remove('hidden');
       this._setAgentFilesStatus('', 'clear');

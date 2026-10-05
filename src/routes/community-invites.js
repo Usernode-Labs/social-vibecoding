@@ -34,6 +34,7 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const testAccounts = require('../services/test-accounts');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
@@ -68,7 +69,8 @@ function madeForName(preview, projectName) {
  * rest show when the link is pasted. A live link reads the way its page does:
  * "Maya made Run Tracker" when the person who sent it made the project ("Maya
  * made this for Sunday Run Club" when the community it was made for has a
- * name of its own), with their note (else the project's line, else who
+ * name of its own; "is making" while its first version is on its way,
+ * `building`), with their note (else the project's line, else who
  * invited you) and its picture (else its icon). A dead or unknown one says
  * only that it is a Homeroom invite, so a pasted link discloses no more than
  * preview() does.
@@ -78,9 +80,10 @@ function previewTags(preview, origin) {
   const name = live ? preview.project.name : null;
   const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
   const madeFor = madeBy ? madeForName(preview, name) : null;
+  const made = preview && preview.building ? 'is making' : 'made';
   const title = !live
     ? 'Homeroom invite'
-    : madeBy ? (madeFor ? `${madeBy} made this for ${madeFor}` : `${madeBy} made ${name}`) : `Join ${name} on Homeroom`;
+    : madeBy ? (madeFor ? `${madeBy} ${made} this for ${madeFor}` : `${madeBy} ${made} ${name}`) : `Join ${name} on Homeroom`;
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';
@@ -89,7 +92,7 @@ function previewTags(preview, origin) {
     : preview.note
       || preview.project.description
       || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
-  // A sketch is a page, not an image: the preview shows the icon instead.
+  // A card is words, not an image: the preview shows the icon instead.
   const picture = live && preview.project.picture && preview.project.picture.kind !== 'sketch'
     ? preview.project.picture.url : null;
   const image = picture || (live ? preview.project.iconUrl : null);
@@ -187,21 +190,15 @@ function communityInviteRoutes(config) {
     }
   });
 
-  // WP-E: a live link opened in a browser counts once per browser for its
-  // maker (services/invite-activity.js), never by name. Counted from the
-  // page's own reads below, not from the HTML route a link unfurler fetches.
-  // An HttpOnly cookie per link remembers that this browser was counted.
+  // WP-E: a live link opened counts once per PERSON for its maker
+  // (services/invite-activity.js), never by name: by account when they are
+  // signed in, on any device, else by browser (an HttpOnly cookie that names
+  // nothing). Counted from the page's own reads below, not from the HTML
+  // route a link unfurler fetches.
   const countOpen = (req, res, token, viewerId = null) => {
-    const name = `hr_io_${token.slice(0, 12)}`;
-    if (req.cookies?.[name]) return;
-    res.cookie(name, '1', {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/api',
-    });
-    void inviteActivity.noteOpened(pool, { token, viewerId });
+    const seenBefore = inviteActivity.countedBefore(req, token);
+    const browser = inviteActivity.ensureBrowser(req, res);
+    void inviteActivity.noteOpened(pool, { token, viewerId, browser, seenBefore });
   };
 
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
@@ -243,30 +240,6 @@ function communityInviteRoutes(config) {
     }
   });
 
-  // WP-D: the sketch a live link's page frames while its project has no
-  // shot yet (invites.pictureFor). Anonymous like the picture, only while the
-  // link is live, and served like the project's own sketch page: sanitized
-  // static markup, sandboxed with no script and no network.
-  router.get('/api/public/invites/:token/sketch.html', invitePreviewLimiter, async (req, res) => {
-    try {
-      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
-      const page = invites.isToken(req.params.token)
-        ? await invites.sketchPage(pool, req.params.token, { theme })
-        : null;
-      if (!page) return res.status(404).type('text/plain').send('Not found');
-      res.set({
-        'Content-Security-Policy': require('../services/app-sketch').SKETCH_CSP,
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      });
-      return res.type('html').send(page);
-    } catch (err) {
-      log.error('invites', 'Invite sketch failed', { err: err.message });
-      return res.status(500).type('text/plain').send('Internal server error');
-    }
-  });
-
   router.get('/api/invite-links/queued', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
@@ -297,14 +270,22 @@ function communityInviteRoutes(config) {
   router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
-      const result = await invites.redeem(pool, { token: req.params.token, user: req.user });
+      const result = await invites.redeem(pool, {
+        token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
+      });
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.
       if (result.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
-      return res.json(result);
+      // Whether "You're in" tells them what Homeroom is (App._followInvite).
+      // An account following a link signed in had its account before the
+      // link, except a test account on its first sign-in: made ahead by an
+      // admin, it is as new as the sign-up a link opens (test-accounts.js
+      // onFirstRun). Read only for a join, which is when it is shown.
+      const newAccount = result.status === 'joined' && await testAccounts.onFirstRun(pool, req.user.id);
+      return res.json({ ...result, newAccount });
     } catch (err) {
       log.error('invites', 'Following an invite link failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -323,7 +304,12 @@ function communityInviteRoutes(config) {
       const preview = invites.isToken(token)
         ? await invites.preview(pool, token)
         : { live: false, reason: 'unknown' };
-      if (preview.live) invites.setInviteCookie(req, res, token);
+      if (preview.live) {
+        invites.setInviteCookie(req, res, token);
+        // The page's two reads (the preview and, signed in, the standing)
+        // may start together: both carry this browser, so it counts once.
+        inviteActivity.ensureBrowser(req, res);
+      }
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
       applyShellDocumentHeaders(res, INDEX_PATH);

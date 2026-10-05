@@ -564,7 +564,6 @@ const SENDS = [
   ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
   ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
   ['frontend/src/features/dev-chat/spec-viewer.tsx', 'id="dc-spec-share-send"'],
-  ['frontend/src/features/first-session/made.tsx', '<Button type="submit" disabled={busy || !username.trim()}'],
 ];
 
 test('every composer\'s Send prevents the mousedown, so a press never takes focus from the field', () => {

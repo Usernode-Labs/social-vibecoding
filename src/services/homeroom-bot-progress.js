@@ -119,8 +119,16 @@ const SETUP_PARTS = Object.freeze({
   deploy: 'starting it up',
 });
 
+// B6: a first version's plan is the one its creator answers (stage 'plan').
+// Once they tap Build it, the build's own plan being written, and its turn
+// and workspace being waited for, are the build to them, not the plan again:
+// "Step 3 of 7: Write a plan", "writing the plan for the build", read as if
+// their Build it had not counted (first-session run-through, 5 October 2026).
+// A request's steps are unchanged: its plan is the bot's own.
+const FIRST_VERSION_BUILD_STAGES = new Set(['build_queued', 'starting', 'planning']);
+
 function stepNumber(stage, firstVersion) {
-  const key = STEP_OF_STAGE[stage];
+  const key = firstVersion && FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
   if (!key) return null;
   const order = ['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live'];
   const at = order.indexOf(key);
@@ -850,7 +858,8 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     step,
     of: steps.length,
     stepName: step ? steps[step - 1] : null,
-    doing: state.doing,
+    // The same for what it is doing: building it, once Build it is tapped.
+    doing: firstVersion && state.stage === 'planning' ? 'building it' : state.doing,
     busyNow: BUSY_STAGES.has(state.stage) && !state.waitingOn,
     ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
     ...(limit ? { stepTimeLimitMinutes: limit } : {}),

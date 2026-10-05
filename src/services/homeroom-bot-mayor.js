@@ -77,6 +77,7 @@
 // own ledger, scoped to one person, which is a handful of queries here.
 
 const log = require('./logger');
+const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 
 const MAX_HISTORY = 24;
@@ -231,15 +232,15 @@ const LEADING_NOTE_RE = /^\s*\[(?:about|re|homeroom)\b[^\]\n]{0,200}\]\s*/i;
 
 // The platform's copy has no em dashes (tests/no-em-dash-in-copy.test.js),
 // and the prompt says so, but the model still writes "Sorry about that \u2014
-// that sounds like a bug". A dash with a space on each side is a pause
-// between two clauses, which a comma carries as well; nothing else is touched.
-const SPACED_EM_DASH_RE = /[ \t\u00a0]+\u2014[ \t\u00a0]+/g;
+// that sounds like a bug". Its replies go through the same normaliser as
+// everything else the bot writes for people (em-dashes.js, 5 Oct 2026):
+// "Sorry about that. That sounds like a bug."
 
-/** Pure: a reply's words as they are sent: no leading bracketed note, and no spaced em dash. */
+/** Pure: a reply's words as they are sent: no leading bracketed note, and no em dash. */
 function cleanReply(text) {
   let out = String(text ?? '');
   for (let i = 0; i < 3 && LEADING_NOTE_RE.test(out); i += 1) out = out.replace(LEADING_NOTE_RE, '');
-  return out.replace(SPACED_EM_DASH_RE, ', ').trim();
+  return withoutEmDashes(out).trim();
 }
 
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
@@ -1456,7 +1457,8 @@ async function runTool(pool, ctx, name, args) {
         if (!(await canFile(pool, app, user))) {
           return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
         }
-        const title = clip(String(args.title || '').replace(/\s+/g, ' '), MAX_TITLE_CHARS);
+        // The request's name, on its board and in every message about it.
+        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
         ctx.offer = { app, title, details };

@@ -538,8 +538,12 @@ test('challengesView: the finished fill sits last under one Done header, with no
   assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
 });
 
+// The Getting started card is on Home (App.user.showGettingStarted): only
+// then does a closed gate with a count draw the one locked card.
+const WITH_CARD = { id: 1, isAdmin: false, showGettingStarted: true };
+
 test('challengesView: while setup gates the season, its finished card moves under Done', () => {
-  const { HP } = makeHomePanels({ slots: [] });
+  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
   const done = { done: true, current: null, target: null };
   // With nothing hidden to count (the season holds First challenges only),
   // a closed gate still draws them, in their groups.
@@ -1432,10 +1436,10 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
     onboarding: onboarding({ hidden_count: 6, hidden_names: ['Make your first proposal', 'Invite a friend'] }),
     challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'ONBOARDING' })],
   });
-  const { HP } = makeHomePanels({ slots: [] });
+  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
   assert.equal(HP.challengesView(locked).lockedCount, 6);
 
-  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] });
+  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] }, { user: WITH_CARD });
   // No cards, no season progress over it, no footer under it.
   assert.doesNotMatch(html, /home-panel-footer/);
   assert.doesNotMatch(html, /home-panel-season/, 'the card above counts the list');
@@ -1453,7 +1457,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   const one = renderWith({
     registry: [], hidden: [],
     panels: [panel({ onboarding: onboarding({ hidden_count: 1 }) })],
-  }).html;
+  }, { user: WITH_CARD }).html;
   assert.match(one, />1 challenge unlocks after Getting started</);
   assert.match(one, />Finish Getting started on Home to see them</, 'no names: what to do');
 
@@ -1463,7 +1467,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   for (const hidden of [undefined, 0, 'wat']) {
     const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
     assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
-    const out = renderWith({ registry: [], hidden: [], panels: [p] }).html;
+    const out = renderWith({ registry: [], hidden: [], panels: [p] }, { user: WITH_CARD }).html;
     assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
     const note = out.indexOf('Finish Getting started to unlock the rest of the season.');
     assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
@@ -1479,7 +1483,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
   assert.equal(HP.challengesView(open).lockedCount, 0);
   assert.equal(HP.challengesView(open).onboardingNote, null, 'nothing to say once unlocked');
-  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }).html;
+  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }, { user: WITH_CARD }).html;
   assert.doesNotMatch(unlocked, /home-challenge-locked|unlock after Getting started/);
   assert.doesNotMatch(unlocked, /are unlocked|unlock the rest/, 'no unlock note');
 });
@@ -1573,65 +1577,53 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
   }
 });
 
-// ── The first week (first-session plan, 2026-10-04) ───────────────
+// ── A new account sees Challenges (2026-10-05) ────────────────────
 //
-// The first week is the first chapter, without points: while GET
-// /api/auth/me says `firstWeek` (an account under seven days old, by the
-// server's clock), Home draws no Challenges block. The host, its id, its slot
-// and its heading stay in the DOM, hidden, as for any block with nothing to
-// show; Discover is not part of it, and neither is the staging demo payload.
+// #3847 hid this block for an account's first seven days (`firstWeek` on
+// GET /api/auth/me). Evan reversed it after his own first session: a
+// brand-new account expected Challenges on Home, with its Getting started
+// challenges. An account its first session brought in has no Getting started
+// card (first-session.js leaves communities_onboarded_at unset), so the
+// block draws those challenges itself rather than a locked card pointing at
+// a list that is not there.
 
-const FIRST_WEEK_DATA = () => ({
+const NEW_ACCOUNT_DATA = () => ({
   registry: [{ key: 'challenges', title: 'Challenges' }, { key: 'discover', title: 'Discover' }],
   hidden: [],
-  panels: [panel({ challenges: [challenge({ goal: 'Join a community', label: 'ONBOARDING', reward: '500 pts' })] })],
+  panels: [panel({
+    total: 2,
+    onboarding: { total: 2, completed: 1, unlocked: false, event_id: 1, hidden_count: 6, hidden_names: ['Make your first proposal'] },
+    challenges: [
+      challenge({ id: 1, goal: 'Join a community', label: 'ONBOARDING', display_order: 0, progress: { done: true, current: null, target: null } }),
+      challenge({ id: 2, goal: 'Try an app', label: 'ONBOARDING', display_order: 1 }),
+    ],
+  })],
 });
 
-test('the first week: no Challenges block, its host kept in the DOM and hidden', () => {
-  const out = renderWith(FIRST_WEEK_DATA(), { user: { id: 7, isAdmin: false, firstWeek: true } });
-  const host = out.host('challenges');
-  assert.equal(out.sandbox.panelsStore.get().challenges, null, 'no view model for the block');
-  assert.ok(host._classes.has('hidden'), 'the section is hidden');
-  assert.equal(host.attrs.id, 'home-challenges-section', 'its id stays for the checks and the tour');
-  assert.equal(host.attrs['data-panel-slot'], 'challenges');
-  assert.match(host.innerHTML, /home-area-label/, 'the heading stays in the DOM, hidden with its section');
-  assert.equal(blocksOf(host.innerHTML), '', 'nothing under the heading');
-  assert.doesNotMatch(host.innerHTML, /Join a community|home-challenge-card|home-panel-season|500 pts/,
-    'no cards, no season progress, no points');
-  assert.ok(!out.host('discover')._classes.has('hidden'), 'Discover still draws');
-  assert.match(out.host('discover').innerHTML, /data-panel="discover"/);
-});
-
-test('week two, or no flag at all, draws the block as before', () => {
-  for (const user of [{ id: 7, firstWeek: false }, { id: 7 }]) {
-    const out = renderWith(FIRST_WEEK_DATA(), { user });
-    assert.ok(!out.host('challenges')._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
-    assert.match(out.host('challenges').innerHTML, /home-challenge-card[\s\S]*Join a community/);
+test('a brand-new account sees Challenges, whatever its age, with its Getting started challenges', () => {
+  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false }, { id: 7, showGettingStarted: false }]) {
+    const out = renderWith(NEW_ACCOUNT_DATA(), { user });
+    const host = out.host('challenges');
+    assert.ok(!host._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
+    assert.match(host.innerHTML, /home-challenge-card[\s\S]*Try an app/, 'the First challenges, drawn in the block');
+    assert.match(host.innerHTML, /Join a community/, 'done ones under Done');
+    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, 'no card pointing at a list that is not on Home');
+    assert.match(host.innerHTML, />Finish Getting started to unlock the rest of the season\.</);
   }
+  // With the Getting started card on Home, the block is its one locked card,
+  // as before: the card lists the First challenges.
+  const withCard = renderWith(NEW_ACCOUNT_DATA(), { user: { id: 7, showGettingStarted: true } });
+  assert.match(withCard.host('challenges').innerHTML, /home-challenge-locked/);
+  assert.doesNotMatch(withCard.host('challenges').innerHTML, /home-challenge-card/);
 });
 
-test('the staging demo payload is drawn whatever the account\'s age', () => {
-  // ?demo=1 is a reviewer's view of every state, and the seeded check account
-  // is days old in every preview: the declared Challenges checks select on it.
-  const data = FIRST_WEEK_DATA();
-  data.panels[0].demo = true;
-  const out = renderWith(data, { user: { id: 900130, firstWeek: true } });
-  assert.ok(!out.host('challenges')._classes.has('hidden'));
-  assert.match(out.host('challenges').innerHTML, /home-challenge-card/);
-});
-
-test('the first week is the server\'s answer, and a verified session repaints it', () => {
+test('nothing about an account\'s age hides the block, and /api/auth/me says nothing about it', () => {
+  assert.doesNotMatch(PANELS_RAW, /inFirstWeek|firstWeek ===/);
+  assert.match(PANELS_RAW, /challenges: viewFor\('challenges', HomePanels\.challengesView\),/);
+  assert.match(PANELS_RAW, /const locked = HomePanels\.gettingStartedOnHome\(\) \? HomePanels\.lockedOnboarding\(panel\) : null;/);
+  assert.match(PANELS_RAW, /gettingStartedOnHome\(\) \{\s+return !!\(typeof window !== 'undefined' && window\.App && App\.user && App\.user\.showGettingStarted === true\);/);
   const auth = read('src/routes/auth.js');
-  // Computed in the users read /api/auth/me already makes, by the database's
-  // clock against the row's own created_at, never the device's.
-  assert.match(auth, /\(u\.created_at > NOW\(\) - INTERVAL '7 days'\) AS first_week,/);
-  assert.match(auth, /firstWeek = rows\[0\]\?\.first_week === true;/);
-  assert.match(auth, /let firstWeek = false;/, 'unreadable means the block as it was');
-  assert.match(auth, /\n\s+firstWeek,\n\s+hasApiKey,/, 'reported on the user');
-  // The client reads only that flag, and exempts the demo payload.
-  assert.match(PANELS_RAW, /inFirstWeek\(panel\) \{\s+if \(panel && panel\.demo\) return false;\s+return !!\(window\.App && App\.user && App\.user\.firstWeek === true\);/);
-  assert.match(PANELS_RAW, /HomePanels\.inFirstWeek\(panel\) \? null : HomePanels\.challengesView\(panel\)/);
-  assert.match(PANELS_RAW, /THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS/);
+  assert.doesNotMatch(auth, /first_week|firstWeek/);
   // A boot paints from the snapshot; the verified user repaints, once loaded.
   assert.match(PANELS_RAW, /document\.addEventListener\('sv:session', \(\) => \{\s+if \(HomePanels\._data\) HomePanels\.render\(\);\s+\}\);/);
 });

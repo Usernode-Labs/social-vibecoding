@@ -85,6 +85,12 @@
       "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
     },
     {
+      "key": "SMALL_CHANGE_TAG_MODE",
+      "group": "Platform",
+      "default": "on",
+      "description": "The small-change tag, watch only: for each proposal head, rule-based vetoes and then one GLM 5.3 Flash call on the Homeroom bot's OpenRouter key decide whether the change is clearly small and undoable. Admins read the results at /api/admin/small-change-tags. Nothing about votes, merges, checks or cards depends on it. on (default): tag every head a checks run settles on. off: do nothing."
+    },
+    {
       "key": "LOG_LEVEL",
       "group": "Platform",
       "default": "INFO",
@@ -3293,7 +3299,7 @@
       "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon; B9: a message that asked Homeroom bot wears its Building chip for everyone",
       "path": "/?demo=1#messages/app/usernode-2d5619",
       "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):has([data-bot-request=building]):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
-      "expectText": "Building",
+      "expectText": "Homeroom bot is building this",
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/css/app.css"
@@ -4821,10 +4827,10 @@
       "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
     },
     {
-      "name": "Settings' Log out is a danger-tinted pill under the sections",
+      "name": "Settings' Sign out is a danger-tinted pill under the sections",
       "path": "/#settings/about",
       "expectSelector": "#settings-footer #settings-logout.rounded-full",
-      "expectText": "Log out"
+      "expectText": "Sign out"
     },
     {
       "name": "The notifications sheet is a lifted sheet whose title row carries a close disc, over a chip rail",

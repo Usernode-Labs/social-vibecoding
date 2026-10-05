@@ -83,7 +83,7 @@ import { describe as describeCommunity } from '../../workshop/community-scope';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
+import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
@@ -3878,7 +3878,20 @@ export function DevWorkshop(): ReactNode {
   // items' search no longer narrows the count, so it is not a condition:
   // #2915.) Named once because the empty note under it reads it too — see
   // EmptyNote.
-  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
+  //
+  // NOT WHILE HOMEROOM BOT BUILDS ITS FIRST VERSION (the hub's First version
+  // card). Before its description is filed as a request the board is empty
+  // too, and "The first change is yours to start" told its maker to start
+  // the change the bot was already making. The same goes for the hub's
+  // no-items note below.
+  const building = !!(community && community.first_version);
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped) && !building;
+  // A project nobody else is in (hubAlone): its hub leaves out the zeros a
+  // group's hub says (./hub-cards.tsx NothingToVote, hubWorkEmpty).
+  const alone = hubAlone(community);
+  const workEmpty = hubWorkEmpty({
+    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot),
+  });
 
   /* ── The band, and on All items its back bar ──
      The four tabs in the community's colour (ProjectBand), leading the
@@ -3981,13 +3994,19 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* ── First version: where Homeroom bot's build stands ──
+          Under the hero while the bot builds the project from its
+          description, so a new project's hub says what it is becoming and
+          how far along it is, and opens the bot's chat when the bot waits on
+          its maker. See ./hub-cards.tsx FirstVersionCard. */}
+      {slug ? <FirstVersionCard slug={slug} data={community} /> : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds;
           this says what to do about an app nobody has started on, and the
           product decision put it at the top of the page. See
           StartHereBanner for the three conditions. */}
       {startHere ? <StartHereBanner /> : null}
-      {v.emptyNote ? (
+      {v.emptyNote && !building ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
@@ -4004,18 +4023,20 @@ export function DevWorkshop(): ReactNode {
           project that is just yours and has nobody to talk to yet, the Share
           it card, which is how it grows; your own work, two rows and the
           rest in place; and Start a new change. See ./since-summary-card.tsx
-          and ./hub-cards.tsx. */}
+          and ./hub-cards.tsx. On a project nobody else is in, the vote
+          line and an empty Your work leave the zeros out (`alone`,
+          `workEmpty`). */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
         ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+      {v.mine && (v.mine.rows.length || (v.mine.viewer && workEmpty)) ? (
         <YourWorkCard
           rows={v.mine.rows}
           slug={slug}
@@ -4024,6 +4045,7 @@ export function DevWorkshop(): ReactNode {
           onToggleRow={(key) => toggleRow('mine', key)}
           all={workAll}
           onAll={() => setWorkAll(!workAll)}
+          empty={workEmpty}
         />
       ) : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯

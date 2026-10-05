@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
 
@@ -131,7 +132,9 @@ test('the Communities tab opens on the project the tour is about', () => {
 test('App._followInvite welcomes somebody the link has just let in, and lands anyone else as before', () => {
   const app = read('public/js/app.js');
   assert.match(app, /const fresh = standing\.joinedAt && Date\.now\(\) - Date\.parse\(standing\.joinedAt\) < 30 \* 60 \* 1000;\s+if \(fresh && welcome\(standing, standing\.slug\)\) return;\s+openHub\(standing\.slug\);/);
-  assert.match(app, /if \(welcome\(\{ \.\.\.standing, newAccount: false \}, result\.slug\)\) return;\s+toast\(`You joined \$\{result\.name \|\| name\}\.`\);/);
+  // Signed in before following it: an account that was already there,
+  // unless the join's answer says it is a test account on its first sign-in.
+  assert.match(app, /if \(welcome\(\{ \.\.\.standing, newAccount: result\.newAccount === true \}, result\.slug\)\) return;\s+toast\(`You joined \$\{result\.name \|\| name\}\.`\);/);
   const invites = read('src/services/community-invites.js');
   assert.match(invites, /joinedAt: appliedAt instanceof Date \? appliedAt\.toISOString\(\) : \(appliedAt \|\| null\),\s+newAccount,/);
 });
@@ -140,7 +143,7 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   const app = read('public/js/app.js');
   // The follow publishes whether it brought them in.
   assert.match(app, /async _followInvite\(token\) \{\s*App\._markNavigationVia\?\.\('handed'\);[\s\S]{0,400}App\._inviteFollow = new Promise\(\(resolve\) => \{ settle = resolve; \}\);\s+try \{/);
-  assert.match(app, /\} finally \{\s+settle\(joinedHere\);\s+\}\s+\},\s+_deepLinkTarget\(\) \{/);
+  assert.match(app, /\} finally \{\s+settle\(joinedHere\);\s+(?:\/\/[^\n]*\n\s*)*if \(held\) App\._endWelcomeHold\(\);\s+\}\s+\},/);
   assert.match(app, /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
   assert.match(app, /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
   // Join pressed on the link's page, then a password sign-in: no second ask.
@@ -168,7 +171,7 @@ test('a join from the confirm reads Home\'s challenges again before the welcome 
   assert.match(follow, /if \(!joined\.ok \|\| !result\.ok\) \{[^\n]*return; \}\s+joinedHere = true;\s+(?:\/\/[^\n]*\n\s*)*if \(result\.status === 'joined'\) window\.HomePanels\?\.ensureLoaded\?\.\(\{ force: true \}\);\s+if \(result\.slug\) \{\s+if \(welcome\(/,
     'after a join that went through, and before the welcome or the hub');
   const route = read('src/routes/community-invites.js');
-  assert.match(route, /if \(result\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+return res\.json\(result\);/,
+  assert.match(route, /if \(result\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+(?:\/\/[^\n]*\n\s*)*const newAccount = result\.status === 'joined' && await testAccounts\.onFirstRun\(pool, req\.user\.id\);\s+return res\.json\(\{ \.\.\.result, newAccount \}\);/,
     'the credit is written before the answer the refresh follows');
   const panels = read('frontend/src/features/home/home-panels.js');
   assert.match(panels, /ensureLoaded\(opts\) \{\s+const force = !!\(opts && opts\.force\);/, 'force skips the minute-long cache');
@@ -185,7 +188,262 @@ test('a link answers the join screen for the person it brings in', () => {
 test("You're in tells a new account what Homeroom is, and an existing one only where it is", () => {
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /'On Homeroom, communities make apps together\.'/);
-  assert.match(src, /`Someone makes an app for their group\. \$\{maker\} made this one\.`/);
+  assert.match(src, /`Someone makes an app for their group\. \$\{maker\} \$\{made\} this one\.`/);
+  // Nothing is made yet while its first version is on its way.
+  assert.match(src, /const made = info\.building \? 'is making' : 'made';/);
+  assert.match(src, /`\$\{maker \? `\$\{maker\} \$\{made\} it for the group\.` : 'It is the group\\'s own app\.'\} Have a look, then say hi\.`/);
+  assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
   assert.match(src, /existing \? `Welcome to \$\{info\.name\}\.`/);
   assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
+});
+
+// ── First-session run-through, 5 October 2026 ──────────────────────────
+
+test('the invited tour\'s App step says what the page behind it says, and the hub needs no possessive', () => {
+  const { invitedSteps, makerSteps, appStep, hubTitle } = loadTsx(`${DIR}/tour-steps.ts`);
+  // Page Turners was still being built: the page read "Page Turners is being
+  // built …" under a card that called it the group's app, to use any time.
+  const building = invitedSteps({ slug: 'page-turners', name: 'Page Turners', firstVersion: 'building' })[1];
+  assert.deepEqual([building.screen, building.target, building.title], ['app', '#app-content', 'Page Turners, being built']);
+  assert.equal(building.text, 'Homeroom bot is building its first version. Until it\'s ready, this shows how the build is going.');
+  const ready = invitedSteps({ slug: 'page-turners', name: 'Page Turners', firstVersion: 'ready' })[1];
+  assert.equal(ready.title, 'This is Page Turners');
+  assert.equal(ready.text, 'Its first version is ready to try, and goes live once the group approves it.');
+  for (const fv of [null, undefined]) {
+    const built = invitedSteps({ slug: 'page-turners', name: 'Page Turners', firstVersion: fv })[1];
+    assert.deepEqual([built.title, built.text], ['This is Page Turners', 'The group\'s app, made on Homeroom. Use it any time.']);
+  }
+  assert.deepEqual(appStep('X', 'building'), { title: 'X, being built', text: building.text });
+  // "Page Turners's hub": named without the possessive, on both paths.
+  assert.equal(hubTitle('Page Turners'), 'The Page Turners hub');
+  assert.equal(invitedSteps({ slug: 'p', name: 'Page Turners' })[4].title, 'The Page Turners hub');
+  assert.equal(makerSteps({ slug: 'p', name: 'Page Turners', conversationId: 3 })[4].title, 'The Page Turners hub');
+  const all = JSON.stringify([
+    ...invitedSteps({ slug: 'p', name: 'Page Turners', firstVersion: 'building' }),
+    ...invitedSteps({ slug: 'p', name: 'Page Turners', firstVersion: 'ready' }),
+    ...makerSteps({ slug: 'p', name: 'Page Turners', conversationId: 3 }),
+  ]);
+  assert.doesNotMatch(all, /Turners's|—/);
+});
+
+test('"You\'re in" reads where the first version stands, and hands it to the tour', () => {
+  const { firstVersionStage } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(firstVersionStage({ app: { first_version: { building: true, step: 3, of: 7, ready: false } } }), 'building');
+  assert.equal(firstVersionStage({ app: { first_version: { building: true, step: 6, of: 7, ready: true } } }), 'ready');
+  assert.equal(firstVersionStage({ app: { first_version: null } }), null);
+  assert.equal(firstVersionStage(null), null);
+  const src = read(`${DIR}/index.tsx`);
+  // The App tab's own read, past the service worker's cache, in an effect.
+  assert.match(src, /fetch\(madeAppUrl\(info\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
+  assert.match(src, /\.then\(\(body\) => \{ if \(live && body\) stage\.current = firstVersionStage\(body\); \}\)/);
+  assert.match(src, /onClick=\{\(\) => onGo\(stage\.current\)\}/);
+  assert.match(src, /setMode\(\{ kind: 'tour', info: \{ \.\.\.mode\.info, firstVersion \}, path: 'invited' \}\);/);
+  assert.match(src, /conversationId: mode\.info\.conversationId, firstVersion: mode\.info\.firstVersion,/);
+});
+
+test('"You\'re in" fills its middle with the project, as its invite showed it', () => {
+  const { JoinedPicture, joinPicture } = loadTsx(`${DIR}/joined-picture.tsx`);
+  const { createElement } = require('./lib/render-tsx');
+  const { renderToHtml } = require('./lib/render-tsx');
+  const draw = (props) => renderToHtml(createElement(JoinedPicture, { slug: 'page-turners', name: 'Page Turners', tile: '📚', ...props }));
+  // A project still without a picture of its own shows the featured card of
+  // its idea (./sketch-card.tsx), drawn from its words: nothing is fetched,
+  // so a link this join used up does not matter. "Being made" while its
+  // first version is on its way; compact (no points) for a new account.
+  const CARD = { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] };
+  const picture = joinPicture({ kind: 'sketch', url: null, darkUrl: null, card: CARD });
+  assert.deepEqual(picture, { kind: 'sketch', card: CARD });
+  const sketch = draw({ picture, building: true });
+  assert.match(sketch, /data-first-session-picture="sketch"/);
+  assert.match(sketch, /data-featured-card="ready"/);
+  assert.match(sketch, />Our little book club<\/p>/);
+  assert.match(sketch, />Pick the next book<\/span>/);
+  assert.match(sketch, />Being made<\/span>/);
+  assert.doesNotMatch(sketch, /<iframe|sketch\.html/);
+  const compact = draw({ picture, building: false, compact: true });
+  assert.match(compact, /h-\[88px\][\s\S]*h-\[84px\]/, 'the art and the tagline, 172px');
+  assert.doesNotMatch(compact, /Pick the next book|data-featured-card-stage|repeating-linear-gradient/, 'no points, and no pill once it is not being made');
+  assert.equal(joinPicture({ kind: 'sketch', card: null }), null, 'a sketch without a card is nothing');
+  // The Discover card's image, light and dark.
+  const art = draw({ picture: joinPicture({ kind: 'illustration', url: '/app-illustrations/1', darkUrl: '/app-illustrations/2' }) });
+  assert.match(art, /<img src="\/app-illustrations\/1" alt="Page Turners"[^>]*dark:hidden/);
+  assert.match(art, /<img src="\/app-illustrations\/2" alt="Page Turners"[^>]*hidden dark:block/);
+  // No picture: the invite page's own fallback, the tile and its one line.
+  const line = draw({ picture: null, description: 'A book club that meets monthly' });
+  assert.match(line, /data-first-session-picture="tile"/);
+  assert.match(line, />A book club that meets monthly<\/p>/);
+  assert.equal(draw({ picture: null, description: null }), '', 'nothing at all leaves the space as it was');
+  // Only same-origin paths of a kind it knows.
+  assert.equal(joinPicture({ kind: 'shot', url: 'https://evil.test/x' }), null);
+  assert.equal(joinPicture({ kind: 'sketch', url: '/api/apps/x/sketch.html' }), null, 'a framed page is no longer drawn');
+  assert.equal(joinPicture({ kind: 'video', url: '/x' }), null);
+  assert.equal(joinPicture(null), null);
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /<JoinedPicture slug=\{info\.slug\} name=\{info\.name\} picture=\{joinPicture\(info\.picture\)\} description=\{info\.description\} tile=\{tile\} building=\{!!info\.building\} compact=\{!existing\} \/>\s+<div className="grow" \/>/);
+  // Both ways in hand it over: the link's standing, and an accepted invite.
+  const app = read('public/js/app.js');
+  assert.match(app, /description: project\.description \|\| null,\s+picture: project\.picture \|\| null,/);
+  const collab = read('src/services/collab-invites.js');
+  assert.match(collab, /picture: communityInvites\.memberPicture\(row\.slug, picture\),/);
+  const invites = require('../src/services/community-invites');
+  assert.deepEqual(invites.memberPicture('page-turners', { kind: 'sketch', card: CARD }),
+    { kind: 'sketch', url: null, darkUrl: null, card: CARD });
+  assert.deepEqual(invites.memberPicture('x', { kind: 'illustration', id: 'a', darkId: null }),
+    { kind: 'illustration', url: '/app-illustrations/a', darkUrl: null });
+  assert.equal(invites.memberPicture('x', { kind: 'shot', artifactId: 'z' }), null, 'a shot is served only through a live link');
+  assert.equal(invites.memberPicture('x', null), null);
+});
+
+// ── No Home between the invite's sheet and "You're in" ─────────────────
+//
+// Evan, 5 October 2026: joining from an invite (its page, Join, the sheet)
+// showed Home for a moment before "You joined Geneva hike planner / You're
+// in", while the shell read the link's standing. App._followInvite now asks
+// the island for the welcome's frame in the tick the signed-in shell starts,
+// before it draws Home, as the make screen's hand-off does (#3894).
+
+const TOKEN = 'AAAAAAAAAAAAAAAAAAAAAA';
+
+/** App._followInvite (and _endWelcomeHold) from app.js, against stand-ins. */
+function followHarness({ fromLanding = true, pressed = false, standing }) {
+  const app = read('public/js/app.js');
+  const methods = app.slice(app.indexOf('  async _followInvite(token) {'), app.indexOf('\n  _deepLinkTarget() {'));
+  const events = [];
+  let answer = null;
+  const sandbox = {
+    console, Promise, setTimeout, clearTimeout, Date, JSON, encodeURIComponent,
+    location: { pathname: `/invite/${TOKEN}`, search: '' },
+    history: { replaceState() { events.push('address'); } },
+    sessionStorage: { getItem: () => (pressed ? `/invite/${TOKEN}` : null), removeItem() {} },
+    fetch: (url) => {
+      events.push(url.endsWith('/redeem') ? 'redeem' : 'standing');
+      if (url.endsWith('/redeem')) {
+        return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true, status: 'joined', slug: 'geneva', name: 'Geneva hike planner', newAccount: false }) });
+      }
+      return new Promise((resolve) => { answer = () => resolve({ status: 200, json: async () => standing }); });
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.UsernodeReact = {
+    firstSession: {
+      holdWelcome() { events.push('hold'); return true; },
+      endHold() { events.push('endHold'); },
+      welcome(info) { events.push(`welcome:${info.slug}`); return true; },
+    },
+  };
+  const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
+  Object.assign(App, {
+    _markNavigationVia() {},
+    _rootUrl: () => '/',
+    restoreFromHash() { events.push('home'); },
+    navigateToApp(slug) { events.push(`hub:${slug}`); },
+    _inviteSessionEnded() { events.push('ended'); },
+    _sessionFromSnapshot: false,
+    _inviteLandingToken: fromLanding ? TOKEN : null,
+  });
+  sandbox.App = App;
+  return { App, events, answer: () => answer() };
+}
+
+const JOINED = {
+  live: true, mine: 'joined', slug: 'geneva', joinedAt: new Date().toISOString(),
+  project: { name: 'Geneva hike planner', iconEmoji: '🥾' }, inviterName: 'Evan', inviterMadeIt: true, newAccount: true,
+};
+
+test('a sign-in from the invite\'s page holds "You\'re in"\'s frame up before the shell draws Home', async () => {
+  const run = followHarness({ standing: JOINED });
+  const done = run.App._followInvite(TOKEN);
+  // Synchronously, in the tick the signed-in shell starts: the frame, then
+  // the address and Home under it.
+  assert.deepEqual(run.events, ['hold', 'address', 'home'], 'held before Home is drawn');
+  await Promise.resolve();
+  run.answer();
+  await done;
+  assert.ok(run.events.indexOf('welcome:geneva') > run.events.indexOf('home'), 'the welcome fills the frame once the standing is read');
+  assert.equal(run.App._inviteLandingToken, null, 'the landing\'s mark is spent');
+});
+
+test('the held frame goes for every other ending, and before a confirm', async () => {
+  // Already a member: the hub, and the frame goes.
+  const member = followHarness({ standing: { ...JOINED, joinedAt: '2026-01-01T00:00:00.000Z' } });
+  let done = member.App._followInvite(TOKEN);
+  await Promise.resolve();
+  member.answer();
+  await done;
+  assert.deepEqual(member.events.filter((e) => e !== 'address'), ['hold', 'home', 'standing', 'hub:geneva', 'endHold']);
+
+  // Not in yet and Join not pressed on the page: the frame goes before the
+  // confirm is asked, never over it.
+  const ask = followHarness({ standing: { live: true, mine: null, slug: null, project: { name: 'Geneva hike planner' } } });
+  done = ask.App._followInvite(TOKEN);
+  await Promise.resolve();
+  ask.answer();
+  await done;
+  assert.ok(ask.events.indexOf('endHold') > -1 && ask.events.indexOf('endHold') < ask.events.indexOf('redeem'), ask.events.join(' '));
+
+  // Join pressed, then a password sign-in: no confirm, the welcome.
+  const pressed = followHarness({ pressed: true, standing: { live: true, mine: null, slug: null, project: { name: 'Geneva hike planner' } } });
+  done = pressed.App._followInvite(TOKEN);
+  await Promise.resolve();
+  pressed.answer();
+  await done;
+  assert.ok(pressed.events.indexOf('welcome:geneva') > pressed.events.indexOf('redeem'));
+  assert.ok(pressed.events.indexOf('endHold') === -1 || pressed.events.indexOf('endHold') > pressed.events.indexOf('welcome:geneva'),
+    'nothing takes the frame down before the welcome is in it');
+
+  // A link opened by somebody already signed in: nothing is held.
+  const opened = followHarness({ fromLanding: false, standing: JOINED });
+  done = opened.App._followInvite(TOKEN);
+  assert.deepEqual(opened.events, ['address', 'home']);
+  await Promise.resolve();
+  opened.answer();
+  await done;
+  assert.equal(opened.events.includes('hold'), false);
+});
+
+test('the island draws the held frame at once, and only the frame goes when the follow ends otherwise', () => {
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /holdWelcome\(\): boolean \{\s+let held = false;\s+flushSync\(\(\) => setMode\(\(prev\) => \{/);
+  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' \? \{ kind: 'none' \} : prev\)\);/);
+  assert.match(src, /if \(mode\.kind === 'held'\) return <WelcomeHeld \/>;/);
+  // The landing marks the link it showed signed out.
+  const app = read('public/js/app.js');
+  assert.match(app, /App\._inviteLandingToken = inviteToken;\s+AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
+  // The frame is "You're in"'s own ground, so the welcome arrives on it.
+  const { WelcomeHeld } = loadTsx(`${DIR}/index.tsx`);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const html = renderToHtml(createElement(WelcomeHeld));
+  assert.match(html, /data-first-session-welcome="held"/);
+  assert.match(html, /class="fixed inset-0 z-\[9000\] flex flex-col overflow-y-auto/);
+  assert.match(html, /background:var\(--home-wallpaper, #f4f2e4\)/);
+  assert.match(html, /role="status">Opening your invite</);
+});
+
+test('"You\'re in", drawn: the project under the welcome, and "is making" while it is built', () => {
+  const saved = global.window;
+  global.window = { App: { user: { username: 'priya', displayName: 'Priya' } } };
+  try {
+    const { YoureIn } = loadTsx(`${DIR}/index.tsx`);
+    const { renderToHtml, createElement } = require('./lib/render-tsx');
+    const info = {
+      slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', inviterName: 'Alex', inviterMadeIt: true,
+      building: true, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] } },
+    };
+    const existing = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: false }, onGo() {} }));
+    assert.match(existing, />Alex is making it for the group\. Have a look, then say hi\.</);
+    // The sketch sits between the welcome and the button, and the spacer after it.
+    const sketch = existing.indexOf('data-first-session-picture="sketch"');
+    assert.ok(sketch > existing.indexOf('Have a look, then say hi.') && sketch < existing.indexOf('Go to Page Turners'));
+    assert.match(existing, /data-featured-card="ready"/);
+    assert.match(existing, />Pick the next book<\/span>/, 'the whole card, with room for it');
+    const fresh = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: true }, onGo() {} }));
+    assert.match(fresh, />Someone makes an app for their group\. Alex is making this one\.</);
+    assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('How it works'));
+    assert.doesNotMatch(fresh, /Pick the next book/, 'compact under "How it works": the art and the tagline');
+    const made = renderToHtml(createElement(YoureIn, { info: { ...info, building: false, picture: null, description: 'A book club' }, onGo() {} }));
+    assert.match(made, />Alex made it for the group\./);
+    assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);
+  } finally {
+    global.window = saved;
+  }
 });

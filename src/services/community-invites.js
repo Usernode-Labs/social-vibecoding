@@ -477,6 +477,9 @@ async function memberCount(db, communityId) {
  *                   while the link is live.
  *   'illustration'  the Discover card's image, which its group chose to show
  *                   (and is already served to anyone by its id).
+ *   'sketch'        WP-D: while it is built, the featured card its maker was
+ *                   shown (services/app-sketch.js): its emoji, tagline and
+ *                   points, which the page draws itself.
  *
  * A project with neither shows its icon and description instead.
  */
@@ -501,30 +504,15 @@ async function pictureFor(db, appId) {
     [appId]
   );
   if (ill[0]) return { kind: 'illustration', id: ill[0].id, darkId: ill[0].dark_id || null };
-  // WP-D: a project still being built has no shot yet; the sketch its maker
+  // WP-D: a project still being built has no shot yet; the card its maker
   // was shown (services/app-sketch.js) stands in for it.
   const { rows: sketch } = await db.query(
-    `SELECT 1 FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+    `SELECT design FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
     [appId]
   );
-  if (sketch[0]) return { kind: 'sketch' };
+  const card = sketch[0] ? require('./app-sketch').cardOf(sketch[0].design) : null;
+  if (card) return { kind: 'sketch', card };
   return null;
-}
-
-/**
- * WP-D: the sketch page a live link's picture frames, as the project's own
- * sketch route serves it, or null: the link must be live and its project's
- * picture must be the sketch.
- */
-async function sketchPage(pool, token, { theme = null } = {}) {
-  const invite = await loadInvite(pool, token);
-  if (deadReason(invite)) return null;
-  const picture = await pictureFor(pool, invite.app_id);
-  if (!picture || picture.kind !== 'sketch') return null;
-  const appSketch = require('./app-sketch');
-  const row = await appSketch.readSketch(pool, invite.app_id);
-  if (appSketch.sketchStatus(row) !== 'ready') return null;
-  return appSketch.sketchDocument({ name: invite.name || invite.slug, design: row.design, html: row.html, theme });
 }
 
 /**
@@ -547,12 +535,63 @@ async function pictureBytes(pool, token) {
 function pictureUrls(token, picture) {
   if (!picture) return null;
   if (picture.kind === 'shot') return { kind: 'shot', url: `/api/public/invites/${token}/picture`, darkUrl: null };
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: `/api/public/invites/${token}/sketch.html`, darkUrl: null };
+  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
   return {
     kind: 'illustration',
     url: `/app-illustrations/${picture.id}`,
     darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
   };
+}
+
+/**
+ * Whether the project's first version is still on its way: Homeroom bot
+ * builds it (homeroom_bot_first_versions) and no proposal for it has merged,
+ * the first gate of homeroom-bot-dm.js firstVersionState without its
+ * progress reads. While it is, the project is being made, not made: "Maya
+ * is making Page Turners" on the invite page, its link preview, the
+ * signed-in confirm and "You're in" (first-session run-through, 5 October
+ * 2026). False for a project made any other way, and for a read that fails:
+ * that is the line as it was.
+ */
+async function firstVersionPending(db, appId) {
+  try {
+    const { rows } = await db.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM homeroom_bot_first_versions f
+          WHERE f.app_id = $1 AND f.bot_builds = TRUE AND f.status IN ('waiting', 'filing', 'filed')
+            AND NOT EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+                JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+               WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+            )
+       ) AS pending`,
+      [appId]
+    );
+    return rows[0]?.pending === true;
+  } catch (err) {
+    log.warn('invites', 'Could not read whether a first version is on its way', { appId, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * The same picture for somebody who has just joined, at addresses that need
+ * no link ("You're in", frontend/src/features/first-session): the card of
+ * the idea, as words the screen draws itself, and the Discover card's image,
+ * which anyone may see. An after-shot is served only through a live link,
+ * so a member is shown none here. Null for no picture.
+ */
+function memberPicture(slug, picture) {
+  if (!picture || !slug) return null;
+  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
+  if (picture.kind === 'illustration') {
+    return {
+      kind: 'illustration',
+      url: `/app-illustrations/${picture.id}`,
+      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
+    };
+  }
+  return null;
 }
 
 /**
@@ -567,9 +606,10 @@ async function preview(pool, token) {
   const invite = await loadInvite(pool, token);
   const reason = deadReason(invite);
   if (reason) return { live: false, reason };
-  const [count, picture] = await Promise.all([
+  const [count, picture, building] = await Promise.all([
     memberCount(pool, invite.community_id),
     pictureFor(pool, invite.app_id),
+    firstVersionPending(pool, invite.app_id),
   ]);
   return {
     live: true,
@@ -583,8 +623,11 @@ async function preview(pool, token) {
     },
     inviter: invite.inviter || null,
     inviterName: invite.inviter_display_name || invite.inviter || null,
-    // The person who sent it made the project: "Maya made Run Tracker".
+    // The person who sent it made the project: "Maya made Run Tracker", or,
+    // while its first version is on its way (`building`), "Maya is making
+    // Run Tracker".
     inviterMadeIt: invite.created_by != null && invite.created_by === invite.app_created_by,
+    building,
     note: invite.note || null,
     memberCount: count,
     expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
@@ -621,14 +664,16 @@ async function standing(pool, token, user) {
   // old link: only the first gets "You're in".
   const appliedAt = inIt && rows[0]?.status === 'joined' ? rows[0].applied_at : null;
   // Whether the account is about as old as its joining: made by the sign-up
-  // this link opened, so "You're in" tells it what Homeroom is.
+  // this link opened, so "You're in" tells it what Homeroom is. A test
+  // account, made ahead by an admin, is new on its first sign-in instead
+  // (test-accounts.js onFirstRun).
   let newAccount = false;
   if (appliedAt) {
     const { rows: u } = await pool.query(
       `SELECT created_at >= $2::timestamptz - INTERVAL '1 hour' AS fresh FROM users WHERE id = $1`,
       [user.id, appliedAt]
     );
-    newAccount = !!u[0]?.fresh;
+    newAccount = !!u[0]?.fresh || await require('./test-accounts').onFirstRun(pool, user.id, appliedAt);
   }
   return {
     ...base,
@@ -641,7 +686,9 @@ async function standing(pool, token, user) {
 
 /**
  * Follow a link as `user` ({ id, isAdmin, hasPlatformAccess }). One
- * transaction, the link's row locked for its use count.
+ * transaction, the link's row locked for its use count. `browser` is the
+ * browser it was followed from (invite-activity.browserFrom), for the
+ * maker's open notice.
  *
  * Returns `{ ok: true, status, slug, name, skippedWaitlist }`:
  *   status 'joined'  in the project now (slug set);
@@ -649,7 +696,7 @@ async function standing(pool, token, user) {
  *          'queued'  no platform access yet: joins when let in (no slug);
  * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
  */
-async function redeem(pool, { token, user }) {
+async function redeem(pool, { token, user, browser = null }) {
   if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
   if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
   // Read before taking a connection: the switch has its own (cached) read.
@@ -734,8 +781,9 @@ async function redeem(pool, { token, user }) {
       void require('./homeroom-bot-dm').greetJoiner(pool, {
         user, app: { id: invite.app_id, slug: invite.slug, name: invite.name },
       });
-      // WP-E: the link's maker hears who came in by it.
-      void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user });
+      // WP-E: the link's maker hears who came in by it, and the open that
+      // brought them (from this browser, maybe signed out) is not news now.
+      void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user, browser });
     }
     events.record(pool, {
       type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
@@ -870,7 +918,8 @@ async function redeemCarried(pool, req, res, userId) {
     );
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
-    const result = await redeem(pool, { token, user });
+    const browser = require('./invite-activity').browserFrom(req);
+    const result = await redeem(pool, { token, user, browser });
     if (!result.ok) return null;
     return { name: result.name, status: result.status, slug: result.slug };
   } catch (err) {
@@ -886,7 +935,9 @@ module.exports = {
   NOTE_MAX,
   cleanNote,
   pictureBytes,
-  sketchPage,
+  pictureFor,
+  memberPicture,
+  firstVersionPending,
   joiningRule,
   joiningRuleText,
   NO_LIMIT,

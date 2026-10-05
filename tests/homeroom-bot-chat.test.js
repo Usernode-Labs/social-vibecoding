@@ -64,11 +64,17 @@ test('B9: the room hands a mention over after it is stored, and only from the ma
 test('B9: the chip and the card', () => {
   const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   const chip = (status, extra = {}) => renderToHtml(createElement(BotStatusChip, { chip: { status, issueNumber: 4, sessionId: null, ...extra } }));
-  assert.match(chip('reading'), /data-bot-request="reading"[^>]*>.*👀.*Reading/);
-  assert.match(chip('building'), /🔨.*Building/);
-  assert.match(chip('live'), /✅.*Live/);
-  assert.match(chip('ready', { sessionId: 9 }), /<button[^>]*data-bot-request="ready"[^>]*>.*Try it/);
-  assert.ok(!/<button/.test(chip('reading')), 'nobody but its asker taps Reading');
+  // 5 October 2026: each chip says in words who has the message and what it
+  // is doing, so the room can tell the bot took it (it said "👀 Reading").
+  assert.match(chip('reading'), /data-bot-request="reading"[^>]*aria-label="Homeroom bot is looking at this"[^>]*>.*👀.*Homeroom bot is looking at this/);
+  assert.match(chip('building'), /aria-label="Homeroom bot is building this"[^>]*>.*🔨.*Homeroom bot is building this/);
+  assert.match(chip('fixing', { sessionId: 9 }), /aria-label="Homeroom bot is fixing this"[^>]*>.*🔧.*Homeroom bot is fixing this/);
+  assert.match(chip('live'), /aria-label="Homeroom bot built this, and it’s live"[^>]*>.*✅.*Live</);
+  assert.match(chip('ready', { sessionId: 9 }), /<button[^>]*data-bot-request="ready"[^>]*>.*▶.*Try it/);
+  for (const status of ['reading', 'building', 'fixing', 'live']) {
+    assert.doesNotMatch(chip(status), />(Reading|Building|Fixing)</, `${status}: no bare one-word chip`);
+  }
+  assert.ok(!/<button/.test(chip('reading')), 'nobody but its asker taps the chip');
   assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'building', issueNumber: 4, sessionId: null }, mine: true })), /<button/);
   assert.equal(cardWords({ kind: 'filed', title: 'Add a Sunday reminder', typicalMinutes: 8 }), 'Got it: Add a Sunday reminder. Usually about 8 minutes.');
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.');
@@ -308,5 +314,5 @@ test('B9: the staging demo seeds one chat request wearing its Building chip, onc
   assert.equal(check.path, '/?demo=1#messages/app/usernode-2d5619');
   assert.match(check.expectSelector, /#gc-messages:has\(\.gc-msg\):has\(\[data-bot-request=building\]\)/);
   assert.ok(check.expectSelector.length <= 256, 'within the capture runner\'s selector cap');
-  assert.equal(check.expectText, 'Building');
+  assert.equal(check.expectText, 'Homeroom bot is building this');
 });

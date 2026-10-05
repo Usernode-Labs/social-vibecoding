@@ -1511,11 +1511,11 @@ Respond with ONLY a JSON object: {"description": "..."}. No prose before or afte
   return { description: description.slice(0, max), usage: resp.usage, model };
 }
 
-// The first session's sketch of a new project's main screen
-// (services/app-sketch.js owns the prompt, the parse and the sanitizer).
-// One helper call; this only sends it and hands back the reply's text.
-// THROWS with no key or on a provider error; the caller records a failed
-// sketch and the made screen carries on without one.
+// The first session's sketch, a featured card of a new project's idea
+// (services/app-sketch.js owns the prompt and the parse). One helper call;
+// this only sends it and hands back the reply's text. THROWS with no key or
+// on a provider error; the caller makes the card from the description
+// instead.
 async function generateAppSketch({ system, user, model = 'claude-haiku-4-5', maxTokens = 4000, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');

@@ -58,6 +58,7 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
+const { withoutEmDashes } = require('./em-dashes');
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
@@ -373,18 +374,20 @@ const FIRST_VERSION_NOTE = [
   'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
   'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
   'bread app) and a rough layout. The spec settles the details; never ask about them.',
-  // The first session's sketch (services/app-sketch.js): when the request
-  // names one, its creator has already seen this screen.
-  'When the request names a design target (`design/sketch.html`, described in `design/sketch.json`), its creator has',
-  'already seen that screen: plan the first version as it, with its job, layout, words and accent, and list any change',
-  'under `assumptions` with the reason.',
+  // The first session's card (services/app-sketch.js): when the request
+  // quotes it, its creator has seen a summary of the idea, never a screen.
+  // Until 5 October 2026 it was a mock of the main screen, and this said to
+  // plan the first version as that screen.
+  'When the request quotes the featured card its creator was shown (`design/sketch.json`: an emoji, a tagline and a',
+  'few points), read it as a short summary of the description, not a design: it shows no screen, so it sets no layout,',
+  'words or colours, and where the two differ the description wins.',
   // 2026-10-04: a sketch's made-up flatmates became a plan's question ("The
   // sketch rotates chores between Maya, Jasper and Sophie. Should you be in
   // the rotation too?") on a project of two real people.
-  'The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the',
-  'group, and never a `plan` bullet or a `choices` question. When the app involves the people in its group (whose turn',
-  'it is, who did what, who sees what), plan around the project\'s real members, listed under WHO IS IN THIS PROJECT',
-  'when known, and around new members joining later; never around people the sketch made up.',
+  'Sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a',
+  '`choices` question. When the app involves the people in its group (whose turn it is, who did what, who sees what),',
+  'plan around the project\'s real members, listed under WHO IS IN THIS PROJECT when known, and around new members',
+  'joining later; never around people made up for an example.',
   // B6: the creator sees the plan before anything is built, and taps Build
   // it or asks for changes (homeroom-bot-dm.js sendPlanCard).
   'Its creator sees your plan before anything is built, and taps Build it or asks for changes. So with `ready`, also',
@@ -1051,7 +1054,33 @@ function planQuestions(raw) {
   return out;
 }
 
+/**
+ * 5 Oct 2026: what a verdict says to people (its question and the answers
+ * to tap, a first version's plan, why a person should decide or why there
+ * is nothing to build) without em dashes, whatever the model wrote
+ * (em-dashes.js). Pure.
+ */
+function plainVerdict(v) {
+  if (!v) return v;
+  const plain = (t) => (typeof t === 'string' ? withoutEmDashes(t) : t);
+  return {
+    ...v,
+    question: plain(v.question),
+    questionDefault: plain(v.questionDefault),
+    questionAnswers: Array.isArray(v.questionAnswers) ? v.questionAnswers.map(plain) : v.questionAnswers,
+    plan: v.plan ? {
+      bullets: v.plan.bullets.map(plain),
+      questions: v.plan.questions.map((q) => ({ question: plain(q.question), answers: q.answers.map(plain) })),
+    } : v.plan,
+    reason: plain(v.reason),
+  };
+}
+
 function parseVerdict(text) {
+  return plainVerdict(readVerdict(text));
+}
+
+function readVerdict(text) {
   const raw = String(text || '');
   const candidates = [];
   let m;
@@ -1744,7 +1773,7 @@ const PROJECT_MEMBERS_SHOWN = 12;
 
 /**
  * 2026-10-04: who is in a first version's project, so its plan is about
- * them. The sketch it was drawn from shows sample people, and a plan that
+ * them. The sketch it was drawn from showed sample people, and a plan that
  * could not see the real ones planned around those: it asked a project of
  * two whether its creator should join the sketch's three made-up flatmates
  * in the rota. Pure; null says nothing (no roster, or an empty one), which
@@ -4569,8 +4598,17 @@ async function runFollowUp(pool, config, {
     });
     await recordSnapshot(runId);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    log.warn('homeroom-bot', 'Follow-up said it revised, but the change did not move', {
+      app: app.slug, issueNumber, sessionId: session.id, why, runId,
+    });
     const postedAt = [];
-    await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
+    // What happened in plain words, and how to start it again; the record
+    // (`why`) stays on the run and in the line above (followup.revisionFailedText).
+    // The requester hears it in their DM too, with the change's card.
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
+      dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
+    })
       .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,

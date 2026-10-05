@@ -165,7 +165,8 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.equal(body.first_version, undefined, 'nothing at the top of the answer: what the made screen used to read');
     const fv = body.app.first_version;
     assert.equal(fv.mine, true);
-    assert.deepEqual([fv.step, fv.of, fv.stepName, fv.ready], [3, 7, 'Write a plan', false]);
+    // Its creator's turn, said as theirs (homeroom-bot-dm.js planWaitsStepName).
+    assert.deepEqual([fv.step, fv.of, fv.stepName, fv.ready], [3, 7, 'Your turn: answer the plan', false]);
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.ok(Number.isInteger(fv.plan.actionId), 'an action to decide, as a number');
     assert.equal(fv.plan.actionId, card.meta.actionId);
@@ -179,7 +180,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       messageId: Number(card.id),
       conversationId: Number(card.conversation_id),
     });
-    assert.equal(buildLine(read.firstVersion, read.status, true), 'Step 3 of 7: Write a plan');
+    assert.equal(buildLine(read.firstVersion, read.status, true), 'Step 3 of 7: Your turn: answer the plan');
   });
 
   await t.test('another member reads the step, never the plan', async () => {
@@ -189,6 +190,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       assert.equal(read.firstVersion.mine, false);
       assert.equal(read.firstVersion.plan, undefined);
       assert.equal(waitingPlan(read.firstVersion), null);
+      assert.equal(read.firstVersion.stepName, `Waiting for @${alex.username} to answer the plan`, 'whose turn it is');
     } finally {
       viewer = alex;
     }
@@ -201,6 +203,15 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     const read = madeAppOf(await get());
     assert.equal(read.firstVersion.plan, undefined);
     assert.equal(waitingPlan(read.firstVersion), null);
-    assert.equal(read.firstVersion.step, 3, 'its build waits its turn on the same step');
+    // Build it was the plan's answer: what follows is the build to its maker,
+    // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October
+    // 2026), and the bot's own account of it says building, not "writing the
+    // plan for the build".
+    assert.deepEqual([read.firstVersion.step, read.firstVersion.stepName], [4, 'Build it'], 'its build waits its turn on the build\'s step');
+    const { rightNow } = await progress.progressFor(pool, { userId: alex.id, facts: false });
+    const mine = rightNow.find((e) => e.firstVersion);
+    assert.ok(mine, 'the first version is in progress');
+    assert.deepEqual([mine.step, mine.stepName], [4, 'Build it']);
+    assert.doesNotMatch(String(mine.doing), /plan/);
   });
 });

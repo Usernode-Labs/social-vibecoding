@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -183,7 +183,8 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /disabled=\{busy\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(src, /disabled=\{!valid/);
-  assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\);\s+return;\s+\}/);
+  // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
+  assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
   assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
   // The placeholder reads as an example, not as a name already given.
   assert.match(src, /placeholder="For example, Sunday Run Club"/);
@@ -208,33 +209,106 @@ test('the description and the name are one sequence: Return says next and goes o
   assert.match(fields[1], /enterKeyHint="go"/i);
   assert.match(form, /<button[^>]*type="submit"/, 'Return in the name submits the form');
   // Return in the description moves on; Shift+Return and an IME's Return do not.
-  assert.match(src, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s+e\.preventDefault\(\);\s+nameRef\.current\?\.focus\(\);/);
+  assert.match(src, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s+e\.preventDefault\(\);\s+nameRef\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(src, /ref=\{nameRef\}\s+id="first-session-name"/);
 });
 
-test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it with the kit\'s avoidance', () => {
+test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
   const src = read(`${DIR}/make.tsx`);
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
-  assert.match(root, /class="fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.match(root, /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
   // The bar (with the status bar's inset) comes first, then the scroller holding the form.
   const bar = html.indexOf('pt-[env(safe-area-inset-top)]');
   const scroller = html.indexOf('data-first-session-make-scroll=""');
   assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
   assert.match(html, /<div data-first-session-make-scroll="" class="flex min-h-0 grow flex-col overflow-y-auto">\s*<form/);
-  // The kit's keyboard avoidance, with this screen's bar as its top: a tapped
-  // field is focused without the browser's pan and revealed once below it.
-  assert.match(src, /import \{ useComposerKeyboard \} from '\.\.\/\.\.\/lib\/composer-keyboard';/);
-  assert.match(src, /useComposerKeyboard\(scrollerRef, barRef\);/);
+  // 5 Oct 2026 (iOS Safari): the screen is a keyboard surface, padded into
+  // the band of the page that is visible while the keys are up (app.css
+  // `.platform-kb-surface`), and its fields are lib/keyboard-surface.ts's: a
+  // tap focuses without iOS's pan, and the focused field is revealed inside
+  // the scroller with Make it under it when they fit. The scroller is what
+  // the surface reveals in; the bar is above it, outside it.
+  assert.match(src, /import \{ useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
+  assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
+  assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
+  assert.match(src, /useEffect\(\(\) => \{ briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
   // The bar holds the whole mark under the status bar's inset (on a notched
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
-  assert.match(src, /<div ref=\{barRef\} className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
-  // The kit adds its class to the scroller, so React must never rewrite it.
+  assert.match(src, /<div className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
   assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+});
+
+// Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
+// his own description over it.
+test('typing their own words into "What should it do?" lets go of the example; the name it filled stays theirs', () => {
+  const src = read(`${DIR}/make.tsx`);
+  // The description's onChange drops the example the moment its text is not
+  // the example's own.
+  assert.match(src, /onChange=\{\(e\) => \{\s+const next = e\.target\.value;\s+setBrief\(next\);\s+\/\/[^\n]*\n\s+if \(picked && next !== picked\.brief\) setPicked\(null\);/);
+  // The chip is marked from `picked` alone, so it is unmarked with it.
+  assert.match(src, /const on = picked\?\.key === e\.key;/);
+  assert.match(src, /aria-pressed=\{on\}/);
+  // Make it sends the example's description only while it is still picked
+  // and its brief untouched.
+  assert.match(src, /const example = picked && brief\.trim\(\) === picked\.brief \? picked : null;/);
+  // The name field is not cleared by letting go of the example.
+  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf('placeholder="A tracker'));
+  assert.doesNotMatch(onChange, /setName\(/);
+
+  // Executed against a React it can step by hand: pick an example, type over
+  // it, and no chip is pressed any more; the name stays.
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const chips = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+  let tree = draw();
+  const first = chips(tree)[0];
+  first.props.onClick();
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the example is chosen');
+  const prefilled = nameField(tree).props.value;
+  assert.ok(prefilled, 'and it filled in the name');
+  brief(tree).props.onChange({ target: { value: `${brief(tree).props.value} and our own twist` } });
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0, 'their own words let go of it');
+  assert.equal(nameField(tree).props.value, prefilled, 'the name it filled stays theirs');
+  // Typing the example's own words back does not choose it again by itself.
+  slots = [];
+  tree = draw();
+  chips(tree)[1].props.onClick();
+  tree = draw();
+  brief(tree).props.onChange({ target: { value: brief(tree).props.value } });
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the same text is not their own words');
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
@@ -258,7 +332,19 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
   assert.equal(require('../src/services/community-invites').NO_LIMIT, 0);
   assert.match(src, /Anyone with the link can join, until you turn it off\./);
-  assert.match(src, /setRule\(data\.joiningRule\)/);
+  // Evan, 5 October 2026: the first invite is a link and nothing else. No
+  // invite by username (somebody brand new knows nobody on Homeroom yet), and
+  // no joining-rule line ("With one other person using it, a change goes
+  // live when you both say yes, …"): both stay in the project's own invite
+  // pane (features/app-context/invite-pane.tsx).
+  assert.doesNotMatch(src, /joiningRule|setRule|Invite by username|\/invites`/);
+  const sheet = renderToHtml(createElement(made.InviteSheet, {
+    made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
+    me: 'alex', onClose() {}, onSent() {},
+  }));
+  assert.match(sheet, />Share link</);
+  assert.doesNotMatch(sheet, /username|say yes|goes live/i);
+  assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
   assert.match(src, /Your note is also your first message in the group chat\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
@@ -278,6 +364,82 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
   assert.equal(without[4].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
+});
+
+// 5 October 2026 (Evan, on his phone): 7 of 7 cut the bot's messages out of
+// the dim and left the conversation's header ("Homeroom bot AI · <Project>
+// needs you", the clock and ⋯) under it, and the newest card began part-way
+// down, with bullets and no "Here's my plan for …". He read it as the chat
+// missing its header.
+test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the newest card from its top', () => {
+  const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const chat = steps[6];
+  assert.equal(chat.title, 'Your chat with Homeroom bot');
+  assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
+  assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
+  // One cut-out round both (index.tsx targetBox draws a selector list as one box).
+  assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
+  assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
+  assert.equal(chat.place, 'bottom');
+  assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
+  // The other steps are as they were, and only this one moves a transcript.
+  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-content', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  ]);
+  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, true]);
+  // The Messages screen draws what it names: a direct conversation's section,
+  // whose first child is its header (none when embedded in a hub, which the
+  // bot's chat never is), its scroller, and an <article> per message.
+  const messages = read('frontend/src/features/messages/index.tsx');
+  assert.match(messages, /const kind = snap\.active\?\.kind \|\| 'direct';/);
+  assert.match(messages, /<section className=\{`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-\$\{kind\}[^`]*`\}[^>]*>\s*\{embedded \? null : <ThreadHeader \/>\}/);
+  assert.match(messages, /function ThreadHeader\(\) \{[\s\S]*?return \(\s*<header className="messages-thread-header">/);
+  assert.match(messages, /<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">/);
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /<article id=\{`messages-message-\$\{message\.id\}`\} data-message-id=\{message\.id\} className=\{`messages-message group /);
+});
+
+test('the newest card is shown from its top: scrolled back just far enough, never forward', () => {
+  const { scrollBackFor, showNewestFromTop } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(scrollBackFor(120, 60), 68, 'its first line above the transcript: back to 8px under its top');
+  assert.equal(scrollBackFor(120, 128), 0);
+  assert.equal(scrollBackFor(120, 400), 0, 'lower down is in view: never forward');
+  assert.equal(scrollBackFor(120, 119.5), 9, 'whole pixels, rounded up');
+
+  const box = (top, height = 40) => ({ getBoundingClientRect: () => ({ top, height }) });
+  const transcript = ({ top = 120, height = 500, scrollTop = 900, rows = [] } = {}) => {
+    const el = { scrollTop, ...box(top, height), querySelectorAll: (sel) => { el.asked = sel; return rows; } };
+    return el;
+  };
+  const rootOf = (...scrollers) => ({ querySelectorAll: (sel) => { rootOf.asked = sel; return scrollers; } });
+  const spec = { scroller: '.messages-thread-direct > .messages-thread-scroll', rows: 'article.messages-message' };
+
+  // The plan card, newest and taller than the space: its top 60px above.
+  const hidden = transcript({ height: 0, rows: [box(-400)] });
+  const shown = transcript({ rows: [box(-300), box(60, 700)] });
+  assert.equal(showNewestFromTop(spec, rootOf(hidden, shown)), true);
+  assert.equal(rootOf.asked, spec.scroller);
+  assert.equal(shown.asked, spec.rows);
+  assert.equal(shown.scrollTop, 900 - 68, 'the visible transcript, not one drawn nowhere');
+  assert.equal(hidden.scrollTop, 900);
+  // Already from its top, a short newest message, nothing loaded yet, or no
+  // transcript at all: nothing moves.
+  const fits = transcript({ rows: [box(130)] });
+  assert.equal(showNewestFromTop(spec, rootOf(fits)), false);
+  assert.equal(fits.scrollTop, 900);
+  assert.equal(showNewestFromTop(spec, rootOf(transcript({ rows: [box(520)] }))), false);
+  assert.equal(showNewestFromTop(spec, rootOf(transcript())), false);
+  assert.equal(showNewestFromTop(spec, rootOf()), false);
+  // Never past the transcript's start.
+  const near = transcript({ scrollTop: 20, rows: [box(-200, 900)] });
+  assert.equal(showNewestFromTop(spec, rootOf(near)), true);
+  assert.equal(near.scrollTop, 0);
+
+  // Each frame, before the cut-out is measured, so the ring is drawn round
+  // what it shows, and it holds when the rows arrive after the step lands.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const b = targetBox\(stepRef\.current\.target\);/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

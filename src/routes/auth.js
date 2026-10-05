@@ -736,15 +736,6 @@ function authRoutes(config) {
     // that is due it; FALSE when the whole lookup fails, which leaves the
     // join screen as it was.
     let storyFirstSession = false;
-    // THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS (first-session
-    // plan, 2026-10-04). TRUE while the account is less than seven days old.
-    // Home's Challenges block hides itself while it is true
-    // (frontend/src/features/home/home-panels.js inFirstWeek): a newcomer
-    // meets the people and the projects first, and the season's points wait
-    // for week two. Decided HERE, by the database's clock against the row's
-    // own created_at, never by the device's clock. Same failure direction as
-    // the flags above: unreadable means FALSE, which is the block as it was.
-    let firstWeek = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -755,7 +746,6 @@ function authRoutes(config) {
                   AND u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
-                (u.created_at > NOW() - INTERVAL '7 days') AS first_week,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -785,7 +775,6 @@ function authRoutes(config) {
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
-      firstWeek = rows[0]?.first_week === true;
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
@@ -901,10 +890,6 @@ function authRoutes(config) {
         // tour counts it done when this OR the browser's own flag says so
         // (frontend/src/features/home/tour/tour-done.ts).
         tourDone,
-        // The account is in its first seven days: the first chapter, which
-        // has no points, so Home draws no Challenges block (see `firstWeek`
-        // above). The Challenges screen itself is unchanged.
-        firstWeek,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a

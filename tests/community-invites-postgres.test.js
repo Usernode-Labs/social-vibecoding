@@ -73,7 +73,14 @@ async function connectPool() {
     -- What the page's picture reads (community-invites.js pictureFor).
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER, merged_at TIMESTAMPTZ,
-      shots_state TEXT, shots_run_id TEXT);
+      shots_state TEXT, shots_run_id TEXT, status TEXT);
+    -- Whether its first version is on its way: "Maya is making …"
+    -- (community-invites.js firstVersionPending).
+    CREATE TABLE homeroom_bot_first_versions (
+      app_id INTEGER PRIMARY KEY, bot_builds BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'waiting', issue_number INTEGER);
+    CREATE TABLE homeroom_bot_runs (
+      id SERIAL PRIMARY KEY, app_id INTEGER, issue_number INTEGER, proposal_session_id INTEGER);
     CREATE TABLE shot_runs (id TEXT PRIMARY KEY, state TEXT NOT NULL);
     CREATE TABLE shot_artifacts (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL,
@@ -166,6 +173,7 @@ test('invite links against a real PostgreSQL', async (t) => {
         { live: true, name: 'Arena', inviter: 'ada', memberCount: 1 },
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
+      assert.equal(preview.building, false, 'no first version on its way: made, not being made');
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {
@@ -321,23 +329,25 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked', 'until it is turned off');
     });
 
-    await t.test('WP-D: a project with no shot yet shows its sketch through a live link, and only then', async () => {
+    await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {
       const arena = await app('arena');
       const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });
       assert.equal((await invites.preview(pool, made.link.token)).project.picture, null);
-      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'no sketch yet');
       await pool.query(`INSERT INTO app_sketches (app_id, status, created_at) VALUES (1, 'pending', NOW())`);
-      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'one being drawn is not shown');
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'one being made is not shown');
+      // A screen mock from before the card is not shown either.
       await pool.query(`UPDATE app_sketches SET status = 'ready', design = $1, html = $2 WHERE app_id = 1`,
-        [JSON.stringify({ job: 'Run the arena', accent: { light: '#c2410c', dark: '#fb923c' } }), '<h1 class="text-title">Arena</h1>']);
+        [JSON.stringify({ job: 'Run the arena' }), '<h1 class="text-title">Arena</h1>']);
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'a screen mock is not the card');
+      const card = { kind: 'card', emoji: '🎲', tagline: 'Game night for the arena', points: ['Pick the game', 'See who is in'], source: 'model' };
+      await pool.query(`UPDATE app_sketches SET design = $1, html = NULL WHERE app_id = 1`, [JSON.stringify(card)]);
       const preview = await invites.preview(pool, made.link.token);
-      assert.deepEqual(preview.project.picture, { kind: 'sketch', url: `/api/public/invites/${made.link.token}/sketch.html`, darkUrl: null });
-      const page = await invites.sketchPage(pool, made.link.token, { theme: 'dark' });
-      assert.match(page, /<title>Arena: a sketch<\/title>/);
-      assert.match(page, /<main class="sketch-screen">\n<h1 class="text-title">Arena<\/h1>/);
-      assert.match(page, /:root\{--ground:12 10 9;/, 'in the look it was asked for');
+      assert.deepEqual(preview.project.picture, {
+        kind: 'sketch', url: null, darkUrl: null,
+        card: { emoji: '🎲', tagline: 'Game night for the arena', points: ['Pick the game', 'See who is in'] },
+      });
       await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
-      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'a dead link shows nothing');
+      assert.equal((await invites.preview(pool, made.link.token)).project, undefined, 'a dead link shows nothing');
     });
 
     await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {

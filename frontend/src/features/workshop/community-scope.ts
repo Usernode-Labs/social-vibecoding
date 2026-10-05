@@ -27,6 +27,12 @@
  * out here from those and ./needs-seen.ts: again whenever a vote is swiped
  * past anywhere on the page, so the badge drops as you go.
  *
+ * AND ONLY A COMMUNITY THAT IS YOURS PUTS THEM ON THE TAB (5 Oct 2026). One
+ * you are in only because every account is, Homeroom, and have not taken
+ * part in yet is UNCHOSEN (`unchosen`, from GET /api/workshop/counts): its
+ * votes stay in `needs` and the switcher, and `tabVotes` leaves them off the
+ * badge.
+ *
  * ── The switcher ───────────────────────────────────────────────────────
  *
  * "Your communities": All communities first, then each community you are in,
@@ -66,6 +72,13 @@ export interface CommunityInfo {
   owedCount?: number;
   /** Which ones, as ./needs-seen.ts keys them, when the describer knows. */
   owed?: string[];
+  /**
+   * Its votes do not put a number on the tab (5 Oct 2026): you are in it
+   * only because every account is (Homeroom) and have not taken part there
+   * yet. GET /api/workshop/counts says so (src/services/communities.js,
+   * UNCHOSEN_COMMUNITIES_SQL). `needs` still counts them, for the switcher.
+   */
+  unchosen?: boolean;
   selfHosted?: boolean;
   lastActiveAt?: string | null;
 }
@@ -82,6 +95,11 @@ export interface CommunityScopeState {
   list: string[] | null;
   /** Votes owed across all of them, once counted. */
   totalNeeds: number | null;
+  /**
+   * The ones of those that ask for you: every community's but the unchosen
+   * ones'. The tab's badge on All communities (`tabVotes`).
+   */
+  badgeNeeds: number | null;
   /** Where the open switcher was opened from; null when it is shut. */
   switcher: SwitcherFrom | null;
   /** The opener's box, for a menu that hangs off it on a wide window. */
@@ -89,10 +107,43 @@ export interface CommunityScopeState {
 }
 
 const INITIAL: CommunityScopeState = {
-  slug: null, info: {}, list: null, totalNeeds: null, switcher: null, anchor: null,
+  slug: null, info: {}, list: null, totalNeeds: null, badgeNeeds: null, switcher: null, anchor: null,
 };
 
 export const communityScopeStore = createStore(INITIAL);
+
+/**
+ * The two sums over every community you are in: every vote owed, which the
+ * switcher's All communities line says, and the votes that ask for you,
+ * which leave the unchosen communities out and are the tab's badge.
+ */
+function sums(list: string[], info: Record<string, CommunityInfo>): { totalNeeds: number; badgeNeeds: number } {
+  let totalNeeds = 0;
+  let badgeNeeds = 0;
+  for (const s of list) {
+    const n = Number(info[s]?.needs) || 0;
+    totalNeeds += n;
+    if (!info[s]?.unchosen) badgeNeeds += n;
+  }
+  return { totalNeeds, badgeNeeds };
+}
+
+/**
+ * THE NUMBER ON THE TAB: the votes the community it is on is waiting on you
+ * for, or on All communities the votes every community is. An UNCHOSEN
+ * community's votes are left out of it (5 Oct 2026): the platform's own
+ * community, which every account is put in, asked a brand-new account for
+ * five or eight votes on the screen that asks what it wants to make. They
+ * are still owed, and still in Needs you, the Communities list and the
+ * switcher: they just do not summon anybody until the community is theirs.
+ */
+export function tabVotes(st: Pick<CommunityScopeState, 'slug' | 'info' | 'badgeNeeds'>): number {
+  if (st.slug) {
+    const info = st.info[st.slug];
+    return info && !info.unchosen ? Number(info.needs) || 0 : 0;
+  }
+  return Number(st.badgeNeeds) || 0;
+}
 
 /** app.js's own key for the project page the tab reopens. */
 const VIEW_KEY = 'usernode_workshop_view_v1';
@@ -168,10 +219,7 @@ export function describe(slug: string, patch: Partial<CommunityInfo>): void {
   });
   if (prev && Object.keys(next).every((k) => same((next as any)[k], (prev as any)[k]))) return;
   const info = { ...cur.info, [slug]: next };
-  const totalNeeds = cur.list
-    ? cur.list.reduce((sum, s) => sum + (Number(info[s]?.needs) || 0), 0)
-    : cur.totalNeeds;
-  communityScopeStore.set({ info, totalNeeds });
+  communityScopeStore.set({ info, ...(cur.list ? sums(cur.list, info) : {}) });
   if (cur.slug === slug) saveInfo(next);
 }
 
@@ -242,7 +290,7 @@ export function loadCommunities(force = false): Promise<void> {
       const joined = rows.filter((r) => r && r.slug && (
         typeof home?.isJoined === 'function' ? home.isJoined(r) : !!r.is_member
       ));
-      let counts: Record<string, { needs?: number; owed?: unknown }> = {};
+      let counts: Record<string, { needs?: number; owed?: unknown; unchosen?: boolean }> = {};
       if (countsRes && countsRes.ok) {
         const c = await countsRes.json().catch(() => null);
         counts = (c && c.counts) || {};
@@ -266,16 +314,14 @@ export function loadCommunities(force = false): Promise<void> {
           // #3526: which votes, so the ones passed over can be left out.
           owedCount: Number(counts[r.slug]?.needs) || 0,
           owed: Array.isArray(owed) ? owed.map(String) : undefined,
+          // Read fresh on every load: the first vote cast there ends it.
+          unchosen: counts[r.slug]?.unchosen === true,
           selfHosted: !!r.self_hosted,
           lastActiveAt: r.last_active_at || null,
         });
       }
       const list = ordered.map((r) => r.slug);
-      communityScopeStore.set({
-        info,
-        list,
-        totalNeeds: list.reduce((sum, s) => sum + (Number(info[s]?.needs) || 0), 0),
-      });
+      communityScopeStore.set({ info, list, ...sums(list, info) });
       if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
       loadedAt = Date.now();
     } catch {
@@ -333,10 +379,7 @@ needsSeenStore.subscribe(() => {
     if (info[slug] !== entry) changed = true;
   }
   if (!changed) return;
-  const totalNeeds = cur.list
-    ? cur.list.reduce((sum, s) => sum + (Number(info[s]?.needs) || 0), 0)
-    : cur.totalNeeds;
-  communityScopeStore.set({ info, totalNeeds });
+  communityScopeStore.set({ info, ...(cur.list ? sums(cur.list, info) : {}) });
   if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
 });
 

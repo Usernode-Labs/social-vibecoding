@@ -62,6 +62,7 @@ const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
 const proposalDescription = require('./proposal-description');
+const { withoutEmDashes } = require('./em-dashes');
 const { SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, getDesignGuidance } = require('./prompts');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
@@ -333,6 +334,8 @@ function specPrompt({ seed, buildNote, firstVersion = false }) {
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
     '- As small as the request: the plan above, no refactoring or extra features.',
+    '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
+    '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
@@ -380,7 +383,7 @@ function specFromTitle(text) {
 function specBlocked(text) {
   const firstLine = String(text || '').trim().split('\n')[0] || '';
   const m = BLOCKED_RE.exec(firstLine);
-  return m ? clipText(m[1], 500) : null;
+  return m ? clipText(withoutEmDashes(m[1]), 500) : null;
 }
 
 function blockedText(reason) {
@@ -453,7 +456,7 @@ const TITLE_ISSUE_TAIL_RE = /\s*(?:[([]\s*(?:(?:github\s+)?issue\s+)?#\d+\s*[)\]
 function proposalTitle(spec) {
   const heading = specHeading(spec);
   if (!heading) return null;
-  const title = heading
+  let title = heading
     .replace(/[`*]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -462,6 +465,9 @@ function proposalTitle(spec) {
     .replace(TITLE_ISSUE_TAIL_RE, '')
     .replace(/\.+$/, '')
     .trim();
+  // 5 Oct 2026: no em dash in the name the group votes on either
+  // ("Climbing sessions — who's in" is "Climbing sessions: who's in").
+  title = withoutEmDashes(title).replace(/[:.]+$/, '').trim();
   // One word ("Spec", "Leaderboard") names a topic, not a change.
   if (!title || title.length > SPEC_TITLE_MAX || title.split(' ').length < 2) return null;
   return title;
@@ -506,12 +512,19 @@ function specUserFacing(spec) {
  * `proposalDescription` the block, or the spec's user-facing half when the
  * build left the block out. A final message that is a wire failure (a run
  * can commit and then die on the API) says nothing about the change.
+ *
+ * 5 Oct 2026: both without em dashes (services/em-dashes.js). The
+ * description is the summary every member reads on the change page and the
+ * pull request's body, and the build prompt's "no em dashes" was not enough:
+ * "Members do nothing extra — finishing a book happens by picking the next
+ * one." Code and URLs in it are left as they are.
  */
 function buildDescription({ text, spec = null }) {
   const raw = String(text || '').trim();
   const said = raw && !agentApiFailure(raw) ? proposalDescription.extract(raw) : { cleanedText: '', description: null };
-  const description = said.description || specUserFacing(spec);
-  return { ccOutput: String(said.cleanedText || '').trim() || description || '', description: description || null };
+  const description = withoutEmDashes(said.description || specUserFacing(spec));
+  const ccOutput = withoutEmDashes(String(said.cleanedText || '').trim()) || description || '';
+  return { ccOutput, description: description || null };
 }
 
 /**
@@ -1257,7 +1270,8 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   '==== END DESCRIPTION ====',
   '',
   'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
-  'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
+  'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
+  'block only if you changed nothing.',
 ]);
 
 // A build of the platform's own repository runs its tests the way that
@@ -1348,9 +1362,11 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'guidance\'s "no new colours" means none beyond them. Then fill in the "## Design" section of the app\'s',
   '`CLAUDE.md` (add it if it is missing): the palette by name, the signature element, the type scale, and the one',
   'fixed look if the app keeps one. Every later change follows it.',
-  'If the repository has `design/sketch.html` and `design/sketch.json`, its creator was shown that sketch when they',
-  'made the app: build that screen for real, with its layout, its words and its accent (the kit\'s tokens may already',
-  'carry it), keep both files, and make the starter screen that shows the sketch into the real one.',
+  // The first session's card (services/app-sketch.js). Until 5 October 2026
+  // it was a mock of the main screen, and this said to build that screen.
+  'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
+  '(an emoji, which is already the app\'s icon, a tagline and a few points summing up the idea): context for what the',
+  'app is for, never a design. It shows no screen, so it sets no layout, words or colours. Keep the file as it is.',
 ]);
 
 function buildPrompt({
@@ -1492,7 +1508,10 @@ function readSpec(text) {
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
   if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
-  return { ok: true, specMd };
+  // The spec is read by the group (its card, its GitHub comment) and its
+  // user-facing half can become the change's description: no em dashes in
+  // it either. Its code is left as it is.
+  return { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
 async function draftSpec({

@@ -821,12 +821,12 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   assert.match(appJs, /if \(!Object\.prototype\.hasOwnProperty\.call\(variants, shot\)\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(variants\[shot\]\);/);
   AppView.showFirstVersionShot(true);
   const planned = h.status();
-  assert.deepEqual([...planned.lines], ['Step 3 of 7: Write a plan'], 'the card says what comes next');
+  assert.deepEqual([...planned.lines], ['Step 3 of 7: Your turn: answer the plan'], 'the card says what comes next, and whose turn it is');
   assert.equal(planned.action, null, 'Change something is the way into the chat');
   assert.equal(planned.plan.bullets.length, 3);
   assert.deepEqual([...planned.plan.questions[0].answers], ['In the app', 'Phone alert']);
   AppView.showFirstVersionShot('plan');
-  assert.deepEqual([...h.status().lines], ['Step 3 of 7: Write a plan'], '\'plan\' is the same shot');
+  assert.deepEqual([...h.status().lines], ['Step 3 of 7: Your turn: answer the plan'], '\'plan\' is the same shot');
   // Ready to try, as a member who still has to approve it…
   AppView.showFirstVersionShot('ready');
   const waiting = h.status();

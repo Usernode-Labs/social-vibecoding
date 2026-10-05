@@ -1452,6 +1452,21 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/small-change-tags",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.small.change.tags.69f78234",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "PUT",
       "path": "/api/admin/homeroom-bot/settings",
       "expression": null,
@@ -2703,21 +2718,6 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.get.apps.item.sketch.1884552c",
-      "domain": "apps",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/app"
-    },
-    {
-      "source": "src/routes/apps.js",
-      "method": "GET",
-      "path": "/api/apps/:slug/sketch.html",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.get.apps.item.sketch.html.5f5e2e3e",
       "domain": "apps",
       "risk": "read",
       "confirmation": "never",
@@ -4304,14 +4304,6 @@
       "source": "src/routes/community-invites.js",
       "method": "GET",
       "path": "/api/public/invites/:token/picture",
-      "expression": null,
-      "status": "exempt",
-      "reason": "anonymous public API rather than signed-in Classic"
-    },
-    {
-      "source": "src/routes/community-invites.js",
-      "method": "GET",
-      "path": "/api/public/invites/:token/sketch.html",
       "expression": null,
       "status": "exempt",
       "reason": "anonymous public API rather than signed-in Classic"

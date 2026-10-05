@@ -23,13 +23,72 @@ export type TourStep = {
   place?: 'auto' | 'bottom' | { above: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
+  /**
+   * A transcript in the cut-out: the newest of its `rows` is shown from its
+   * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
+   * card taller than the transcript began part-way down, with no first line.
+   */
+  newestFromTop?: { scroller: string; rows: string };
   last?: boolean;
 };
 
-export type TourProject = { slug: string; name: string; conversationId?: number | null };
+/**
+ * The maker's last step: their chat with Homeroom bot, its header (the bot's
+ * name and what it is doing for them) with its messages under it, as one
+ * cut-out. It used to be the messages alone, under a dimmed header, and its
+ * newest card began part-way down: "the chat with Homeroom bot is missing the
+ * header" (Evan, on his phone, 5 October 2026). The conversation's own
+ * section scopes both, so no other pane's header or transcript is measured.
+ */
+export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
+export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
+
+/**
+ * Where the project's first version stands, as its App tab shows it
+ * (GET /api/apps/:slug `first_version`; public/js/app-view.js
+ * _firstVersionView): Homeroom bot still building it, built and waiting for
+ * approval, or neither (null: the app is what there is).
+ */
+export type FirstVersionStage = 'building' | 'ready' | null;
+
+export type TourProject = {
+  slug: string;
+  name: string;
+  conversationId?: number | null;
+  firstVersion?: FirstVersionStage;
+};
+
+/**
+ * The project's hub, named without a possessive: "Page Turners's hub" was
+ * what a name ending in s read as (first-session run-through, 5 October 2026).
+ */
+export function hubTitle(name: string): string {
+  return `The ${name} hub`;
+}
+
+/**
+ * The invited path's second step, over the App tab: what the page behind it
+ * says. A project still being built reads "<name> is being built …" there,
+ * so the step does not call it an app to use any time.
+ */
+export function appStep(name: string, firstVersion: FirstVersionStage = null): Pick<TourStep, 'title' | 'text'> {
+  if (firstVersion === 'building') {
+    return {
+      title: `${name}, being built`,
+      text: 'Homeroom bot is building its first version. Until it\'s ready, this shows how the build is going.',
+    };
+  }
+  if (firstVersion === 'ready') {
+    return {
+      title: `This is ${name}`,
+      text: 'Its first version is ready to try, and goes live once the group approves it.',
+    };
+  }
+  return { title: `This is ${name}`, text: 'The group\'s app, made on Homeroom. Use it any time.' };
+}
 
 /** The invited path: seven steps, ending in the group's chat. */
-export function invitedSteps({ slug, name }: TourProject): TourStep[] {
+export function invitedSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
   return [
     {
       screen: 'home',
@@ -41,8 +100,7 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
     {
       screen: 'app',
       target: '#app-content',
-      title: `This is ${name}`,
-      text: 'The group\'s app, made on Homeroom. Use it any time.',
+      ...appStep(name, firstVersion),
       place: 'bottom',
     },
     {
@@ -67,7 +125,7 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
     {
       screen: 'hub',
       target: '#app-content',
-      title: `${name}'s hub`,
+      title: hubTitle(name),
       text: 'Communities opens on the group you just joined: who\'s in it, what\'s being built, and what\'s up for a vote.',
       place: 'bottom',
     },
@@ -134,7 +192,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#app-content',
-      title: `${name}'s hub`,
+      title: hubTitle(name),
       text: 'Who\'s in it, what\'s being built, and what\'s up for a vote, once people join.',
       place: 'bottom',
     },
@@ -154,7 +212,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
     {
       screen: 'bot',
-      target: '.messages-thread-scroll',
+      target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
+      newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       title: 'Your chat with Homeroom bot',
       text: 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.',
       place: 'bottom',
