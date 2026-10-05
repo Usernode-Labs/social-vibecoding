@@ -23,7 +23,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
-const { once } = require('node:events');
+const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
 
 const TOKENS = Object.freeze({
   member: 'member.fixture.jwt',
@@ -91,19 +91,17 @@ async function startProxy(t, {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const closed = closedPromise(proxy);
   const output = [];
   proxy.stdout.on('data', (chunk) => output.push(chunk));
   proxy.stderr.on('data', (chunk) => output.push(chunk));
   t.after(async () => {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, 'the proxy started');
+  const shared = await waitForReady(proxy, ready, { output: () => Buffer.concat(output).toString() });
   return {
-    shared: Number(fs.readFileSync(ready, 'utf8')),
+    shared,
     ports,
     output: () => Buffer.concat(output).toString(),
     events: () => Buffer.concat(output).toString().trim().split('\n')
