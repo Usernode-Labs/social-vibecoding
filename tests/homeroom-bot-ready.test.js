@@ -197,7 +197,8 @@ test('B7: the client reads what happens next from the vote\'s answer and from th
   assert.match(api, /if \(response\.ok\) return \{ ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive\(pick\(data, 'goesLive'\)\) \};/);
   const card = read('frontend/src/features/messages/bot-ready.tsx');
   assert.match(card, /if \(out\.ok\) \{ setGoesLive\(out\.goesLive \|\| null\); setApproved\(true\);/);
-  assert.match(card, /const next = meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
+  // 5 October: what happens next as read now comes first (readyStates).
+  assert.match(card, /const next = fresh\?\.goesLive \|\| meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
 });
 
 test('B7: "ready to try" in the bell and on the phone, on by default', async () => {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import * as api from './api';
 import { WORK_CHANGED_EVENT } from './bot-shared';
 import { handleEvent } from './store';
-import type { HomeroomBotActivity } from './types';
+import type { HomeroomBotActivity, HomeroomBotReadyNow } from './types';
 
 /*
  * #3736: the state of the activity cards in the Homeroom bot's DM
@@ -24,6 +24,11 @@ import type { HomeroomBotActivity } from './types';
  * Opening the DM also asks the server, once, to give a card to any of the
  * viewer's work the bot has under way without one (work begun before cards
  * existed, or looked at again after a restart): catchUpBotActivity below.
+ *
+ * 5 October: the same read says where the changes of the viewer's ready
+ * cards stand now (./bot-ready.tsx), so a card sent "ready to try" says it
+ * is live once it is, and who it still waits on as others approve. A vote on
+ * one of them announces `homeroom_bot_work_changed` to whoever asked for it.
  */
 
 /** Asked again this often while a card is going, in case a step was not announced. */
@@ -31,6 +36,8 @@ export const POLL_MS = 60 * 1000;
 
 export interface BotActivitySnapshot {
   cards: ReadonlyMap<number, HomeroomBotActivity>;
+  /** The ready cards' changes as they stand now, by message id. */
+  ready: ReadonlyMap<number, HomeroomBotReadyNow>;
   /** The first read has landed. */
   loaded: boolean;
   /** The last read failed (what was read before is kept). */
@@ -39,7 +46,7 @@ export interface BotActivitySnapshot {
   landed: number;
 }
 
-const EMPTY: BotActivitySnapshot = { cards: new Map(), loaded: false, failed: false, landed: 0 };
+const EMPTY: BotActivitySnapshot = { cards: new Map(), ready: new Map(), loaded: false, failed: false, landed: 0 };
 let snapshot: BotActivitySnapshot = EMPTY;
 const listeners = new Set<() => void>();
 
@@ -73,9 +80,13 @@ export function readsAsked(): number {
 /** Read every card's state again. `fresh`: past the worker's offline copy. */
 export function loadBotActivity({ fresh = true }: { fresh?: boolean } = {}): Promise<void> {
   const mine = ++seq;
-  const run: Promise<void> = api.getHomeroomBotActivity({ fresh }).then((cards) => {
+  const run: Promise<void> = api.getHomeroomBotActivity({ fresh }).then(({ cards, ready }) => {
     if (mine !== seq) return;
-    publish({ cards: new Map(cards.map((card) => [card.messageId, card])), loaded: true, failed: false, landed: mine });
+    publish({
+      cards: new Map(cards.map((card) => [card.messageId, card])),
+      ready: new Map(ready.map((entry) => [entry.messageId, entry])),
+      loaded: true, failed: false, landed: mine,
+    });
   }).catch(() => {
     if (mine === seq) publish({ ...snapshot, failed: true });
   }).finally(() => {

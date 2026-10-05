@@ -682,8 +682,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [notes.id, n, built.id],
     );
     // #7 (WP3): "live now" once the app answered its health check on what
-    // the merge deployed, with the app's own card to open it, then the
-    // proposal's, and the app's address as its link.
+    // the merge deployed, with a button that opens the app (5 October: its
+    // own, which no card the bot cannot attach takes with it), the
+    // proposal's card, and the app's address as its link.
     const probed = [];
     const healthy = {
       applicationRuntime: {
@@ -702,8 +703,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: liveCards } = await pool.query(
       'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [live.messageId],
     );
-    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`app:${notes.id}`, `code_proposal:${built.id}`],
-      'the app first, to open it, then its proposal');
+    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${built.id}`],
+      'its proposal; the app opens from the button');
+    assert.deepEqual(liveMessage.metadata.homeroomBot.actions, [
+      { id: 'open_app', label: 'Open Note board', style: 'primary', type: 'open', target: '#app/note-board/app' },
+    ]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.

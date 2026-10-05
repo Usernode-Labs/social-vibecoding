@@ -78,7 +78,7 @@ test('a card still going takes its step from progressFor; with nothing in progre
   };
   const going = activity.cardOf(row, entry);
   assert.deepEqual(going, {
-    messageId: 31, startedAt: '2026-10-02T11:51:00.000Z',
+    messageId: 31, startedAt: '2026-10-02T11:51:00.000Z', workedFrom: '2026-10-02T11:51:00.000Z',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null },
     state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
     stepSince: '2026-10-02T11:56:00.000Z', stepLimitMinutes: 30,
@@ -457,7 +457,7 @@ test('the client keeps only in-app links, whole steps and known endings, and nev
   });
   assert.deepEqual(cards.map((c) => c.messageId), [31, 32, 33, 34, 35], 'a card without a message is dropped');
   assert.deepEqual(cards[0], {
-    messageId: 31, state: 'working', startedAt: 'a', links: { request: '#app/x/dev/issues/3', proposal: null },
+    messageId: 31, state: 'working', startedAt: 'a', workedFrom: null, links: { request: '#app/x/dev/issues/3', proposal: null },
     step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null,
   });
   assert.equal(cards[1].step, null, 'step 7 of 6 is not a step');
@@ -726,7 +726,9 @@ function loadStore(t, { responses, catchUps = [] }) {
     getHomeroomBotActivity(options) {
       reads.push(options);
       const next = responses.shift();
-      return typeof next === 'function' ? next() : Promise.resolve(next || []);
+      // A read answers the cards and (5 October) the ready cards beside them.
+      const read = (cards) => ({ cards: cards || [], ready: [] });
+      return typeof next === 'function' ? next().then(read) : Promise.resolve(read(next));
     },
     catchUpHomeroomBotActivity() {
       asked.push(true);

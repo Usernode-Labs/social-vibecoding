@@ -6,6 +6,7 @@ import type {
   ConversationUser,
   HomeroomBotActivity,
   HomeroomBotActivityOutcome,
+  HomeroomBotActivityRead,
   HomeroomBotJob,
   HomeroomBotAction,
   HomeroomBotGoesLive,
@@ -14,6 +15,7 @@ import type {
   HomeroomBotPhase,
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
+  HomeroomBotReadyNow,
   HomeroomBotWork,
   MessageAttachment,
   MessageReaction,
@@ -930,10 +932,15 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
     const typical = record(pick(row, 'typicalMinutes'));
     const from = strictId(pick(typical, 'from'));
     const to = strictId(pick(typical, 'to'));
+    const workedFrom = text(pick(row, 'workedFrom'));
+    const waitedFor = text(pick(row, 'waitedFor'));
     return {
       messageId,
       state: working ? 'working' : 'done',
       startedAt: text(pick(row, 'startedAt')) || null,
+      // The work's own start, never a date that does not read as one.
+      workedFrom: workedFrom && Number.isFinite(Date.parse(workedFrom)) ? workedFrom : null,
+      ...(waitedFor === 'first_version' || waitedFor === 'turn' ? { waitedFor } : {}),
       links: { request: inAppHref(pick(links, 'request')), proposal: inAppHref(pick(links, 'proposal')) },
       step: working && whole ? step : null,
       of: working && whole ? of : null,
@@ -947,13 +954,54 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   }).filter((card): card is HomeroomBotActivity => !!card);
 }
 
+const READY_NOW_STATES = new Set<HomeroomBotReadyNow['state']>(['open', 'going_live', 'live', 'closed']);
+
+/**
+ * 5 October: the bot DM's ready cards as their changes stand now (services/
+ * homeroom-bot-dm.js readyStates), field by field. One without a message id
+ * or with a state not known here is dropped: its card says what it was sent
+ * with. Counts are whole and not below zero; names are strings.
+ */
+export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
+  return array(pick(record(input), 'ready')).map((entry): HomeroomBotReadyNow | null => {
+    const row = record(entry);
+    const messageId = strictId(pick(row, 'messageId'));
+    const state = text(pick(row, 'state')) as HomeroomBotReadyNow['state'];
+    if (!messageId || !READY_NOW_STATES.has(state)) return null;
+    const approvalRow = pick(row, 'approval');
+    const approval = approvalRow && typeof approvalRow === 'object' && !Array.isArray(approvalRow) ? record(approvalRow) : null;
+    const missing = approval ? countOf(pick(approval, 'missing')) : null;
+    const needed = approval ? countOf(pick(approval, 'needed')) : null;
+    const goesLive = normalizeGoesLive(pick(row, 'goesLive'));
+    return {
+      messageId,
+      state,
+      // Only the live card's button, which opens the app.
+      actions: state === 'live' ? normalizeBotActions(pick(row, 'actions')).filter((action) => action.type === 'open') : [],
+      ...(state === 'open' && approval && missing !== null && needed !== null ? {
+        approval: {
+          missing,
+          needed,
+          last: pick(approval, 'last') === true,
+          approved: pick(approval, 'approved') === true,
+          waitingOn: array(pick(approval, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
+          more: Math.max(Math.floor(Number(pick(approval, 'more')) || 0), 0),
+        },
+      } : {}),
+      ...(state === 'open' && goesLive ? { goesLive } : {}),
+    };
+  }).filter((entry): entry is HomeroomBotReadyNow => !!entry);
+}
+
 /**
  * #3736: how far along each activity card in the signed-in person's bot DM
- * is. A re-read after news passes `fresh`, so the worker's offline copy of
- * an older state never stands in for it (see ReadOptions).
+ * is, and (5 October) where each of its ready cards' changes stands now. A
+ * re-read after news passes `fresh`, so the worker's offline copy of an
+ * older state never stands in for it (see ReadOptions).
  */
-export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivity[]> {
-  return normalizeBotActivity(await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options)));
+export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivityRead> {
+  const data = await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options));
+  return { cards: normalizeBotActivity(data), ready: normalizeBotReadyNow(data) };
 }
 
 /**
