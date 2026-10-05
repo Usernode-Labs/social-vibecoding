@@ -264,7 +264,7 @@ async function deleteOwnMessage(pool, { appId, userId, messageId }) {
   try {
     await cx.query('BEGIN');
     // FOR UPDATE: serialises against an edit, a reaction or a report
-    // (routes/content-reports.js takes FOR SHARE) racing the delete.
+    // (services/moderation.js takes FOR SHARE) racing the delete.
     const { rows } = await cx.query(
       `SELECT id, user_id, msg_type, thread_type, thread_ref, deleted_at
          FROM chat_messages

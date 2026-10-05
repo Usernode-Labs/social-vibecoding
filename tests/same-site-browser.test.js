@@ -176,8 +176,6 @@ const EXEMPT = new Map([
   ['cli-auth.js POST /api/cli/device/token', JSON_FIELD],
   ['cli-auth.js POST /api/cli/device/approve', OWN],
   ['collaborators.js POST /api/apps/:slug/invites', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/report', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
   ['conversations.js POST /api/conversations', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/respond', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/members', JSON_FIELD],
