@@ -123,9 +123,13 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // Loaded in an effect, so the first render is nothing.
   assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // At the head of the Workshop tab, straight under the approval rules that
-  // open it (#3528).
-  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,600}\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,400}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
+  // On the Workshop tab, straight under the approval rules (#3528). All
+  // items leads the tab since 5 Oct 2026, and the panel kept its place
+  // under the rules rather than moving up with it.
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'straight under the approval rules');
+  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-mine=""'),
+    'under All items, and above your work');
 });
 
 test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {

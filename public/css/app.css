@@ -17148,7 +17148,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-.dev-ws-rules-sub { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }
 
 /* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
    workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
@@ -18714,50 +18713,54 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    They were a sentence, and four integers read out as prose is the slowest
    form they can take: the reader parses a clause to learn something a glance
    should give. So they are tiles, on their own ground inside the pane, and
-   the paragraph under them is freed to say the things a number cannot.
-   Two up on a phone, four across from 420px. `auto-fit` rather than a fixed
-   count so the row never leaves one tile stranded on a line of its own. */
+   the paragraph under them is freed to say the things a number cannot. */
 .dev-ws-dash {
   /* ONE RULED ROW, NOT FOUR CARDS. Each figure used to carry the pane's own
      surface, a hairline and the two-layer lift the week cards had — four
      objects inside an object, above a fifth holding the summary line. The
      figures are the pane's content, so they sit on the pane: hairlines
-     between them and nothing else. Two up on a phone, four across from
-     420px, which is the breakpoint they already used. */
+     between them and nothing else.
+     FOUR ACROSS AT EVERY WIDTH (5 Oct 2026). Under 420px they were two up,
+     a 2x2 grid, and the owner asked for one row on an iPhone 13 mini. A
+     phone keeps the row by drawing the figures closer and a size smaller
+     (below), never by cutting a label short: a label wraps instead. At
+     375px the pane's content box is 339px (375, less #dev-body's 4px a
+     side, less the strip's 14px a side), so each column is 84.75px, and
+     the narrowest text column, the third figure's beside its dot, is
+     84.75 - 1 - 8 - 8 - 6 - 5 = 56.75px. In the system font at 11.5px
+     its longest word, "waiting", is about 39px, and every label takes two
+     lines at most; at the wider 14px spacing "waiting on votes" would
+     take three. */
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 4px;
 }
 .dev-ws-dash-cell {
   min-width: 0;
-  padding: 10px 14px;
+  padding: 2px 8px;
   border-left: 1px solid var(--app-sheet-line);
-  border-top: 1px solid var(--app-sheet-line);
   font-size: 11.5px;
   color: var(--text-muted);
   line-height: 1.3;
 }
-.dev-ws-dash-cell:nth-child(2n+1) { border-left: 0; padding-left: 2px; }
-.dev-ws-dash-cell:nth-child(-n+2) { border-top: 0; padding-top: 2px; }
 @media (min-width: 420px) {
-  .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .dev-ws-dash-cell { border-top: 0; padding-top: 2px; padding-bottom: 2px; }
-  .dev-ws-dash-cell:nth-child(2n+1) {
-    border-left: 1px solid var(--app-sheet-line);
-    padding-left: 14px;
-  }
-  .dev-ws-dash-cell:first-child { border-left: 0; padding-left: 2px; }
-  .dev-ws-dash-cell:last-child { padding-right: 2px; }
+  .dev-ws-dash-cell { padding-left: 14px; padding-right: 14px; }
 }
+.dev-ws-dash-cell:first-child { border-left: 0; padding-left: 2px; }
+.dev-ws-dash-cell:last-child { padding-right: 2px; }
 .dev-ws-dash-cell b {
   display: block;
   /* THE TEXT TOKEN, always. Tone used to be painted on the integer itself —
      a green 6, an amber 3 — which is state carried by hue alone and unread
      by anyone who cannot separate the two, and it put a status colour on
      text where the rest of the product keeps text in text ink. The mark
-     moved to the label; the number is a number. */
-  font-size: 24px; font-weight: 650; line-height: 1.1;
+     moved to the label; the number is a number.
+     20px on a phone, where four share the row; 24px from 420px. */
+  font-size: 20px; font-weight: 650; line-height: 1.1;
   letter-spacing: -.02em; color: var(--text-primary);
+}
+@media (min-width: 420px) {
+  .dev-ws-dash-cell b { font-size: 24px; }
 }
 /* A GRID, not an inline run. The label wraps at phone widths, and under
    `align-items: center` the dot floated to the middle of a two-line label
