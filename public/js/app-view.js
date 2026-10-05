@@ -818,6 +818,7 @@ const AppView = {
     // description (the About sheet's tagline); the declared tests and platform
     // env are the server's, and the platform's own run to ~280 KB.
     let res;
+    const askedAt = Date.now();
     try {
       res = await fetch(`/api/apps/${slug}?manifest=summary`);
     } catch (err) {
@@ -872,6 +873,9 @@ const AppView = {
     // its older snapshot came back. It is the later fact, so reconcile it
     // before any consumer can paint the stale spinning-up state.
     const appData = AppView._applyPendingAppStatus(fetchedAppData);
+    // Possibly the worker's boot-lane copy: the App tab will not say a first
+    // version is still waiting from that alone (_firstVersionTrusted).
+    AppView._noteAppRecordRead(appData, res, askedAt);
     // #1010: local "being applied" state is per-app and per-page-visit —
     // proposal ids are global, but a stale entry carried into another app
     // would spin a card whose apply this client never started. Cleared on
@@ -2984,6 +2988,138 @@ const AppView = {
     return !!(fv && fv.building && appData.slug && !AppView._starterShown.has(appData.slug));
   },
 
+  // ── Painted only from an answer it can trust ──
+  //
+  // GET /api/apps/:slug is in the service worker's zero-deadline boot lane
+  // (public/sw.js BOOT_READ_PATTERNS): a project visited before opens on the
+  // copy cached THEN, and the worker's late correction (App.refreshActiveScreen)
+  // has no branch for this screen. On 5 October that copy was from before
+  // the first version merged and before its reader voted for it, so the App
+  // tab said "Waiting for your approval." to a member who had approved a
+  // change that was already live, until the 10s recheck below came round.
+  // A record read before a vote is the same failure without the worker: the
+  // App tab after a Yes on the change page repaints the record the app was
+  // opened with.
+  //
+  // So every record a read stood up is noted here with when it was asked
+  // for, when it came, and whether the worker answered it from its cache
+  // (its `sw-cached-at` stamp, public/sw.js stampAndPut). The screen paints
+  // a record that says the first version is pending only while that answer
+  // is the server's own and recent; otherwise it says "Opening…" and asks
+  // past every cache at once (_recheckFirstVersion with `now`), the same
+  // tagged read the 10s recheck makes. A record no read stood up (a
+  // screenshot state) is what it is.
+  FIRST_VERSION_FRESH_MS: 15000,
+  _firstVersionReads: new WeakMap(),
+  _firstVersionAsking: null,
+  // The viewer's own votes this page cast, by change id → { vote, at }:
+  // later than any answer asked for before them (_firstVersionApprovalSeen).
+  _ownVotes: new Map(),
+
+  /** Note a record a read stood up: when it was asked for and came, and whether the worker's cache answered it. */
+  _noteAppRecordRead(record, res = null, askedAt = Date.now()) {
+    if (!record || typeof record !== 'object') return;
+    let cached = false;
+    try {
+      cached = !!(res && res.headers && typeof res.headers.get === 'function' && res.headers.get('sw-cached-at'));
+    } catch { cached = false; }
+    AppView._firstVersionReads.set(record, { asked: askedAt, got: Date.now(), cached, stale: false, heldAt: 0 });
+  },
+
+  /** What a vote or a merge has made old: the next paint asks again first. */
+  _distrustFirstVersion(record) {
+    if (!record || typeof record !== 'object') return;
+    const read = AppView._firstVersionReads.get(record);
+    if (read) {
+      read.stale = true;
+      read.heldAt = 0;
+    } else {
+      AppView._firstVersionReads.set(record, { asked: 0, got: 0, cached: true, stale: true, heldAt: 0 });
+    }
+  },
+
+  /**
+   * May the screen say what this record says about the first version? Yes
+   * for the server's own answer, come within FIRST_VERSION_FRESH_MS and not
+   * made old since; yes for one shown anyway because a fresh read failed
+   * (_holdFirstVersion), for as long again; yes for a record no read stood
+   * up.
+   */
+  _firstVersionTrusted(record, now = Date.now()) {
+    const read = AppView._firstVersionReads.get(record);
+    if (!read) return true;
+    if (read.heldAt && now - read.heldAt <= AppView.FIRST_VERSION_FRESH_MS) return true;
+    return !read.cached && !read.stale && now - read.got <= AppView.FIRST_VERSION_FRESH_MS;
+  },
+
+  /** A fresh read failed: show the record there is, rather than "Opening…" until the next one. */
+  _holdFirstVersion(record) {
+    const read = AppView._firstVersionReads.get(record);
+    if (read) read.heldAt = Date.now();
+  },
+
+  /** While a pending record waits for the server's word, the screen says only this. */
+  _firstVersionCheckingView() {
+    return { dot: null, message: 'Opening…', detail: null, action: null };
+  },
+
+  /**
+   * The viewer voted on a change (castVote, once the server took it). If it
+   * is the first version's, the record on hand is from before that vote.
+   */
+  _noteOwnVote(sessionId, vote) {
+    const id = Number(sessionId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    AppView._ownVotes.set(id, { vote, at: Date.now() });
+    const current = AppView.appData;
+    const approval = current && current.first_version && current.first_version.approval;
+    if (approval && Number(approval.sessionId) === id) AppView._distrustFirstVersion(current);
+  },
+
+  /**
+   * `approval` as this reader stands now. The server decides "your" from the
+   * reader's own Yes (homeroom-bot-dm.js firstVersionApproval: mustApprove
+   * only while it is not in), but an answer read before their Yes, or the
+   * worker's older copy, still says it is needed. A Yes this page cast after
+   * the answer was asked for is the later fact: they approved it, and one
+   * Yes fewer is missing. Past the last one, no day is promised: which
+   * clock runs then is the server's to say on the next read.
+   */
+  _firstVersionApprovalSeen(appData, approval) {
+    if (!approval || !approval.mustApprove) return approval;
+    const own = AppView._ownVotes.get(Number(approval.sessionId));
+    if (!own || own.vote !== 'yes') return approval;
+    const read = AppView._firstVersionReads.get(appData);
+    if (read && !read.cached && read.asked >= own.at) return approval;
+    const missing = Math.max((Number(approval.missing) || 0) - 1, 0);
+    return {
+      ...approval,
+      mustApprove: false,
+      approved: true,
+      missing,
+      ...(missing ? {} : { goesLiveAt: null, soon: false }),
+    };
+  },
+
+  /**
+   * Something the first version's screen says may have just changed (a vote
+   * on the open project, the change's merge: App.handleVoteUpdate). With
+   * that screen up, it is read again now, past every cache, and what is on
+   * screen stays until the answer lands: true. Off the App tab (the
+   * Workshop, the change page), the record is marked old, so the next paint
+   * asks first: false, as when there is no first version waiting.
+   */
+  recheckFirstVersionNow() {
+    const appData = AppView.appData;
+    if (!appData || App.currentApp !== appData.slug || !AppView._firstVersionPending(appData)) return false;
+    if (App.currentTab !== 'app') {
+      AppView._distrustFirstVersion(appData);
+      return false;
+    }
+    AppView._recheckFirstVersion(appData, { now: true });
+    return true;
+  },
+
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
     const name = appData.name || appData.slug;
@@ -3048,6 +3184,10 @@ const AppView = {
    *                         it and See the change
    *   anyone else           "Waiting for approval.", with See the change
    *
+   * "Still has to approve" is never said to a reader whose Yes this page
+   * cast after the answer was read: they read "You approved it." and whom
+   * it still waits on (_firstVersionApprovalSeen).
+   *
    * "Show the starter for now" stays, quieter, under them. Without
    * `approval` (a read that failed) its creator is pointed at their chat,
    * as before. No amber dot: nothing is being built.
@@ -3055,8 +3195,9 @@ const AppView = {
   _firstVersionReadyView(appData, lines) {
     const fv = appData.first_version || {};
     const slug = appData.slug;
+    // "Your" is the reader's own Yes, as it stands now (_firstVersionApprovalSeen).
     const approval = fv.approval && Number.isInteger(fv.approval.sessionId) && fv.approval.sessionId > 0
-      ? fv.approval : null;
+      ? AppView._firstVersionApprovalSeen(appData, fv.approval) : null;
     const view = {
       dot: null,
       message: `The first version of ${appData.name || slug} is ready to try`,
@@ -3236,16 +3377,35 @@ const AppView = {
     }, AppView.FIRST_VERSION_POLL_MS);
   },
 
-  async _recheckFirstVersion(expected) {
+  // `now`: asked for by a paint that will not trust the record it has, or by
+  // a vote or a merge (recheckFirstVersionNow), so it is read at once, even
+  // from a page in the background. One read at a time for one record: a
+  // second ask while it is out joins it.
+  _recheckFirstVersion(expected, { now = false } = {}) {
+    const asking = AppView._firstVersionAsking;
+    if (asking && asking.record === expected) return asking.promise;
+    const promise = AppView._readFirstVersion(expected, { now });
+    AppView._firstVersionAsking = { record: expected, promise };
+    const done = () => {
+      if (AppView._firstVersionAsking && AppView._firstVersionAsking.promise === promise) {
+        AppView._firstVersionAsking = null;
+      }
+    };
+    promise.then(done, done);
+    return promise;
+  },
+
+  async _readFirstVersion(expected, { now = false } = {}) {
     const current = () => AppView.appData === expected && App.currentApp === expected.slug
       && App.currentTab === 'app' && AppView._firstVersionPending(expected);
     if (!current()) return;
     // A page in the background asks nothing; it asks again on the next tick.
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    if (!now && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       AppView._watchFirstVersion(expected);
       return;
     }
     let updated = null;
+    const askedAt = Date.now();
     try {
       // The tagged URL bypasses the service worker's boot cache, as
       // pollStatus's does: a cached record is what this is correcting.
@@ -3257,9 +3417,18 @@ const AppView = {
     }
     if (!current()) return;
     if (!updated || updated.slug !== expected.slug) {
+      // A screen holding at "Opening…" for this read shows the record it
+      // has after all (offline, say) rather than nothing, and the watch it
+      // re-arms keeps asking.
+      if (!AppView._firstVersionTrusted(expected)) {
+        AppView._holdFirstVersion(expected);
+        AppView.renderAppTab();
+        return;
+      }
       AppView._watchFirstVersion(expected);
       return;
     }
+    AppView._noteAppRecordRead(updated, null, askedAt);
     AppView.appData = updated;
     if (updated.status === 'running' && !AppView._firstVersionPending(updated)) {
       // Built: the frame mounts now, so it gets a fresh app-scoped token.
@@ -3337,9 +3506,20 @@ const AppView = {
     if (AppView._firstVersionPending(appData)) {
       AppView._teardownLaunch();
       AppView._unmountAppFrame();
-      AppView._paintAppStatus(content, AppView._appStatusView(appData));
+      // Not from the worker's copy, or from an answer a vote or a while has
+      // made old: "Opening…" until the server says, asked now
+      // (_firstVersionTrusted). Its answer renders again, and either branch
+      // re-arms what it needs.
+      const trusted = AppView._firstVersionTrusted(appData);
+      AppView._paintAppStatus(content, trusted
+        ? AppView._appStatusView(appData) : AppView._firstVersionCheckingView());
       AppView._setSurface('platform');
-      AppView._watchFirstVersion(appData);
+      if (trusted) {
+        AppView._watchFirstVersion(appData);
+      } else {
+        AppView._stopFirstVersionWatch();
+        AppView._recheckFirstVersion(appData, { now: true });
+      }
       return;
     }
     AppView._stopFirstVersionWatch();
@@ -3645,8 +3825,10 @@ const AppView = {
     if (!AppView.appData || AppView.appData.slug !== slug) {
       if (window.DevChat) DevChat.reset();
       let app = null;
+      let res = null;
+      const askedAt = Date.now();
       try {
-        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+        res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
         if (res.ok) app = ((await res.json()) || {}).app || null;
       } catch (_) { app = null; }
       if (!live()) return 'stale';
@@ -3659,6 +3841,7 @@ const AppView = {
       AppView._devDataReady = false;
       AppView._resetMergedPagination();
       AppView.appData = AppView._applyPendingAppStatus(app);
+      AppView._noteAppRecordRead(AppView.appData, res, askedAt);
     }
     AppView._reactDevBoard()?.mountSessionShell(host);
     const result = await AppView.renderDevChatTab(sessionId, { embedded: true });
@@ -21461,6 +21644,9 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // A first version's App tab must not ask this voter for the Yes they
+      // just gave (_noteOwnVote).
+      AppView._noteOwnVote(sessionId, vote);
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -22051,6 +22237,7 @@ const AppView = {
         // is hard-bypassed by public/sw.js, and no-store also keeps the browser
         // HTTP cache out of the recovery path.
         const slug = encodeURIComponent(expected.slug);
+        const askedAt = Date.now();
         const res = await fetch(`/api/apps/${slug}?status_recheck=1`, { cache: 'no-store' });
         if (!res.ok) return;
         const { app: updated } = await res.json();
@@ -22063,6 +22250,7 @@ const AppView = {
           return;
         }
 
+        AppView._noteAppRecordRead(updated, res, askedAt);
         AppView.appData = updated;
         AppView._statusPollRecord = updated;
         if (updated.status === 'running') {
