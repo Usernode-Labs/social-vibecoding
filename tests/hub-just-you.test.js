@@ -198,7 +198,7 @@ test('Your work on a project nobody else is in: how to change something, or noth
   assert.match(bot, /<button[^>]*data-ws-mine-bot=""[^>]*>Go to chat<\/button>/);
   assert.match(bot, /data-ws-mine-bot="" class="rounded-full bg-zinc-100 /, 'a neutral pill: nothing waits on them');
   const menu = renderToHtml(createElement(YourWorkCard, { ...props, empty: 'menu' }));
-  assert.match(menu, /data-ws-mine-empty="menu">Nothing in progress\. Press <span class="font-medium text-violet-700 dark:text-violet-400">⋯<\/span> to ask for a change\.<\/p>/);
+  assert.match(menu, /data-ws-mine-empty="menu">Nothing in progress\. Press <span class="font-medium text-violet-700 dark:text-violet-400">⋯<\/span> to suggest an improvement\.<\/p>/);
   // A project with people in it: as it was, for the declared check that
   // reads "No work in progress." on Homeroom's own hub.
   const plain = renderToHtml(createElement(YourWorkCard, { ...props }));

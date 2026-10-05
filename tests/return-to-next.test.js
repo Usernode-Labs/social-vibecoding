@@ -333,7 +333,7 @@ test('Edit profile: Return in the name goes on to the bio, where it is a new lin
     /<div id="profile-edit-sheet" ref=\{panelRef\} className=\{CARD_CLASS\} inert=\{cropping\} onKeyDown=\{returnKeyHandler\(\)\}>/);
 });
 
-test('Ask for a change: Return in the title goes on to the description; ⌘/Ctrl+Enter still posts', () => {
+test('Suggest an improvement: Return in the title goes on to the description; ⌘/Ctrl+Enter still posts', () => {
   const mod = loadTsx('frontend/src/features/dialogs/feedback.tsx', {
     stubs: { './feedback-controller': { Feedback: {}, init() {} } },
   });

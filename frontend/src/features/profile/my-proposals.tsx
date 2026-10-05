@@ -15,7 +15,7 @@
  *             GET /api/me/proposal-history, In progress / Merged / Closed.
  *             It took the Communities tab's "What you are working on".
  *   requests  #profile/your-requests: GET /api/me/requests, what you asked for
- *             from the Ask for a change dialog or a board, Open / Done, with
+ *             from the Suggest an improvement dialog or a board, Open / Done, with
  *             the dialog one tap away at the foot.
  *   votes     #profile/your-votes: GET /api/me/history?type=votes, the changes
  *             and group decisions you voted on, Still open / Decided.
@@ -70,7 +70,7 @@ export const WORK_TITLES: Record<WorkKind, string> = {
 
 const EMPTY: Record<WorkKind, string> = {
   changes: 'You have not started a change yet.',
-  requests: 'You have not asked for a change yet.',
+  requests: 'You have not suggested an improvement yet.',
   votes: 'You have not voted on anything yet.',
 };
 
@@ -227,7 +227,7 @@ export function ProfileProposalsScreen(): ReactNode {
               className="w-full"
               onClick={() => { (window as any).App?.openFeedbackModal?.(); }}
             >
-              Ask for a change
+              Suggest an improvement
             </Button>
           </div>
         ) : null}

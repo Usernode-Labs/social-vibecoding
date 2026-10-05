@@ -233,7 +233,7 @@ function requireIssueMembership(pool) {
   }, 'issue');
 }
 
-// B8: Ask for a change (POST /api/feedback) files a request on the app its
+// B8: Suggest an improvement (POST /api/feedback) files a request on the app its
 // body names rather than one in the path: the same gate, by slug. Returns the
 // join_required body to answer with, or null to let it through.
 async function appNeedsJoin(pool, slug, user) {

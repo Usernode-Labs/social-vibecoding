@@ -649,7 +649,7 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
           <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="menu">
             {'Nothing in progress. Press '}
             <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
-            {' to ask for a change.'}
+            {' to suggest an improvement.'}
           </p>
         ) : (
           <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress.</p>

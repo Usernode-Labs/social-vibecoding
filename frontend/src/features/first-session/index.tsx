@@ -474,7 +474,7 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
           <ol className="mt-3 grid gap-2.5">
             {[
               maker ? `Someone makes an app for their group. ${maker} ${made} this one.` : 'Someone makes an app for their group.',
-              'Anyone in the group can ask for a change. Homeroom bot builds it.',
+              'Anyone in the group can suggest an improvement. Homeroom bot builds it.',
               'The group decides what goes in.',
             ].map((line, i) => (
               <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">

@@ -80,14 +80,16 @@ export function FeedbackDialog() {
             markup: nothing here is written, so the controller still owns
             every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
         <div id="feedback-form" onKeyDown={returnKeyHandler()}>
-        {/* ASK FOR A CHANGE, from every way in (UI overhaul). It was "Send
-            feedback", and "Ask for a change" only from the hub's ⋯ (QA
-            2026-09-24); people read feedback as a note to nobody in
-            particular, when what it posts is a request the members of the
-            place it goes can see, vote on and pick up. The line under the
-            heading says exactly that. */}
+        {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
+            feedback", then "Ask for a change" from the hub's ⋯ (QA
+            2026-09-24) and from every way in (UI overhaul); people read
+            feedback as a note to nobody in particular, when what it posts is
+            a request the members of the place it goes can see, vote on and
+            pick up. The line under the heading says exactly that. "Suggest
+            an improvement" since the first-session run-through (5 Oct
+            2026), in a newcomer's words. */}
         <h2 className="text-lg font-bold">
-          Ask for a change
+          Suggest an improvement
         </h2>
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.

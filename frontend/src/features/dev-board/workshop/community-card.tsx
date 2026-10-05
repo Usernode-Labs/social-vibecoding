@@ -32,7 +32,7 @@
  *   What you can DO here ends the members row: Invite opens Members &
  *   approvals, where the roster, invites and approvers are managed, for
  *   exactly whom the ⋯ menu offers it, and the ⋯ itself (`menu`, the
- *   page's DevPlusMenu) holds Ask for a change and the project's settings.
+ *   page's DevPlusMenu) holds Suggest an improvement and the project's settings.
  *   This hero lists; it does not manage.
  *
  *   MAKE IT PUBLIC. Who a project is for can grow after it exists: Invite

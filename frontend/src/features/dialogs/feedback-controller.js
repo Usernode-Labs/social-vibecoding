@@ -1618,7 +1618,7 @@ export function init() {
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
       setComposerLocked(false);
-      // The heading is "Ask for a change" from every way in (UI overhaul),
+      // The heading is "Suggest an improvement" from every way in,
       // so it is the markup's own and nothing renames it; `opts.intent`
       // ('issue', from the hub's ⋯) is still accepted and changes nothing.
       firstSuccess?.classList.add('hidden');
@@ -1889,7 +1889,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.('Your request draft was saved. Reopen Ask for a change to finish it.');
+      PlatformUI?.toast?.('Your request draft was saved. Reopen Suggest an improvement to finish it.');
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();

@@ -387,7 +387,7 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
 // request the viewer asked for, whichever way they asked. Two ways in, one
 // list:
 //
-//   - the Ask for a change dialog, recorded in feedback_reports once the
+//   - the Suggest an improvement dialog, recorded in feedback_reports once the
 //     request exists (a platform request has no app_id there: it is the
 //     self-hosted app's, the repository it was filed into, matched by name);
 //   - a project's board, which records it in `issues` (kind 'general').
