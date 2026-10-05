@@ -82,7 +82,7 @@ function buildRequest({
   sessionId,
   maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
-  parallelToolCalls = true,
+  parallelToolCalls = null,
   toolChoice = 'auto',
 }) {
   const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
@@ -128,7 +128,14 @@ function buildRequest({
       sort: 'latency',
     },
   };
-  if (parallelToolCalls != null) request.parallel_tool_calls = parallelToolCalls === true;
+  // Sent only when a caller asks for it by name (true). With
+  // require_parameters above, any parallel_tool_calls OpenRouter sees, false
+  // included, routes the call only to providers that list the parameter:
+  // for GLM 5.3 Flash one of its thirty-three (Inceptron). Left out, every
+  // provider of the model can answer, at its own default, which already
+  // allows several tool calls in one reply. The DM (#3772) and the model
+  // helpers (#3949) each hit this through a default or an explicit false.
+  if (parallelToolCalls === true) request.parallel_tool_calls = true;
   if (temperature != null) {
     request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
   }

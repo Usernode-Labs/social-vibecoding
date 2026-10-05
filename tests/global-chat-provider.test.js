@@ -61,7 +61,16 @@ test('OpenRouter request uses strict tools without conflicting response_format',
     sort: 'latency',
   });
   assert.equal(Object.hasOwn(request, 'response_format'), false);
-  assert.equal(request.parallel_tool_calls, true);
+  // Not sent unless asked for by name: with require_parameters it would route
+  // the call only to providers that list it (#3772, #3949).
+  assert.equal(Object.hasOwn(request, 'parallel_tool_calls'), false);
+});
+
+test('parallel_tool_calls is sent only for true: false and null leave every provider in', () => {
+  const base = { model: MODEL.id, reasoning: 'low', messages: [], tools: [] };
+  assert.equal(provider.buildRequest({ ...base, parallelToolCalls: true }).parallel_tool_calls, true);
+  assert.equal(Object.hasOwn(provider.buildRequest({ ...base, parallelToolCalls: false }), 'parallel_tool_calls'), false);
+  assert.equal(Object.hasOwn(provider.buildRequest({ ...base, parallelToolCalls: null }), 'parallel_tool_calls'), false);
 });
 
 test('unsupported optional model parameters are omitted instead of weakening required routing', () => {
