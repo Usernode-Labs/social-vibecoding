@@ -2852,6 +2852,73 @@ async function sweepFirstVersions(pool, config, deps = {}) {
 const REPLAN_STEP_NAME = 'Updating the plan';
 
 /**
+ * Where approval of a first version that is ready to try stands, for one
+ * person reading its App tab (firstVersionState below), so the screen can
+ * say what it waits on rather than only that it waits:
+ *
+ *   sessionId    the change, for Try it (its preview) and See the change
+ *   mustApprove  their Yes counts on the project (approvalState: its named
+ *                approvers, else every member), is not in yet, and is
+ *                still needed
+ *   approved     their Yes counts and is in
+ *   waitingOn    up to three of the people it still waits on, never the
+ *                reader (needsYesFrom: who the "ready to try" notification
+ *                asked), and `more` the rest; empty once no Yes is missing
+ *   missing      how many more Yes votes it needs (0 when it has them)
+ *   goesLiveAt   when it goes live anyway if nobody objects: the end of the
+ *                merge clock that runs (active-users.js mergeGate: the
+ *                lazy-consensus window while a Yes is missing, the
+ *                visibility window once it has them), from when it went up
+ *                for approval. Null when no clock runs (an "at least N"
+ *                project, a change to protected settings, no Yes yet).
+ *   soon         nothing more is needed: it goes live in a minute or two
+ *
+ * The gate is the change's real one, counted with its explicit-approval
+ * flag so no clock is promised to a change that has none. Null for no such
+ * change.
+ */
+async function firstVersionApproval(pool, sessionId, viewerId = null) {
+  const viewer = Number(viewerId) || null;
+  const state = await approvalState(pool, { sessionId, userId: viewer });
+  if (!state) return null;
+  const id = Number(state.session.id);
+  const appId = Number(state.session.app_id);
+  // approvalState's own gate when it carries one; else read here, with the
+  // change's explicit-approval flag (governance.js applyNoTimerMerge).
+  let gate = state.gate || null;
+  if (!gate) {
+    const { rows: [flags] } = await pool.query(
+      'SELECT COALESCE(requires_explicit_approval, FALSE) AS explicit_approval FROM chat_sessions WHERE id = $1', [id],
+    );
+    gate = await require('./governance').governedGate(pool, appId, {
+      kind: 'pr', id, openedAt: state.session.opened_at,
+      explicitApproval: flags?.explicit_approval === true, authorId: state.session.user_id ?? null,
+    });
+  }
+  const missing = gate.thresholdMet
+    ? 0
+    : Math.max((Number(gate.required) || 1) - (Number(gate.qualifiedYes) || 0), 1);
+  // Voting is a member's (communities.requireSessionMembership), so a Yes
+  // that would count is asked only of a member.
+  const member = viewer ? await require('./communities').isMember(pool, appId, viewer) : false;
+  const approved = state.counts && state.already;
+  const waiting = missing
+    ? await usernamesOf(pool, await needsYesFrom(pool, state, { except: viewer ? [viewer] : [] }))
+    : [];
+  const clock = (gate.thresholdMet || gate.lazyArmed) && gate.windowEndsAt ? new Date(gate.windowEndsAt) : null;
+  return {
+    sessionId: id,
+    mustApprove: state.counts && !state.already && member && missing > 0,
+    approved,
+    waitingOn: waiting.slice(0, 3),
+    more: Math.max(waiting.length - 3, 0),
+    missing,
+    goesLiveAt: clock && Number.isFinite(clock.getTime()) ? clock.toISOString() : null,
+    soon: !!gate.mergeable,
+  };
+}
+
+/**
  * #15 (D9): whether the Homeroom bot is still building a project's first
  * version from its description, and where it is, for the App tab. While it
  * builds, the app's own page is the starter its repo was scaffolded with
@@ -2869,8 +2936,10 @@ const REPLAN_STEP_NAME = 'Updating the plan';
  * whose description it is, their DM with the bot, the step of
  * homeroom-bot-progress.js's FIRST_VERSION_STEPS, whether the bot waits on
  * an answer from them, and whether its proposal is up for the vote (ready
- * to try). GET /api/apps/:slug reads it best-effort: a read that fails is
- * no state, never a failed page.
+ * to try). While it is ready, `approval` is where approval of it stands for
+ * whoever reads it (`deps.viewerId`; firstVersionApproval above), when that
+ * could be read. GET /api/apps/:slug reads it best-effort: a read that
+ * fails is no state, never a failed page.
  */
 async function firstVersionState(pool, appId, deps = {}) {
   if (!appId) return null;
@@ -2923,12 +2992,22 @@ async function firstVersionState(pool, appId, deps = {}) {
     // plan's step rather than going back one.
     const replanning = found.row?.queue_reason === 'plan_change'
       && (found.state.stage === 'queued' || found.state.stage === 'reading');
+    const ready = found.state.stage === 'vote';
+    // Ready to try: who it waits on, for the App tab to say. A read that
+    // fails leaves the screen as it was before it said so.
+    const approval = ready && found.row?.proposal_session_id
+      ? await firstVersionApproval(pool, found.row.proposal_session_id, deps.viewerId).catch((err) => {
+        log.warn('homeroom-bot-dm', 'Could not read who a first version waits on', { appId: row.app_id, err: err.message });
+        return null;
+      })
+      : null;
     return {
       ...base,
       ...(replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME } : at(found.state.stage)),
       question: found.state.stage === 'question' && found.state.waitingOn === 'them',
-      ready: found.state.stage === 'vote',
+      ready,
       ...(plan ? { plan } : {}),
+      ...(approval ? { approval } : {}),
     };
   }
   // Filed, and nothing in progress: either it came to something, or the bot
@@ -3075,6 +3154,7 @@ module.exports = {
   startFirstVersion,
   fileFirstVersion,
   sweepFirstVersions,
+  firstVersionApproval,
   firstVersionState,
   suggestShortDescription,
   firstSentence,
