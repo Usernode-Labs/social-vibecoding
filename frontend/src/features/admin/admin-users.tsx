@@ -80,6 +80,9 @@ interface User {
   daily_limit_cents?: number | null;
   weekly_limit_cents?: number | null;
   usernode_pubkey?: string | null;
+  // Kept off the leaderboard podium when true; the row's Podium cell and the
+  // details view's Ranking row read the same flag.
+  exclude_podium?: boolean;
   social_verified?: boolean;
   // #838: the identity tier the weekly cap follows, and its three proofs.
   identity_tier?: 'unverified' | 'social' | 'zkpassport';
@@ -350,9 +353,36 @@ function AppSlotRequest({ user, canWrite, onReload }: { user: User; canWrite: bo
   );
 }
 
+// The row's Podium cell: where the account stands for the leaderboard podium,
+// in the details view's own words, with the same toggle one click away. The
+// details card keeps its longer "Include in ranking" labels where there is
+// room for them.
+function PodiumCell({ user, canWrite, onReload }: { user: User; canWrite: boolean; onReload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const excluded = !!user.exclude_podium;
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const { ok, data } = await send('PATCH', `/api/v4/admin/users/${encodeURIComponent(user.id)}/toggle-exclude-podium`);
+      if (ok && data?.success) { await onReload(); return; }
+      console_()._alert((data && data.error) || 'Update failed.');
+    } finally { setBusy(false); }
+  };
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span>{excluded
+        ? <span className="text-amber-800 dark:text-amber-400">Excluded</span> : 'Ranked'}</span>
+      {canWrite ? (
+        <button type="button" className={AdminUI.btn.outlineSm} disabled={busy}
+          onClick={toggle}>{excluded ? 'Include' : 'Exclude'}</button>
+      ) : null}
+    </span>
+  );
+}
+
 // Fixed columns from md up, so the same value sits in the same place on
 // every row; stacked below md.
-const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
+const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
 const CELL_LABEL = 'md:hidden text-xs text-zinc-500 dark:text-zinc-400';
 
 function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
@@ -404,6 +434,10 @@ function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
         <span className="text-zinc-700 dark:text-zinc-300 tabular-nums" data-user-points={user.id}>
           {Number(user.total_points || 0).toLocaleString('en-US')}
         </span>
+      </div>
+      <div className="text-sm">
+        <div className={CELL_LABEL}>Podium</div>
+        <PodiumCell user={user} canWrite={canWrite} onReload={onReload} />
       </div>
       <div className="flex items-center gap-1 md:justify-end">
         <button type="button" className={AdminUI.btn.outlineSm} data-user-more={user.id} onClick={onMore}>More</button>
@@ -1177,8 +1211,8 @@ function UsersSection() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span className="w-24" />
+        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span>Podium</span><span className="w-24" />
         </div>
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}

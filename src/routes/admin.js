@@ -332,7 +332,7 @@ function adminRoutes(config) {
       // One query for every user, read off by id below.
       const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
-                u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey, u.exclude_podium,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id

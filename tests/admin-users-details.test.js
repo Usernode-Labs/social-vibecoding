@@ -14,6 +14,7 @@ const USERS = read('frontend/src/features/admin/admin-users.tsx');
 const PROGRAMME = read('frontend/src/features/admin/topochain/programme-users.tsx');
 const DELETIONS = read('frontend/src/features/admin/account-deletions.tsx');
 const MIGRATE = read('src/db/migrate.js');
+const ADMIN = read('src/routes/admin.js');
 const DAPP = JSON.parse(read('dapp.json'));
 
 // Strip comments so prose (which may use em dashes or name credentials while
@@ -127,4 +128,26 @@ test('details cards come from the shared parts and link to Support', () => {
   assert.match(USERS, /id="admin-user-details-open-support"/);
   assert.match(USERS, /location\.hash = `#admin\/support\/\$\{user\.id\}`/);
   assert.match(USERS, /data-open-support=\{user\.id\}/);
+});
+
+test('the users row carries a Podium column with an inline toggle', () => {
+  assert.ok(ADMIN.includes('u.exclude_podium'),
+    'GET /api/admin/users selects u.exclude_podium');
+  // Header and row grids must agree on the seventh column or the values
+  // drift out from under their headings.
+  const GRID = 'md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto]';
+  assert.ok(USERS.split(GRID).length - 1 >= 2,
+    'header and row grids both carry the Podium column');
+  assert.ok(USERS.includes('<span id="admin-users-points-header">Total points</span><span>Podium</span>'),
+    'the header names Podium after Total points');
+  assert.match(USERS, /<div className=\{CELL_LABEL\}>Podium<\/div>/,
+    'the stacked layout labels the cell Podium');
+  // The row reuses the endpoint the details view's Ranking toggle calls:
+  // the details card holds one copy, the row adds the second.
+  assert.strictEqual(USERS.split('/toggle-exclude-podium`').length - 1, 2,
+    'the row reuses the existing ranking toggle endpoint');
+  assert.match(USERS, /\{excluded \? 'Include' : 'Exclude'\}/,
+    'the inline button names the action it performs');
+  assert.match(USERS, /\? <span className="text-amber-800 dark:text-amber-400">Excluded<\/span> : 'Ranked'\}/,
+    'the status words match the details card, amber when excluded');
 });
