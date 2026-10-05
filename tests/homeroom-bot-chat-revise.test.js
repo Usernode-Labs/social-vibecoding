@@ -144,7 +144,7 @@ test('what the card and the chip say, at every stage', () => {
   assert.match(fixing, /Only you can see this/);
   // Everybody in the room sees the fix asked for on the message.
   assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'fixing', issueNumber: 1, sessionId: 70 } })),
-    /data-bot-request="fixing"[^>]*>.*🔧.*Fixing/);
+    /data-bot-request="fixing"[^>]*>.*🔧.*Homeroom bot is fixing this/);
   // The chat draws the chip, opens the change, and reads its cards again.
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /\['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'\]\.includes\(value\.status\)/);

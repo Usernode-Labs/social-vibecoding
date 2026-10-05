@@ -23,8 +23,25 @@ export type TourStep = {
   place?: 'auto' | 'bottom' | { above: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
+  /**
+   * A transcript in the cut-out: the newest of its `rows` is shown from its
+   * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
+   * card taller than the transcript began part-way down, with no first line.
+   */
+  newestFromTop?: { scroller: string; rows: string };
   last?: boolean;
 };
+
+/**
+ * The maker's last step: their chat with Homeroom bot, its header (the bot's
+ * name and what it is doing for them) with its messages under it, as one
+ * cut-out. It used to be the messages alone, under a dimmed header, and its
+ * newest card began part-way down: "the chat with Homeroom bot is missing the
+ * header" (Evan, on his phone, 5 October 2026). The conversation's own
+ * section scopes both, so no other pane's header or transcript is measured.
+ */
+export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
+export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
 
 /**
  * Where the project's first version stands, as its App tab shows it
@@ -195,7 +212,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
     {
       screen: 'bot',
-      target: '.messages-thread-scroll',
+      target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
+      newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       title: 'Your chat with Homeroom bot',
       text: 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.',
       place: 'bottom',

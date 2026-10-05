@@ -159,6 +159,46 @@ export function targetBox(selectors: string): Box | null {
   return { left, top, width: right - left, height: bottom - top };
 }
 
+/** How far below a transcript's top edge a row it shows from its top begins. */
+const ROW_INSET = 8;
+
+/**
+ * Pure: how far a transcript scrolls back so a row whose top is at `rowTop`
+ * begins ROW_INSET below the transcript's own top (`scrollerTop`), both on
+ * screen: 0 when it does already. Never forward: a row lower down is in view.
+ */
+export function scrollBackFor(scrollerTop: number, rowTop: number, inset: number = ROW_INSET): number {
+  const by = scrollerTop + inset - rowTop;
+  return by > 0 ? Math.ceil(by) : 0;
+}
+
+type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number } }> };
+
+/**
+ * A step's transcript (TourStep.newestFromTop): its newest row is shown from
+ * its top edge. Pinned to its newest line, the bot's chat put a plan card
+ * taller than the space above the coach card part-way down, its first line
+ * ("Here's my plan for …") above the cut-out. Run every frame while the step
+ * is up, so it holds when the rows arrive after the step lands and when the
+ * chat follows a card that grew; the step covers its cut-out, so the reader
+ * is never scrolled against their own hand. Answers whether it scrolled.
+ */
+export function showNewestFromTop(
+  spec: { scroller: string; rows: string },
+  root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
+): boolean {
+  const scroller = (Array.from(root.querySelectorAll(spec.scroller)) as ScrollerLike[])
+    .find((el) => el.getBoundingClientRect().height > 0);
+  if (!scroller) return false;
+  const rows = scroller.querySelectorAll(spec.rows);
+  const newest = rows.length ? rows[rows.length - 1] : null;
+  if (!newest) return false;
+  const by = scrollBackFor(scroller.getBoundingClientRect().top, newest.getBoundingClientRect().top);
+  if (!by) return false;
+  scroller.scrollTop = Math.max(0, scroller.scrollTop - by);
+  return true;
+}
+
 const PAD = 6;
 /** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
 const RING = 3;
@@ -241,6 +281,9 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
     const tick = () => {
       try {
         const at = indexRef.current;
+        // Before measuring, so the cut-out is drawn round what it shows.
+        const reveal = stepRef.current.newestFromTop;
+        if (reveal) showNewestFromTop(reveal);
         const b = targetBox(stepRef.current.target);
         const key = `${at}:${boxKey(b)}`;
         if (key !== last) { last = key; setMeasured({ step: at, box: b }); }
