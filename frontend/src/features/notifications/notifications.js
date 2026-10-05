@@ -2698,20 +2698,25 @@ function rowView(n) {
   // project, as a group chat's banner is, over what they said; the meta line
   // names the surface (Discussion), as a conversation row's names Messages,
   // so the project's name is not said twice.
+  // 5 October (Page Turners): a message Homeroom bot filed as a request
+  // (`requestNumber`, read live, services/notifications.js) is somebody
+  // asking for a change, as a joiner's first message says (below). Several
+  // messages folded into one row stay messages.
   if (n.kind === 'channel_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
     const place = n.appName || 'the discussion';
     const snippet = (n.messageContent || '').slice(0, 140);
     const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    const asked = count === 1 && n.requestNumber != null;
     return {
       ...base,
       wrap: true,
-      icon: '💬',
+      icon: asked ? '\u{1F4A1}' : '💬',
       by: null,
       appLine: 'Discussion',
       ...(count > 1
         ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
-        : headline(`${author} in ${place}`, snippet || null)),
+        : headline(asked ? `${author} asked for a change in ${place}` : `${author} in ${place}`, snippet || null)),
     };
   }
 

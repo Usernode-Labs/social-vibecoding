@@ -13,7 +13,8 @@
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
 //   - homeroom-bot-chat record() pushes the maker's row again once the first
-//     message is filed.
+//     message is filed, and the rest of a small group's discussion rows
+//     about a message once it is filed (Mo's, the same day).
 //
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/bell-live-ready-saidhi-postgres.test.js
 
@@ -229,5 +230,56 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     for (const field of ['sessionStatus', 'digestWaiting', 'requestNumber']) {
       assert.equal(Object.prototype.hasOwnProperty.call(plain, field), false, field);
     }
+  });
+
+  await t.test('a group discussion message the bot filed: the rest of the group\'s rows say it is a request, pushed again', async () => {
+    // The real discussion path (services/group-channel-notify.js): a private
+    // project of three, each a member collaborator, so Mo's message rings
+    // Alex and Priya.
+    const group = require('../src/services/group-channel-notify');
+    for (const person of [alex, priya, mo]) {
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())
+         ON CONFLICT (app_id, user_id) DO UPDATE SET status = 'member'`,
+        [app.id, person.id],
+      );
+    }
+    const post = async (who, content) => (await pool.query(
+      'INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, $3) RETURNING id', [app.id, who.id, content],
+    )).rows[0].id;
+    const asked = await post(mo, 'Could it also show whose place we meet at next time?');
+    pushed.length = 0;
+    const rang = await group.notifyChannelMessage(pool, { appId: app.id, messageId: asked, senderId: mo.id });
+    assert.deepEqual(rang.map((r) => Number(r.user_id)).sort(), [alex.id, priya.id].sort(), 'the rest of the group');
+    const rowOf = (who) => rang.find((r) => Number(r.user_id) === who.id).id;
+    assert.equal((await listed(alex.id, rowOf(alex))).requestNumber, null, 'just sent: what Mo said');
+
+    // A read that is not a request (a question for the bot) changes nothing.
+    pushed.length = 0;
+    const chat = require('../src/services/homeroom-bot-chat');
+    const question = await post(mo, 'What can the bot do?');
+    await chat.record(pool, { messageId: question, appId: app.id, userId: mo.id, kind: 'question' });
+    assert.equal(pushed.length, 0);
+
+    // Filed as request #4 (the group files it; the bot does not build here).
+    await chat.record(pool, {
+      messageId: asked, appId: app.id, userId: mo.id, kind: 'group', issueNumber: 4, title: 'Show the host', replace: true,
+    });
+    for (const who of [alex, priya]) {
+      assert.equal((await listed(who.id, rowOf(who))).requestNumber, 4, who.username);
+      const exact = notifications.serialize(await notifications.getForUser(pool, who.id, rowOf(who)));
+      assert.equal(exact.requestNumber, 4, 'the exact lookup (a push opened) reads the same');
+    }
+    const again = pushed.filter((p) => p.payload.type === 'notification_new');
+    assert.deepEqual(again.map((p) => p.userId).sort(), [alex.id, priya.id].sort(), 'each row pushed again, to its reader');
+    assert.ok(again.every((p) => p.payload.notification.requestNumber === 4 && p.payload.notification.kind === 'channel_message'));
+    assert.ok(again.every((p) => p.payload.notification.readAt === null), 'unread as it was');
+
+    // Priya answers before Alex reads: his row folds her message in, and is
+    // about two messages now, not Mo's request.
+    await group.notifyChannelMessage(pool, { appId: app.id, messageId: await post(priya, 'Good idea'), senderId: priya.id });
+    const folded = await listed(alex.id, rowOf(alex));
+    assert.equal(folded.detail, '2');
+    assert.equal(folded.requestNumber, null, 'its newest message is not the request');
   });
 });

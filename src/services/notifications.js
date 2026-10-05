@@ -33,6 +33,9 @@
 // approval" digest counts only what still waits, and a first message Homeroom
 // bot filed as a request says it asked for a change. A change that is
 // decided settles what the bell still asked about it (settleDecidedChange).
+// The same day, a group's discussion row about a message the bot filed as a
+// request said "@mo_t1006 in Page Turners" over it: it says they asked for a
+// change too (FILED_MESSAGE_JOIN_SQL).
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -162,17 +165,22 @@ const DIGEST_WAITING_SQL = `LEAST((
 // with it (5 October): the status of the change a "ready to try" asked about
 // (`session_status`, cs is chat_sessions on n.session_id), how many of a
 // digest's changes still wait (`digest_waiting`), and the request a joiner's
-// first message became when Homeroom bot filed it (`bot_request_number`,
-// from FIRST_MESSAGE_REQUEST_JOIN_SQL). Kept beside the joins they need in
-// every read of the bell: the list, the exact lookup and the live push.
+// first message, or a message in a group's discussion, became when Homeroom
+// bot filed it (`bot_request_number`, from FILED_MESSAGE_JOIN_SQL). Kept
+// beside the joins they need in every read of the bell: the list, the exact
+// lookup and the live push.
 const LIVE_ROW_COLUMNS_SQL = `cs.status AS session_status,
             CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
             bot_request.issue_number AS bot_request_number`;
 // 'filed' and 'group' are a request in the writer's words; 'revise' asked to
 // change one of the bot's changes before it went live. An offer not taken
-// up, a question or a dismissed read is still just what they said.
-const FIRST_MESSAGE_REQUEST_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
-       ON n.kind = 'first_message' AND bot_request.chat_message_id = n.chat_message_id
+// up, a question or a dismissed read is still just what they said. The two
+// kinds of row that are about one person's message in a project's chat: a
+// joiner's first message (to their invite's maker) and a group's discussion
+// (channel_message, to the rest of the group; its message is the newest one
+// folded in).
+const FILED_MESSAGE_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
+       ON n.kind IN ('first_message', 'channel_message') AND bot_request.chat_message_id = n.chat_message_id
       AND bot_request.kind IN ('filed', 'group', 'revise') AND bot_request.issue_number IS NOT NULL`;
 
 function parseMentions(text) {
@@ -880,7 +888,7 @@ async function hydrateAndPush(pool, row) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-       ${FIRST_MESSAGE_REQUEST_JOIN_SQL}
+       ${FILED_MESSAGE_JOIN_SQL}
        WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
       [row.id]
     );
@@ -1261,7 +1269,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-     ${FIRST_MESSAGE_REQUEST_JOIN_SQL}
+     ${FILED_MESSAGE_JOIN_SQL}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${cursorClause}
      ${kindClause}
@@ -1305,7 +1313,7 @@ async function getForUser(pool, userId, id) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-       ${FIRST_MESSAGE_REQUEST_JOIN_SQL}
+       ${FILED_MESSAGE_JOIN_SQL}
       WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [id, userId]
   );
@@ -1539,21 +1547,24 @@ async function settleDecidedChange(pool, sessionId) {
 }
 
 /**
- * 5 October (Page Turners): the joiner's first message `chatMessageId` was
- * just filed as a request (homeroom-bot-chat.js record), seconds or a
- * "Suggest it" after it was sent and its maker was told they said hi. The
- * maker's row is pushed again as it reads now ("Asked for a change"); the
- * client replaces it in place, unread or read as it was. Found through the
- * project's own people, whose rows the per-user index holds. Never throws.
+ * 5 October (Page Turners): message `chatMessageId` in a project's chat was
+ * just filed as a request (homeroom-bot-chat.js record), seconds (a read of
+ * it, or a "Suggest it") after it rang. The rows that told people about it
+ * are pushed again as they read now: the joiner's first message to their
+ * invite's maker ("Asked for a change", not "Said hi"), and the group's
+ * discussion row whose newest message it still is ("@mo asked for a change
+ * in Page Turners"). The client replaces each in place, unread or read as it
+ * was; the push that rang already went. Found through the project's own
+ * people, whose rows the per-user index holds. Never throws.
  */
-async function refreshFirstMessage(pool, { appId, chatMessageId }) {
+async function refreshFiledMessage(pool, { appId, chatMessageId }) {
   const app = Number(appId);
   const message = Number(chatMessageId);
   if (!Number.isSafeInteger(app) || app <= 0 || !Number.isSafeInteger(message) || message <= 0) return 0;
   try {
     const { rows } = await pool.query(
       `SELECT n.id FROM notifications n
-        WHERE n.kind = 'first_message' AND n.chat_message_id = $2 AND n.app_id = $1
+        WHERE n.kind IN ('first_message', 'channel_message') AND n.chat_message_id = $2 AND n.app_id = $1
           AND n.user_id IN (SELECT m.user_id FROM apps a
                               JOIN community_members m ON m.community_id = a.community_id
                              WHERE a.id = $1)`,
@@ -1562,7 +1573,7 @@ async function refreshFirstMessage(pool, { appId, chatMessageId }) {
     for (const row of rows) await hydrateAndPush(pool, row);
     return rows.length;
   } catch (err) {
-    log.warn('notifications', 'first-message refresh failed', { appId: app, err: err.message });
+    log.warn('notifications', 'filed-message refresh failed', { appId: app, err: err.message });
     return 0;
   }
 }
@@ -1774,11 +1785,11 @@ function serialize(row) {
     // unchanged. Where the change a "ready to try" asked about stands now
     // ('promoted', 'merging', 'merged', 'archived', …); how many of a
     // digest's changes still wait on its reader; and the request a joiner's
-    // first message became.
+    // first message, or a group's discussion message, became.
     ...(row.kind === 'change_ready' ? { sessionStatus: row.session_status || null } : {}),
     ...(row.kind === 'vote_digest' && row.digest_waiting != null
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
-    ...(row.kind === 'first_message'
+    ...(row.kind === 'first_message' || row.kind === 'channel_message'
       ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
   };
 }
@@ -1826,7 +1837,7 @@ module.exports = {
   markReadForSession,
   settleDecidedChange,
   settleVoteDigests,
-  refreshFirstMessage,
+  refreshFiledMessage,
   DECIDED_ASK_KINDS,
   markReadForAction,
   markReadForAgentSession,
