@@ -426,7 +426,10 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
           </div>
         ) : null}
       </div>
-      {/* The way down when the reader is up the transcript, as every chat has. */}
+      {/* The way down when the reader is up the transcript, as every chat has.
+          A zero-height overlay between the two, so dapp.json's safe-bar check
+          reads the composer as a later sibling of the transcript (`~`), not
+          the next one. */}
       <JumpToLatest scroller={scroll} />
 
       <Composer id={globalChatComposerId(embedded ? 'messages' : 'screen')} />
