@@ -9562,5 +9562,101 @@
   "merged_020957b917e2": {
     "text": "Nhân viên bắn súng đã cố gắng điều này sau khi xây dựng, và ứng dụng bị phá vỡ.",
     "source": "020957b917e2489770850e94d5e588d60c8326bda0f38a32c632e0240d0edb1f"
+  },
+  "sync_new_messages_ef5df7e6": {
+    "text": "Tin tức mới",
+    "source": "ef5df7e6051540cadc2942c9c85501a74772f87f4d30d28913478a84331b8062"
+  },
+  "sync_new_18fdd549": {
+    "text": "Mới",
+    "source": "18fdd549b2ed367ac0c74cbec1214644728515b30edbcb78e7d322757a7c8359"
+  },
+  "sync_open_original_44a915fa": {
+    "text": "Mở nguyên bản",
+    "source": "44a915faf3a909dc942739e32d327fe88bee550d1697741de10631f6fdabad5c"
+  },
+  "sync_still_waiting_for_your_browser_to_share_the_s_f3425099": {
+    "text": "Nếu bạn đã chọn những gì để chia sẻ và không có gì xảy ra, khởi động lại trình duyệt, hoặc chọn một hình ảnh thay thế. phản hồi của bạn an toàn.",
+    "source": "f3425099d1652813b3d9b1a55315db1e28a069723c010cc11b32b6013c1fde77"
+  },
+  "sync_that_was_a_small_window_not_this_page_try_aga_44657c62": {
+    "text": "Đó là một cửa sổ nhỏ, không phải trang này. thử lại và chia sẻ cửa sổ hiển thị trang này, hoặc toàn bộ màn hình của bạn. phản hồi của bạn an toàn.",
+    "source": "44657c6296ab36106e5623775ced676721a482d7664952bb8966a87e8ab165dd"
+  },
+  "sync_this_community_7a0984fa": {
+    "text": "cộng đồng này",
+    "source": "7a0984fae8008c868042a594765931af7a38dd2720c6184be19be455e4ec5d6e"
+  },
+  "sync_side_by_side_a3d7b387": {
+    "text": "Cạnh nhau",
+    "source": "a3d7b387c34df52c5a611045b53215ebba668ddb9026a813b5aff0d50599fb3e"
+  },
+  "sync_close_up_223f4cd0": {
+    "text": "Cận cảnh",
+    "source": "223f4cd0ec6de9f8fb64c3bc3a1c9083962dcc04bb5f0e1131d7899fcc7a5f49"
+  },
+  "sync_whole_screen_d0cf2fa1": {
+    "text": "Toàn bộ màn hình",
+    "source": "d0cf2fa1c212ce6c4ff6b1e8ddc9458a670e916096c100dcaa848fd695bde8b8"
+  },
+  "sync_show_before_and_after_side_by_side_170d8d26": {
+    "text": "Hiển thị trước và sau bên cạnh",
+    "source": "170d8d26fb715b27523f06d3dc0b50f9679f09b87a15a955cf85298fc9a91a9e"
+  },
+  "sync_show_side_by_side_when_there_is_room_otherwis_eb297bef": {
+    "text": "Hiển thị bên cạnh khi có phòng, nếu không sau khi",
+    "source": "eb297bef2a0259e73cf981e47fcdf3f6092f76a76e2b97991a6ba0187f36f36e"
+  },
+  "sync_show_a_close_up_of_what_changes_c0f31bdb": {
+    "text": "Hiển thị gần hơn về những thay đổi",
+    "source": "c0f31bdbdf7c7ae5569dceb3067356657061ea64e320c6658bcc62e2b9d7e1fb"
+  },
+  "sync_show_the_whole_screen_8f4f712f": {
+    "text": "Hiển thị toàn bộ màn hình",
+    "source": "8f4f712f09413b48279319e82e698c2708d4cae2d9de0c51b97eb83efb2e1f0b"
+  },
+  "sync_phone_63dceb88": {
+    "text": "Điện thoại",
+    "source": "63dceb8800b2dd4af9567a1f54f03b7c3dbdc27fac4799091ebfcc4928899ee5"
+  },
+  "sync_desktop_9bd88f24": {
+    "text": "máy tính Desktop",
+    "source": "9bd88f2485acbb9426ad3dd9e06842ede8c7516d0ba8559298675f09419681fa"
+  },
+  "sync_screen_6e56137e": {
+    "text": "màn hình",
+    "source": "6e56137e21d3222a2e3135fc3458286fc3fb6b2e2c679e9ae28db268fe982af7"
+  },
+  "sync_close_up_21bb7416": {
+    "text": " · Cận cảnh",
+    "source": "21bb74166198096ef71043dd3969d0c4dd253fcb8d1872f037c78ac839ca1965"
+  },
+  "sync_whole_screen_26446d6d": {
+    "text": " · Toàn bộ màn hình",
+    "source": "26446d6d630089f1896c376bfd49b012c944c048424c599ffa096ef261b53d3a"
+  },
+  "sync_after_planned_description_7ac26e58": {
+    "text": "Sau (được lên kế hoạch): {{description}}",
+    "source": "7ac26e58b06d614fd64b0e17ff25129054c78f99cc5122dd9e9263bcc4edcb78"
+  },
+  "sync_before_description_334ddead": {
+    "text": "Lượt xem: {{description}}",
+    "source": "334ddead0e44e91db63f1ba37f203b237ce045d0f0296bc724f99d6285171194"
+  },
+  "sync_after_planned_c2b21fad": {
+    "text": "Sau · dự kiến",
+    "source": "c2b21fadc03700c8b2a9f4d3410214de3cb90622a20fe6c5ecee7220c6e3c14d"
+  },
+  "sync_before_today_08f06eaf": {
+    "text": "Trước · hôm nay",
+    "source": "08f06eaf8f975c3a51a0966b28d6b9563edea4a9a17cd5c3a410c44551f9bdb8"
+  },
+  "sync_size_width_height_ea9f2790": {
+    "text": "{{size}}, {{width}} × {{height}}",
+    "source": "ea9f2790d659652b88b150047bdd8fc26632f22d2a049e4da700027b2ef44fc6"
+  },
+  "sync_seen_as_a_persona_78ee6798": {
+    "text": " · được xem là {{persona}}",
+    "source": "78ee67985f9a3d114535c78867783e0619c8297ba7e40311463aa76a2f925079"
   }
 }
