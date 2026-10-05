@@ -564,8 +564,10 @@ export async function loadThread(conversationId: number, force = false): Promise
     // Read up to the newest message DRAWN — and only once the transcript
     // reaches the present, or a message link would mark everything after it
     // read. Never straight after "Mark unread" (#2387): the reader asked for
-    // this conversation to stay unread, and it is still open.
-    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last);
+    // this conversation to stay unread, and it is still open. And only with
+    // somebody there to read it (readWhenThere): a message that lands in a
+    // conversation left open on an unattended screen waits for them.
+    if (last && member && !page.nextAfter && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     if (request !== threadRequest) return;
     publish({
@@ -660,7 +662,7 @@ export async function loadNewer(): Promise<void> {
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = newestMainId(messages);
-    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last);
+    if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
   }
@@ -1816,7 +1818,14 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
-    if (newest) void markThreadRead(conversationId, rootId, newest);
+    if (newest) {
+      readWhenThere(`thread:${conversationId}:${rootId}`, conversationId, () => {
+        // The newest reply drawn when they are back, in the thread still open.
+        if (state.thread?.conversationId !== conversationId || state.thread.rootId !== rootId) return;
+        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), 0);
+        if (now > 0) void markThreadRead(conversationId, rootId, now);
+      });
+    }
   } catch (error) {
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
@@ -1910,6 +1919,70 @@ async function markThreadRead(conversationId: number, rootId: number, replyId: n
   threadReadUpTo.set(key, replyId);
   if (typeof window !== 'undefined') window.Notifications?.markConversationThreadRead?.(conversationId, rootId);
   try { await api.markRead(conversationId, replyId); } catch { /* the next open reads it again */ }
+}
+
+/**
+ * A MESSAGE IS READ WHEN SOMEBODY IS THERE TO READ IT (5 October, Page
+ * Turners). A conversation open on screen used to be read up to its newest
+ * message the moment one landed, whoever was looking: a background tab, an
+ * app whose socket outlived the screen, a phone left on the table. Alex
+ * approved his first version from his chat with Homeroom bot and put the
+ * phone down; "Page Turners is live" landed in that open chat four minutes
+ * later and was read on the spot, which cleared its bell row and the
+ * Messages badge (both read off the same cursor,
+ * services/conversations.js markRead) before he ever looked.
+ *
+ * Now a read waits while the page is hidden or nobody has touched it for
+ * PRESENCE_MS, and happens when they are back: their next touch, key,
+ * scroll or return to the page (initializeMessagesStore), if that
+ * conversation is still on screen and not marked unread. Opening a
+ * conversation is touching the page, so an open still reads at once; a
+ * conversation left before they came back stays unread, as it should.
+ */
+const PRESENCE_MS = 2 * 60 * 1000;
+let lastPresence = Date.now();
+const heldReads = new Map<string, { conversationId: number; read: () => void }>();
+
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+function someoneThere(): boolean {
+  return !pageHidden() && Date.now() - lastPresence < PRESENCE_MS;
+}
+
+/** Run `read` now if somebody is there, or when they are back (notePresence). The newest wins per `key`. */
+function readWhenThere(key: string, conversationId: number, read: () => void): void {
+  if (someoneThere()) {
+    heldReads.delete(key);
+    read();
+    return;
+  }
+  heldReads.set(key, { conversationId, read });
+}
+
+/** The open conversation read up to its newest message drawn, then. */
+function readMainWhenThere(conversationId: number): void {
+  readWhenThere(`main:${conversationId}`, conversationId, () => {
+    if (state.route.conversationId !== conversationId || state.nextAfter) return;
+    const last = newestMainId(state.messages);
+    if (last) void markRead(last);
+  });
+}
+
+/**
+ * Somebody used the page (or came back to it): reads that waited for them
+ * happen now, for the conversation still on screen.
+ */
+export function notePresence(): void {
+  if (pageHidden()) return;
+  lastPresence = Date.now();
+  if (!heldReads.size) return;
+  const held = [...heldReads.values()];
+  heldReads.clear();
+  for (const item of held) {
+    if (onScreen(item.conversationId) && unreadHold !== item.conversationId) item.read();
+  }
 }
 
 export async function markRead(messageId: number): Promise<void> {
@@ -2191,6 +2264,14 @@ export function initializeMessagesStore(): () => void {
   const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+  // 5 October: somebody using the page, or coming back to it, is somebody
+  // there to read what is open (notePresence, readWhenThere). Captured and
+  // passive: it only notes the time, and never stands in a gesture's way.
+  const PRESENCE_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel', 'scroll', 'focus'];
+  const presence = { capture: true, passive: true };
+  const onPresence = () => { notePresence(); };
+  for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
+  document.addEventListener('visibilitychange', onPresence);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -2214,6 +2295,8 @@ export function initializeMessagesStore(): () => void {
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
+    for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
+    document.removeEventListener('visibilitychange', onPresence);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

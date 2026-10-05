@@ -2503,6 +2503,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
 -- set, so wrapped in IF NOT EXISTS for idempotent re-runs.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
   INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+-- 5 October (Page Turners): a change that goes live or closes settles what
+-- the bell still asks everybody about it at once
+-- (notifications.settleDecidedChange), which reads by change, not by person.
+CREATE INDEX IF NOT EXISTS idx_notifications_session
+  ON notifications (session_id) WHERE session_id IS NOT NULL;
 
 -- #25: free-form detail for a notification kind that needs a small extra
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
