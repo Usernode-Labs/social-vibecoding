@@ -154,6 +154,70 @@ export function forceOffline(): void {
   syncRecheck();
 }
 
+// ── Recovery off the app's own traffic (#3191) ─────────────────────────
+//
+// The probe answers one question only: can THIS browser reach /health?
+// Some browsers answer no for reasons that have nothing to do with the
+// network — a stale service worker still intercepting the endpoint, an
+// extension, a WebView with its own DNS — while the app's own requests
+// keep succeeding around them. The 15s re-probe loop then re-confirms
+// the same broken /health forever, and the banner sticks over a session
+// that is demonstrably live.
+//
+// So recovery also listens to the app's own fetches: one wrapper around
+// `window.fetch`, installed here where the flag lives, so it covers every
+// caller in both bundles (the same shape installJoinRequired uses). A
+// successful same-origin response is the strongest proof of reachability
+// there is — it is exactly the thing the banner says is impossible — and
+// it clears the state the moment it lands instead of waiting for the
+// next probe tick.
+//
+// It clears DIRECTLY, not through nudge(): a nudge would re-ask /health,
+// which is precisely the endpoint that is lying. The one way a
+// successful-looking response can still arrive while the device truly is
+// offline is the service worker's network-first cache fallback; the next
+// failed fetch re-raises the strip through the existing nudge paths
+// (home.js's failed load, the WS drop), so the worst a dead network
+// costs is one banner flicker instead of a stuck one.
+
+function isSameOrigin(input: RequestInfo | URL): boolean {
+  try {
+    const raw = typeof input === 'object' && input !== null && 'url' in input
+      ? (input as Request).url
+      : String(input);
+    return new URL(raw, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear a stuck offline state on proof the origin answered. Internal. */
+function noteSuccess(): void {
+  // set() refuses to un-pin a forced state anyway, but skip the work too:
+  // a ?shot= capture must never see the flag move.
+  if (!offline || forced) return;
+  set(false);
+}
+
+/**
+ * Wrap `window.fetch` once. Successes pass through untouched; the only
+ * added behaviour is the clearing above. Idempotent.
+ */
+function installSuccessProbe(win: any = typeof window !== 'undefined' ? window : null): void {
+  if (!win || typeof win.fetch !== 'function' || win.__offlineSuccessProbeInstalled) return;
+  const send: typeof fetch = win.fetch.bind(win);
+  win.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const res = await send(input, init);
+    try {
+      if (res && res.ok && offline && isSameOrigin(input)) noteSuccess();
+    } catch {
+      /* the answer passes through untouched either way */
+    }
+    return res;
+  };
+  win.__offlineSuccessProbeInstalled = true;
+}
+
 let started = false;
 
 /** Install `window.Offline` and start listening. Idempotent. */
@@ -169,6 +233,7 @@ export function initOffline(): OfflineApi {
   (window as unknown as { Offline: OfflineApi }).Offline = api;
   if (started) return api;
   started = true;
+  installSuccessProbe(window);
 
   window.addEventListener('online', () => { void probe(); });
   window.addEventListener('offline', () => { void probe(); });

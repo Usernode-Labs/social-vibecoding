@@ -7,7 +7,7 @@ const { loadTsx } = require('./lib/render-tsx');
 // Exercise the real connectivity engine with controlled network responses and
 // time. A connected browser can lose access to its Preview without ever firing
 // an online/offline event, or leave a health request pending across recovery.
-function setup(t, { onLine = true } = {}) {
+function setup(t, { onLine = true, windowFetch = false } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const window = new EventTarget();
   const document = new EventTarget();
@@ -29,6 +29,12 @@ function setup(t, { onLine = true } = {}) {
       return new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
     },
   };
+  if (windowFetch) {
+    // The page's own fetch, the one the engine's success hook wraps. Shares
+    // the `requests` log with the probe's transport above.
+    window.location = { href: 'https://shell.test/app', origin: 'https://shell.test' };
+    window.fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
+  }
   for (const [key, value] of Object.entries(globals)) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -167,5 +173,67 @@ test('forced screenshot state survives a pending success and disables all retrie
   t.mock.timers.tick(60000);
   await flush();
   assert.equal(requests.length, 1);
+  assert.deepEqual(changes, [true]);
+});
+
+test('a successful same-origin response clears a stuck offline state at once', async (t) => {
+  // #3191: /health is unreachable from this browser while its own API
+  // traffic succeeds. Drive the flag the way a failed probe leaves it, then
+  // prove a successful same-origin answer recovers without any health check.
+  const { api, window, requests, visibility, bodyClasses, changes } = setup(t, { windowFetch: true });
+  const first = api.probe();
+  await flush();
+  requests[0].reject(new TypeError('unreachable'));
+  await first;
+  assert.equal(api.isOffline(), true);
+
+  const answered = window.fetch('/api/apps');
+  await flush();
+  assert.equal(requests.length, 2);
+  requests[1].resolve({ ok: true });
+  await answered;
+  await flush();
+  assert.equal(api.isOffline(), false, 'a successful answer clears the banner at once');
+  assert.equal(visibility.get('offline-banner'), false);
+  assert.equal(bodyClasses.has('is-offline'), false);
+  assert.deepEqual(changes, [true, false], 'home.js receives the refill event');
+  assert.equal(requests.length, 2, 'recovery happened without another health check');
+  t.mock.timers.tick(60000);
+  await flush();
+  assert.equal(requests.length, 2, 'and it stops the retry loop like any other recovery');
+});
+
+test('the success hook keeps its hands off cross-origin, failed and pinned states', async (t) => {
+  const { api, window, requests, changes } = setup(t, { windowFetch: true });
+  const first = api.probe();
+  await flush();
+  requests[0].reject(new TypeError('unreachable'));
+  await first;
+  assert.equal(api.isOffline(), true);
+
+  // A cross-origin success says nothing about THIS origin's reachability.
+  let answered = window.fetch('https://example.com/health');
+  await flush();
+  requests[1].resolve({ ok: true });
+  await answered;
+  await flush();
+  assert.equal(api.isOffline(), true);
+
+  // A non-2xx same-origin answer clears nothing either.
+  answered = window.fetch('/api/apps');
+  await flush();
+  requests[2].resolve({ ok: false, status: 503 });
+  await answered;
+  await flush();
+  assert.equal(api.isOffline(), true);
+
+  // The ?shot= pinned state never moves, whatever answers.
+  api.forceOffline();
+  answered = window.fetch('/api/apps');
+  await flush();
+  requests[3].resolve({ ok: true });
+  await answered;
+  await flush();
+  assert.equal(api.isOffline(), true);
   assert.deepEqual(changes, [true]);
 });
