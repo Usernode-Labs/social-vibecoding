@@ -31,6 +31,7 @@
 import type { ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { SwitchRow } from '@/components/ui/switch';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { topochainStandingsStore } from './topochain-standings-store.js';
@@ -65,6 +66,7 @@ type BodyView =
       challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
       isSeason: boolean;
+      includeNonPodium: boolean;
       columns: ColumnKey[];
       headers: Record<ColumnKey, string>;
       rows: RowView[];
@@ -154,7 +156,16 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
   if (column === 'user') {
     return (
       <td className="px-3 py-2 text-sm">
-        <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
+        {/* #3887: a non-podium row's whole line is the muted ink the Rank
+            column already uses — the user name drops the forced dark ink
+            with it, and the tag below keeps saying why. */}
+        <span
+          className={
+            row.nonPodium
+              ? 'font-medium text-zinc-500 dark:text-zinc-400'
+              : 'font-medium text-zinc-900 dark:text-zinc-100'
+          }
+        >{row.user}</span>
         {row.nonPodium ? (
           <span
             className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
@@ -198,7 +209,10 @@ function StandingsTable(
           {view.rows.map((row) => (
             <tr
               key={row.index}
-              className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60"
+              className={
+                `tc-lb-row ${row.nonPodium ? 'text-zinc-500 dark:text-zinc-400 ' : ''}`
+                + 'border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60'
+              }
               data-row-index={row.index}
               tabIndex={0}
               aria-label={`Open ${row.user}'s details`}
@@ -247,6 +261,31 @@ function Pagination(
           Next
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The #3887 switch above the table: podium-excluded people are hidden by
+ * default, and this is the one control that answers "who isn't being
+ * counted, and can I see them?". A React-controlled switch (the settings
+ * rows are bound by id instead) — state lives in the controller module,
+ * and toggling refetches from page 1. It renders only with the table
+ * state, so the prerender contract (`mounted: false` renders nothing)
+ * is untouched.
+ */
+function NonPodiumToggle(
+  { checked }: { checked: boolean },
+): ReactNode {
+  return (
+    <div className="mb-3">
+      <SwitchRow
+        id="tc-lb-include-non-podium"
+        checked={checked}
+        onChange={(e) => controller()?._setIncludeNonPodium(e.target.checked)}
+      >
+        Show non-podium users
+      </SwitchRow>
     </div>
   );
 }
@@ -332,6 +371,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
+      <NonPodiumToggle checked={view.includeNonPodium} />
       <StandingsTable view={view} />
       <Pagination meta={view.pagination} />
     </>

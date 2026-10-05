@@ -21,7 +21,10 @@ import { cn } from '@/lib/utils';
  * place, instead of five copies — and the state stays where it is.
  *
  * SwitchRow is the enclosing `<label>` those four switches share: a full-width
- * click target with the switch first and its caption after. The mobile-push
+ * click target with the switch first and its caption after. Any other input
+ * props (`checked`, `onChange`, …) forward to the `<Switch>` — the standings
+ * table's toggle (#3887) is a React-controlled switch, unlike the settings
+ * rows, which stay bound by id. The mobile-push
  * rows in the alerts section are a DIFFERENT shape (caption block first,
  * switch right-aligned and top-aligned) and stay written out where they are.
  */
@@ -35,16 +38,16 @@ const Switch = React.forwardRef<HTMLInputElement, SwitchProps>(
 );
 Switch.displayName = 'Switch';
 
-export interface SwitchRowProps {
+export interface SwitchRowProps extends React.InputHTMLAttributes<HTMLInputElement> {
   /** The switch's id — settings.js binds every one of them by id. */
   id: string;
   children: React.ReactNode;
 }
 
-function SwitchRow({ id, children }: SwitchRowProps) {
+function SwitchRow({ id, children, ...props }: SwitchRowProps) {
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none">
-      <Switch id={id} />
+      <Switch id={id} {...props} />
       <span className="text-sm text-zinc-800 dark:text-zinc-200">
         {children}
       </span>

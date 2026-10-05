@@ -303,9 +303,24 @@ function topochainPublicRoutes(config) {
       }
 
       const rows = await fetchEventLeaderboardRows(pool, event);
-      const total = rows.length;
+      // #3887: podium-excluded users are hidden by default and, when shown,
+      // take no rank slot of their own — each shares the next ranked row's
+      // rank (assignSharedRanks already wrote that number on both fetch
+      // paths: `u.exclude_podium` on the snapshot path, `s.is_non_podium`
+      // mapped to `exclude_podium` on the season path). Filtering happens
+      // BEFORE total/slice, so meta describes the filtered list and a page
+      // boundary can never split around a hidden row. One filter covers both
+      // paths; the route level is deliberate, because the shared
+      // fetchEventLeaderboardRows also feeds eventStandingsBoard (the home
+      // widget), which keeps non-podium rows in its byUserId map so an
+      // excluded viewer still finds their own line.
+      const truthyPodium = ['1', 'true', 'on', 'yes'];
+      const includeNonPodium = typeof req.query.include_non_podium === 'string'
+        && truthyPodium.includes(req.query.include_non_podium.toLowerCase());
+      const filtered = includeNonPodium ? rows : rows.filter((r) => !r.exclude_podium);
+      const total = filtered.length;
       const start = (page - 1) * perPage;
-      const leaderboard = rows.slice(start, start + perPage).map(formatLeaderboardRow);
+      const leaderboard = filtered.slice(start, start + perPage).map(formatLeaderboardRow);
 
       return ok(res, { data: { event: eventPayload, leaderboard } }, { meta: meta(page, perPage, total) });
     } catch (err) {

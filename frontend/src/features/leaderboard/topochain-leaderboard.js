@@ -72,6 +72,10 @@ const TopochainLeaderboard = {
   _page: 1,
   _perPage: 25,
 
+  // #3887: show the podium-excluded rows. Off by default — the table lists
+  // only ranked people — and remembered for the current visit only.
+  _includeNonPodium: false,
+
   // Last successful /leaderboard payload: { event, leaderboard } + meta.
   _data: null,
   _meta: null,
@@ -197,6 +201,10 @@ const TopochainLeaderboard = {
     }
     params.set('page', String(TopochainLeaderboard._page));
     params.set('per_page', String(TopochainLeaderboard._perPage));
+    // #3887: the parameter is sent only when on — its absence is the default.
+    if (TopochainLeaderboard._includeNonPodium) {
+      params.set('include_non_podium', 'true');
+    }
 
     const { status, ok, data } = await TopochainLeaderboard.fetchJson(
       `/api/v4/leaderboard?${params.toString()}`
@@ -353,9 +361,13 @@ const TopochainLeaderboard = {
       success: 'Success rate',
     };
 
+    // #3887: every row renders its rank number, including a non-podium one —
+    // it takes no slot of its own, so it carries the NEXT ranked row's rank
+    // (the shared number the server already wrote/assigned). The old '—' is
+    // gone; the row is marked non-podium by its tag and its muted ink.
     const rows = leaderboard.map((r, i) => ({
       index: i,
-      rank: r.is_non_podium ? '—' : String(r.rank),
+      rank: String(r.rank),
       nonPodium: !!r.is_non_podium,
       // The server resolves a name for every account it can (#2394); a row
       // it still cannot name says so rather than showing only its points.
@@ -380,6 +392,7 @@ const TopochainLeaderboard = {
       challengeLine,
       disclaimer,
       isSeason,
+      includeNonPodium: TopochainLeaderboard._includeNonPodium,
       columns,
       headers,
       rows,
@@ -405,6 +418,15 @@ const TopochainLeaderboard = {
 
   _nextPage() {
     TopochainLeaderboard._page += 1;
+    TopochainLeaderboard.loadLeaderboard();
+  },
+
+  // #3887: the "Show non-podium users" switch above the table. Refetches from
+  // page 1 — the row the reader was on sits at a different index in either
+  // list — mirroring the event-change handler's reset.
+  _setIncludeNonPodium(on) {
+    TopochainLeaderboard._includeNonPodium = !!on;
+    TopochainLeaderboard._page = 1;
     TopochainLeaderboard.loadLeaderboard();
   },
 

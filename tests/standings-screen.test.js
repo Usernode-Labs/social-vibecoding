@@ -851,6 +851,96 @@ test('a standings row opens from the keyboard, and says what it opens', () => {
     'Enter and Space open the same details a click does');
 });
 
+// ─── Show non-podium users (#3887) ──────────────────────────────────────
+
+function renderPane(body) {
+  const state = { mounted: true, body, drill: null };
+  const store = { get: () => state, subscribe: () => () => {} };
+  const mod = loadTsx('frontend/src/features/leaderboard/topochain-standings.tsx', {
+    stubs: { './topochain-standings-store.js': { topochainStandingsStore: store } },
+  });
+  return renderToHtml(createElement(mod.TopochainStandingsPane, {}));
+}
+
+test('the standings pane offers the non-podium toggle, off by default (#3887)', () => {
+  // The descriptor carries the flag and defaults it to hidden; the renderer
+  // draws the one control above the table — the shell's SwitchRow, with its
+  // state still in the controller.
+  const view = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.includeNonPodium, false, 'podium-excluded people are hidden by default');
+
+  const out = renderPane(view);
+  assert.ok(out.includes('id="tc-lb-include-non-podium"'), 'the switch renders');
+  assert.ok(out.includes('type="checkbox"'), 'a real switch input, not a button');
+  assert.ok(out.includes('Show non-podium users'), 'with its caption');
+  assert.match(standingsTsx, /_setIncludeNonPodium\(e\.target\.checked\)/,
+    'the switch is wired to the controller');
+});
+
+test('the non-podium toggle renders only with the table state (#3887)', () => {
+  // The loading/empty/error states are unchanged — the switch appears only
+  // where there is a table to filter. (An all-excluded board shows its empty
+  // hint without the switch; that is the accepted limitation in the spec.)
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._data = { event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' }, leaderboard: [] };
+  TL._meta = null;
+  TL._renderBody();
+  assert.equal(store.state.body.state, 'noentries');
+  const out = renderPane(store.state.body);
+  assert.ok(!out.includes('tc-lb-include-non-podium'),
+    'no switch on the no-entries state');
+});
+
+test('toggling the non-podium switch refetches from page 1, and only sends the parameter when on (#3887)', () => {
+  const { TL } = loadStandings();
+  TL._open = true;
+  TL._page = 3;
+  const urls = [];
+  TL.fetchJson = async (url) => { urls.push(url); return { status: 0, ok: false, data: null }; };
+
+  TL._setIncludeNonPodium(true);
+  assert.equal(TL._page, 1, 'a toggle resets to page 1, like an event switch does');
+  assert.ok(urls[0].includes('include_non_podium=true'), 'the fetch carries the parameter');
+
+  TL._page = 2;
+  TL._setIncludeNonPodium(false);
+  assert.equal(TL._page, 1, 'switching back resets too');
+  assert.ok(!urls[1].includes('include_non_podium'),
+    'the parameter is sent only when on — its absence is the default');
+});
+
+test('a non-podium row shows its shared rank number, muted (#3887)', () => {
+  // The old '—' is gone: a non-podium row takes no slot of its own, so it
+  // carries the NEXT ranked row's rank — and the whole row wears the muted
+  // ink the Rank column already uses, the "non-podium" tag still saying why.
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [
+      { ...SEASON_ROW, rank: 6, is_non_podium: true, display_name: 'snait' },
+      { ...SEASON_ROW, rank: 6, is_non_podium: false, display_name: 'userx' },
+    ],
+  });
+  assert.deepEqual(view.rows.map((r) => r.rank), ['6', '6'],
+    'both rows read rank 6 — the shared number, never a dash');
+  assert.equal(view.rows[0].nonPodium, true);
+
+  const out = renderPane(view);
+  const trs = out.match(/<tr[^>]*class="tc-lb-row[^>]*>/g) || [];
+  assert.equal(trs.length, 2);
+  assert.match(trs[0], /text-zinc-500 dark:text-zinc-400/,
+    'the non-podium row is the muted ink');
+  assert.ok(!trs[1].includes('text-zinc-500'), 'the ranked row keeps its normal ink');
+  assert.ok(out.includes('non-podium'), 'the existing tag is still there');
+  assert.doesNotMatch(out, />—</, 'no rank cell reads a dash any more');
+  assert.ok(out.includes('>6</td>'), 'the shared rank renders as a number');
+});
+
 test('the season caption replaces the "nothing is running" caption', () => {
   // The season event has usually ENDED by the time it is the default
   // (production's closed 2026-06-30), so hasEnded() is true for it and the

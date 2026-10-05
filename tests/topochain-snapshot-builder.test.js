@@ -616,12 +616,24 @@ test('builder: snapshots it writes serve the public leaderboard endpoint', async
 
   const { server, base } = await listen(buildApp(topochainPublicRoutes));
   try {
+    // #3887: the endpoint hides podium-excluded users by default now, so the
+    // default board is alice's three ranked rivals. Asking for her back with
+    // include_non_podium=true restores the full board, shared rank and all —
+    // which is the assertion this test carried before #3887.
     const res = await fetch(`${base}/api/v4/leaderboard?season_event_id=100`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.success, true);
     const board = body.data.leaderboard;
     assert.deepEqual(board.map((r) => [r.rank, Number(r.total_points)]), [
+      [1, 2350], [2, 1250], [3, 500],
+    ]);
+
+    const withAlice = await fetch(
+      `${base}/api/v4/leaderboard?season_event_id=100&include_non_podium=true`);
+    assert.equal(withAlice.status, 200);
+    const aliceBoard = (await withAlice.json()).data.leaderboard;
+    assert.deepEqual(aliceBoard.map((r) => [r.rank, Number(r.total_points)]), [
       [1, 2500], [1, 2350], [2, 1250], [3, 500],
     ]);
   } finally { server.close(); }

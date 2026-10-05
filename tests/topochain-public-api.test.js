@@ -760,11 +760,14 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   });
   assert.match(body.data.event.starts_at, /\+00:00$/);
   // SPEC 912: default per_page is 50 for this endpoint (not the shared
-  // 25 default other v4 endpoints use).
-  assert.deepEqual(body.meta, { page: 1, per_page: 50, total: 4, total_pages: 1 });
+  // 25 default other v4 endpoints use). #3887: the podium-excluded alice is
+  // hidden by default, so the default board lists 3 and meta counts 3.
+  assert.deepEqual(body.meta, { page: 1, per_page: 50, total: 3, total_pages: 1 });
 
   const rows = body.data.leaderboard;
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 3);
+  assert.ok(!rows.some((r) => r.is_non_podium),
+    'the default board never lists a podium-excluded user (#3887)');
   // rank 1: dave — masked identifier (no discord/display_name), real numbers.
   const dave = rows.find((r) => r.wallet_address === 'pk-dave-100');
   assert.equal(dave.rank, 1);
@@ -783,15 +786,75 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   // epoch_success_rate stored NULL -> v4 real zero, not null.
   assert.equal(bob.epoch_success_rate, 0);
 
-  // rank 3 (shared): alice (podium-excluded) and carol.
+  // rank 3: carol — her stored rank is the SHARED number (alice, hidden by
+  // default, sat on it too), and hiding alice does not renumber her.
+  const carol = rows.find((r) => r.display_name === 'Carol Display');
+  assert.equal(carol.rank, 3);
+  assert.equal(carol.is_non_podium, false);
+  // carol has no email (telegram identifier instead) — masked generic form.
+  assert.equal(carol.identifier, 'car***');
+});
+
+// ─── GET /leaderboard: include_non_podium (#3887) ────────────────────
+
+test('GET /leaderboard: include_non_podium=true puts the podium-excluded user back, sharing the next rank', async () => {
+  const res = await get('/api/v4/leaderboard?season_event_id=100&include_non_podium=true');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.meta.total, 4, 'the excluded row is back in the count');
+  const rows = body.data.leaderboard;
+  assert.equal(rows.length, 4);
+  // alice shares carol's rank 3 — a non-podium row takes no slot of its own.
   const alice = rows.find((r) => r.identifier === 'ali***@***.com');
   assert.equal(alice.is_non_podium, true);
   assert.equal(alice.rank, 3);
   const carol = rows.find((r) => r.display_name === 'Carol Display');
   assert.equal(carol.rank, 3);
   assert.equal(carol.is_non_podium, false);
-  // carol has no email (telegram identifier instead) — masked generic form.
-  assert.equal(carol.identifier, 'car***');
+});
+
+test('GET /leaderboard: include_non_podium reads the same truthy spellings include_past does, and rejects the rest', async () => {
+  for (const v of ['1', 'true', 'on', 'yes', 'TRUE']) {
+    const res = await get(`/api/v4/leaderboard?season_event_id=100&include_non_podium=${v}`);
+    assert.equal((await res.json()).meta.total, 4, `${v} counts the excluded row`);
+  }
+  const off = await get('/api/v4/leaderboard?season_event_id=100&include_non_podium=0');
+  assert.equal((await off.json()).meta.total, 3, 'anything else means the default, hidden');
+});
+
+test('GET /leaderboard: the season board applies the same default filter', async () => {
+  // event 103 is the 'season' pseudo-event: its rows come from
+  // computeStandings (is_non_podium mapped onto exclude_podium), not from
+  // stored snapshots — the same filter must cover that path.
+  const hidden = await get('/api/v4/leaderboard?season_event_id=103');
+  assert.equal(hidden.status, 200);
+  const hiddenBody = await hidden.json();
+  assert.equal(hiddenBody.meta.total, 3, 'the excluded user is hidden by default here too');
+  assert.ok(!hiddenBody.data.leaderboard.some((r) => r.is_non_podium));
+
+  const shown = await get('/api/v4/leaderboard?season_event_id=103&include_non_podium=true');
+  const shownBody = await shown.json();
+  assert.equal(shownBody.meta.total, 4);
+  const alice = shownBody.data.leaderboard.find((r) => r.identifier === 'ali***@***.com');
+  const carol = shownBody.data.leaderboard.find((r) => r.display_name === 'Carol Display');
+  assert.equal(alice.is_non_podium, true);
+  assert.equal(alice.rank, carol.rank, 'she shares the next ranked row\'s rank, no slot consumed');
+});
+
+test('GET /leaderboard: paging slices the FILTERED list (#3887)', async () => {
+  // A page boundary never splits around a hidden row, because the filter
+  // runs before the slice: with the excluded user hidden, page 2 (per_page 2)
+  // is carol alone and meta.total reads 3; with her included, page 2 is
+  // alice + carol and meta.total reads 4.
+  const hidden = await get('/api/v4/leaderboard?season_event_id=100&per_page=2&page=2');
+  const hiddenBody = await hidden.json();
+  assert.deepEqual(hiddenBody.meta, { page: 2, per_page: 2, total: 3, total_pages: 2 });
+  assert.deepEqual(hiddenBody.data.leaderboard.map((r) => r.rank), [3]);
+
+  const shown = await get('/api/v4/leaderboard?season_event_id=100&per_page=2&page=2&include_non_podium=true');
+  const shownBody = await shown.json();
+  assert.deepEqual(shownBody.meta, { page: 2, per_page: 2, total: 4, total_pages: 2 });
+  assert.deepEqual(shownBody.data.leaderboard.map((r) => r.is_non_podium), [true, false]);
 });
 
 test('GET /leaderboard: no season_event_id falls back to the active public event', async () => {
