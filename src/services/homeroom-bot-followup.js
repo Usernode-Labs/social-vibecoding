@@ -265,9 +265,28 @@ function revisedText({ summary, reply }) {
   return lines.join('\n');
 }
 
-function revisionFailedText({ why }) {
-  return `Homeroom bot tried to update this change but couldn't: ${clipText(why, 400) || 'unknown reason'}. `
-    + 'It is as it was. A person could make the update from here.';
+// 5 Oct 2026: this said "Homeroom bot tried to update this change but
+// couldn't: the turn produced no change. It is as it was. A person could
+// make the update from here." to everybody in the project: the run's own
+// record, and a dead end. #3900 fixed the same for a build
+// (homeroom-bot-live.js buildFailedText). It says what happened in the
+// words the requester's DM uses (homeroom-bot-dm.js updateFailedWords, from
+// the same reading of the record as a build's), and how anybody starts it
+// again: a person's reply here, in the change's discussion or on the
+// request (or on the GitHub issue), is activity on the request
+// (ws.js noteProposalActivityForBot / noteIssueActivityForBot), and the
+// next look at it is a follow-up on the change that reads that reply
+// (homeroom-bot.js runFollowUp). The record stays on the run (its error,
+// `revise: <why>`, on the admin's Homeroom bot screen) and in the log. A
+// change the bot has already revised as often as it may (`canRevise`
+// false) is not one a reply gets updated, so it says so.
+function revisionFailedText({ why, canRevise = true }) {
+  if (canRevise === false) {
+    return 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may on its own, '
+      + 'so a person needs to make this one. The change is as it was.';
+  }
+  const words = require('./homeroom-bot-dm').updateFailedWords(why, 'this change', 'bot');
+  return `${words} The change is as it was. Reply here (or on the GitHub issue) and it will try again.`;
 }
 
 // ── Its own red checks ───────────────────────────────────────────────────

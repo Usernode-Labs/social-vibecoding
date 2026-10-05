@@ -4596,8 +4596,17 @@ async function runFollowUp(pool, config, {
     });
     await recordSnapshot(runId);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    log.warn('homeroom-bot', 'Follow-up said it revised, but the change did not move', {
+      app: app.slug, issueNumber, sessionId: session.id, why, runId,
+    });
     const postedAt = [];
-    await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
+    // What happened in plain words, and how to start it again; the record
+    // (`why`) stays on the run and in the line above (followup.revisionFailedText).
+    // The requester hears it in their DM too, with the change's card.
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
+      dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
+    })
       .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
