@@ -1924,6 +1924,57 @@ ${stripLoneSurrogates(description).trim()}`,
   return { title: reply.title.trim(), actionable: true, usage: resp.usage, model };
 }
 
+// One-shot Haiku call that reads an ANNOTATED screenshot — a feedback
+// attachment the person drew on with a red marker (or cropped) to point at
+// what is wrong — and drafts what the "What should change?" field might say.
+// Shared shape with generateIssueTitle: one message, thrown-on-failure, and
+// the caller decides what a failure means (routes/feedback.js soft-degrades
+// it to `description: null` — the form works as it always has without one).
+//
+// The image block shape is the one services/mayor/mcp-shim.js already sends
+// through this message path: { type: 'image', source: { type: 'base64',
+// media_type, data } }.
+async function generateFeedbackDraftFromImage({ image, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const model = 'claude-haiku-4-5';
+  const mediaType = image && image.mediaType === 'image/png' ? 'image/png' : 'image/jpeg';
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 200,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType,
+              data: String((image && image.base64) || ''),
+            },
+          },
+          {
+            type: 'text',
+            text: `The image is a screenshot of an app. The person drew on it with a red marker — circles, underlines, arrows — to point at what is wrong or what should change. They may also have cropped it to the part that matters.
+
+Write one or two plain sentences describing what should change, written as the person themselves would write it in a "What should change?" field of a feedback form. First person, no greetings, no headings. Say nothing about the drawing or the red marks themselves — describe the underlying change, as if the person had typed it from memory. Reply with only those sentences.`,
+          },
+        ],
+      }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'feedback_draft' },
+    apiKey,
+  });
+  const raw = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
+  if (!raw) throw new Error('Empty feedback draft response');
+  // The route clips to the textarea's 2,000 chars; two sentences never get
+  // near it, but a model that ignores the instruction must not either.
+  return { description: stripLoneSurrogates(raw).trim(), usage: resp.usage, model };
+}
+
 // ── B9: a message to Homeroom bot in a project's group chat ────────────
 //
 // Somebody wrote "@Homeroom bot …" in a project's chat. One quick Haiku read
@@ -2919,6 +2970,9 @@ module.exports = {
   RUN_LENGTH_PRIORS, RUN_LENGTH_PRIORS_SNAPSHOT, renderPriorsGuidance,
   PROMPT_VERSION, isCompletionClaim,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
+  // request: the AI draft offered for an annotated screenshot (see
+  // routes/feedback.js's POST /api/feedback/describe).
+  generateFeedbackDraftFromImage,
   // #3193: the guard between the title model and a published issue title.
   issueTitleRejection, feedbackTitleFromDescription, ISSUE_TITLE_SCHEMA,
   // B9

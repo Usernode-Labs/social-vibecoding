@@ -332,6 +332,31 @@ export function FeedbackDialog() {
             </span>
           </label>
         </div>
+        {/*
+            request: a draft the AI suggests from an ANNOTATED screenshot.
+            The controller shows the row only once an edited image (a drawing
+            or a crop) has been confirmed and /api/feedback/describe has
+            answered with a draft; ticking the box copies the draft into
+            "What should change?" above, where it can be edited freely. Same
+            opt-in-row styling as #feedback-state-row and #feedback-bounty-row
+            above, so no new Tailwind names appear. Renders EMPTY and hidden
+            for the same hydration reasons its two neighbours do: the
+            controller owns the draft text, and a draft on the initial render
+            would both lie on open and mismatch on hydration.
+        */}
+        <div id="feedback-ai-row" className="hidden mt-2">
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input id="feedback-ai-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                Suggested from your drawing
+              </span>
+              <br />
+              <span id="feedback-ai-note" className="text-zinc-500 dark:text-zinc-500">
+              </span>
+            </span>
+          </label>
+        </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
         <div className="flex gap-3 mt-4">
