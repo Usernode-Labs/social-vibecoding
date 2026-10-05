@@ -3068,7 +3068,7 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
  * Pure. Shared with the benchmark's taste eval (services/bench/taste.js),
  * whose first-version trials are given the same request the bot reads.
  */
-function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = null }) {
+function firstVersionIssue({ name, username, brief, botBuilds = true, card = null }) {
   return {
     title: clip(`First version of ${name}`, 200),
     body: [
@@ -3076,14 +3076,16 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = n
       '',
       brief,
       '',
-      // The first session's sketch (services/app-sketch.js), when it was
-      // drawn: the screen its creator has already seen, so the design target.
-      ...(sketch ? [
-        `**Design target:** the sketch ${username} was shown when they made it, \`design/sketch.html\``
-          + ' (its job, layout, words and accent are in `design/sketch.json`). Build that screen for real: keep its'
-          + ' layout, its words and its accent, and list any change under Assumptions with the reason.'
-          + ' Its names, dates and numbers are samples, not facts about the group.',
-        ...(sketch.job ? ['', `Its main screen's job: ${clip(sketch.job, 200)}`] : []),
+      // The first session's card (services/app-sketch.js), when it was made:
+      // what its creator has already seen, a short summary of the idea. Never
+      // a design: until 5 October 2026 it was a mock of a screen, and this
+      // line told the build to make that screen.
+      ...(card ? [
+        `**Featured card:** while it was made, ${username} was shown a card of the idea`
+          + `${card.committed ? ' (\`design/sketch.json\`)' : ''}: "${clip(card.tagline, 120)}"`
+          + `${(card.points || []).length ? `, with the points ${card.points.map((p) => `"${clip(p, 100)}"`).join(', ')}` : ''}.`
+          + ' It sums up the description above in a few words and shows no screen, so it sets no layout, words or'
+          + ' colours. Build from the description; where the two differ, the description wins.',
         '',
       ] : []),
       '---',
@@ -3121,9 +3123,11 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
   const botBuilds = row.bot_builds !== false;
-  const sketchRow = await require('./app-sketch').readSketch(pool, row.app_id).catch(() => null);
-  const sketch = sketchRow && sketchRow.status === 'ready' && sketchRow.committed_at ? sketchRow.design || {} : null;
-  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, sketch });
+  const appSketch = require('./app-sketch');
+  const sketchRow = await appSketch.readSketch(pool, row.app_id).catch(() => null);
+  const cardRow = sketchRow && sketchRow.status === 'ready' ? appSketch.cardOf(sketchRow.design) : null;
+  const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
+  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
       || (() => {

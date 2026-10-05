@@ -92,7 +92,7 @@ function previewTags(preview, origin) {
     : preview.note
       || preview.project.description
       || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
-  // A sketch is a page, not an image: the preview shows the icon instead.
+  // A card is words, not an image: the preview shows the icon instead.
   const picture = live && preview.project.picture && preview.project.picture.kind !== 'sketch'
     ? preview.project.picture.url : null;
   const image = picture || (live ? preview.project.iconUrl : null);
@@ -237,30 +237,6 @@ function communityInviteRoutes(config) {
     } catch (err) {
       log.error('invites', 'Invite picture failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // WP-D: the sketch a live link's page frames while its project has no
-  // shot yet (invites.pictureFor). Anonymous like the picture, only while the
-  // link is live, and served like the project's own sketch page: sanitized
-  // static markup, sandboxed with no script and no network.
-  router.get('/api/public/invites/:token/sketch.html', invitePreviewLimiter, async (req, res) => {
-    try {
-      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
-      const page = invites.isToken(req.params.token)
-        ? await invites.sketchPage(pool, req.params.token, { theme })
-        : null;
-      if (!page) return res.status(404).type('text/plain').send('Not found');
-      res.set({
-        'Content-Security-Policy': require('../services/app-sketch').SKETCH_CSP,
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      });
-      return res.type('html').send(page);
-    } catch (err) {
-      log.error('invites', 'Invite sketch failed', { err: err.message });
-      return res.status(500).type('text/plain').send('Internal server error');
     }
   });
 

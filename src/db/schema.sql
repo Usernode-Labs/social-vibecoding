@@ -9845,12 +9845,13 @@ COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
--- The first session's sketch of a new project's main screen
--- (services/app-sketch.js): drawn from its description about half a minute
--- after Make it, shown on the made screen while the real app is built, and
--- committed to the repository as design/sketch.* for the first version to
--- keep. `html` is sanitized markup in the sketch vocabulary, never raw model
--- output. One per project.
+-- The first session's sketch (services/app-sketch.js): since 5 October 2026
+-- a featured card of the idea, made from its description a few seconds after
+-- Make it and shown on the made screen while the real app is built. `design`
+-- holds the card (kind 'card': emoji, tagline, points), committed to the
+-- repository as design/sketch.json; its emoji becomes the project's icon.
+-- `html` is only set on the screen mocks made before it (sanitized markup,
+-- no longer shown). One per project.
 CREATE TABLE IF NOT EXISTS app_sketches (
   app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
   user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,

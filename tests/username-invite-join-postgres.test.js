@@ -287,9 +287,9 @@ test('an invite by username joins a group the way its link does, against the ful
   await t.test('"You\'re in" gets the project\'s picture at an address a member can read, and whether it is being made', async () => {
     // Page Turners, still being built, with the sketch its maker was shown.
     await pool.query(
-      `INSERT INTO app_sketches (app_id, user_id, status, design, html, ready_at)
-       VALUES ($1, $2, 'ready', '{}'::jsonb, '<main>Books</main>', NOW())`,
-      [turners.id, alex.id]);
+      `INSERT INTO app_sketches (app_id, user_id, status, design, ready_at)
+       VALUES ($1, $2, 'ready', $3::jsonb, NOW())`,
+      [turners.id, alex.id, JSON.stringify({ kind: 'card', emoji: '📚', tagline: 'A book club', points: ['Pick the next book'], source: 'model' })]);
     await pool.query(
       `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
        VALUES ($1, $2, 'A book club that meets monthly', TRUE, 'filed', 1)`,
@@ -298,7 +298,7 @@ test('an invite by username joins a group the way its link does, against the ful
     const sam = await user('sam_sketch');
     await call(alex, 'POST', `/api/apps/${turners.slug}/invites`, { username: 'sam_sketch' });
     const got = await call(sam, 'POST', `/api/invites/${turners.id}/accept`);
-    assert.deepEqual(got.body.welcome.picture, { kind: 'sketch', url: '/api/apps/page-turners/sketch.html', darkUrl: null });
+    assert.deepEqual(got.body.welcome.picture, { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '📚', tagline: 'A book club', points: ['Pick the next book'] } });
     assert.equal(got.body.welcome.description, 'A book club that meets monthly');
     assert.equal(got.body.welcome.building, true, 'its first version is on its way');
     assert.equal(await invites.firstVersionPending(pool, turners.id), true);

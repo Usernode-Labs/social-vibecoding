@@ -1,7 +1,9 @@
 'use strict';
 
 /**
- * A sketch's dates are real dates (services/app-sketch.js).
+ * A sketch's dates are real dates (services/app-sketch.js). The sketch is a
+ * featured card of the idea now, and its lines are checked the same way: a
+ * line of text is markup with no tags.
  *
  * Production, 5 October 2026. "Our little book club ... (we meet the last
  * Thursday of each month at 7pm)" was sketched with its next meetup on

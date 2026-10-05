@@ -130,5 +130,13 @@ module.exports = {
     // `rounded-lg`/`rounded-xl` up one step at once, with no class churn.
     // `rounded-full` is untouched (pills stay pills).
     borderRadius: { lg: '0.75rem', xl: '1rem', '2xl': '1.25rem', '3xl': '1.5rem' },
+    // The first session's card while it is being sketched
+    // (frontend/src/features/first-session/sketch-card.tsx): a band of light
+    // passing over it. Transform only, so it stays on the compositor through
+    // a busy main thread; callers gate it on motion-safe.
+    keyframes: {
+      'card-sweep': { from: { transform: 'translateX(-100%)' }, to: { transform: 'translateX(250%)' } },
+    },
+    animation: { 'card-sweep': 'card-sweep 1.8s ease-in-out infinite' },
   } },
 };

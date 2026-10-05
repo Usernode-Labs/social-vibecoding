@@ -1362,9 +1362,11 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'guidance\'s "no new colours" means none beyond them. Then fill in the "## Design" section of the app\'s',
   '`CLAUDE.md` (add it if it is missing): the palette by name, the signature element, the type scale, and the one',
   'fixed look if the app keeps one. Every later change follows it.',
-  'If the repository has `design/sketch.html` and `design/sketch.json`, its creator was shown that sketch when they',
-  'made the app: build that screen for real, with its layout, its words and its accent (the kit\'s tokens may already',
-  'carry it), keep both files, and make the starter screen that shows the sketch into the real one.',
+  // The first session's card (services/app-sketch.js). Until 5 October 2026
+  // it was a mock of the main screen, and this said to build that screen.
+  'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
+  '(an emoji, which is already the app\'s icon, a tagline and a few points summing up the idea): context for what the',
+  'app is for, never a design. It shows no screen, so it sets no layout, words or colours. Keep the file as it is.',
 ]);
 
 function buildPrompt({

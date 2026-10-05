@@ -374,18 +374,20 @@ const FIRST_VERSION_NOTE = [
   'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
   'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
   'bread app) and a rough layout. The spec settles the details; never ask about them.',
-  // The first session's sketch (services/app-sketch.js): when the request
-  // names one, its creator has already seen this screen.
-  'When the request names a design target (`design/sketch.html`, described in `design/sketch.json`), its creator has',
-  'already seen that screen: plan the first version as it, with its job, layout, words and accent, and list any change',
-  'under `assumptions` with the reason.',
+  // The first session's card (services/app-sketch.js): when the request
+  // quotes it, its creator has seen a summary of the idea, never a screen.
+  // Until 5 October 2026 it was a mock of the main screen, and this said to
+  // plan the first version as that screen.
+  'When the request quotes the featured card its creator was shown (`design/sketch.json`: an emoji, a tagline and a',
+  'few points), read it as a short summary of the description, not a design: it shows no screen, so it sets no layout,',
+  'words or colours, and where the two differ the description wins.',
   // 2026-10-04: a sketch's made-up flatmates became a plan's question ("The
   // sketch rotates chores between Maya, Jasper and Sophie. Should you be in
   // the rotation too?") on a project of two real people.
-  'The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the',
-  'group, and never a `plan` bullet or a `choices` question. When the app involves the people in its group (whose turn',
-  'it is, who did what, who sees what), plan around the project\'s real members, listed under WHO IS IN THIS PROJECT',
-  'when known, and around new members joining later; never around people the sketch made up.',
+  'Sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a',
+  '`choices` question. When the app involves the people in its group (whose turn it is, who did what, who sees what),',
+  'plan around the project\'s real members, listed under WHO IS IN THIS PROJECT when known, and around new members',
+  'joining later; never around people made up for an example.',
   // B6: the creator sees the plan before anything is built, and taps Build
   // it or asks for changes (homeroom-bot-dm.js sendPlanCard).
   'Its creator sees your plan before anything is built, and taps Build it or asks for changes. So with `ready`, also',
@@ -1771,7 +1773,7 @@ const PROJECT_MEMBERS_SHOWN = 12;
 
 /**
  * 2026-10-04: who is in a first version's project, so its plan is about
- * them. The sketch it was drawn from shows sample people, and a plan that
+ * them. The sketch it was drawn from showed sample people, and a plan that
  * could not see the real ones planned around those: it asked a project of
  * two whether its creator should join the sketch's three made-up flatmates
  * in the rota. Pure; null says nothing (no roster, or an empty one), which

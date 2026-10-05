@@ -1220,12 +1220,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         },
       });
 
-      // The first session's sketch (services/app-sketch.js): started BEFORE
-      // creation, which waits a little for it so the repository's first
-      // commit can carry it. Only from "What do you want to make?", only
-      // with a description to draw from, and never a reason the create fails.
-      // `timeZone` is the maker's device's, so the sketch's "today" is theirs
-      // (an unknown or invalid zone reads as UTC there).
+      // The first session's card of the idea, and with it the project's
+      // icon (services/app-sketch.js): started BEFORE creation, which waits a
+      // little for it so the repository's first commit can carry it. Only
+      // from "What do you want to make?", only with a description to make it
+      // from, and never a reason the create fails. `timeZone` is the maker's
+      // device's, so the card's "today" is theirs (an unknown or invalid zone
+      // reads as UTC there).
       if (req.body.from === 'first-session' && !repoUrlNormalized
           && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
         await require('../services/app-sketch').startSketch(pool, {
@@ -1634,63 +1635,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // The first session's sketch (services/app-sketch.js). The made screen
-  // polls the status, then frames the page. Anyone who may view the app may
-  // see it; a project without one answers { status: 'none' }.
+  // The first session's card (services/app-sketch.js), which the made
+  // screen polls until it is ready and then draws itself: its emoji, tagline
+  // and points, text only. Anyone who may view the app may see it; a project
+  // without one answers { status: 'none' }, and so does a sketch from before
+  // the card (a page of a screen, no longer shown).
   router.get('/api/apps/:slug/sketch', async (req, res) => {
     try {
       const appSketch = require('../services/app-sketch');
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const row = await appSketch.readSketch(pool, app.id);
-      const status = appSketch.sketchStatus(row);
+      let status = appSketch.sketchStatus(row);
+      const card = status === 'ready' ? appSketch.cardOf(row.design) : null;
+      if (status === 'ready' && !card) status = 'none';
       res.set('Cache-Control', 'no-store');
-      res.json({
-        status,
-        ...(status === 'ready' ? {
-          job: row.design?.job || null,
-          primaryAction: row.design?.primaryAction || null,
-          accentName: row.design?.accentName || null,
-          committed: !!row.committed_at,
-        } : {}),
-      });
-    } catch (err) {
-      log.error('apps', 'Failed to read sketch', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // The sketch as a page of its own, for the made screen's frame. It is
-  // model output from a user's description, so besides being sanitized to
-  // static markup (services/app-sketch.js) it is served sandboxed: no
-  // script, no network, no form, its own opaque origin, framed only here.
-  router.get('/api/apps/:slug/sketch.html', async (req, res) => {
-    try {
-      const appSketch = require('../services/app-sketch');
-      const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`
-      );
-      if (!app) return res.status(404).type('text/plain').send('Not found');
-      const row = await appSketch.readSketch(pool, app.id);
-      if (appSketch.sketchStatus(row) !== 'ready') return res.status(404).type('text/plain').send('Not found');
-      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
-      res.set({
-        'Content-Security-Policy': appSketch.SKETCH_CSP,
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      });
-      res.type('html').send(appSketch.sketchDocument({
-        name: app.name || app.slug, design: row.design, html: row.html, theme,
-      }));
+      res.json({ status, ...(card ? { card, committed: !!row.committed_at } : {}) });
       // The admin Journey's first session: the first thing of theirs its
-      // maker is shown (journey-events.js; once per project, makers only).
-      if (req.user?.id) {
+      // maker is shown, the moment the made screen has it to draw
+      // (journey-events.js; once per project, makers only).
+      if (card && req.user?.id) {
         void require('../services/journey-events').noteFirstArtefactShown(pool, { appId: app.id, userId: req.user.id });
       }
     } catch (err) {
-      log.error('apps', 'Failed to render sketch', { message: err.message });
-      res.status(500).type('text/plain').send('Internal server error');
+      log.error('apps', 'Failed to read sketch', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

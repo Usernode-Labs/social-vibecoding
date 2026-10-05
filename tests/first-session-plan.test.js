@@ -107,10 +107,11 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const note = buildNote\(botBuilds, !!plan, planAhead\(fv\)\);/);
-  // Under the sketch while it is drawn, its caption once it is; and in the
-  // card without one.
-  assert.match(src, /note=\{sketch === 'ready' \? sketchCaption\(made\.name, botBuilds\) : note\}/);
+  // Under the card of the idea (./sketch-card.tsx), and in the plain card
+  // without one. The sketch's caption calling it the real app is gone.
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
   assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
+  assert.doesNotMatch(src, /sketchCaption/);
   // Nothing is under way while it waits on them: no busy dot.
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan\);/);
 });

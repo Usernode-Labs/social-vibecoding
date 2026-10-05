@@ -114,15 +114,19 @@ const PEOPLE = {
   emailInvites: 0,
 };
 
-test('a first version\'s plan treats the sketch\'s names, dates and numbers as placeholders', () => {
+test('a first version\'s plan treats sample names, dates and numbers as placeholders, and the card as a summary', () => {
   const flat = (text) => text.replace(/\s+/g, ' ');
   const first = flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true }));
-  assert.match(first, /The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a `choices` question\./);
-  assert.match(first, /When the app involves the people in its group \(whose turn it is, who did what, who sees what\), plan around the project's real members, listed under WHO IS IN THIS PROJECT when known, and around new members joining later; never around people the sketch made up\./);
-  assert.ok(first.indexOf('The sketch is an illustrative look only') > first.indexOf('When the request names a design target'),
-    'right after the design target rule');
-  assert.doesNotMatch(flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), /illustrative look only/, 'only a first version');
-  const note = first.slice(first.indexOf('The sketch is an illustrative look only'), first.indexOf('never around people the sketch made up.'));
+  // 5 October 2026: the first session's sketch is a featured card of the
+  // idea, not a screen, so it is never a design target (services/app-sketch.js).
+  assert.doesNotMatch(first, /design target|design\/sketch\.html|plan the first version as it/);
+  assert.match(first, /When the request quotes the featured card its creator was shown \(`design\/sketch\.json`: an emoji, a tagline and a few points\), read it as a short summary of the description, not a design: it shows no screen, so it sets no layout, words or colours, and where the two differ the description wins\./);
+  assert.match(first, /Sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a `choices` question\./);
+  assert.match(first, /When the app involves the people in its group \(whose turn it is, who did what, who sees what\), plan around the project's real members, listed under WHO IS IN THIS PROJECT when known, and around new members joining later; never around people made up for an example\./);
+  assert.ok(first.indexOf('Sample names, dates and numbers') > first.indexOf('When the request quotes the featured card'),
+    'right after the card rule');
+  assert.doesNotMatch(flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), /featured card|Sample names/, 'only a first version');
+  const note = first.slice(first.indexOf('When the request quotes the featured card'), first.indexOf('never around people made up for an example.'));
   assert.doesNotMatch(note, /—/, 'no em dash');
 });
 

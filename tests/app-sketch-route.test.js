@@ -1,9 +1,10 @@
 'use strict';
 
-// GET /api/apps/:slug/sketch and /sketch.html (src/routes/apps.js): the made
-// screen's status poll and the framed page. Pinned: view access with a 404
-// on deny, a stale pending row read as failed, and the page served only
-// when ready, with the sandbox CSP, nosniff and no-store.
+// GET /api/apps/:slug/sketch (src/routes/apps.js): the made screen's poll for
+// the first session's card. Pinned: view access with a 404 on deny, a stale
+// pending row read as failed, the card's words once it is ready (a screen
+// mock from before the card reads as none), no-store, the maker's first
+// artefact noted the first time it is there to draw, and no framed page.
 //
 // Same harness as tests/app-contributors-route.test.js.
 //
@@ -28,14 +29,14 @@ stub(require.resolve('../src/services/app-manifest'), { MAX_APP_NAME_LENGTH: 64 
 stub(require.resolve('../src/services/rename-pr'), {});
 stub(require.resolve('../src/services/staging'), { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
 
-const appSketch = require('../src/services/app-sketch');
-
 const poolMod = require('../src/db/pool');
 let appRow = null;
 let sketchRow = null;
+const artefacts = [];
 poolMod.getPool = () => ({
-  query: async (sql) => {
+  query: async (sql, params) => {
     const s = String(sql);
+    if (/INSERT INTO events/.test(s) && /first_artefact_shown|\$3::text/.test(s)) { artefacts.push(params.slice(0, 2)); return { rows: [] }; }
     if (/FROM apps WHERE slug = \$1/.test(s)) return { rows: appRow ? [appRow] : [] };
     if (/FROM app_sketches WHERE app_id = \$1/.test(s)) return { rows: sketchRow ? [sketchRow] : [] };
     return { rows: [], rowCount: 0 };
@@ -59,16 +60,18 @@ async function withServer(fn) {
   }
 }
 
-const DESIGN = appSketch.normalizeDesign({ job: 'Log runs', primaryAction: 'Log a run', accentName: 'red', accent: { light: '#c2410c', dark: '#fb923c' } });
-const HTML = '<header><h1 class="text-title">Run Club</h1><p class="text-body text-muted">Twelve of us, every Sunday.</p></header>';
+const CARD = { kind: 'card', emoji: '🏃', tagline: 'Weekly miles for the club', points: ['Log each run', 'See who is keeping up'], source: 'model' };
 
 function reset() {
   appRow = { id: 7, name: 'Run Club', slug: 'run-club', created_by: 5, self_hosted: false, collab_visibility: 'public', view_visibility: 'public' };
   sketchRow = null;
   currentUser = { id: 5, isAdmin: false };
+  artefacts.length = 0;
 }
 
-test('the status: none, pending, ready with its words, and a stale pending row as failed', async () => {
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('the status: none, pending, the card when ready, and a stale pending row as failed', async () => {
   reset();
   await withServer(async (get) => {
     let res = await get('/api/apps/run-club/sketch');
@@ -82,36 +85,41 @@ test('the status: none, pending, ready with its words, and a stale pending row a
     sketchRow = { app_id: 7, status: 'pending', created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString() };
     assert.deepEqual(await (await get('/api/apps/run-club/sketch')).json(), { status: 'failed' });
 
-    sketchRow = { app_id: 7, status: 'ready', design: DESIGN, html: HTML, created_at: new Date().toISOString(), committed_at: null };
+    sketchRow = { app_id: 7, status: 'ready', design: CARD, html: null, created_at: new Date().toISOString(), committed_at: null };
     assert.deepEqual(await (await get('/api/apps/run-club/sketch')).json(), {
-      status: 'ready', job: 'Log runs', primaryAction: 'Log a run', accentName: 'red', committed: false,
+      status: 'ready',
+      card: { emoji: '🏃', tagline: 'Weekly miles for the club', points: ['Log each run', 'See who is keeping up'] },
+      committed: false,
     });
+
+    // A screen mock from before the card is not shown.
+    sketchRow = { app_id: 7, status: 'ready', design: { job: 'Log runs' }, html: '<h1>Run Club</h1>', created_at: new Date().toISOString() };
+    assert.deepEqual(await (await get('/api/apps/run-club/sketch')).json(), { status: 'none' });
   });
 });
 
-test('the page: served sandboxed when ready, 404 otherwise, and never past the view check', async () => {
+test('the card is the maker\'s first artefact the first time it is there to draw', async () => {
   reset();
   await withServer(async (get) => {
-    assert.equal((await get('/api/apps/run-club/sketch.html')).status, 404, 'no sketch');
     sketchRow = { app_id: 7, status: 'pending', created_at: new Date().toISOString() };
-    assert.equal((await get('/api/apps/run-club/sketch.html')).status, 404, 'not yet');
+    await get('/api/apps/run-club/sketch');
+    await settle();
+    assert.deepEqual(artefacts, [], 'not while it is being made');
+    sketchRow = { app_id: 7, status: 'ready', design: CARD, created_at: new Date().toISOString() };
+    await get('/api/apps/run-club/sketch');
+    await settle();
+    assert.deepEqual(artefacts, [[7, 5]]);
+  });
+});
 
-    sketchRow = { app_id: 7, status: 'ready', design: DESIGN, html: HTML, created_at: new Date().toISOString() };
-    const res = await get('/api/apps/run-club/sketch.html?theme=dark');
-    assert.equal(res.status, 200);
-    assert.match(res.headers.get('content-type'), /^text\/html/);
-    assert.equal(res.headers.get('content-security-policy'), appSketch.SKETCH_CSP);
-    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(res.headers.get('cache-control'), 'no-store');
-    const body = await res.text();
-    assert.match(body, /<title>Run Club: a sketch<\/title>/);
-    assert.match(body, /<main class="sketch-screen">\s*<header><h1 class="text-title">Run Club<\/h1>/);
-    assert.match(body, /:root\{--ground:12 10 9;/, 'the dark look, pinned');
-
-    // A private project the viewer cannot see: 404 for both, nothing enumerable.
+test('no framed page, and never past the view check', async () => {
+  reset();
+  await withServer(async (get) => {
+    sketchRow = { app_id: 7, status: 'ready', design: CARD, created_at: new Date().toISOString() };
+    assert.equal((await get('/api/apps/run-club/sketch.html')).status, 404, 'the card is drawn by the made screen');
+    // A private project the viewer cannot see: 404, nothing enumerable.
     appRow = { ...appRow, created_by: 99, view_visibility: 'private', collab_visibility: 'private' };
     assert.equal((await get('/api/apps/run-club/sketch')).status, 404);
-    assert.equal((await get('/api/apps/run-club/sketch.html')).status, 404);
     appRow = null;
     assert.equal((await get('/api/apps/run-club/sketch')).status, 404);
   });

@@ -9,8 +9,9 @@
  *            you to join …" when the sender did not make it), and how many
  *            people are in it;
  *   picture  the project itself: the after-shot of its latest change, else
- *            the Discover card's image, else the sketch its maker was shown
- *            while it is built (a sandboxed page: no script, its own origin),
+ *            the Discover card's image, else, while it is built, the
+ *            featured card of the idea its maker was shown
+ *            (../first-session/sketch-card.tsx, drawn here from its words),
  *            else a large tile with its one-line description
  *            (preview().project.picture);
  *   join     the sender's note, when they left one, and the one way in.
@@ -37,7 +38,11 @@ import { useEffect, useState } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
-export type InvitePicture = { kind: 'shot' | 'illustration' | 'sketch'; url: string; darkUrl: string | null };
+import { FeaturedCard, sketchCardOf } from '../first-session/sketch-card';
+
+export type InvitePicture =
+  | { kind: 'shot' | 'illustration'; url: string; darkUrl: string | null }
+  | { kind: 'sketch'; url?: null; darkUrl?: null; card: unknown };
 
 export type InvitePreview = {
   live: boolean;
@@ -197,26 +202,19 @@ function Tile({ project, size }: { project: NonNullable<InvitePreview['project']
  * the part of a screen that says what the project is. An illustration has
  * a dark version when its group made one, and each theme shows its own.
  */
-function Picture({ project }: { project: NonNullable<InvitePreview['project']> }) {
+function Picture({ project, building = false }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
   const picture = project.picture;
-  if (picture && picture.kind === 'sketch') {
-    // WP-D: the page is drawn in this screen's look, read once: it is
-    // static, and the screen does not stay up long.
-    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  // WP-D: while it is built, the card of the idea its maker was shown:
+  // "Being made" while its first version is on its way, no pill otherwise.
+  const card = picture && picture.kind === 'sketch' ? sketchCardOf(picture) : null;
+  if (card) {
     return (
-      <div data-landing-invite-picture="sketch" className="relative mx-4 mt-3 h-[340px] overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-        <iframe
-          title={`A sketch of ${project.name}`}
-          src={`${picture.url}?theme=${dark ? 'dark' : 'light'}`}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="h-full w-full border-0"
-        />
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+      <div data-landing-invite-picture="sketch" className="mx-4 mt-3">
+        <FeaturedCard name={project.name} colorKey={project.name} emoji={card.emoji} card={card} stage={building ? 'making' : 'plain'} />
       </div>
     );
   }
-  if (picture) {
+  if (picture && picture.kind !== 'sketch') {
     const img = 'block w-full h-[340px] object-cover object-top';
     return (
       <div data-landing-invite-picture={picture.kind} className="mx-4 mt-3 overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
@@ -301,7 +299,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
           </div>
         </div>
       </section>
-      <Picture project={project} />
+      <Picture project={project} building={!!preview.building} />
       {preview.note ? (
         <section data-landing-invite-join="" className={`${CARD} mt-3`}>
           <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
