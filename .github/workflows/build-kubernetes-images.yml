@@ -400,21 +400,68 @@ jobs:
           echo "release_channel=$release_channel" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
-      # Push events can be queued out of order. An old source revision must
-      # not publish a higher chart version after main has advanced.
+      # Push events can be queued out of order, and Argo CD runs the highest
+      # 0.1.* chart: an older source revision must never publish a higher
+      # chart version than a newer one. The branch tip always publishes.
+      #
+      # Requiring the exact tip guaranteed that, but runs are queued one at a
+      # time (concurrency above), so while merges land faster than a run
+      # finishes every run found a newer tip and nothing was released. On 5
+      # October nothing deployed from 16:12 to about 17:50 UTC while twelve
+      # merges built. So a stable run that is no longer the tip still
+      # publishes when the branch contains its revision, the newest release in
+      # the registry is older than it and numbered below it, and that release's
+      # revision was merged at least RELEASE_EVERY_MINUTES before this one: a
+      # burst of merges ships a release about that often instead of none, and
+      # not one per merge, since every release restarts the platform. Anything
+      # that cannot be read falls back to the exact tip.
       - name: Check branch tip before publishing
         id: current_head
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ steps.chart.outputs.release_channel }}
+          CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
+          CHART_REF: oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform
+          RELEASE_EVERY_MINUTES: '15'
         run: |
           set -euo pipefail
           current_sha="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
           test -n "$current_sha"
+          decide() {
+            echo "publish=$1" >> "$GITHUB_OUTPUT"
+            echo "$2" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          # base...head: "ahead" when head contains base and more.
+          compare() { gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --jq .status 2>/dev/null || echo unknown; }
+          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
+
           if [ "$current_sha" = "$GITHUB_SHA" ]; then
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-            echo "Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha." >> "$GITHUB_STEP_SUMMARY"
+            decide true "Publishing $GITHUB_SHA, the tip of $GITHUB_REF."
           fi
+          skipping="Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha"
+          [ "$RELEASE_CHANNEL" = stable ] || decide false "$skipping."
+          [ "$(compare "$GITHUB_SHA" "$current_sha")" = ahead ] \
+            || decide false "$skipping, which does not contain it."
+
+          published="$(helm show chart "$CHART_REF" --version '0.1.*' 2>/dev/null || true)"
+          published_sha="$(printf '%s\n' "$published" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
+          published_version="$(printf '%s\n' "$published" | sed -n 's/^version: *//p' | tr -d '"' | head -n 1)"
+          [[ "$published_sha" =~ ^[a-f0-9]{40}$ && "$published_version" =~ ^0\.1\.[0-9]+$ ]] \
+            || decide false "$skipping, and the newest release could not be read."
+          [ "$(compare "$published_sha" "$GITHUB_SHA")" = ahead ] \
+            || decide false "$skipping, and the newest release ($published_version, $published_sha) is not older than it."
+          [ "${published_version##*.}" -lt "${CHART_VERSION##*.}" ] \
+            || decide false "$skipping, and the newest release ($published_version) is numbered at or above $CHART_VERSION."
+
+          this_at="$(merged_at "$GITHUB_SHA")"
+          published_at="$(merged_at "$published_sha")"
+          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] \
+            || decide false "$skipping, and when its revisions were merged could not be read."
+          [ $(( this_at - published_at )) -ge $(( RELEASE_EVERY_MINUTES * 60 )) ] \
+            || decide false "$skipping, and the newest release ($published_version) is less than $RELEASE_EVERY_MINUTES minutes older; a later run releases it."
+          decide true "Publishing $GITHUB_SHA ahead of $GITHUB_REF's tip ($current_sha): the newest release ($published_version, $published_sha) is $(( (this_at - published_at) / 60 )) minutes older."
 
       - name: Log in to GHCR for Helm
         if: steps.current_head.outputs.publish == 'true'
