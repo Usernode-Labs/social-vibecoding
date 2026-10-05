@@ -608,13 +608,26 @@ const TURN_BUDGET_MS = bot.DEFAULTS.turnSeconds * 1000;
 const startedAgo = (ms) => new Date(Date.now() - ms).toISOString();
 // Runs until the bot's clock stops it, as a build still working does.
 const untilStopped = () => new Promise((resolve) => { stopped = () => resolve({ exitCode: 143, pushOk: false, ahead: 0 }); });
+// Time left on the clock when recovery takes the turn: enough that a loaded
+// runner cannot spend it all before server.js reads the deadline (it would
+// then be a clock that was already up, the other case below).
+const CLOCK_LEFT_MS = 1500;
+// A clock with time left is unref'd in server.js, so it never holds a
+// shutting-down process open. Here nothing else holds the event loop while
+// the journal waits on that clock, and node:test would end the file and
+// cancel this test and every one after it ("7 cancelled, 0 failed" in the
+// platform's unit run). Hold the loop open until the adoption settles.
+async function adoptHeld(pool, session) {
+  const hold = setInterval(() => {}, 1000);
+  try { return await adopt(pool, session); } finally { clearInterval(hold); }
+}
 
 test('a live build a restart reached in time, whose clock then ran out, goes round again instead of failing', async () => {
   stubLive();
   journalTail = untilStopped;
-  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 300) }) });
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - CLOCK_LEFT_MS) }) });
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
-  await adopt(pool, session);
+  await adoptHeld(pool, session);
   assert.ok(workerCalls.some((c) => c[0] === 'stopTurn'), 'the bot\'s clock still ends the turn at its deadline');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'back to be triaged again');
   const outcome = liveOutcome(pool);
@@ -629,7 +642,7 @@ test('a live build whose time was up before the restart reached it ran too long 
   journalTail = untilStopped;
   const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS + 5 * 60 * 1000) }) });
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
-  await adopt(pool, session);
+  await adoptHeld(pool, session);
   assert.ok(workerCalls.some((c) => c[0] === 'stopTurn'), 'stopped at once: its time was already up');
   assert.deepEqual(requeues(pool), [], 'not sent round again');
   const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
@@ -642,7 +655,7 @@ test('a build that finished while the platform was down is proposed, whatever it
   journalTail = async () => ({ pushOk: true, ahead: 1, sha: 'd'.repeat(40), exitCode: 0, lastResultText: 'Built it.' });
   const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 60 * 1000) }) });
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
-  await adopt(pool, session);
+  await adoptHeld(pool, session);
   assert.ok(liveCalls.some((c) => c[0] === 'promote'));
   assert.equal(workerCalls.some((c) => c[0] === 'stopTurn'), false);
   assert.deepEqual(requeues(pool), []);
@@ -651,12 +664,12 @@ test('a build that finished while the platform was down is proposed, whatever it
 test('the third build in a row whose time ran out after a restart is said to have failed, with the restarts as why', async () => {
   stubLive();
   journalTail = untilStopped;
-  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 300) }) });
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - CLOCK_LEFT_MS) }) });
   const pool = makePool({
     session, run: null, liveRun: LIVE_RUN,
     earlierBuilds: [sentBack('the build turn ran out of time after it was cut short'), sentBack('the worker is gone')],
   });
-  await adopt(pool, session);
+  await adoptHeld(pool, session);
   assert.deepEqual(requeues(pool), [], 'MAX_RESTARTED_BUILDS: not round a third time');
   const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
   assert.ok(failed);
