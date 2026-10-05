@@ -308,7 +308,12 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
 
-/** "Step 4 of 7: Build it", the made screen's and the App tab's words. */
+/**
+ * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
+ * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
+ * exactly what the made screen and the App tab say, and follows them when
+ * a step is renamed.
+ */
 export function firstVersionStep(fv: HubFirstVersion): string {
   if (!fv.step || !fv.of) return fv.ready ? 'Ready to try' : 'Being built';
   return `Step ${fv.step} of ${fv.of}${fv.step_name ? `: ${fv.step_name}` : ''}`;
@@ -317,19 +322,17 @@ export function firstVersionStep(fv: HubFirstVersion): string {
 /**
  * The line under the step: what happens next, for whoever reads it. Its
  * maker is told what it waits on from them, or that the bot messages them
- * (and, from the bot's own record, about how long a build takes); anybody
- * else, whose description it is.
+ * when it is ready; anybody else, whose description it is.
+ *
+ * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
+ * version. It plans first and waits on its maker's answer, so an ordinary
+ * request's typical build was a promise it did not keep.
  */
 export function firstVersionNote(fv: HubFirstVersion): string {
   if (fv.ready) return 'Version one is ready to try.';
   if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
   if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
-  if (fv.mine) {
-    const minutes = Number(fv.typical_minutes) || 0;
-    return minutes > 0
-      ? `Homeroom bot messages you when it’s ready to try, usually in about ${minutes} minutes.`
-      : 'Homeroom bot messages you when it’s ready to try.';
-  }
+  if (fv.mine) return 'Homeroom bot messages you when it’s ready to try.';
   return fv.creator
     ? `Homeroom bot is building it from @${fv.creator}’s description.`
     : 'Homeroom bot is building it from its description.';

@@ -88,6 +88,8 @@ type Audience = 'open' | 'invited' | 'solo';
 export type HubFirstVersion = {
   step: number | null;
   of: number | null;
+  /** The step's name as the server names it for this viewer (the App
+      tab's and the made screen's words), never one written here. */
   step_name: string | null;
   /** Built and up for approval: ready to try. */
   ready: boolean;
@@ -100,7 +102,6 @@ export type HubFirstVersion = {
   conversation_id: number | null;
   /** The change, once it is ready to try. */
   session_id: number | null;
-  typical_minutes: number | null;
 };
 
 export type CommunityPayload = {

@@ -250,7 +250,10 @@ const stagingApps = require('../services/staging-apps');
  * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
  * hub draws. Pure.
  *
- *   step, of, step_name  "Step 4 of 7: Build it"
+ *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
+ *                        as firstVersionState names it for this viewer, so
+ *                        the hub says what the App tab and the made screen
+ *                        say
  *   ready                built and up for approval: ready to try
  *   mine                 whose description it is: the viewer's
  *   creator              whose description it is, by username
@@ -259,10 +262,11 @@ const stagingApps = require('../services/staging-apps');
  *                        person whose description it is and nobody else
  *   conversation_id      their DM with the bot, for theirs alone
  *   session_id           the change, once it is ready to try
- *   typical_minutes      about how long a build takes, for its maker while
- *                        it is not ready
+ *
+ * No build time. Evan, 5 Oct 2026: no average build time for a first
+ * version, which plans first and waits on its maker's answer.
  */
-function hubFirstVersion(state, viewerId, typicalMinutes = null) {
+function hubFirstVersion(state, viewerId) {
   if (!state) return null;
   const mine = viewerId != null && Number(state.userId) === Number(viewerId);
   const ready = !!state.ready;
@@ -277,7 +281,6 @@ function hubFirstVersion(state, viewerId, typicalMinutes = null) {
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
-    typical_minutes: mine && !ready && Number(typicalMinutes) > 0 ? Number(typicalMinutes) : null,
   };
 }
 
@@ -3464,11 +3467,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.self_hosted) {
         try {
           const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
-          if (state) {
-            const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
-            firstVersion = hubFirstVersion(state, req.user?.id ?? null,
-              mine && !state.ready ? await botDm.typicalMinutesCached(pool) : null);
-          }
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
         } catch (err) {
           log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
         }
