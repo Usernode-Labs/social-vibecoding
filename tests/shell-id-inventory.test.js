@@ -320,7 +320,7 @@ const RETIRED_IDS = {
 const ADDED_IDS = {
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
-  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
+  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "You just helped make this app better. Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()

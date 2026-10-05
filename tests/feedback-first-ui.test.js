@@ -143,7 +143,7 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   assert.ok(h.el('feedback-form').classList.contains('hidden'));
   // The heading names where it went; the notice carries only what else
   // happened, here the bounty.
-  assert.equal(h.el('feedback-sent-title').textContent, 'Posted to Homeroom');
+  assert.equal(h.el('feedback-sent-title').textContent, 'Nice, that is posted to Homeroom');
   assert.match(h.el('feedback-sent-notice').textContent, /^Pledged 1 kudos.*4 left/);
   assert.equal(h.el('feedback-sent-notice').classList.contains('hidden'), false);
   for (const id of ['feedback-text', 'feedback-title']) assert.equal(h.el(id).readOnly, true);
@@ -161,7 +161,7 @@ test('?shot=feedback-sent poses the sent confirmation without filing anything', 
   const h = harness({ response: {} });
   h.sandbox.App._simulateFeedbackSent();
   assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
-  assert.equal(h.el('feedback-sent-title').textContent, 'Posted to Homeroom');
+  assert.equal(h.el('feedback-sent-title').textContent, 'Nice, that is posted to Homeroom');
   assert.equal(h.el('feedback-sent-notice').textContent, '');
   assert.ok(h.el('feedback-sent-notice').classList.contains('hidden'), 'nothing else happened, so the notice says nothing');
   assert.equal(h.el('feedback-text').readOnly, true);
@@ -289,7 +289,8 @@ test('B8: no link for somebody who could not build it, and the ordinary words wh
   assert.ok(h.el('feedback-sent-fix').classList.contains('hidden'));
   const plain = harness({ response: {} });
   await plain.submit();
-  assert.equal(plain.el('feedback-sent-line').textContent, 'Find it on your profile, under Your requests.');
+  assert.equal(plain.el('feedback-sent-line').textContent,
+    'You just helped make this app better. Find it on your profile, under Your requests.');
   assert.ok(plain.el('feedback-sent-chat').classList.contains('hidden'));
   assert.equal(plain.el('feedback-sent-mine').classList.contains('hidden'), false);
   // ?shot=feedback-bot poses it without filing anything.

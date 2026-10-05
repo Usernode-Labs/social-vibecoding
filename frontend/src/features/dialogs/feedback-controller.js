@@ -232,9 +232,10 @@ export function init() {
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
-    // "Posted to Run Club" / "Posted to Homeroom" is the heading; the notice
-    // under it carries only what else happened (a bounty, the app's state),
-    // and says nothing when nothing did.
+    // "Nice, that is posted to Run Club" / "Nice, that is posted to
+    // Homeroom" is the heading; the notice under it carries only what else
+    // happened (a bounty, the app's state), and says nothing when nothing
+    // did.
     const sentTitle = document.getElementById('feedback-sent-title');
     // B8: the bot's version of it. `bot` is the post's `homeroomBot`
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
@@ -242,7 +243,8 @@ export function init() {
     const sentChat = document.getElementById('feedback-sent-chat');
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
-    const SENT_LINE = 'Find it on your profile, under Your requests.';
+    const SENT_LINE =
+      'You just helped make this app better. Find it on your profile, under Your requests.';
     let sentBot = null;
     const showSent = (title, notice = '', bot = null) => {
       const building = !!bot?.botWillBuild;
@@ -1602,8 +1604,8 @@ export function init() {
             }
           }
           const postedTo = (target === 'app'
-            ? `Posted to ${AppView?.appData?.name || 'this app'}`
-            : 'Posted to Homeroom');
+            ? `Nice, that is posted to ${AppView?.appData?.name || 'this app'}`
+            : 'Nice, that is posted to Homeroom');
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
           feedbackStatus.textContent = `${postedTo}.${bountyNotice}${stateNotice}`;
@@ -1647,7 +1649,7 @@ export function init() {
           }
           // B8: the bot is theirs but does not build here: it went to the group.
           const toGroup = data.homeroomBot && target === 'app'
-            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group as a request` : postedTo;
+            ? `Nice, that is posted to ${AppView?.appData?.name || 'this app'}'s group` : postedTo;
           // #3186: the confirmation stays, with "See your requests" in it,
           // instead of closing itself (see showSent above).
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
@@ -2009,7 +2011,7 @@ export function init() {
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Posted to Homeroom');
+    showSent('Nice, that is posted to Homeroom');
   };
 
   // B8: ?shot=feedback-bot, what a request Homeroom bot builds is answered

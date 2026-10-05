@@ -387,13 +387,14 @@ export function FeedbackDialog() {
             line, and the dialog closed itself 1.5 s later; now it is this
             section, drawn like the first-feedback moment above, and it stays
             until Done. The controller names where it went in the heading
-            ("Posted to Run Club", "Posted to Homeroom") and fills the notice
-            with any bounty outcome, so the notice renders empty and hidden
-            for the reason #feedback-status does.
+            ("Nice, that is posted to Run Club", "Nice, that is posted to
+            Homeroom") and fills the notice with any bounty outcome, so the
+            notice renders empty and hidden for the reason #feedback-status
+            does.
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
-            Request posted
+            Nice, that is posted to Homeroom
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
