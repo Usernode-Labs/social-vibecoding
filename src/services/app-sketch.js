@@ -30,6 +30,19 @@
  * first version's plan asking whether the made-up flatmates were in the
  * rota. The plan is told the same (homeroom-bot.js FIRST_VERSION_NOTE).
  *
+ * ITS DATES ARE CHECKED, not hoped for (services/sketch-dates.js). Told
+ * today, a sketch still put "the last Thursday" on Saturday 31 October 2026.
+ * Today is now the date where the creator is, with a calendar of the next
+ * months under it, and the reply's dates are held to the real calendar
+ * before anyone sees them: a weekday and a date that disagree are made to
+ * agree, everywhere the date is shown, with its countdown.
+ *
+ * ITS WORDS ARE IN SENTENCE CASE. The same sketch read "hosting" and
+ * "thursday, 31 october", in the model's own words (the page sets no
+ * text-transform); the prompt's "No uppercase labels" was most likely read
+ * as no capitals. It asks for sentence case now, and capitaliseLineStarts
+ * makes sure of the first word of each line.
+ *
  * SAFE TO SHOW. The sketch is model output from a user's description, so it
  * is treated as untrusted HTML: sanitized here (no scripts, no handlers, no
  * links, no URLs at all), served with a sandbox CSP that allows no script and
@@ -47,6 +60,7 @@
  */
 
 const log = require('./logger');
+const sketchDates = require('./sketch-dates');
 
 const SKETCH_MODEL = 'claude-haiku-4-5';
 // How long app creation waits for the sketch before seeding the repository
@@ -494,30 +508,24 @@ Respond with ONLY a JSON object, no prose before or after:
 The accent: one colour chosen for this app, with a darker shade for the light look and a lighter one for the dark look. Not teal unless the subject calls for it.
 
 The markup is STATIC HTML for the body of the screen at phone width, filled with example content that is plainly illustrative: never lorem ipsum, and never made-up facts about the group. Rules:
-- Dates: TODAY is given with the description. Any date or weekday the screen shows is today or counted from it (this week, tomorrow, next Monday), never a date you made up.
+- Dates: TODAY and a CALENDAR are given with the description. Any date or weekday the screen shows is today or counted from it (this week, tomorrow, next Monday), never a date you made up. Read every date's weekday off the CALENDAR rather than working it out, and show a date that repeats (the last Thursday of the month) as its next one on or after TODAY.
 - People: show the creator as "You" (THE CREATOR, given with the description, says who that is). Show anyone else by a neutral placeholder from the app's subject plus a number, such as "Flatmate 2" or "Member 3", never an invented personal name. Only a person the description itself names may appear by that name.
 - Every other example (counts, amounts, items) is plain and obviously a sample.
 - Tags: header, section, div, span, p, h1, h2, h3, strong, em, small, ul, ol, li, button, input, textarea, select, option, label, table, thead, tbody, tr, th, td, hr, time. Nothing else: no script, no style, no img, no svg, no links, no style attributes, no ids, no event handlers.
 - Classes: ONLY these, exactly as written. Components: btn-primary (the one primary action, once), btn-secondary, field (inputs), list with list-row children (the usual way to show several things), card (one self-contained thing; never a card inside a card or a list), section-label (a label above a section), skeleton, state-empty. Type: text-title (once, the screen's title), text-heading, text-body, text-small, font-medium, font-semibold, font-bold, text-center, text-right, tabular-nums, truncate, line-through. Colour: text-fg, text-muted, text-accent, text-on-accent, text-danger, bg-surface, bg-raised, bg-line, bg-accent, bg-accent/10, bg-accent/20, border, border-t, border-b, border-line, border-accent, rounded-md, rounded-lg, rounded-xl, rounded-full, opacity-60. Layout: flex, inline-flex, grid, flex-col, flex-wrap, items-center, items-start, items-end, items-baseline, justify-between, justify-center, justify-end, grow, shrink-0, self-start, grid-cols-2, grid-cols-3, grid-cols-4, col-span-2, min-w-0, overflow-hidden, ml-auto, gap-1, gap-2, gap-3, gap-4, gap-6, p-/px-/py-/mt-/mb- with 0, 1, 2, 3, 4, 6 or 8, h- and w- with 1, 2, 3, 4, 8, 10, 12 or 16, w-1/4, w-1/3, w-1/2, w-2/3, w-3/4, w-full.
 - The screen's top-level elements are siblings, spaced by the page (do not wrap everything in one div). Start with a header holding the title and one short line under it in text-muted.
-- No emoji. No uppercase labels. Accent only for the primary action, the signature element and small highlights.
+- Sentence case: capitalise the first word of every heading, label, button and line (Hosting, Next meetup), and every weekday and month name. No all-caps labels. No emoji. Accent only for the primary action, the signature element and small highlights.
 - At most about 60 elements. A bar or meter is a bg-line rounded-full h-2 track holding a bg-accent rounded-full h-2 fill with a w- fraction.`;
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
-  'October', 'November', 'December'];
-
 /**
- * Today, as the sketch is told it: the weekday, the date in words and the
- * ISO date, in UTC (the creator's own zone is not known here, so at most a
+ * Today, as the sketch is told it: the weekday, the date in words, the ISO
+ * date and the time zone it is the date in. That is the creator's own zone
+ * when their device sent one with Make it, and UTC when not (so at most a
  * day off). A sketch drawn without it dated a chore rota "week of Monday
  * 20 Jan" on Sunday 4 October 2026.
  */
-function todayLine(now = new Date()) {
-  const d = new Date(now);
-  const at = Number.isFinite(d.getTime()) ? d : new Date();
-  const words = `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
-  return `${words} (${at.toISOString().slice(0, 10)})`;
+function todayLine(now = new Date(), zone = null) {
+  return sketchDates.todayLine(now, zone);
 }
 
 /**
@@ -533,19 +541,59 @@ function makerLine(maker) {
   return display && display.toLowerCase() !== username.toLowerCase() ? `${display} (@${username})` : `@${username}`;
 }
 
-function sketchUserPrompt({ name, brief, audience, today = null, maker = null }) {
+function sketchUserPrompt({ name, brief, audience, today = null, zone = null, maker = null }) {
   const creator = makerLine(maker);
+  const now = today || new Date();
   return [
     `APP NAME:\n${String(name || '').slice(0, 120)}`,
     audience ? `WHO IT IS FOR:\n${String(audience).slice(0, 120)}` : null,
-    `TODAY:\n${todayLine(today || new Date())}`,
+    `TODAY:\n${todayLine(now, zone)}`,
+    `CALENDAR (each weekday's dates, this month and the next two):\n${sketchDates.calendarLines(sketchDates.localToday(now, zone)).join('\n')}`,
     creator ? `THE CREATOR (shown on the screen as "You"):\n${creator}` : null,
     `WHAT IT SHOULD DO (the creator's words):\n${String(brief || '').slice(0, 4000)}`,
   ].filter(Boolean).join('\n\n');
 }
 
-/** The model's reply as { design, html }, or null when it is not usable. */
-function parseSketchReply(text) {
+// The elements a line of text starts in, and the lower-case words a line may
+// rightly start with (units under a number: "42" over "km").
+const LINE_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'p', 'li', 'label', 'button', 'th', 'td', 'option', 'figcaption']);
+const LOWER_STARTS = new Set(['km', 'kg', 'mg', 'ml', 'cm', 'mm', 'mi', 'min', 'mins', 'hr', 'hrs', 'sec', 'secs',
+  'am', 'pm', 'lb', 'lbs', 'oz', 'kcal', 'ft', 'vs', 'etc']);
+
+/**
+ * Sentence case for sanitized sketch markup: the first word of each line
+ * (a heading, paragraph, list item, label, button or cell, through any
+ * inline element in front of it) starts with a capital. Only an all
+ * lower-case word: "iPhone" and units like "km" are left alone. Tags pass
+ * through untouched.
+ */
+function capitaliseLineStarts(html) {
+  const parts = String(html || '').split(/(<[^>]*>)/);
+  let lineStart = false;
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i % 2 === 1) {
+      const tag = /^<(\/?)([a-z][a-z0-9]*)/i.exec(parts[i]);
+      if (tag && LINE_TAGS.has(tag[2].toLowerCase())) lineStart = !tag[1];
+      continue;
+    }
+    if (!lineStart || !parts[i].trim()) continue;
+    lineStart = false;
+    parts[i] = parts[i].replace(/^(\s*)([a-z])([a-z'\u2019]*)(?![\p{L}\p{N}])/u, (whole, space, first, rest) => {
+      const word = first + rest;
+      if (LOWER_STARTS.has(word) || (word.length === 1 && word !== 'a')) return whole;
+      return space + first.toUpperCase() + rest;
+    });
+  }
+  return parts.join('');
+}
+
+/**
+ * The model's reply as { design, html }, or null when it is not usable. The
+ * markup is sanitized, its dates held to the calendar where the creator is
+ * (`today`, sketch-dates.localToday; `brief`, their description), and its
+ * lines put in sentence case.
+ */
+function parseSketchReply(text, { today = null, brief = '' } = {}) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
@@ -557,7 +605,7 @@ function parseSketchReply(text) {
     return null;
   }
   const design = normalizeDesign(obj.design);
-  const html = sanitizeSketchHtml(obj.html);
+  const html = capitaliseLineStarts(sketchDates.checkSketchDates(sanitizeSketchHtml(obj.html), { today, brief }));
   // Something to look at: a title and a few more words than that.
   if (!design || textOf(html).split(' ').length < 8) return null;
   return { design, html };
@@ -706,7 +754,7 @@ async function makerOf(pool, user) {
   return { username: user?.username || null, displayName: null };
 }
 
-async function generate(pool, { app, user, brief, audience, deps }) {
+async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   let result = null;
@@ -715,15 +763,16 @@ async function generate(pool, { app, user, brief, audience, deps }) {
   let error = null;
   try {
     const maker = await makerOf(pool, user);
+    const now = deps.now ? deps.now() : new Date();
     const reply = await llm.generateAppSketch({
       system: SKETCH_SYSTEM,
-      user: sketchUserPrompt({ name: app.name, brief, audience, today: deps.now ? deps.now() : new Date(), maker }),
+      user: sketchUserPrompt({ name: app.name, brief, audience, today: now, zone: timeZone, maker }),
       model: SKETCH_MODEL,
       telemetryContext: { pool, appId: app.id },
     });
     usage = reply.usage || null;
     model = reply.model || SKETCH_MODEL;
-    result = parseSketchReply(reply.text);
+    result = parseSketchReply(reply.text, { today: sketchDates.localToday(now, timeZone), brief });
     if (!result) error = 'unusable_reply';
   } catch (err) {
     error = String(err && err.message || 'failed').slice(0, 200);
@@ -756,8 +805,10 @@ async function generate(pool, { app, user, brief, audience, deps }) {
 /**
  * Start a project's sketch, once. Returns at once; the work runs on. A
  * project with a sketch row already (a retried create) is left alone.
+ * `timeZone` is the creator's device's IANA zone, so "today" is theirs;
+ * anything else reads as UTC.
  */
-async function startSketch(pool, { app, user, brief, audience = null }, deps = {}) {
+async function startSketch(pool, { app, user, brief, audience = null, timeZone = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
     if (!(deps.staging ?? IS_STAGING)) return false;
@@ -778,7 +829,7 @@ async function startSketch(pool, { app, user, brief, audience = null }, deps = {
     [app.id, user.id]
   );
   if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, deps }).catch((err) => {
+  const work = generate(pool, { app, user, brief, audience, timeZone, deps }).catch((err) => {
     log.warn('app-sketch', 'Sketch failed', { appId: app.id, err: err.message });
     return null;
   });
@@ -853,6 +904,7 @@ module.exports = {
   textOf,
   normalizeDesign,
   parseSketchReply,
+  capitaliseLineStarts,
   sketchUserPrompt,
   todayLine,
   makerLine,

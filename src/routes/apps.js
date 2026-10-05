@@ -1183,10 +1183,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // creation, which waits a little for it so the repository's first
       // commit can carry it. Only from "What do you want to make?", only
       // with a description to draw from, and never a reason the create fails.
+      // `timeZone` is the maker's device's, so the sketch's "today" is theirs
+      // (an unknown or invalid zone reads as UTC there).
       if (req.body.from === 'first-session' && !repoUrlNormalized
           && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
         await require('../services/app-sketch').startSketch(pool, {
           app: appRow, user: req.user, brief: req.body.brief,
+          timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
         }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
       }
 

@@ -293,7 +293,7 @@ test('the sketch prompt grounds its dates in today and its people in the creator
   const flat = sketch.SKETCH_SYSTEM.replace(/\s+/g, ' ');
   assert.doesNotMatch(flat, /believable example content for this group \(names, numbers, dates\)/, 'no longer asks for invented names');
   assert.match(flat, /filled with example content that is plainly illustrative: never lorem ipsum, and never made-up facts about the group\./);
-  assert.match(flat, /- Dates: TODAY is given with the description\. Any date or weekday the screen shows is today or counted from it \(this week, tomorrow, next Monday\), never a date you made up\./);
+  assert.match(flat, /- Dates: TODAY and a CALENDAR are given with the description\. Any date or weekday the screen shows is today or counted from it \(this week, tomorrow, next Monday\), never a date you made up\. Read every date's weekday off the CALENDAR rather than working it out, and show a date that repeats \(the last Thursday of the month\) as its next one on or after TODAY\./);
   assert.match(flat, /- People: show the creator as "You" \(THE CREATOR, given with the description, says who that is\)\./);
   assert.match(flat, /Show anyone else by a neutral placeholder from the app's subject plus a number, such as "Flatmate 2" or "Member 3", never an invented personal name\./);
   assert.match(flat, /Only a person the description itself names may appear by that name\./);
@@ -301,11 +301,12 @@ test('the sketch prompt grounds its dates in today and its people in the creator
   assert.doesNotMatch(sketch.SKETCH_SYSTEM, /—/, 'no em dash');
 });
 
-test('the sketch is told today\'s date, with its weekday, and the creator by name', () => {
+test('the sketch is told today\'s date where its creator is, with its weekday and zone, and the creator by name', () => {
   const today = new Date('2026-10-04T12:00:00Z');
-  assert.equal(sketch.todayLine(today), 'Sunday 4 October 2026 (2026-10-04)');
-  assert.equal(sketch.todayLine(new Date('2027-01-18T23:59:00Z')), 'Monday 18 January 2027 (2027-01-18)', 'in UTC');
-  assert.match(sketch.todayLine('not a date'), /^[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4} \(\d{4}-\d{2}-\d{2}\)$/, 'a bad date is now');
+  assert.equal(sketch.todayLine(today), 'Sunday 4 October 2026 (2026-10-04), UTC');
+  assert.equal(sketch.todayLine(new Date('2027-01-18T23:59:00Z')), 'Monday 18 January 2027 (2027-01-18), UTC', 'in UTC');
+  assert.equal(sketch.todayLine(new Date('2027-01-18T23:59:00Z'), 'Asia/Tokyo'), 'Tuesday 19 January 2027 (2027-01-19), Asia/Tokyo', 'or in their zone');
+  assert.match(sketch.todayLine('not a date'), /^[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4} \(\d{4}-\d{2}-\d{2}\), UTC$/, 'a bad date is now');
 
   assert.equal(sketch.makerLine({ username: 'jordan_t1004', displayName: 'Jordan' }), 'Jordan (@jordan_t1004)');
   assert.equal(sketch.makerLine({ username: 'jordan_t1004', displayName: null }), '@jordan_t1004');
@@ -315,17 +316,23 @@ test('the sketch is told today\'s date, with its weekday, and the creator by nam
 
   const brief = 'A chore rota for our flat. Shows whose turn it is for bins, dishes and hoovering this week.';
   const user = sketch.sketchUserPrompt({
-    name: 'Chore Rota', brief, today, maker: { username: 'jordan_t1004', displayName: 'Jordan' },
+    name: 'Chore Rota', brief, today, zone: 'Europe/London', maker: { username: 'jordan_t1004', displayName: 'Jordan' },
   });
   assert.equal(user, [
     'APP NAME:\nChore Rota',
-    'TODAY:\nSunday 4 October 2026 (2026-10-04)',
+    'TODAY:\nSunday 4 October 2026 (2026-10-04), Europe/London',
+    [
+      'CALENDAR (each weekday\'s dates, this month and the next two):',
+      'October 2026: Mondays 5, 12, 19, 26; Tuesdays 6, 13, 20, 27; Wednesdays 7, 14, 21, 28; Thursdays 1, 8, 15, 22, 29; Fridays 2, 9, 16, 23, 30; Saturdays 3, 10, 17, 24, 31; Sundays 4, 11, 18, 25',
+      'November 2026: Mondays 2, 9, 16, 23, 30; Tuesdays 3, 10, 17, 24; Wednesdays 4, 11, 18, 25; Thursdays 5, 12, 19, 26; Fridays 6, 13, 20, 27; Saturdays 7, 14, 21, 28; Sundays 1, 8, 15, 22, 29',
+      'December 2026: Mondays 7, 14, 21, 28; Tuesdays 1, 8, 15, 22, 29; Wednesdays 2, 9, 16, 23, 30; Thursdays 3, 10, 17, 24, 31; Fridays 4, 11, 18, 25; Saturdays 5, 12, 19, 26; Sundays 6, 13, 20, 27',
+    ].join('\n'),
     'THE CREATOR (shown on the screen as "You"):\nJordan (@jordan_t1004)',
     `WHAT IT SHOULD DO (the creator's words):\n${brief}`,
   ].join('\n\n'));
-  // Never without a date; without a creator, no creator line.
+  // Never without a date and a calendar; without a creator, no creator line.
   const bare = sketch.sketchUserPrompt({ name: 'Chore Rota', brief });
-  assert.match(bare, /\n\nTODAY:\n[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4} \(\d{4}-\d{2}-\d{2}\)\n\n/);
+  assert.match(bare, /\n\nTODAY:\n[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4} \(\d{4}-\d{2}-\d{2}\), UTC\n\nCALENDAR /);
   assert.doesNotMatch(bare, /THE CREATOR/);
 });
 
@@ -363,7 +370,7 @@ test('drawing a sketch reads the creator\'s display name and today\'s date into 
     { llm, limits: { async recordSpend() {} }, now }), true);
   const args = await llm.done;
   assert.equal(args.system, sketch.SKETCH_SYSTEM);
-  assert.match(args.user, /TODAY:\nSunday 4 October 2026 \(2026-10-04\)/);
+  assert.match(args.user, /TODAY:\nSunday 4 October 2026 \(2026-10-04\), UTC\n\nCALENDAR /);
   assert.match(args.user, /THE CREATOR \(shown on the screen as "You"\):\nJordan \(@jordan_t1004\)/);
   assert.deepEqual(pool.queries.find((q) => /FROM users/.test(q.sql)).params, [7]);
 
@@ -372,6 +379,13 @@ test('drawing a sketch reads the creator\'s display name and today\'s date into 
   await sketch.startSketch(fakePool({ usersFail: true }), { app: { id: 9102, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota' },
     { llm: llm2, limits: { async recordSpend() {} }, now });
   assert.match((await llm2.done).user, /THE CREATOR \(shown on the screen as "You"\):\n@jordan_t1004/);
+
+  // The maker's device's zone makes "today" theirs: 09:30 UTC on the 4th is
+  // still the evening of the 3rd in Honolulu.
+  const llm3 = fakeLlm();
+  await sketch.startSketch(fakePool(), { app: { id: 9103, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota', timeZone: 'Pacific/Honolulu' },
+    { llm: llm3, limits: { async recordSpend() {} }, now });
+  assert.match((await llm3.done).user, /TODAY:\nSaturday 3 October 2026 \(2026-10-03\), Pacific\/Honolulu\n\nCALENDAR /);
 });
 
 test('the first version\'s request says the sketch\'s names, dates and numbers are samples', () => {
@@ -379,4 +393,94 @@ test('the first version\'s request says the sketch\'s names, dates and numbers a
   const { body } = dm.firstVersionIssue({ name: 'Chore Rota', username: 'jordan_t1004', brief: 'A chore rota', sketch: DESIGN });
   assert.match(body, /list any change under Assumptions with the reason\. Its names, dates and numbers are samples, not facts about the group\./);
   assert.doesNotMatch(dm.firstVersionIssue({ name: 'Chore Rota', username: 'jordan_t1004', brief: 'A chore rota' }).body, /samples/);
+});
+
+// ── 6. Its dates are the calendar's, its words in sentence case ─────────
+//
+// 2026-10-05, production: "Our little book club ... (we meet the last
+// Thursday of each month at 7pm)" on Monday 5 October was sketched with
+// "hosting" and "thursday, 31 october" (a Saturday), "Due: 31 Oct" and "26
+// days to go". The lower case was the model's own: the page sets no
+// text-transform. src/services/sketch-dates.js and tests/sketch-dates.test.js
+// hold the dates to the calendar; this pins that a reply goes through both
+// checks before it is shown or committed.
+
+const BOOK_CLUB_BRIEF = 'Our little book club. Shows what we\'re reading this month, who\'s hosting the next meetup and a countdown to it (we meet the last Thursday of each month at 7pm). Everyone can suggest the next book.';
+const BOOK_CLUB_REPLY = JSON.stringify({
+  design: { job: 'See this month\'s book, who\'s hosting, and when you\'re meeting next', primaryAction: 'Suggest a book' },
+  html: `<header class="px-4 py-6 border-b border-line"><h1 class="text-title font-bold text-fg">Page Turners</h1><p class="text-small text-muted mt-1">Your book club</p></header>
+<section class="px-4 py-6"><p class="section-label text-muted font-medium mb-3">This month's read</p><div class="card"><h2 class="text-heading">The Midnight Library</h2><p class="text-small text-muted mt-3">Due: 31 Oct</p></div></section>
+<section class="px-4 py-6"><p class="section-label">Next meetup</p><div class="card"><div class="flex justify-between"><div><p class="text-small text-muted">hosting</p><p class="text-heading">Member 2</p></div><div class="text-right"><p class="text-small text-muted">thursday, 31 october</p><p class="text-heading">7:00 pm</p></div></div><p class="text-small text-accent font-semibold mt-2">26 days to go</p></div></section>`,
+});
+
+test('the prompt asks for sentence case, not "no uppercase labels"', () => {
+  const flat = sketch.SKETCH_SYSTEM.replace(/\s+/g, ' ');
+  assert.doesNotMatch(flat, /No uppercase labels/);
+  assert.match(flat, /- Sentence case: capitalise the first word of every heading, label, button and line \(Hosting, Next meetup\), and every weekday and month name\. No all-caps labels\. No emoji\./);
+});
+
+test('each line of a sketch starts with a capital; units, mixed-case words and markup are left alone', () => {
+  const cap = sketch.capitaliseLineStarts;
+  assert.equal(cap('<p class="text-small text-muted">hosting</p>'), '<p class="text-small text-muted">Hosting</p>');
+  assert.equal(cap('<li class="list-row"><span>buy milk</span><span>you</span></li>'), '<li class="list-row"><span>Buy milk</span><span>you</span></li>',
+    'through an inline element, the first word only');
+  assert.equal(cap('<button class="btn-primary">suggest a book</button>'), '<button class="btn-primary">Suggest a book</button>');
+  assert.equal(cap('<h2>  don\'t miss it</h2>'), '<h2>  Don\'t miss it</h2>');
+  assert.equal(cap('<li><input type="checkbox"> bins out</li>'), '<li><input type="checkbox"> Bins out</li>');
+  for (const same of ['<p>iPhone club</p>', '<p>km this week</p>', '<p>42</p><p>km</p>', '<p>e.g. this</p>',
+    '<p>Already right</p>', '<div>loose text</div>', '<p>7:00 pm</p>', '<p class="hosting">&amp; more</p>', '']) {
+    assert.equal(cap(same), same, same);
+  }
+});
+
+test('a reply is shown with its dates held to the calendar and its lines in sentence case', () => {
+  const today = require('../src/services/sketch-dates').localToday(new Date('2026-10-05T09:00:00Z'), 'Europe/London');
+  const { html } = sketch.parseSketchReply(BOOK_CLUB_REPLY, { today, brief: BOOK_CLUB_BRIEF });
+  assert.match(html, /<p class="text-small text-muted">Hosting<\/p>/);
+  assert.match(html, /<p class="text-small text-muted">Thursday, 29 October<\/p>/);
+  assert.match(html, /Due: 29 Oct/);
+  assert.match(html, /24 days to go/);
+  assert.doesNotMatch(html, /31|26 days|thursday|october|hosting/);
+});
+
+test('a drawn sketch is saved with its dates and words checked, for the maker\'s own today', async () => {
+  let saved;
+  const done = new Promise((resolve) => { saved = resolve; });
+  const pool = {
+    async query(sql, params) {
+      if (/FROM users/.test(sql)) return { rows: [{ username: 'jordan_t1004', display_name: 'Jordan' }] };
+      if (/INSERT INTO app_sketches/.test(sql)) return { rows: [{ app_id: params[0] }] };
+      if (/SET status = 'ready'/.test(sql)) saved(params);
+      return { rows: [] };
+    },
+  };
+  const llm = {
+    isEnabled: () => true,
+    estimateCostCents: () => 0,
+    async generateAppSketch(args) { return { text: BOOK_CLUB_REPLY, usage: null, model: args.model }; },
+  };
+  // Nothing here waits on a timer, but keep the loop open until it is saved.
+  const hold = setInterval(() => {}, 1000);
+  try {
+    assert.equal(await sketch.startSketch(pool, {
+      app: { id: 9104, name: 'Page Turners' }, user: { id: 7, username: 'jordan_t1004' },
+      brief: BOOK_CLUB_BRIEF, timeZone: 'Europe/London',
+    }, { llm, limits: { async recordSpend() {} }, now: () => new Date('2026-10-05T09:00:00Z') }), true);
+    const [appId, , html] = await done;
+    assert.equal(appId, 9104);
+    assert.match(html, /Thursday, 29 October/);
+    assert.match(html, /Due: 29 Oct/);
+    assert.match(html, /24 days to go/);
+    assert.match(html, />Hosting</);
+  } finally {
+    clearInterval(hold);
+  }
+});
+
+test('the route hands the sketch the maker\'s time zone, and the make screen sends it', () => {
+  const routes = read('src/routes/apps.js');
+  assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
+  const make = read('frontend/src/features/first-session/make.tsx');
+  assert.match(make, /const timeZone = deviceTimeZone\(\);/);
+  assert.match(make, /\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
 });
