@@ -20,22 +20,36 @@ const demoStates = require('../src/services/shots-demo-states');
 const agentSessions = require('../src/services/agent-sessions');
 const friends = require('../src/services/friends');
 const { loadOnboarding } = require('../src/services/topochain/challenge-onboarding');
+const { loadCadence } = require('../src/services/topochain/challenge-scorer');
+const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
+const { attachForkLineage } = require('../src/routes/apps');
+const suggestBack = require('../src/services/suggest-back');
+const conversations = require('../src/services/conversations');
+const botActivity = require('../src/services/homeroom-bot-activity');
 const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SLUG = 'usernode-2d5619';
 
 // What a shots copy holds before the demo states: the fixture personas, the
-// platform app, and the staging seeds' topochain season the challenge
-// states join (src/db/migrate.js), beside a newer season of production's.
+// platform app, the staging seeds' topochain season the challenge states join
+// and their fork-lineage source the member's remix points at
+// (src/db/migrate.js), beside a newer season of production's. No Homeroom
+// bot account: the bot run card's state makes one where a copy has none.
 async function seedCopy(pool) {
   await pool.query(
     `INSERT INTO users (username, password, is_admin, admin_readonly) VALUES
        ('usernode-capture', 'x', FALSE, FALSE),
        ('usernode-capture-admin', 'x', TRUE, TRUE),
-       ('staging-demo-general-lin', 'x', FALSE, FALSE)`
+       ('staging-demo-general-lin', 'x', FALSE, FALSE),
+       ('staging-demo-user', 'staging-demo-not-a-login', FALSE, FALSE)`
   );
   await pool.query(`INSERT INTO apps (name, slug, status) VALUES ('Homeroom', $1, 'running')`, [SLUG]);
+  await pool.query(
+    `INSERT INTO apps (name, slug, status, view_visibility, created_by)
+     SELECT 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', id
+       FROM users WHERE username = 'staging-demo-user'`
+  );
   await pool.query(
     `INSERT INTO seasons (id, name, starts_at, ends_at, is_active, internal, display_order) VALUES
        (77, 'Pre Season 2', NOW() - INTERVAL '10 days', NOW() + INTERVAL '50 days', TRUE, FALSE, 1),
@@ -109,8 +123,10 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
   assert.deepEqual(result.skipped.map((state) => state.id), ['shots-demo-homeroom-bot-verdict-v1']);
   assert.deepEqual(result.installed.map((state) => state.id),
     both.filter((id) => id !== 'shots-demo-homeroom-bot-verdict-v1'));
+  // The verdict's run is the one with a build; the bot run card's has none.
   for (const { pool } of [base, head]) {
-    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_runs')).rows[0].n, 0);
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE build_branch IS NOT NULL'))
+      .rows[0].n, 0);
   }
   assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM friendships')).rows[0].n, 0,
     'base could hold the friend request; head could not, so neither has it');
@@ -120,6 +136,10 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
     `SELECT (SELECT array_agg(id ORDER BY id) FROM agent_sessions) AS sessions,
             (SELECT array_agg(id ORDER BY id) FROM chat_sessions) AS changes,
             (SELECT array_agg(id ORDER BY id) FROM challenges) AS challenges,
+            (SELECT array_agg(measure ORDER BY measure) FROM challenge_scoring_rules) AS rules,
+            (SELECT array_agg(slug ORDER BY slug) FROM apps) AS apps,
+            (SELECT array_agg(id ORDER BY id) FROM conversations WHERE kind = 'direct') AS chats,
+            (SELECT COUNT(*)::int FROM homeroom_bot_dm_messages) AS cards,
             (SELECT COUNT(*)::int FROM user_activities) AS credits,
             (SELECT COUNT(*)::int FROM pr_votes) AS votes`)).rows[0];
   assert.deepEqual(await shape(base.pool), await shape(head.pool));
@@ -131,7 +151,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 
   // Every row is in the reserved block or marked as the fixture's.
   const [low, high] = demoStates.RESERVED_RANGE;
-  for (const table of ['agent_sessions', 'chat_sessions', 'challenges', 'challenge_templates']) {
+  for (const table of ['agent_sessions', 'chat_sessions', 'challenges', 'challenge_templates', 'apps', 'conversations']) {
     const { rows } = await base.pool.query(`SELECT id FROM ${table} WHERE id >= 990000`);
     assert.ok(rows.every((row) => Number(row.id) >= low && Number(row.id) <= high), table);
   }
@@ -215,7 +235,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
 
   // A live Ready verdict with its build, on the self app.
   const { rows: [verdict] } = await pool.query(
-    `SELECT mode, verdict, build_ok, proposal_session_id FROM homeroom_bot_runs`);
+    `SELECT mode, verdict, build_ok, proposal_session_id FROM homeroom_bot_runs WHERE build_branch IS NOT NULL`);
   assert.deepEqual(verdict, { mode: 'live', verdict: 'ready', build_ok: true, proposal_session_id: demoStates.IDS.proposal });
 
   // First challenges, finished by every persona so nothing else is hidden;
@@ -227,7 +247,8 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const { rows: [rule] } = await pool.query(
     `SELECT r.interval_minutes, r.last_scored_at > NOW() - INTERVAL '1 minute' AS fresh, t.category
        FROM challenge_scoring_rules r JOIN challenges c ON c.id = r.challenge_id
-       JOIN challenge_templates t ON t.id = c.challenge_template_id`);
+       JOIN challenge_templates t ON t.id = c.challenge_template_id
+      WHERE r.measure = 'TRY_APPS'`);
   assert.deepEqual(rule, { interval_minutes: 60, fresh: true, category: 'PERSISTENT' });
 
   // The fixture season is the newest active one, so "your standing" asks
@@ -243,6 +264,76 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // whose badge would be on every screen.
   const list = await friends.listFor(pool, member);
   assert.deepEqual(list.incoming.map((person) => person.username), ['staging-demo-general-lin']);
+
+  // This week, read as the Challenges tab reads its event (routes/topochain/
+  // public.js): the two weekly challenges and the one scored on sending a
+  // proposal, grouped by their cards' label, each open for three more days.
+  // Only the proposal one and the Always open one are counted: hourly, and
+  // just now, so their cards say when they are next counted.
+  const { rows: listed } = await pool.query(
+    `SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed,
+            c.goal, c.task, c.reward, c.description, c.requirements,
+            c.schedule_start, c.schedule_end, c.reward_logic, c.cta_button, c.cta_label, c.cta_link,
+            c.metric_type, c.metric_target, c.metric_label,
+            ${TEMPLATE_JOIN_COLUMNS_SQL}
+       FROM challenges c JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+      WHERE c.season_event_id = 900501 AND c.enabled = TRUE
+      ORDER BY c.display_order ASC, c.id ASC`);
+  const thisWeek = listed.map(buildChallengeListItem).filter((item) => item.card_preview.label === 'WEEKLY');
+  assert.deepEqual(thisWeek.map((item) => item.id), [...demoStates.IDS.weeklyChallenges, demoStates.IDS.proposalChallenge]);
+  for (const item of thisWeek) {
+    const left = new Date(item.effective.schedule_end).getTime() - Date.now();
+    assert.ok(new Date(item.effective.schedule_start).getTime() < Date.now(), item.id);
+    assert.ok(left > 2 * 86400000 && left <= 3 * 86400000, `${item.id} has three days left`);
+    assert.ok(!item.completed && item.enabled, item.id);
+  }
+  const cadence = await loadCadence(pool, 900501, listed, { defaultMinutes: 10 });
+  assert.deepEqual([...cadence.keys()].sort(), [demoStates.IDS.alwaysOpenChallenge, demoStates.IDS.proposalChallenge]);
+  const counted = cadence.get(demoStates.IDS.proposalChallenge);
+  assert.equal(counted.intervalMinutes, 60);
+  assert.ok(Date.now() - counted.lastScoredAt < 60000);
+  const { rows: [proposalRule] } = await pool.query(
+    `SELECT measure, enabled FROM challenge_scoring_rules WHERE challenge_id = $1`, [demoStates.IDS.proposalChallenge]);
+  assert.deepEqual(proposalRule, { measure: 'PROPOSAL_SENT', enabled: true });
+
+  // A remix of the member's: its ⋯ offers them "Suggest this back", read
+  // through the app payload's lineage and the dialog's own condition, and
+  // the dialog's preview says why a copy cannot send it.
+  const { rows: [remix] } = await pool.query('SELECT * FROM apps WHERE slug = $1', ['shots-demo-member-remix']);
+  assert.equal(Number(remix.id), demoStates.IDS.memberRemix);
+  assert.deepEqual([remix.collab_visibility, remix.view_visibility, remix.self_hosted], ['private', 'private', false]);
+  const { rows: [owner] } = await pool.query(
+    `SELECT cm.source FROM community_members cm WHERE cm.community_id = $1 AND cm.user_id = $2`,
+    [remix.community_id, member]);
+  assert.equal(owner.source, 'creator');
+  const payload = { ...remix };
+  await attachForkLineage(pool, payload);
+  const { loadTsx } = require('./lib/render-tsx');
+  const { suggestBackTarget } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
+  assert.deepEqual(suggestBackTarget(payload, member), { slug: 'staging-demo-forkable', name: 'Staging demo forkable app' });
+  assert.equal(suggestBackTarget(payload, ids['usernode-capture-admin']), null, 'only its owner is offered it');
+  const suggested = await suggestBack.preview({ pool, user: { id: member, username: 'usernode-capture' }, fork: remix });
+  assert.equal(suggested.reason.code, 'lineage_missing');
+  assert.equal(suggested.original.slug, 'staging-demo-forkable');
+
+  // The member's chat with the Homeroom bot: two activity cards on one
+  // request, read through the cards' own reader. The older one's build is
+  // ready and waiting its turn, so it is working though a newer card began
+  // on the same request; both are read, and nothing went to the bell.
+  const viewer = { id: member, username: 'usernode-capture' };
+  const { cards } = await botActivity.cardsFor(pool, { user: viewer });
+  assert.equal(cards.length, 2);
+  const [newer, older] = cards;
+  assert.ok(older.messageId < newer.messageId);
+  assert.equal(older.state, 'working');
+  assert.equal(older.stage, 'build_queued');
+  assert.equal(newer.state, 'working', 'the request\'s own progress: its build is waiting its turn');
+  assert.equal(older.links.request, `#app/${SLUG}/dev/issues/${demoStates.IDS.botRequest}`);
+  const chats = await conversations.listConversations(pool, viewer);
+  const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
+  assert.equal(chat.homeroomBot, true);
+  assert.equal(chat.unreadCount, 0);
+  assert.equal(chat.latestMessage.id, newer.messageId);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0);
 });
 
