@@ -2,6 +2,8 @@ import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
 
+import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
+
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
  * (current password required). In the Homeroom native app with a linked
@@ -10,11 +12,20 @@ import { PasswordInput } from '@/components/ui/password-input';
  * which signs a wallet-check challenge and calls POST
  * /api/me/wallet-change-password. settings.js wires the mode switch and both
  * submit paths.
+ *
+ * Return walks the fields (#3907: the iOS app has no keyboard chevrons any
+ * more): current, new, confirm, and Return in confirm presses whichever of
+ * the two submits is showing, so it takes the same path a tap does. In
+ * wallet mode the current-password row is hidden and simply skipped.
  */
+function submitShown(): void {
+  if (!pressButton(document.getElementById('cp-save'))) pressButton(document.getElementById('cp-wallet-save'));
+}
+
 export function PasswordSection() {
   return (
     <div data-settings-section="password" className="hidden">
-      <div id="change-password-section">
+      <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
         <SectionHeading title="Change password">
           Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
         </SectionHeading>
@@ -24,6 +35,7 @@ export function PasswordSection() {
             <PasswordInput
               id="cp-current"
               autoComplete="current-password"
+              enterKeyHint="next"
               placeholder="Current password"
               box="card"
               ring="bare"
@@ -34,6 +46,7 @@ export function PasswordSection() {
             <PasswordInput
               id="cp-new"
               autoComplete="new-password"
+              enterKeyHint="next"
               placeholder="New password (at least 8 characters)"
               box="card"
               ring="bare"
@@ -44,6 +57,7 @@ export function PasswordSection() {
             <PasswordInput
               id="cp-confirm"
               autoComplete="new-password"
+              enterKeyHint="done"
               placeholder="Confirm new password"
               box="card"
               ring="bare"

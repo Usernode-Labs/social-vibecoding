@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
 
@@ -74,7 +75,11 @@ export function FeedbackDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <div id="feedback-form">
+        {/* #3907: Return in the title goes on to the description, where it is
+            a new line (the iOS keyboard's chevrons are gone). A handler, not
+            markup: nothing here is written, so the controller still owns
+            every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
+        <div id="feedback-form" onKeyDown={returnKeyHandler()}>
         {/* ASK FOR A CHANGE, from every way in (UI overhaul). It was "Send
             feedback", and "Ask for a change" only from the hub's ⋯ (QA
             2026-09-24); people read feedback as a note to nobody in
@@ -187,6 +192,7 @@ export function FeedbackDialog() {
             id="feedback-title"
             type="text"
             maxLength={200}
+            enterKeyHint="next"
             placeholder="Suggested as you type"
           />
         </div>

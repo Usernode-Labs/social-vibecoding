@@ -125,6 +125,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppAllowance, useAppAllowance } from './app-allowance';
 import { invalidateAppAllowance } from './app-allowance-store.js';
@@ -1692,7 +1693,12 @@ export function CreateAppDialog() {
               {`${numberOf('details')}. ${importing ? 'What to call it' : 'What to call it and what it should do'}`}
               <span className="create-repo-sets-tag" data-repo-tag="details">{' · the repo sets this'}</span>
             </p>
-            <div id="create-name-block" className={CARD}>
+            {/* Return in the name goes on to what it should do (#3907), where
+                it is a new line. Before, it submitted the form, and `next()`
+                refused and focused the brief with an error. An import has no
+                brief (app.css folds the row away), so there the name is the
+                last field and Return submits the form as it always did. */}
+            <div id="create-name-block" className={CARD} onKeyDown={returnKeyHandler()}>
               <div className={ROW + ' create-name-row'}>
                 <label htmlFor="app-name" className={LABEL}>
                   Project name
@@ -1703,6 +1709,7 @@ export function CreateAppDialog() {
                   name="name"
                   type="text"
                   autoComplete="off"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="my cool app"
                   onInput={(e) => { setName(e.currentTarget.value); setError(''); }}

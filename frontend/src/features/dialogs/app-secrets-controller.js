@@ -38,6 +38,9 @@
 //   row.githubSecret        — an existing row whose name exactly matches
 //                             one of those secrets; annotated rather than
 //                             duplicated.
+
+import { attachReturnKey, pressButton } from '../../lib/return-to-next';
+
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
 // rather than captured, because the island unregisters on unmount.
@@ -548,17 +551,18 @@ const Secrets = {
           <div>
             <label class="${lbl}" for="decl-key">Key</label>
             <input id="decl-key" class="${input} font-mono" placeholder="MY_NEW_TOKEN"
-              autocapitalize="characters" autocomplete="off" spellcheck="false">
+              autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">UPPER_SNAKE_CASE: the name your code reads from the environment.</p>
           </div>
           <div>
             <label class="${lbl}" for="decl-description">Description</label>
-            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it">
+            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it"
+              enterkeyhint="next">
           </div>
           <div>
             <label class="${lbl}" for="decl-value">Value</label>
             <input id="decl-value" class="${input} font-mono" placeholder="leave blank to declare only"
-              autocomplete="off" spellcheck="false">
+              autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">${canWrite
     ? 'Stored as soon as you submit. Optional if you give a default below.'
     : 'Held encrypted and stored when the proposal merges. Optional if you give a default below.'}</p>
@@ -575,7 +579,7 @@ const Secrets = {
             rest and never displayed again${isPlatform ? '' : ', and never copied into PR previews'}.</p>
           <div>
             <label class="${lbl}" for="decl-default">Default</label>
-            <input id="decl-default" class="${input} font-mono" placeholder="optional">
+            <input id="decl-default" class="${input} font-mono" placeholder="optional" enterkeyhint="next">
             <p class="${help}">${isPlatform
     ? 'Documents the fallback your code already uses. The platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
     : 'Used at deploy time when no value is stored.'}</p>
@@ -583,13 +587,15 @@ const Secrets = {
           ${isPlatform ? `
           <div>
             <label class="${lbl}" for="decl-group">Group</label>
-            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General">
+            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General"
+              enterkeyhint="done">
             <datalist id="decl-group-options">${groups.map((g) => `<option value="${escapeAttr(g)}"></option>`).join('')}</datalist>
             <p class="${help}">The heading this row files under in this panel.</p>
           </div>` : `
           <div>
             <label class="${lbl}" for="decl-staging-default">Staging default</label>
-            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional">
+            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional"
+              enterkeyhint="done">
             <p class="${help}">What PR previews use. A required + private secret needs one (or a
               default), otherwise no preview of this app can boot.</p>
           </div>`}
@@ -604,6 +610,14 @@ const Secrets = {
         </div>
       </div>`;
 
+    // #3907: Return walks the five fields (the checkboxes are stepped over)
+    // and the last one presses the submit button, so a blocked form still
+    // refuses the same way a tap does. The iOS keyboard has no chevrons to
+    // walk them with any more. On the node this render just wrote, so a
+    // re-render never stacks a second listener.
+    attachReturnKey(host.firstElementChild, {
+      submit: () => { pressButton(document.getElementById('app-secrets-declare-submit')); },
+    });
     document.getElementById('app-secrets-declare-cancel')?.addEventListener('click', () => {
       Secrets.declareOpen = false;
       Secrets.setStatus('', '');
