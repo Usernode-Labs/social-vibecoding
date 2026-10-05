@@ -118,13 +118,17 @@ function turn(extra = {}) {
 }
 
 /** A pool that answers the session read, the run lookup and the cost sum. */
-function makePool({ session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [] }) {
+function makePool({ session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [], firstVersion = false }) {
   const calls = [];
   return {
     calls,
     async query(sql, params = []) {
       const s = String(sql);
       calls.push({ sql: s, params });
+      // Whether a live build is its project's first version (recoveryDeadline).
+      if (/SELECT first_version FROM homeroom_bot_requesters WHERE app_id = \$1/.test(s)) {
+        return { rows: firstVersion ? [{ first_version: true }] : [] };
+      }
       // The request's earlier live builds, newest first (restartedBuildsBefore).
       if (/SELECT build_error FROM homeroom_bot_runs/.test(s)) return { rows: earlierBuilds };
       // A live run put back in line with its kept plan (resumeLiveBuildFromSpec).
@@ -582,4 +586,122 @@ test('a reaped live build is settled the way restart recovery settles one it cou
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await bot.settleReapedTurn({ pool, config: {}, session });
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'the issue goes back to be triaged');
+});
+
+// ── A live build's time, across restarts (5 Oct 2026) ───────────────────
+// Page Turners #3: its build turn started about 12:31, four deploys landed
+// between 12:33 and 12:41, and the last recovery followed its journal until
+// the bot's clock (its start plus the 20-minute budget) ended it at 12:51.
+// Its requester was told it "ran past its time limit (finished after a
+// restart)" and that a person could pick it up. Nothing on the turn says
+// how much of that time the restarts took, so a build a restart reached
+// with time still on its clock goes round again, as any build a restart
+// interrupted does; one whose time was up before any restart reached it ran
+// too long on its own.
+//
+// A recovery leaves nothing behind it but the turn record, whose start never
+// moves: each restart's recovery arms the same deadline. So the last of the
+// four is the one these adopt: the turn started 20 minutes ago less the
+// moment its clock has left.
+
+const TURN_BUDGET_MS = bot.DEFAULTS.turnSeconds * 1000;
+const startedAgo = (ms) => new Date(Date.now() - ms).toISOString();
+// Runs until the bot's clock stops it, as a build still working does.
+const untilStopped = () => new Promise((resolve) => { stopped = () => resolve({ exitCode: 143, pushOk: false, ahead: 0 }); });
+
+test('a live build a restart reached in time, whose clock then ran out, goes round again instead of failing', async () => {
+  stubLive();
+  journalTail = untilStopped;
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 300) }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.ok(workerCalls.some((c) => c[0] === 'stopTurn'), 'the bot\'s clock still ends the turn at its deadline');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'back to be triaged again');
+  const outcome = liveOutcome(pool);
+  assert.deepEqual(outcome.slice(0, 2), [950, false]);
+  assert.equal(outcome[2], `interrupted: the build turn ran out of time after it was cut short ${bot.RESTARTED_BUILD_NOTE}`);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'no "couldn\'t finish" on the issue or in the DM');
+  assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)), 'the cut-short session is put away');
+});
+
+test('a live build whose time was up before the restart reached it ran too long on its own, and says so', async () => {
+  stubLive();
+  journalTail = untilStopped;
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS + 5 * 60 * 1000) }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.ok(workerCalls.some((c) => c[0] === 'stopTurn'), 'stopped at once: its time was already up');
+  assert.deepEqual(requeues(pool), [], 'not sent round again');
+  const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
+  assert.ok(failed, 'said, as any build that ran too long is');
+  assert.deepEqual(liveOutcome(pool).slice(0, 3), [950, false, 'the build ran past its time limit (finished after a restart)']);
+});
+
+test('a build that finished while the platform was down is proposed, whatever its clock had left', async () => {
+  stubLive();
+  journalTail = async () => ({ pushOk: true, ahead: 1, sha: 'd'.repeat(40), exitCode: 0, lastResultText: 'Built it.' });
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 60 * 1000) }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.ok(liveCalls.some((c) => c[0] === 'promote'));
+  assert.equal(workerCalls.some((c) => c[0] === 'stopTurn'), false);
+  assert.deepEqual(requeues(pool), []);
+});
+
+test('the third build in a row whose time ran out after a restart is said to have failed, with the restarts as why', async () => {
+  stubLive();
+  journalTail = untilStopped;
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - 300) }) });
+  const pool = makePool({
+    session, run: null, liveRun: LIVE_RUN,
+    earlierBuilds: [sentBack('the build turn ran out of time after it was cut short'), sentBack('the worker is gone')],
+  });
+  await adopt(pool, session);
+  assert.deepEqual(requeues(pool), [], 'MAX_RESTARTED_BUILDS: not round a third time');
+  const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
+  assert.ok(failed);
+  assert.equal(liveOutcome(pool)[2], 'the platform restarted in the middle of each of its last 3 tries at building this');
+  assert.equal(bot.MAX_RESTARTED_BUILDS, 3);
+});
+
+test('restartRanItOut: only a build turn the clock ended in recovery, with time left when recovery took it', () => {
+  const plan = { mode: 'build', timedOut: true, clockLeftMs: 60_000 };
+  assert.equal(bot.restartRanItOut(plan), true);
+  assert.equal(bot.restartRanItOut({ ...plan, clockLeftMs: 0 }), false, 'its time was up before the restart reached it');
+  assert.equal(bot.restartRanItOut({ ...plan, clockLeftMs: null }), false, 'no clock: nothing ran out');
+  assert.equal(bot.restartRanItOut({ ...plan, timedOut: false }), false, 'it ended on its own');
+  assert.equal(bot.restartRanItOut({ ...plan, mode: 'scout' }), false, 'a spec turn has its own path');
+  assert.equal(bot.restartRanItOut({ ...plan, lost: true }), false, 'a lost turn has its own path');
+  assert.equal(bot.restartRanItOut(null), false);
+});
+
+test('server.js hands the bot what its clock had left when recovery took the turn', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
+  const at = src.indexOf('const botClockMs = Math.max(0, deadline - Date.now());');
+  assert.ok(at > 0);
+  assert.match(src.slice(at, at + 200), /botClockLeftMs = botClockMs;/);
+  assert.match(src, /finishRecoveredTurn\(\{\n\s+pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, clockLeftMs: botClockLeftMs,/);
+});
+
+// The deadline itself: a live build keeps the budget the live path gave it.
+// It used to fall through to a triage turn's one plain budget, so a restart
+// halved a first version's clock and cut a platform build's to a third.
+test('a recovered live build keeps its own budget: a first version\'s doubled, the platform\'s tripled, a spec capped', async () => {
+  const start = Date.parse('2026-10-05T10:31:00Z');
+  const at = (mode, { firstVersion = false, repo = 'https://github.com/usernode-bot/todo', liveRun = LIVE_RUN, run = null } = {}) => {
+    const session = botSession({ repo_url: repo });
+    const pool = makePool({ session, run, liveRun, firstVersion });
+    return bot.recoveryDeadline(pool, {}, session, turn({ mode, startedAt: new Date(start).toISOString() }))
+      .then((deadline) => (deadline - start) / 60_000);
+  };
+  const turnMin = TURN_BUDGET_MS / 60_000;
+  const specMin = live.SPEC_TURN_MAX_MS / 60_000;
+  assert.equal(await at('build'), turnMin, 'a request\'s build');
+  assert.equal(await at('scout'), Math.min(turnMin, specMin), 'its spec, as the live path caps it');
+  assert.equal(await at('build', { firstVersion: true }), turnMin * bot.FIRST_VERSION_BUILD_TIME_FACTOR, 'a first version');
+  assert.equal(await at('scout', { firstVersion: true }), Math.min(turnMin, specMin) * bot.FIRST_VERSION_BUILD_TIME_FACTOR);
+  assert.equal(await at('build', { repo: 'https://github.com/Usernode-Labs/social-vibecoding' }),
+    turnMin * bot.PLATFORM_BUILD_TIME_FACTOR, 'the platform\'s own repository');
+  assert.equal(await at('scout', { liveRun: null }), turnMin, 'a triage turn: one turn\'s budget');
+  assert.equal(await at('build', { liveRun: null, run: RUN }), turnMin, 'a lane build, as before');
 });
