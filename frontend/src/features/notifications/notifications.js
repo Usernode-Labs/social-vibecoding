@@ -1399,6 +1399,12 @@ const Notifications = {
     Notifications._renderInvites();
   },
 
+  // An accept that has just brought them into the project answers with
+  // `welcome` (src/routes/collaborators.js): it opens "You're in" and its
+  // tour (features/first-session), the welcome an invite link ends on
+  // (App._followInvite), which ends in the group's chat with the inviter's
+  // note waiting and the reply chips under it. Without one, or once that
+  // welcome has been shown for this project, the chat opens as before.
   async _acceptInvite(appId, slug, kind) {
     const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
     try {
@@ -1423,11 +1429,24 @@ const Notifications = {
         // presented over the screen this opens (#1329). The people you just
         // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
+        if (kind !== 'approver' && Notifications._welcome(data.welcome, target)) return;
         Notifications._openAppDiscussion(target);
       }
     } catch (err) {
       console.warn('[notifications] acceptInvite failed', err);
     }
+  },
+
+  // "You're in" for an accepted invite, through the bridge the invite link
+  // uses (window.UsernodeReact.firstSession.welcome). True when it shows.
+  _welcome(welcome, slug) {
+    const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (!welcome || typeof welcome !== 'object' || !fs || typeof fs.welcome !== 'function') return false;
+    const shown = fs.welcome({ ...welcome, slug: welcome.slug || slug, name: welcome.name || slug });
+    // The tour opens on Home, where the challenge this join counted is read
+    // from a minute's cache (as after an invite link, App._followInvite).
+    if (shown) window.HomePanels?.ensureLoaded?.({ force: true });
+    return !!shown;
   },
 
   async _declineInvite(appId, kind) {
@@ -1747,16 +1766,28 @@ function savedView(s) {
 // their own accept/decline endpoints. The descriptor carries the endpoint
 // discriminator (`kind`) as well as the copy, because the component's
 // buttons and its swipe tray both need it.
+//
+// A collaborator invite into a private project is an invitation to JOIN it
+// (`joins`, src/services/notifications.js listPendingInvites): being invited
+// in is how anybody joins a group. It reads the way an invite link's page
+// does, with the inviter's note and how many are in it. "Invited you to
+// build" is left for a project anyone can use but only its invited people
+// build. First-session run-through, 5 October 2026: a group's invite by
+// username said "invited you to build", with no note and no headcount.
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
+  const count = Number(inv.memberCount) || 0;
   return {
     appId: inv.appId,
     slug: inv.appSlug || '',
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
-    verb: isApprover ? 'asked you to help approve changes to' : 'invited you to build',
+    verb: isApprover ? 'asked you to help approve changes to'
+      : inv.joins ? 'invited you to join' : 'invited you to build',
     appName: inv.appName || inv.appSlug || 'an app',
+    note: !isApprover && inv.note ? String(inv.note) : '',
+    members: !isApprover && count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '',
     ...stampFields(inv.createdAt),
   };
 }
@@ -2663,11 +2694,12 @@ function rowView(n) {
   // Collab-invite history rows (the actionable Accept/Decline buttons live
   // ONLY in the pinned Invites section, driven by pendingInvites — once
   // resolved this is just a plain history row). The app's name is the meta
-  // line's job, so the label is the whole headline.
+  // line's job, so the label is the whole headline. An invite into a private
+  // project is to join it (`detail: 'join'`, src/services/collab-invites.js).
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? 'Invited you to build with them'
+      ? (n.detail === 'join' ? 'Invited you to join' : 'Invited you to build with them')
       : n.kind === 'collab_invite_accepted'
         ? 'Accepted your invite'
         : n.kind === 'approver_invite'

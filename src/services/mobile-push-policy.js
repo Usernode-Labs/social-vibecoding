@@ -323,7 +323,17 @@ function buildCopy(kind, context, now) {
         title: app ? `@${actor} said hi in ${app}` : `@${actor} said hi`,
         body: message,
       };
+    // An invite into a private project is to join it (detail 'join',
+    // services/collab-invites.js); the rest are to build one.
     case 'collab_invite':
+      if (detail === 'join') {
+        return {
+          title: actor
+            ? (app ? `@${actor} invited you to join ${app}` : `@${actor} invited you to join them`)
+            : withApp('You have an invite to join'),
+          body: 'Accept or decline in the app',
+        };
+      }
       return {
         title: actor
           ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)

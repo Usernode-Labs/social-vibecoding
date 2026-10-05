@@ -11905,3 +11905,25 @@ CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
 -- NULL: deleting the carrying change leaves this one merged.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGER
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The inviter's note with an invite by @username (the first session's
+-- invite sheet, frontend/src/features/first-session/made.tsx, and
+-- POST /api/apps/:slug/invites): their own words, shown on the invite the
+-- person accepts, as a link's note is on the page it opens
+-- (community_invites.note). Plain text, at most 280 characters; NULL when
+-- they left none. services/collab-invites.js sendInvite is the one writer,
+-- through community-invites.js cleanNote. Kept once the invite is accepted,
+-- like invited_by.
+ALTER TABLE app_collaborators ADD COLUMN IF NOT EXISTS invite_note TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'app_collaborators'::regclass
+       AND conname = 'app_collaborators_invite_note_length'
+  ) THEN
+    ALTER TABLE app_collaborators
+      ADD CONSTRAINT app_collaborators_invite_note_length
+      CHECK (invite_note IS NULL OR char_length(invite_note) BETWEEN 1 AND 280);
+  END IF;
+END $$;

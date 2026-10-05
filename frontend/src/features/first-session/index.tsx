@@ -14,8 +14,10 @@
  * App.\_followInvite (public/js/app.js) opens it through
  * `window.UsernodeReact.firstSession.welcome(info)`, once per account and
  * project (localStorage), when the invite link it is following has just
- * joined the viewer. It answers false when it will not show, and the caller
- * lands them on the hub the way it always did.
+ * joined the viewer; so does an invite by username, accepted from the
+ * notifications (Notifications.\_acceptInvite, with the accept's `welcome`).
+ * It answers false when it will not show, and the caller lands them where
+ * it always did.
  *
  * ── The island rules ──────────────────────────────────────────────────
  *
