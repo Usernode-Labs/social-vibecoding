@@ -22,8 +22,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
-const { api } = require('./lib/dev-card-html');
-const { renderToHtml, createElement } = require('./lib/render-tsx');
+const { api, mergedCardHtml } = require('./lib/dev-card-html');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // ── Rendering the pill ──────────────────────────────────────────────────
 //
@@ -109,14 +109,23 @@ const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
 
 // ── Precedence, tier by tier ────────────────────────────────────────────
 
-test('tier 0 — a merged row is settled and reads ✓ Live, quiet rather than green', () => {
+test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   const AppView = makeAppView();
   const s = AppView.statusPillState(PR({ status: 'merged', yes_count: 5 }));
   assert.equal(s.tier, 0);
-  // The newcomer's word (first-session run-through, 4 Oct 2026), and a done
-  // state gets no fill: grey with a check, as "Joined" is (AGENTS.md).
+  // The newcomer's word (first-session run-through, 4 Oct 2026). #3848 drew
+  // it grey, as a done state with no fill; #3873 brought the green back for
+  // Live: the `ok` tone, the green wash with a check.
   assert.equal(s.label, '✓ Live');
-  assert.equal(s.tone, 'neutral');
+  assert.equal(s.tone, 'ok');
+  assert.match(pillHtml(AppView, PR({ status: 'merged', yes_count: 5 })),
+    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/,
+    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`)');
+  // The card's spine, and the folded row's, follow the tone (edgeFor).
+  const { edgeFor } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.equal(edgeFor({ key: 'session:1', pill: { state: s } }), 'ok');
+  const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
+  assert.equal(edgeFor({ key: 'session:1', pill: { state: deployed } }), 'ok');
 });
 
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
@@ -124,7 +133,7 @@ test('tier 0 — derived deployment state distinguishes live, pending, and stall
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
   assert.equal(deployed.label, '✓ Live');
   assert.equal(deployed.key, 'deployed');
-  assert.equal(deployed.tone, 'neutral');
+  assert.equal(deployed.tone, 'ok');
 
   const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
   assert.equal(deploying.label, 'Going live…');
@@ -150,8 +159,41 @@ test('merged child proposals say whether delivery is pending, failed or confirme
   // before revision labels existed), not a problem to flag on every row.
   assert.equal(state('unknown').label, '✓ Live');
   assert.equal(state('unknown').key, 'merged');
-  assert.equal(state('unknown').tone, 'neutral');
+  assert.equal(state('unknown').tone, 'ok');
   assert.equal(state(undefined).label, '✓ Live');
+  // #3873 greens only the Live pill: a change that is still going live stays
+  // grey, and one that could not go live stays red.
+  assert.equal(state('deployed').tone, 'ok');
+  assert.equal(state('pending').tone, 'neutral');
+});
+
+// #3873: "live should be green". A live card on the board wears the green
+// pill and the green spine together; one still going live keeps the grey of
+// both. The declared check walks the same chain on the demo's Done column
+// (9100027 is seeded `deployed` there), so this resolves it against the
+// markup the real card renders before a staging run has to.
+test('a live card wears the green pill and the green edge; one going live stays grey', () => {
+  const AppView = makeAppView();
+  const live = mergedCardHtml(AppView, PR({
+    id: 9100027, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,
+    deployment_state: 'deployed',
+  }), 3);
+  assert.match(live, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="ok"[^>]*data-proposal-row="9100027"/);
+  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+
+  const going = mergedCardHtml(AppView, PR({
+    id: 9100000, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,
+    deployment_kind: 'child', deployment_state: 'pending',
+  }), 3);
+  assert.match(going, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="neutral"/);
+  assert.match(going, /gc-vote-count-neutral[^"]*"[^>]*><span class="gc-vote-count-label">Going live…<\/span>/);
+
+  const DAPP = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const check = DAPP.tests.find((t) => /#3873/.test(t.name || ''));
+  assert.ok(check, 'a declared check pins the green Live card');
+  assert.match(check.path, /[?&]demo=1[&#][\s\S]*col=done/);
+  assert.ok(check.expectSelector.includes(
+    ':has([data-proposal-row="9100027"][data-edge="ok"] .gc-vote-count-ok)'));
 });
 
 test('the Done summary reports a child app’s latest delivery outcome', () => {
@@ -453,11 +495,11 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   assert.equal(voted.label, '2 / 5');
   assert.equal(voted.tone, 'progress');
 
-  // Settled is quiet: a done state gets no fill (tier 0, grey with a check).
+  // Settled is Live, and Live is green (tier 0, #3873).
   const won = AppView.statusPillState(PR({
     status: 'merged', yes_count: 5, votes_required: 5,
   }));
-  assert.equal(won.tone, 'neutral');
+  assert.equal(won.tone, 'ok');
 
   const approvals = AppView.statusPillState(PR({
     check_state: 'passing', approvals_required: 3, yes_count: 2,

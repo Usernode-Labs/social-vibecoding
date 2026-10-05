@@ -2419,9 +2419,9 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
-      "name": "Done keeps task attributes and opens a completed change's Closed issue inside Homeroom (#2423)",
+      "name": "Done keeps task attributes, a live change's ✓ Live is green (#3873), and a Closed issue opens in Homeroom (#2423)",
       "path": "/?demo=1&view=kanban&col=done&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"])",
+      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"]):has([data-proposal-row=\"9100027\"][data-edge=\"ok\"] .gc-vote-count-ok)",
       "expectText": "Closed #900006"
     },
     {
