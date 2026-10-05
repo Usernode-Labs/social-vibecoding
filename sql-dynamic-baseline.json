@@ -453,16 +453,9 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "031bf907bfa049c90235",
+      "fingerprint": "1c821d7ef624ede242e9",
       "count": 1,
-      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content FROM chat_session_specs s WHERE s.session_id = $1 A"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "2252c6068a154006e298",
-      "count": 1,
-      "preview": "`SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs.id = s.session_i"
+      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content, content_html FROM chat_session_specs s WHERE s.ses"
     },
     {
       "source": "src/routes/sessions.js",
@@ -470,6 +463,13 @@
       "fingerprint": "53cbf4a100d8fd060870",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "974dbc333f746ae0a00c",
+      "count": 1,
+      "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
     },
     {
       "source": "src/routes/sessions.js",

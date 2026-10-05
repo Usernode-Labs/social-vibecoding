@@ -4623,9 +4623,11 @@ async function resumeDetachedTurnInner({
       // Persist it the same way runScoutTool does (spec_md + frozen
       // version) so the draft isn't lost with the dead SSE.
       const {
-        stripSpecWrapperFence, persistScoutPublication,
+        captureSpecOutput, persistScoutPublication,
       } = require('./src/routes/sessions');
-      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      // #3699: an HTML spec is kept as its markdown copy (ccText) plus the document.
+      const capturedSpec = captureSpecOutput(result.lastResultText);
+      const ccText = capturedSpec.text;
       if (ccText) {
         const hadSpec = !!(session.spec_md || '').trim();
         // #786: "spec drafted" pills ride the spec row itself rather than
@@ -4638,6 +4640,7 @@ async function resumeDetachedTurnInner({
           sessionId,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          contentHtml: capturedSpec.html,
           hadSpec,
           quickReplies: specPills,
           recovered: true,

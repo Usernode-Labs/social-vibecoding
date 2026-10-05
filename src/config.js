@@ -765,6 +765,16 @@ function load() {
     ).replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // #3699: apps whose spec author is asked for an HTML spec (before/after
+    // screens, diagrams) instead of markdown. Comma-separated slugs, `*` for
+    // every app, `none` for none; the platform's own app by default, so the
+    // platform tries it on itself first. See src/services/spec-html.js.
+    htmlSpecApps: (() => {
+      const raw = process.env.HTML_SPEC_APPS;
+      if (raw == null || raw.trim() === '') return [SELF_APP_SLUG];
+      if (raw.trim().toLowerCase() === 'none') return [];
+      return raw.split(',').map((s) => s.trim()).filter(Boolean);
+    })(),
     // The platform's own DNS name on the shared docker network. Child
     // apps run as `usernode-app-<slug>`, but the platform itself runs as
     // the blue-green pair usernode-blue/-green, BOTH carrying the

@@ -288,6 +288,17 @@ const MANIFEST_FILENAME = 'dapp.json';
 // by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
 // 29 slots over the 831 declared here.
 //
+// 860 → 870 (#3699): main stood at 840 exactly, the 20-slot floor; the HTML
+// spec viewer declares one check on its own route, a new staging session
+// (#app/usernode-2d5619/dev/sessions/900831), which no existing check shares.
+// The nearest, 900830's shared-spec check, is a fixture whose version history
+// the boot-time draft backfill also writes, so an HTML version could not join
+// it without changing what that check proves. Same arithmetic: 870 checks at
+// ~3.9s over the pool of 16 is ~212s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~226s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 841
+// declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -299,7 +310,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 860;
+const MAX_DECLARED_TESTS = 870;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

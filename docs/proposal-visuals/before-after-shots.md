@@ -425,7 +425,7 @@ browser). Each persona's browser saves files under
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
-| Proposal card | `public/js/app-view.js` (`shotsHtml`) |
+| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699) |
 
 ## Diagnosing a run
 

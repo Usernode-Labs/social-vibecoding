@@ -1456,9 +1456,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check on it to fold into. 840 leaves 20 slots against
   // MAX_DECLARED_TESTS (860), exactly the floor.
   //
+  // 840 → 841: +1 (#3699): an HTML spec opens on its before and after
+  // screens in the spec panel, on a new staging session
+  // (#app/usernode-2d5619/dev/sessions/900831). 900830's shared-spec check is
+  // the nearest, but its version history is also written by the boot-time
+  // draft backfill, so the HTML spec is a session and a route of its own,
+  // with no check on it to fold into. MAX_DECLARED_TESTS went 860 → 870 in
+  // the same change (services/app-manifest.js), so 841 leaves 29 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 840);
+  checkCap.assertPinned(DAPP.tests.length, 841);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

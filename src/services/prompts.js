@@ -108,6 +108,42 @@ const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters somethin
 // spec keeps the brief above.
 const FIRST_VERSION_SPEC_DESIGN_BRIEF = `DESIGN BRIEF (FIRST VERSION): the app has no screen of its own yet (the starter template's is placeholder), so there is no existing screen for it to look like. In the "User-facing changes" half, before "### Assumptions", write a short "### Design" subsection in plain language that decides this app's own look: the main screen's one job and its one primary action; an accent colour plus the neutrals around it, chosen for this app and working in both the light and the dark look (not the starter's default palette, unless you choose it on purpose and say why); ONE signature element drawn from the app's subject, something a generic app would not have (for example a staff or a keyboard for an ear trainer, a proofing timeline for a bread app); a rough sketch of the main screen's layout at phone width, a few plain lines from top to bottom; and the exact word it uses for each thing on it. Use the platform's native UI kit for the parts it has. If the app keeps one fixed look (such as a game drawn as its own scene), say so here. The build follows this subsection and records it in the app's CLAUDE.md, so decide here rather than leaving it to the build. If the repository has \`design/sketch.json\`, it is the featured card its creator was shown while the app was made: an emoji (already the app's icon), a tagline and a few points that sum up the idea. Read them as context for what the app is for, never as a design: the card shows no screen, so this subsection still decides the look.`;
 
+// #3699: the spec as a small HTML document that leads with pictures: before/
+// after screens on the User-facing tab, diagrams and tables on the Technical
+// tab. Given to the scout instead of the markdown format lines for apps in
+// config.htmlSpecApps. The dialect, and why the screens are drawn rather than
+// captured, are in src/services/spec-html.js; the browser half is
+// frontend/src/lib/spec-html.ts. The server keeps a markdown copy of every
+// HTML spec for the readers that want text.
+const SPEC_HTML_CONTRACT = `HTML SPEC FORMAT: write the spec as ONE small HTML document, not markdown. The spec viewer shows it with the same two tabs, and it should lead with pictures: before/after screens on the User-facing tab, diagrams and tables on the Technical tab. Use exactly this shape:
+
+<article data-spec>
+  <h1>Short title</h1>
+  <p>Optional one or two sentence summary.</p>
+  <section data-spec-tab="user">…</section>
+  <section data-spec-tab="tech">…</section>
+</article>
+
+The "user" section is the User-facing half and the "tech" section is the Technical half; everything said about those halves applies to these sections. Inside them use plain elements only: h3, h4, p, ul, ol, li, strong, em, code, pre, a (https links only), table/thead/tbody/tr/th/td, blockquote, hr, figure, figcaption. No script, no style attribute, no ids, no images by URL. A class is kept only if it starts with "spec-". Wherever these instructions name a "### X" subsection (Questions, Design, Considerations, Deferred work, Assumptions), write it as <h3>X</h3> inside the matching section.
+
+BEFORE/AFTER SCREENS: when the change is visible, OPEN the "user" section with a screens figure (leave it out only for a change nobody sees):
+
+<figure data-screens>
+  <ol data-changes>
+    <li data-change="1" data-steps="Dev board → Up for vote → open a proposal">In plain words, what a person sees change</li>
+  </ol>
+  <template data-screen data-size="desktop" data-focus="840 60 440 300">…one markup tree of the screen…</template>
+  <template data-screen data-size="phone" data-focus="0 120 390 320">…</template>
+  <figcaption>Optional line shown under the screens</figcaption>
+</figure>
+
+- One to three changes, numbered; up to six screens. data-size "desktop" is 1280×800 and "phone" is 390×844; data-height makes a screen taller (up to 2400).
+- Draw each screen as real HTML using the app's OWN element structure and class names, copied from the components you read: it renders with the app's real stylesheet, so a faithful copy looks like the app. Draw the screen as it is today, and mark what differs in the same tree: data-side="before" on parts only today's app shows, data-side="after" on parts only the change shows, and data-change="N" on each changed part (its numbered outline goes there). Unchanged parts appear once and show on both sides.
+- data-focus="x y w h", in the screen's pixels, frames the close-up the viewer opens on: the part that changes plus enough around it to recognise the place. Draw only as much of the screen as that close-up and its surroundings need. data-persona says who is signed in (member, guest, read_only_admin, full_admin); member is the default.
+- Screens render in a sandboxed frame with scripts off and no network: no script, no external images or fonts. A class the app's stylesheet does not already define will not exist there, so style anything new with a <style> block inside the template or a style attribute.
+
+DIAGRAMS AND TABLES: open the "tech" section with whatever explains the change fastest, such as a <figure> holding an inline <svg viewBox="…" role="img"> that has a <title>, and keep files touched, data model and tests as tables. SVG may use svg, g, path, rect, circle, ellipse, line, polyline, polygon, text, tspan, title and desc with presentation attributes (no ids, markers, gradients or style). Draw with these classes so it reads in light and dark mode: spec-box, spec-box-changed, spec-box-new (dashed, for new code), spec-line, spec-arrow (a small polygon arrowhead), spec-muted, spec-accent, spec-good, spec-bad. Text takes the theme's colour.`;
+
 // The offline excerpt carried inside a connector work order.
 //
 // Every app's notes tell a coding agent to fetch these conventions from the
@@ -405,6 +441,7 @@ module.exports = {
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
   FIRST_VERSION_SPEC_DESIGN_BRIEF,
+  SPEC_HTML_CONTRACT,
   getLaunchpadInstructions,
   SPEC_HANDOFF_MAX_CHARS,
   getWorkOrderEssentials,
