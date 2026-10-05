@@ -23,6 +23,17 @@ const UNIT_CHECK_INDEX = -3;
 // bound, and a shorter cut downstream drops exactly that list.
 const FAILURE_DETAIL_MAX = 1600;
 
+// The row also carries, per failing test, an excerpt of its own error, so a
+// fix turn can read the assertion instead of guessing at the name. These
+// bounds keep the added weight small against the 256 KB test_results cap:
+// one excerpt is about a YAML diagnostic block plus a few lines of the
+// test's own output; the row's list is filled in output order until the
+// row budget is spent, and the tests left out are COUNTED, not dropped.
+const TEST_EXCERPT_MAX = 2048;
+const UNIT_DETAILS_ROW_MAX = 20 * 1024;
+const UNIT_DETAILS_STACK_LINES = 10;
+const UNIT_DETAILS_CONTEXT_LINES = 20;
+
 // Found by the identity shapeOutcome gives the row, so a rename of the check
 // cannot silently stop a reader from recognising it.
 function isUnitSuiteRow(r) {
@@ -35,5 +46,9 @@ module.exports = {
   UNIT_CHECK_PATH,
   UNIT_CHECK_INDEX,
   FAILURE_DETAIL_MAX,
+  TEST_EXCERPT_MAX,
+  UNIT_DETAILS_ROW_MAX,
+  UNIT_DETAILS_STACK_LINES,
+  UNIT_DETAILS_CONTEXT_LINES,
   isUnitSuiteRow,
 };

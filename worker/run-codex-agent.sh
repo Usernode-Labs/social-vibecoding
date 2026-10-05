@@ -240,7 +240,7 @@ TOML
 command = "node"
 args = ["/usr/local/bin/homeroom-read-mcp.js"]
 env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
-enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change", "get_check_output"]
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML

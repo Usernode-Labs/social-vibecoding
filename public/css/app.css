@@ -15354,6 +15354,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   overflow-wrap: anywhere;
 }
 .dev-ledger-why-errors { margin: 4px 0 0; padding-left: 16px; list-style: disc; }
+/* The unit suite's per-test error excerpts, inside the same fold. `font:
+   inherit` keeps the why-body's mono stack over the <pre> UA default, and
+   pre-wrap lets long assertion lines wrap instead of overflowing. */
+.dev-ledger-why-excerpt { margin: 2px 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* ── The Review line ────────────────────────────────────────────────────
    "Approved by @alice ✓", and at its right end the "How voting works" link
    and the "?" — this is the row they explain, so they sit on it. */

@@ -321,3 +321,65 @@ test('a fold whose names are not here yet says so, and opening it is what reads 
   assert.match(head, /if \(!e\.currentTarget\.open \|\| !passesFor \|\| state === 'loading' \|\| !av\?\._loadCheckNames\) return;/,
     'only an OPEN fold with unnamed passes reads, and never twice at once');
 });
+
+// ── #3978 — the unit suite's per-test excerpts, inside the why fold ─────
+//
+// get_check_output answers the connector; a person reading the proposal
+// page gets the same record folded under the reason. The fold stays closed
+// by default — the reason line is the verdict, the excerpts are the
+// diagnosis — and a test the runner printed nothing for renders its name
+// alone, with no excerpt block.
+
+test('a failing unit-suite row folds its per-test excerpts under the reason, closed by default', () => {
+  const { ChecksVerdictView } = loadTsx('tests/fixtures/dev-card-api.ts');
+  const row = {
+    key: 'f1', pass: false, advisory: false, name: 'Repo unit suite (npm test) passes',
+    path: 'package.json', reason: 'tests/a.test.js (1): explodes | # fail 1',
+    details: [
+      {
+        file: 'tests/a.test.js', name: 'explodes',
+        excerpt: "error: 'expected 1 to be 2'\ncode: 'ERR_ASSERTION'",
+      },
+      { file: null, name: 'printed no diagnostics' },
+    ],
+    detailsOmitted: 1,
+    errors: [{ kind: 'console', message: 'Uncaught TypeError: snap is not a function', source: 'app.js:10:3' }],
+  };
+  const html = renderToHtml(createElement(ChecksVerdictView, {
+    v: {
+      failing: true, heading: 'Checks failed', summary: '2 checks · 1 failed',
+      failures: [row], passes: [], passCount: 1, passesFor: null,
+      foldPasses: false, advisoryNote: null, checkedNote: null, baseNote: null, fixNote: null, action: null,
+    },
+  }));
+  // The fold is closed until opened, and the excerpts live inside it —
+  // not beside the reason on the closed row.
+  assert.match(html, /<details class="dev-ledger-why">/, 'the fold ships closed');
+  assert.doesNotMatch(html, /<details class="dev-ledger-why" open/);
+  assert.match(html, /dev-ledger-why-excerpt">error: &#x27;expected 1 to be 2&#x27;/);
+  assert.match(html, /explodes<\/span><span class="opacity-60"> · tests\/a\.test\.js<\/span>/);
+  assert.match(html, /printed no diagnostics<\/span><\/li>/,
+    'a test with no diagnostic renders its name alone, with no excerpt block');
+  assert.match(html, /Not shown: 1 more failing test\./);
+  assert.match(html, /snap is not a function/, 'the declared console errors still draw beside the excerpts');
+  // The plain line is singular; two left out reads "tests".
+  const two = renderToHtml(createElement(ChecksVerdictView, {
+    v: {
+      failing: true, heading: 'Checks failed', summary: '2 checks · 1 failed',
+      failures: [{ ...row, detailsOmitted: 2 }], passes: [], passCount: 1, passesFor: null,
+      foldPasses: false, advisoryNote: null, checkedNote: null, baseNote: null, fixNote: null, action: null,
+    },
+  }));
+  assert.match(two, /Not shown: 2 more failing tests\./);
+  // A declared check (no details) draws no excerpt block at all.
+  const declared = renderToHtml(createElement(ChecksVerdictView, {
+    v: {
+      failing: true, heading: 'Checks failed', summary: '2 checks · 1 failed',
+      failures: [{ ...row, details: undefined, detailsOmitted: null }],
+      passes: [], passCount: 1, passesFor: null, foldPasses: false,
+      advisoryNote: null, checkedNote: null, baseNote: null, fixNote: null, action: null,
+    },
+  }));
+  assert.doesNotMatch(declared, /dev-ledger-why-excerpt/);
+  assert.doesNotMatch(declared, /Not shown:/);
+});

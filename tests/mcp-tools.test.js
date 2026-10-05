@@ -2310,6 +2310,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_bench_run',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
+    // #3978. One failing check's full record: per-test error excerpts for the
+    // unit suite, the complete console-error list for a declared check.
+    'get_check_output',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
@@ -4320,6 +4323,183 @@ test('#2136 — the same PR number on two apps asks for the slug; two keys that 
     const disagree = await c.handlers.get('get_proposal')({ proposalId: 4223, prNumber: 77 });
     assert.equal(disagree.isError, true);
     assert.match(disagree.structuredContent.message, /Proposal 4223 is PR #2151, not PR #77/);
+  } finally { c.restore(); }
+});
+
+// ── #3978: one failing check's full error record ──────────────────────────
+//
+// get_proposal's verdict says WHICH tests failed; get_check_output says WHAT
+// they printed. The reason string is the whole diagnosis for a declared
+// check, but the unit suite's one line cannot carry a failing test's
+// assertion — so the row keeps per-test excerpts and this tool reads them.
+
+const UNIT_FAILURE_ROW = {
+  index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json',
+  status: 'fail', advisory: false, consoleErrors: [],
+  failureReason: 'tests/a.test.js (1): explodes | # tests 2 | # pass 1 | # fail 1',
+  details: [
+    {
+      file: 'tests/a.test.js', name: 'explodes',
+      excerpt: "error: 'expected 1 to be 2'\ncode: 'ERR_ASSERTION'\nstack:\n    at TestContext.<anonymous> (tests/a.test.js:12:5)\noutput:\n    console.log from the test",
+    },
+    { file: null, name: 'printed no diagnostics' },
+  ],
+  detailsOmitted: 1,
+};
+const DECLARED_FAILURE_ROW = {
+  index: 2, name: 'Board shows the snap toggle', path: '/board', status: 'fail',
+  failureReason: 'The #snap-toggle element was not found on /board.',
+  consoleErrors: [
+    { kind: 'console', message: 'Uncaught TypeError: snap is not a function', source: 'app.js:10:3' },
+    { kind: 'pageerror', message: 'second recorded error', source: null },
+  ],
+};
+const FAILING_SESSION = {
+  id: 5001, app_slug: 'recipe-box', status: 'promoted', check_state: 'failing',
+  test_results: [
+    { index: 0, name: 'Home loads', path: '/', status: 'pass' },
+    DECLARED_FAILURE_ROW,
+    UNIT_FAILURE_ROW,
+  ],
+};
+
+test('#3978 — a failing unit-suite row keeps its reason byte-for-byte and gains its index', () => {
+  const reason = `tests/a.test.js (8): t1; t2… | tests/b.test.js (1): t9 | # fail 9 ${'.'.repeat(1200)}`;
+  const declaredRow = { ...DECLARED_FAILURE_ROW, index: 4 };
+  const withDetails = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [declaredRow, { ...UNIT_FAILURE_ROW, failureReason: reason }],
+  });
+  const without = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [declaredRow, {
+      ...UNIT_FAILURE_ROW, failureReason: reason, details: undefined, detailsOmitted: undefined,
+    }],
+  });
+  assert.equal(withDetails.failures[1].reason, without.failures[1].reason,
+    'the declared row\'s reason does not change because another row carries details');
+  assert.equal(withDetails.failures[0].reason, without.failures[0].reason,
+    'the unit row\'s reason is untouched by the details beside it');
+  assert.equal(withDetails.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
+  // The index that addresses get_check_output, on both kinds of row.
+  assert.equal(withDetails.failures[1].index, 4);
+  assert.equal(withDetails.failures[0].index, -3);
+  assert.equal(without.failures[0].index, -3);
+  // A legacy row without an index answers null rather than inventing one.
+  assert.equal(tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [{ name: 'old row', status: 'fail', failureReason: 'x' }],
+  }).failures[0].index, null);
+});
+
+test('#3978 — get_check_output returns the unit-suite row\'s per-test excerpts', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'GET');
+    if (pathname === '/api/sessions/5001') return { session: FAILING_SESSION };
+    throw new Error(`unexpected platform call: ${pathname}`);
+  });
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 5001, check: -3 });
+    assert.ok(!result.isError, 'the tool answered');
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    const out = parsed.data;
+    assert.equal(out.proposalId, 5001);
+    assert.equal(out.check.index, -3);
+    assert.equal(out.check.status, 'fail');
+    assert.match(out.reason, /^<untrusted-content>tests\/a\.test\.js \(1\): explodes \| /);
+    assert.equal(out.details.length, 2, 'one entry per failing test, the excerpt-less one included');
+    assert.equal(out.details[0].file, '<untrusted-content>tests/a.test.js</untrusted-content>');
+    assert.match(out.details[0].name, /explodes/);
+    assert.match(out.details[0].excerpt, /^<untrusted-content>error: 'expected 1 to be 2'/);
+    assert.match(out.details[0].excerpt, /console\.log from the test<\/untrusted-content>$/);
+    assert.equal(out.details[1].excerpt, '', 'a test with no diagnostic keeps its name, with no excerpt');
+    assert.equal(out.detailsOmitted, 1);
+    assert.equal(out.consoleErrors, null, 'the unit row has no console errors to return');
+  } finally { c.restore(); }
+});
+
+test('#3978 — get_check_output returns a declared check\'s reason and complete console errors', async () => {
+  const c = connector(() => ({ session: FAILING_SESSION }));
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 5001, check: 2 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    const out = parsed.data;
+    assert.equal(out.check.index, 2);
+    assert.match(out.reason, /#snap-toggle/);
+    assert.equal(out.consoleErrors.length, 2, 'every recorded console error, not only the first');
+    assert.match(out.consoleErrors[0].message, /snap is not a function/);
+    assert.match(out.consoleErrors[0].source, /app\.js:10:3/);
+    assert.equal(out.details, null);
+    assert.equal(out.detailsOmitted, null);
+  } finally { c.restore(); }
+});
+
+test('#3978 — get_check_output refuses anything but a failing, indexed row, naming the failing indexes', async () => {
+  const c = connector(() => ({ session: FAILING_SESSION }));
+  try {
+    for (const check of [0, 99]) {
+      const refused = await c.handlers.get('get_check_output')({ proposalId: 5001, check });
+      assert.equal(refused.isError, true, `${check}: refused`);
+      assert.equal(refused.structuredContent.code, 'invalid_request');
+      assert.match(refused.structuredContent.message, /failing checks are numbered: 2, -3/,
+        `${check}: the failing indexes are named`);
+    }
+    const noIndex = await c.handlers.get('get_check_output')({ proposalId: 5001 });
+    assert.equal(noIndex.isError, true);
+    assert.match(noIndex.structuredContent.message, /Pass `check`/);
+  } finally { c.restore(); }
+});
+
+test('#3978 — a run with no indexed failing row is refused with that, not with an empty list', async () => {
+  const c = connector(() => ({
+    session: {
+      id: 5001, app_slug: 'recipe-box', check_state: 'passing',
+      test_results: [{ name: 'Home loads', status: 'pass' }],
+    },
+  }));
+  try {
+    const refused = await c.handlers.get('get_check_output')({ proposalId: 5001, check: -3 });
+    assert.equal(refused.isError, true);
+    assert.match(refused.structuredContent.message, /No failing check carries an index/);
+  } finally { c.restore(); }
+});
+
+test('#3978 — get_check_output resolves by prNumber like get_proposal, and shares its refusals', async () => {
+  const row = { ...PR_ROW, check_state: 'failing', test_results: [UNIT_FAILURE_ROW] };
+  const c = connector(platformWithProposals([row]));
+  try {
+    const byPr = await c.handlers.get('get_check_output')({ prNumber: 2151, check: -3 });
+    assert.ok(!byPr.isError);
+    assert.equal(byPr.structuredContent.proposalId, 4223);
+    assert.deepEqual(c.calls.map((x) => x.pathname), [
+      '/api/me/active-sessions?include_imported=1', '/api/sessions/4223',
+    ]);
+    const disagree = await c.handlers.get('get_check_output')({ proposalId: 4223, prNumber: 77, check: -3 });
+    assert.equal(disagree.isError, true);
+    assert.match(disagree.structuredContent.message, /Proposal 4223 is PR #2151, not PR #77/);
+    const sessionCalls = c.calls.filter((x) => x.pathname.startsWith('/api/sessions/')).length;
+    assert.equal(sessionCalls, 2,
+      'byPr costs one session fetch, and the mismatch check rides that same fetch for get_proposal too');
+    c.calls.length = 0;
+    const noKeys = await c.handlers.get('get_check_output')({ check: -3 });
+    assert.equal(noKeys.isError, true);
+    assert.equal(noKeys.structuredContent.code, 'invalid_request');
+    assert.equal(c.calls.filter((x) => x.pathname.startsWith('/api/sessions/')).length, 0,
+      'the no-keys refusal happens before the session route is asked');
+  } finally { c.restore(); }
+});
+
+test('#3978 — get_check_output is documented as read-only and addresses checks by their index', () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const s = c.specs.get('get_check_output');
+    assert.match(s.description, /checks\.failures\[\]/);
+    assert.match(s.description, /Read-only\./);
+    assert.equal(s.annotations.readOnlyHint, true);
+    assert.match(z.object(s.outputSchema).shape.consoleErrors.description, /Null for the unit suite/);
   } finally { c.restore(); }
 });
 

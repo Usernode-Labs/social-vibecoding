@@ -43,7 +43,9 @@ const appManifest = require('./app-manifest');
 const log = require('./logger');
 const {
   UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
+  TEST_EXCERPT_MAX, UNIT_DETAILS_ROW_MAX, UNIT_DETAILS_STACK_LINES, UNIT_DETAILS_CONTEXT_LINES,
 } = require('./unit-suite-row');
+const { redactString } = require('./log-redaction');
 
 // The worker image ships node 22 + git + a local PostgreSQL 17 and is rebuilt
 // daily, so reusing it means no separate CI image to build or deploy. Repos
@@ -149,6 +151,125 @@ function failingTests(lines) {
 
 function clipName(name) {
   return name.length > MAX_TEST_NAME ? `${name.slice(0, MAX_TEST_NAME - 1)}…` : name;
+}
+
+// ── Per-failing-test error excerpts ────────────────────────────────────
+//
+// `failingTests` distills WHICH tests failed; this keeps, for each one, WHAT
+// it printed about its own failure — the YAML diagnostic block's fields, the
+// first stack lines, and the output the test printed just before it failed.
+// That text is what turns "is this my change, a schema error, a timeout, or
+// just this environment?" from a guess into a read, and it is what the
+// one-line reason cannot carry (see FAILURE_DETAIL_MAX).
+
+// The YAML diagnostic keys kept in an excerpt, in excerpt order — the error
+// message leads so an oversized `expected` block cannot clip it away.
+const YAML_KEYS = ['error', 'code', 'severity', 'failureType', 'expected', 'actual'];
+// `expected`/`actual` can be block scalars (`expected: |-` followed by
+// indented lines); this many lines of each is enough to compare values.
+const MAX_SCALAR_LINES = 5;
+// A line of the test's own printed output, in the excerpt. Bounded in
+// aggregate by TEST_EXCERPT_MAX; this only stops one huge line from eating
+// the whole budget before the other nineteen get their turn.
+const MAX_CONTEXT_LINE = 200;
+
+// A YAML block scalar's lines: everything indented deeper than the block's
+// two-space keys, up to the next key line or the block's `...` end.
+function scalarLines(lines, from, max) {
+  const more = [];
+  for (let k = from; k < lines.length && more.length < max; k += 1) {
+    const raw = lines[k];
+    if (!/^\s/.test(raw)) break;
+    if (/^ {2}\S/.test(raw)) break;
+    const t = raw.trim();
+    if (t) more.push(t);
+  }
+  return more;
+}
+
+// The non-TAP output printed immediately BEFORE a `not ok` line: the test's
+// own stdout/stderr. Walking backwards, indented lines are the YAML blocks
+// and nested subtests of neighbouring tests, `#` lines are TAP comments and
+// the summary counters, and the script's own sentinel lines are plumbing —
+// none of it is the test speaking.
+function nearbyOutput(lines, i) {
+  const out = [];
+  for (let j = i - 1; j >= 0 && out.length < UNIT_DETAILS_CONTEXT_LINES; j -= 1) {
+    const l = lines[j];
+    if (!l.trim() || /^\s/.test(l)) continue;
+    if (/^(ok\b|not ok\b|1\.\.\d|TAP version|#)/.test(l)) continue;
+    if (/^__UNIT_SUITE_[A-Z_]+__/.test(l)) continue;
+    out.push(l.slice(0, MAX_CONTEXT_LINE));
+  }
+  return out.reverse();
+}
+
+// Excerpt text for one failing test: the diagnostic fields, then the stack,
+// then the output. Multi-line, TAP's own words, so it reads the same wherever
+// it is shown.
+function assembleExcerpt(fields, stack, context) {
+  const excerpt = [...fields];
+  if (stack.length) excerpt.push('stack:', ...stack.map((s) => `    ${s}`));
+  if (context.length) excerpt.push('output:', ...context.map((c) => `    ${c}`));
+  return excerpt.join('\n');
+}
+
+// Per failing test, in output order: `{ name, file, excerpt }`. The same
+// column-0 walk `failingTests` does, keeping the YAML block's diagnostic
+// fields (its first stack lines included) and the nearby printed output.
+// `file` and `name` are as `failingTests` reports them.
+function failingTestDiagnostics(lines) {
+  const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
+  const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
+    let file = null;
+    const fields = [];
+    const stack = [];
+    if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
+      for (let j = i + 2; j < lines.length && /^\s/.test(lines[j]); j += 1) {
+        const raw = lines[j];
+        if (raw.trim() === '...') break;
+        const loc = /^ {2}location:\s*['"]?(.*?)['"]?\s*$/.exec(raw);
+        if (loc) { if (file === null) file = relativeFile(loc[1], root); continue; }
+        const km = /^ {2}([A-Za-z][\w. ]*):\s*(.*)$/.exec(raw);
+        if (!km) continue;
+        const [, key, first] = km;
+        if (key === 'stack') {
+          stack.push(...scalarLines(lines, j + 1, UNIT_DETAILS_STACK_LINES - stack.length));
+        } else if (YAML_KEYS.includes(key) && first) {
+          if (/^\|/.test(first)) fields.push(`${key}: |`, ...scalarLines(lines, j + 1, MAX_SCALAR_LINES).map((s) => `    ${s}`));
+          else fields.push(`${key}: ${first}`);
+        }
+      }
+    }
+    const excerpt = assembleExcerpt(fields, stack, nearbyOutput(lines, i));
+    out.push({ name: clipName(m[1].trim() || '(unnamed test)'), file, excerpt });
+  }
+  return out;
+}
+
+// The row's `details` list, or null when there is nothing to record. Each
+// excerpt is redacted with the check logs' own rules FIRST (a DSN with a
+// password or a token assignment must never reach a stored row or a
+// connector answer), then clipped per test. The list is filled in output
+// order until the row's byte budget is spent; the tests that got no entry
+// are counted in `detailsOmitted` rather than dropped silently.
+function failingTestDetails(lines) {
+  const details = [];
+  let detailsOmitted = 0;
+  for (const t of failingTestDiagnostics(lines)) {
+    let excerpt = t.excerpt ? redactString(t.excerpt) : '';
+    if (excerpt.length > TEST_EXCERPT_MAX) excerpt = `${excerpt.slice(0, TEST_EXCERPT_MAX - 1)}…`;
+    const candidate = { file: t.file, name: t.name, ...(excerpt ? { excerpt } : {}) };
+    const next = [...details, candidate];
+    if (JSON.stringify(next).length > UNIT_DETAILS_ROW_MAX) { detailsOmitted += 1; continue; }
+    details.push(candidate);
+  }
+  return details.length ? { details, ...(detailsOmitted ? { detailsOmitted } : {}) } : null;
 }
 
 // The failing tests grouped by file, fitted into `budget` characters:
@@ -438,6 +559,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   const startedAt = Date.now();
   let passed = false;
   let reason = '';
+  let details = null;
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
@@ -469,6 +591,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     reason = failureDetail(err.stdout, err.stderr, { timedOut });
     if (!reason) reason = String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX);
+    details = failingTestDetails(`${String(err.stdout || '')}\n${String(err.stderr || '')}`.split('\n'));
   }
   const finalSnap = tracker.finish(passed);
   report(finalSnap);
@@ -479,7 +602,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
   });
 
-  return shapeOutcome({ passed, reason, graduated, summary });
+  return shapeOutcome({ passed, reason, graduated, summary, details });
 }
 
 // Did a proposal's stored checks (chat_sessions.test_results) include a
@@ -500,8 +623,10 @@ function passedIn(testResults) {
 
 // The unit-suite check as the checks pipeline consumes it: one extraRows
 // entry plus its check-history record. Shared by the live run above and the
-// harvest path below so the two can never drift in shape.
-function shapeOutcome({ passed, reason, graduated, summary }) {
+// harvest path below so the two can never drift in shape. `details` — the
+// per-failing-test error excerpts — rides on the row only when it FAILED and
+// there is something to show; the reason string is untouched by it.
+function shapeOutcome({ passed, reason, graduated, summary, details = null }) {
   const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
   return {
     row: {
@@ -515,6 +640,10 @@ function shapeOutcome({ passed, reason, graduated, summary }) {
       // The TAP summary block, when the runner printed one: the size of the
       // suite for the record. Absent for runners that print no TAP.
       ...(summary ? { summary } : {}),
+      ...(passed || !details ? {} : {
+        details: details.details,
+        ...(details.detailsOmitted ? { detailsOmitted: details.detailsOmitted } : {}),
+      }),
     },
     history: { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
   };
@@ -537,9 +666,11 @@ async function outcomeFromLog({
   }
   const passed = !!succeeded;
   let reason = '';
+  let details = null;
   if (!passed) {
     reason = failureDetail(stdout, stderr, { timedOut });
     if (!reason) reason = timedOut ? 'npm test timed out' : 'npm test failed';
+    details = failingTestDetails(`${String(stdout || '')}\n${String(stderr || '')}`.split('\n'));
   }
   const finalSnap = t.finish(passed);
   const summary = finalSnap.summary || null;
@@ -547,7 +678,7 @@ async function outcomeFromLog({
   log.info('unit-suite', 'Unit suite outcome read from its finished Job', {
     sessionId, appId, passed, graduated, tests: summary ? summary.tests : undefined,
   });
-  return shapeOutcome({ passed, reason, graduated, summary });
+  return shapeOutcome({ passed, reason, graduated, summary, details });
 }
 
 module.exports = {
@@ -562,6 +693,7 @@ module.exports = {
   // Exported for tests.
   hasRunnableTestScript,
   failureDetail,
+  failingTestDetails,
   isEnabled,
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,

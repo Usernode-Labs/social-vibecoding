@@ -70,10 +70,10 @@ test('the Mayor sees exactly its list, and every name on it is a real tool', () 
   }
 });
 
-test('the worker sees exactly six reads', () => {
+test('the worker sees exactly seven reads', () => {
   const { specs } = register('worker_read');
   assert.deepEqual([...specs.keys()].sort(), [...audiences.WORKER_READ_TOOLS].sort());
-  assert.equal(specs.size, 6);
+  assert.equal(specs.size, 7);
   for (const [name, spec] of specs) {
     assert.equal(spec.annotations.readOnlyHint, true, `${name} is a read`);
   }
@@ -119,6 +119,10 @@ const SAMPLE_ARGS = {
   get_request: { slug: 'recipe-box', number: 12 },
   get_discussion: { slug: 'recipe-box', threadType: 'issue', ref: 12 },
   get_proposal: { proposalId: 50 },
+  // #3978. The unit-suite row's index on a failing run; the fake platform's
+  // session carries no results, so the handler refuses — its route is all
+  // this test checks.
+  get_check_output: { proposalId: 50, check: -3 },
   get_change: { changeId: 50 },
   get_platform_conventions: {},
   get_connector_guidance: {},

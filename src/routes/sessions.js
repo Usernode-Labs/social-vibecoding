@@ -6587,7 +6587,7 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // worker/homeroom-read-mcp.js on a grant execInWorker issues per build or
 // scout turn (services/worker.js mintHomeroomReadGrant). Minting is best
 // effort, so the note says what to do when they are absent.
-const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal and get_change. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results. They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
+const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal, get_change and get_check_output. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results (get_check_output reads one failing check\'s full error record). They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
 
 // #3426: Codex views a local image with view_image, Claude Code with Read;
 // both work only for a model that takes images. A text-only model that is

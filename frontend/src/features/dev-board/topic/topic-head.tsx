@@ -175,6 +175,20 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         <div className="dev-ledger-why-body">
           {r.reason || 'failed'}
           {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-errors">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <span>{d.name}</span>
+                  {d.file ? <span className="opacity-60">{` · ${d.file}`}</span> : null}
+                  {d.excerpt ? <pre className="dev-ledger-why-excerpt">{d.excerpt}</pre> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {r.detailsOmitted ? (
+            <div className="opacity-70">{`Not shown: ${r.detailsOmitted} more failing test${r.detailsOmitted === 1 ? '' : 's'}.`}</div>
+          ) : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (

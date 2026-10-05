@@ -15600,6 +15600,15 @@ const AppView = {
       // A row that passed only after a retry keeps its reason line, which
       // the verdict view otherwise drops for anything green.
       keepReason: !!(r && r.passedOnRetry),
+      // The repo unit suite's per-test error excerpts, as the run recorded
+      // them; empty for every other row. Read inside the "Why it failed"
+      // fold, like the console errors beside them.
+      details: (Array.isArray(r && r.details) ? r.details : []).map((d) => ({
+        file: (d && d.file) ? String(d.file) : null,
+        name: String((d && d.name) || 'test'),
+        excerpt: String((d && d.excerpt) || ''),
+      })),
+      detailsOmitted: (r && Number.isInteger(r.detailsOmitted)) ? r.detailsOmitted : null,
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),

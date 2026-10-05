@@ -11,7 +11,7 @@
 //                 the platform. Reads freely; every write it makes is one the
 //                 user confirmed first, carried out with a token minted for
 //                 that one action.
-//   worker_read - the coding agent inside one change's worker. Six reads,
+//   worker_read - the coding agent inside one change's worker. Seven reads,
 //                 bound to that change's app, and nothing that writes.
 //
 // The kind comes from how the token was issued (mcp_delegations.kind), never
@@ -69,7 +69,7 @@ const AGENT_MAYOR_TOOLS = Object.freeze([
   'withdraw_change',
 ]);
 
-// Exactly the six reads the worker bridge proxies. Nothing that lists every
+// Exactly the seven reads the worker bridge proxies. Nothing that lists every
 // app, nothing about the user's other proposals, nothing that writes.
 const WORKER_READ_TOOLS = Object.freeze([
   'get_platform_conventions',
@@ -78,6 +78,7 @@ const WORKER_READ_TOOLS = Object.freeze([
   'get_request',
   'get_proposal',
   'get_change',
+  'get_check_output',
 ]);
 
 // The agent_mayor tools that change something, and so run only on a

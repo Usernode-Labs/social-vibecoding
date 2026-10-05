@@ -270,6 +270,168 @@ test('the non-TAP tail leaves the script\'s own marker lines out', () => {
   assert.equal(d, 'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404');
 });
 
+// ── failingTestDetails: each failing test's own error (#3978) ──────────
+
+const rowCaps = require('../src/services/unit-suite-row');
+
+test('each failing test keeps its YAML diagnostic fields, its stack and its nearby output', () => {
+  const stdout = [
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    unitSuite.CLONED_SENTINEL,
+    SENTINEL,
+    'TAP version 13',
+    'ok 1 - fine',
+    'console.log from the test',
+    'second printed line',
+    tapFail(2, 'explodes', 'tests/a.test.js'),
+    '1..2',
+    '# tests 2',
+    '# pass 1',
+    '# fail 1',
+    '# cancelled 0',
+  ].join('\n');
+  const got = unitSuite.failingTestDetails(stdout.split('\n'));
+  assert.ok(got, 'a failing run records details');
+  assert.equal(got.details.length, 1);
+  assert.equal(got.detailsOmitted, undefined, 'nothing was left out at this size');
+  const d = got.details[0];
+  assert.equal(d.file, 'tests/a.test.js', 'repo-relative, like the reason names it');
+  assert.equal(d.name, 'explodes');
+  assert.match(d.excerpt, /^error: 'boom'$/m);
+  assert.match(d.excerpt, /^code: 'ERR_ASSERTION'$/m);
+  assert.match(d.excerpt, /^failureType: 'testCodeFailure'$/m);
+  assert.match(d.excerpt, /^stack:\n {4}TestContext\.<anonymous>/m, 'the first stack lines');
+  assert.doesNotMatch(d.excerpt, /duration_ms|type: 'test'/, 'plumbing keys are not kept');
+  assert.match(d.excerpt, /^output:\n {4}console\.log from the test\n {4}second printed line$/m,
+    'the test\'s own printed output, in order');
+  assert.doesNotMatch(d.excerpt, /fine|# tests|TAP version/,
+    'other tests, counters and plumbing are not the failing test\'s output');
+});
+
+test('a passing run, and SKIP and TODO, record no details', () => {
+  const passing = unitSuite.failingTestDetails([
+    SENTINEL,
+    'ok 1 - fine',
+    tapFail(2, 'todo one', 'tests/a.test.js').replace('\nnot ok 2', '\nnot ok 2 # TODO'),
+    tapFail(3, 'skipped one', 'tests/b.test.js').replace('\nnot ok 3', '\nnot ok 3 # SKIP'),
+    '# tests 3',
+    '# pass 1',
+  ].join('\n').split('\n'));
+  assert.equal(passing, null);
+});
+
+test('a run that failed without failing tests (timeout, setup) records no details', () => {
+  assert.equal(unitSuite.failingTestDetails(['npm error code E404', 'npm error 404 Not Found'].join('\n').split('\n')), null);
+  assert.equal(unitSuite.failingTestDetails([].join('\n').split('\n')), null);
+});
+
+test('one excerpt is clipped to TEST_EXCERPT_MAX', () => {
+  const stdout = [
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    SENTINEL,
+    'not ok 1 - huge',
+    '  ---',
+    `  error: '${'x'.repeat(6000)}'`,
+    '  ...',
+  ].join('\n');
+  const got = unitSuite.failingTestDetails(stdout.split('\n'));
+  assert.equal(got.details.length, 1);
+  const ex = got.details[0].excerpt;
+  assert.equal(ex.length, rowCaps.TEST_EXCERPT_MAX);
+  assert.match(ex, /…$/, 'the clip is marked');
+});
+
+test('the row keeps what fits its budget and counts what it left out', () => {
+  const big = 'y'.repeat(1500);
+  const blocks = Array.from({ length: 30 }, (_, i) => [
+    `not ok ${i + 1} - oversized case ${i + 1}`,
+    '  ---',
+    `  location: '${WS}/tests/f${i + 1}.test.js:10:1'`,
+    `  error: '${big}'`,
+    '  ...',
+  ].join('\n'));
+  const stdout = [
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    SENTINEL,
+    ...blocks,
+    '# tests 30',
+    '# fail 30',
+  ].join('\n');
+  const got = unitSuite.failingTestDetails(stdout.split('\n'));
+  assert.ok(got.details.length < 30, 'the row budget is not bottomless');
+  assert.equal(got.details.length + got.detailsOmitted, 30, 'the tests left out are counted, not lost');
+  assert.ok(got.details.length > 1, 'more than one fits');
+  assert.equal(got.details[0].name, 'oversized case 1', 'filled in output order');
+  for (const d of got.details) assert.ok(d.excerpt.length <= rowCaps.TEST_EXCERPT_MAX);
+  const bytes = JSON.stringify(got.details).length;
+  assert.ok(bytes <= rowCaps.UNIT_DETAILS_ROW_MAX, `${bytes} bytes > ${rowCaps.UNIT_DETAILS_ROW_MAX}`);
+});
+
+test('excerpts are redacted with the check logs\' own rules before they are stored', () => {
+  const stdout = [
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    SENTINEL,
+    'postgres://user:secret@host:5432/db refused a connection',
+    'SENDGRID_API_KEY=sg-live-token-value',
+    tapFail(1, 'leaky', 'tests/a.test.js'),
+  ].join('\n');
+  const got = unitSuite.failingTestDetails(stdout.split('\n'));
+  const ex = got.details[0].excerpt;
+  assert.doesNotMatch(ex, /secret@/);
+  assert.match(ex, /postgres:\/\/user:\*\*\*\*@/, 'the DSN keeps its shape, loses its password');
+  assert.doesNotMatch(ex, /sg-live-token-value/);
+  assert.match(ex, /SENDGRID_API_KEY=\*\*\*\*/, 'the variable name survives, the value does not');
+});
+
+test('the live run attaches the details to the row; a setup failure does not', async (t) => {
+  const github = require('../src/services/github');
+  const docker = require('../src/services/docker');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  const withFailure = t.mock.method(docker, 'runOneShot', async () => {
+    throw Object.assign(new Error('exit 1'), {
+      stdout: tapRun([tapFail(1, 'regression', 'tests/x.test.js')]), code: 1,
+    });
+  });
+  const base = { config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) };
+  const out = await unitSuite.maybeRunUnitSuite(base);
+  assert.equal(out.row.status, 'fail');
+  assert.equal(out.row.details.length, 1);
+  assert.equal(out.row.details[0].name, 'regression');
+  withFailure.mock.mockImplementation(async () => {
+    throw Object.assign(new Error('exit 1'), { stdout: 'npm error code E404\nnpm error 404 Not Found', code: 1 });
+  });
+  const setup = await unitSuite.maybeRunUnitSuite(base);
+  assert.match(setup.row.failureReason, /Suite setup failed/);
+  assert.ok(!('details' in setup.row), 'no failing tests, no details');
+});
+
+test('the harvest path records the same details from the finished Job\'s output', async () => {
+  const out = await unitSuite.outcomeFromLog({
+    pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 9,
+    succeeded: false, graduated: true,
+    stdout: tapRun([tapFail(1, 'regression', 'tests/x.test.js')]),
+  });
+  assert.equal(out.row.status, 'fail');
+  assert.ok(Array.isArray(out.row.details));
+  assert.equal(out.row.details[0].name, 'regression');
+  assert.equal(out.row.details[0].file, 'tests/x.test.js');
+  assert.match(out.row.failureReason, /^tests\/x\.test\.js \(1\): regression \| /, 'the reason is unchanged by the details');
+});
+
+test('a passing harvest records no details', async () => {
+  const out = await unitSuite.outcomeFromLog({
+    pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 9,
+    succeeded: true, graduated: true,
+    stdout: tapRun([tapFail(1, 'regression', 'tests/x.test.js')], { fail: 0 }),
+  });
+  assert.equal(out.row.status, 'pass');
+  assert.ok(!('details' in out.row));
+});
+
 // ── kill switch ────────────────────────────────────────────────────────
 
 test('UNIT_SUITE_CHECK_ENABLED gates the feature, default on', () => {

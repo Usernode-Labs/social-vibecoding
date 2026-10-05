@@ -111,6 +111,16 @@ export interface CheckRow {
   keepReason?: boolean;
   reason?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
+  /**
+   * The repo unit suite's per-test errors, as the run recorded them: one
+   * entry per failing test, in output order, each excerpt redacted and
+   * clipped where it was captured. Empty on every other row; an entry's
+   * excerpt is empty when the runner printed no diagnostic for that test —
+   * render the name alone then.
+   */
+  details?: { file: string | null; name: string; excerpt: string }[];
+  /** Failing tests that got no entry above, when the run's row budget ran out. */
+  detailsOmitted?: number | null;
 }
 
 export interface ChecksVerdict {

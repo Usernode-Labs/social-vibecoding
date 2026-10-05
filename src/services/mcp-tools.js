@@ -66,6 +66,11 @@ const MAX_BODY_CHARS = 2000;
 // a tight per-reason clip: this is a diagnosis, not a log.
 const MAX_FAILURE_DETAILS = 10;
 const MAX_FAILURE_REASON_CHARS = 400;
+// A declared check's recorded console errors, complete on the one check the
+// get_check_output tool reads. The capture already bounds what it stores
+// (20 entries, 500 characters each); this re-states that bound so a legacy
+// or hand-written row cannot widen the answer.
+const MAX_CONSOLE_ERRORS_REPORTED = 20;
 
 // list_requests pages, and its default page carries no bodies (#1217).
 //
@@ -800,6 +805,10 @@ function shapeChecks(session) {
       ...failed.filter(unitSuiteRow.isUnitSuiteRow),
       ...failed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
     ].slice(0, MAX_FAILURE_DETAILS).map((t) => ({
+      // Which entry this is, as get_check_output addresses it: a declared
+      // row's declared index, the unit suite's -3. Null on a row from before
+      // indexes were stored — that one stays reason-only.
+      index: Number.isInteger(t.index) ? t.index : null,
       name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
       reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
@@ -2887,6 +2896,47 @@ function registerTools(server, ctx) {
     return { proposalId: Number(matches[0].id) };
   };
 
+  // What both proposal reads do first: pick the proposal by its id, or by
+  // its pull request number, and refuse a pair that names two different
+  // ones. get_proposal and get_check_output share it so the two can never
+  // disagree about what a valid address is.
+  const resolveProposalRead = async ({ proposalId, prNumber, slug }) => {
+    const byId = Number.isInteger(proposalId) && proposalId > 0;
+    const byPr = Number.isInteger(prNumber) && prNumber > 0;
+    if (!byId && !byPr) {
+      return { error: toolError(
+        'invalid_request',
+        'Pass proposalId (the id list_my_proposals, prepare_work and submit_work report — the last number in a '
+        + 'proposal\'s webPath) or prNumber (its pull request number, as a person sees it on GitHub), with slug '
+        + 'when the same PR number could be a pull request on more than one of the user\'s apps.'
+      ) };
+    }
+    // Validated when it IS passed, so a malformed slug is named as such rather
+    // than silently matching nothing.
+    if (slug !== undefined && !requireSlug(slug)) {
+      return { error: toolError('invalid_request', 'slug must be a valid app slug — or omit it.') };
+    }
+    let id = proposalId;
+    if (!byId) {
+      const resolved = await resolveProposalByPr(prNumber, slug);
+      if (resolved.error) return { error: resolved.error };
+      id = resolved.proposalId;
+    }
+    return { id, byId, byPr };
+  };
+
+  // The prNumber cross-check, once the session is in hand: both keys given,
+  // naming two different proposals, is a question the caller did not ask.
+  const proposalKeyMismatch = (proposalId, session, prNumber) => (
+    Number(session.pr_number) > 0 && Number(session.pr_number) !== prNumber
+      ? toolError(
+        'invalid_request',
+        `Proposal ${proposalId} is PR #${Number(session.pr_number)}, not PR #${prNumber}. Pass one key or the `
+        + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
+      )
+      : null
+  );
+
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
@@ -2974,12 +3024,16 @@ function registerTools(server, ctx) {
         failingTruncated: z.boolean()
           .describe('True when `failing` was cut at the cap and names more failures than it lists.'),
         failures: z.array(z.object({
+          index: z.number().nullable()
+            .describe('Which entry this is, as get_check_output addresses it: a declared check counts from 0, the '
+              + 'repo unit suite is -3. Null on a run that predates the index — its row stays reason-only.'),
           name: z.string(),
           path: z.string().nullable(),
           reason: z.string().nullable(),
         })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
           + 'to the first console error. When every entry carries the same reason, that reason is the whole '
-          + 'diagnosis and no test needs fixing.'),
+          + 'diagnosis and no test needs fixing. For the full error text of one of these, call get_check_output '
+          + 'with its index.'),
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
@@ -3057,40 +3111,127 @@ function registerTools(server, ctx) {
   }, async ({ proposalId, prNumber, slug }) => {
     const guard = scopeGuard(READ_SCOPE);
     if (guard) return guard;
-    const byId = Number.isInteger(proposalId) && proposalId > 0;
-    const byPr = Number.isInteger(prNumber) && prNumber > 0;
-    if (!byId && !byPr) {
-      return toolError(
-        'invalid_request',
-        'Pass proposalId (the id list_my_proposals, prepare_work and submit_work report — the last number in a '
-        + 'proposal\'s webPath) or prNumber (its pull request number, as a person sees it on GitHub), with slug '
-        + 'when the same PR number could be a pull request on more than one of the user\'s apps.'
-      );
-    }
-    // Validated when it IS passed, so a malformed slug is named as such rather
-    // than silently matching nothing.
-    if (slug !== undefined && !requireSlug(slug)) {
-      return toolError('invalid_request', 'slug must be a valid app slug — or omit it.');
-    }
-    let id = proposalId;
-    if (!byId) {
-      const resolved = await resolveProposalByPr(prNumber, slug);
-      if (resolved.error) return resolved.error;
-      id = resolved.proposalId;
-    }
-    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${id}`);
+    const resolved = await resolveProposalRead({ proposalId, prNumber, slug });
+    if (resolved.error) return resolved.error;
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${resolved.id}`);
     if (!result.ok) return platformError(result);
     const session = (result.body && result.body.session) || {};
     // Both keys, naming two different proposals: answering about either would
     // be answering a question the caller did not ask.
-    if (byId && byPr && Number(session.pr_number) > 0 && Number(session.pr_number) !== prNumber) {
-      return toolError(
-        'invalid_request',
-        `Proposal ${proposalId} is PR #${Number(session.pr_number)}, not PR #${prNumber}. Pass one key or the `
-        + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
-      );
+    if (resolved.byId && resolved.byPr) {
+      const mismatch = proposalKeyMismatch(proposalId, session, prNumber);
+      if (mismatch) return mismatch;
     }
     return readResult('get_proposal', shapeProposal(session, origin));
+  });
+
+  // ── get_check_output ─────────────────────────────────────────────────
+  //
+  // One failing check's FULL record. get_proposal's verdict is one line per
+  // check — the reason string — and the reason cannot carry a unit suite's
+  // per-test errors without eating every other check's budget. This reads
+  // the stored row for one index and returns what it kept: the failing
+  // tests one by one (file, name, error excerpt), or a declared check's
+  // complete recorded console errors. Read-only, and small by construction:
+  // one check per call, each excerpt clipped where it was captured.
+  server.registerTool('get_check_output', {
+    title: "Get a failing check's output",
+    description: "One failing check's full error record, for a proposal read with get_proposal. For the repo unit suite (npm test): the failing tests one by one as file, test name and error excerpt (the assertion message, expected vs actual, the first stack lines and the test's own printed output), size-capped, with a count of any tests left out. For a declared dapp.json check: its failure reason and every console error recorded for it, complete where get_proposal's reason keeps only the first. Pass `check`: the `index` on one of get_proposal's checks.failures[] entries. Read-only.",
+    inputSchema: {
+      proposalId: z.number().int().positive().optional()
+        .describe('The proposal id, as get_proposal reports it. Either this or prNumber; this one wins when both are given.'),
+      prNumber: z.number().int().positive().optional()
+        .describe('The pull request number instead — resolved like get_proposal resolves it. Pass slug too when the same number could be a pull request on more than one of their apps.'),
+      slug: z.string().optional()
+        .describe('The app slug, as returned by list_apps — only to say which app a prNumber belongs to. Not needed with proposalId.'),
+      check: z.number().int()
+        .describe("Which failing check: the `index` on one of get_proposal's checks.failures[] entries. A declared check counts from 0; the repo unit suite is -3."),
+    },
+    outputSchema: {
+      proposalId: z.number().describe("Homeroom's own id for the proposal — the number get_proposal takes."),
+      check: z.object({
+        index: z.number().nullable(),
+        name: z.string(),
+        path: z.string().nullable(),
+        status: z.string().describe("'fail' or 'error' — this tool answers for a check that is not passing."),
+      }),
+      reason: z.string().nullable()
+        .describe("The check's failure reason, the same string get_proposal's checks.failures[].reason reports."),
+      details: z.array(z.object({
+        file: z.string().nullable(),
+        name: z.string(),
+        excerpt: z.string(),
+      })).nullable()
+        .describe('For the repo unit suite: one entry per failing test, in output order — its file, its name, and its error excerpt (assertion message, expected vs actual, first stack lines, and what it printed just before failing). Redacted and clipped where captured; `excerpt` is empty when the runner printed no diagnostic for that test.'),
+      detailsOmitted: z.number().nullable()
+        .describe('For the repo unit suite: failing tests that got NO entry above, because the row kept only what fits its budget. Null when none were left out.'),
+      consoleErrors: z.array(z.object({
+        kind: z.string(),
+        message: z.string(),
+        source: z.string().nullable(),
+      })).nullable()
+        .describe("For a declared check: every console error recorded for it, complete — get_proposal's reason keeps only the first. Null for the unit suite."),
+    },
+    annotations: readAnnotations,
+  }, async ({ proposalId, prNumber, slug, check }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const resolved = await resolveProposalRead({ proposalId, prNumber, slug });
+    if (resolved.error) return resolved.error;
+    if (!Number.isInteger(check)) {
+      return toolError('invalid_request',
+        'Pass `check`: the `index` on one of get_proposal\'s checks.failures[] entries for this proposal.');
+    }
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${resolved.id}`);
+    if (!result.ok) return platformError(result);
+    const session = (result.body && result.body.session) || {};
+    if (resolved.byId && resolved.byPr) {
+      const mismatch = proposalKeyMismatch(proposalId, session, prNumber);
+      if (mismatch) return mismatch;
+    }
+    // The whole stored run, not checks.failures[]: a failing row cut out of
+    // that list by its cap of 10 is still addressable here.
+    const results = Array.isArray(session.test_results) ? session.test_results : [];
+    const failing = results.filter((t) => t && t.status && t.status !== 'pass');
+    const row = failing.find((t) => Number.isInteger(t.index) && t.index === check);
+    if (!row) {
+      const numbered = failing.map((t) => (Number.isInteger(t.index) ? String(t.index) : null))
+        .filter((v) => v !== null);
+      return toolError('invalid_request', numbered.length
+        ? `Proposal ${resolved.id} has no failing check with index ${check}. Its failing checks are numbered: ${numbered.join(', ')}.`
+        : `Proposal ${resolved.id} has no failing check with index ${check}. No failing check carries an index — the run may have passed, or predates the index.`);
+    }
+    const isUnit = unitSuiteRow.isUnitSuiteRow(row);
+    return readResult('get_check_output', {
+      proposalId: session.id,
+      check: {
+        index: Number.isInteger(row.index) ? row.index : null,
+        name: untrusted(row.name || row.path || 'unnamed test', MAX_TITLE_CHARS),
+        path: row.path ? untrusted(String(row.path), MAX_TITLE_CHARS) : null,
+        status: String(row.status),
+      },
+      reason: untrusted(failureReasonOf(row), isUnit
+        ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      ...(isUnit ? {
+        details: (Array.isArray(row.details) ? row.details : []).map((d) => ({
+          file: d && d.file ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
+          name: untrusted((d && d.name) || 'test', MAX_TITLE_CHARS),
+          excerpt: d && d.excerpt ? untrusted(String(d.excerpt), unitSuiteRow.TEST_EXCERPT_MAX) : '',
+        })),
+        detailsOmitted: Number.isInteger(row.detailsOmitted) ? row.detailsOmitted : null,
+        consoleErrors: null,
+      } : {
+        details: null,
+        detailsOmitted: null,
+        consoleErrors: (Array.isArray(row.consoleErrors) ? row.consoleErrors : [])
+          .slice(0, MAX_CONSOLE_ERRORS_REPORTED)
+          .map((e) => ({
+            kind: e && e.kind ? String(e.kind) : 'console',
+            message: untrusted((e && e.message) || '', 500),
+            source: e && e.source ? untrusted(String(e.source), 200) : null,
+          })),
+      }),
+    });
   });
 
   server.registerTool('update_proposal_description', {

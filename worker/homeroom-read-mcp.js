@@ -4,7 +4,7 @@
 // The coding agent's read-only Homeroom tools (#2779, spec:
 // docs/agent-sessions.md, "Coding agent").
 //
-// A stdio MCP server that proxies an allowlist of six READ tools to the
+// A stdio MCP server that proxies an allowlist of seven READ tools to the
 // platform's own MCP endpoint (PLATFORM_URL/mcp), authenticated with the
 // turn's `worker_read` grant (HOMEROOM_MCP_TOKEN). The platform binds that
 // grant to this change and its app, lets it read only, and revokes it when
@@ -24,6 +24,7 @@ const HOMEROOM_READ_TOOLS = Object.freeze([
   'get_request',
   'get_proposal',
   'get_change',
+  'get_check_output',
 ]);
 
 // The worker image installs the SDK globally; a checkout has it in
