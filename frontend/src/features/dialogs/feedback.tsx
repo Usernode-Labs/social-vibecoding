@@ -29,7 +29,7 @@
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon } from '@/components/ui/icons';
+import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -246,6 +246,12 @@ export function FeedbackDialog() {
             #feedback-status, and the controller fills it on open. The picker
             takes several files at once (`multiple`); the controller keeps
             only as many as there is room for.
+
+            #3940: a second pill beside the image ones, for a short screen
+            recording — one per report, beside the three images. Same pill
+            classes, its own file input filtered to the two formats screen
+            recorders produce; the controller owns everything inside the
+            card, so both new nodes start hidden like their siblings.
         */}
         <div className="mt-2">
           <div className="flex flex-wrap gap-2">
@@ -265,11 +271,27 @@ export function FeedbackDialog() {
               <PhotoIcon className="w-3.5 h-3.5" />
               Choose from Photos
             </button>
+            <button
+              id="feedback-video-btn"
+              type="button"
+              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+            >
+              <VideoCameraIcon className="w-3.5 h-3.5" />
+              Attach video
+            </button>
             <input
               id="feedback-screenshot-input"
               type="file"
               accept="image/png,image/jpeg"
               multiple
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <input
+              id="feedback-video-input"
+              type="file"
+              accept="video/mp4,video/webm"
               className="hidden"
               tabIndex={-1}
               aria-hidden="true"

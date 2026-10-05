@@ -10,7 +10,7 @@ const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
-const { sniffImageType } = require('../services/attachments');
+const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
@@ -26,7 +26,16 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // (issue_screenshots). At filing time POST /api/feedback links the row to
 // the created issue and appends the public embed line the coding agents
 // and GitHub's camo proxy can fetch (GET /issue-images/:id).
+//
+// #3940: the same upload route and table now also carry a short screen
+// recording — MP4 or WebM, told by magic bytes, capped at 16 MB (about
+// 30–60 seconds of screen recording), separate from the per-image cap. A
+// video row is an issue_screenshots row with a video/* content type, so
+// the id flow, the orphan GC, account deletion and db-export are all
+// unchanged; only the embed line (a link — GitHub's proxy embeds images
+// only) and the serve route's Range support differ.
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
 const SCREENSHOT_ID_RE = /^[a-f0-9]{32}$/;
 
 // Pure (exported for tests): validate an uploaded screenshot body.
@@ -46,6 +55,44 @@ function validateScreenshotUpload(data) {
     return { ok: false, error: 'Screenshot must be a PNG or JPEG image' };
   }
   return { ok: true, contentType };
+}
+
+// Pure (exported for tests): validate an uploaded video body. Same shape as
+// its image sibling. The 60-second duration limit is the dialog's own check
+// (a <video> element reads the metadata before upload); the server bounds
+// only size, so this cap is the backstop.
+function validateVideoUpload(data) {
+  if (!Buffer.isBuffer(data) || data.length === 0) {
+    return { ok: false, error: 'Empty upload' };
+  }
+  if (data.length > MAX_VIDEO_BYTES) {
+    return {
+      ok: false,
+      error: `Video too large (max ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)} MB)`,
+    };
+  }
+  const contentType = sniffVideoType(data);
+  if (!contentType) {
+    return { ok: false, error: 'Video must be an MP4 or WebM file' };
+  }
+  return { ok: true, contentType };
+}
+
+// Pure (exported for tests): the one classifier the shared upload route
+// branches on. Bytes that sniff as a video are judged by the video rules
+// (so an over-cap recording answers "Video too large", not the image copy);
+// everything else is judged as an image, and an image that fails keeps
+// today's error. Returns { ok: true, kind, contentType } or
+// { ok: false, error }.
+function classifyAttachmentUpload(data) {
+  const videoType = sniffVideoType(data);
+  if (videoType) {
+    const verdict = validateVideoUpload(data);
+    return verdict.ok ? { ok: true, kind: 'video', contentType: verdict.contentType } : verdict;
+  }
+  const image = validateScreenshotUpload(data);
+  if (image.ok) return { ok: true, kind: 'image', contentType: image.contentType };
+  return { ok: false, error: image.error };
 }
 
 // Pure (exported for tests): the exact markdown suffix appended to the
@@ -103,6 +150,24 @@ function buildScreenshotsEmbed(ids, domain) {
   if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
   const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
+// #3940: the suffix for every attached upload — images first, exactly as
+// buildScreenshotsEmbed draws them, then each video as a plain clickable
+// link. GitHub's camo proxy embeds linked IMAGE files but not linked video
+// files, so an embedded player is not on offer; the link is what a reader
+// can open.
+// `entries` is the validated upload rows in attachment order:
+// [{ id, contentType }]. Returns '' when there is nothing.
+function buildAttachmentsEmbed(entries, domain) {
+  const list = Array.isArray(entries) ? entries : [];
+  const isVideo = (e) => String(e.contentType || '').startsWith('video/');
+  const imageIds = list.filter((e) => e && !isVideo(e)).map((e) => e.id);
+  let out = buildScreenshotsEmbed(imageIds, domain);
+  for (const entry of list.filter((e) => e && isVideo(e))) {
+    out += `\n\n**Screen recording:**\n[Screen recording](https://${domain}/issue-images/${entry.id})`;
+  }
+  return out;
 }
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
@@ -445,17 +510,20 @@ function feedbackRoutes(config) {
   // BEFORE submit: the client POSTs the captured image's raw bytes here,
   // gets back an id, and passes it in `screenshotIds` to /api/feedback
   // below, which links the row to the filed issue. Rows never linked are
-  // GC'd by the server.js orphan sweeper after 24h.
+  // GC'd by the server.js orphan sweeper after 24h. #3940: the same route
+  // accepts a video — classifyAttachmentUpload branches on the sniffed
+  // kind, and the row's stored content_type says which it is.
   router.post(
     '/api/feedback/screenshot',
     issueScreenshotLimiter,
-    // Limit must exceed the 4 MB screenshot cap so over-cap uploads get
-    // the friendly 400 from validateScreenshotUpload, not a parser 413.
-    express.raw({ type: 'application/octet-stream', limit: '5mb' }),
+    // Limit must exceed the 16 MB video cap so over-cap uploads get the
+    // friendly 400 from validateVideoUpload, not a parser 413 (the 4 MB
+    // screenshot cap rides the same limit).
+    express.raw({ type: 'application/octet-stream', limit: '17mb' }),
     async (req, res) => {
       try {
         const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-        const verdict = validateScreenshotUpload(data);
+        const verdict = classifyAttachmentUpload(data);
         if (!verdict.ok) return res.status(400).json({ error: verdict.error });
 
         const id = crypto.randomBytes(16).toString('hex');
@@ -511,16 +579,28 @@ function feedbackRoutes(config) {
     const parsedShots = parseScreenshotIds(req.body);
     if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
     const screenshotIds = parsedShots.ids;
+    // #3940: the validated rows in attachment order, each with its STORED
+    // content type, so the embed builder can tell an image from a video.
+    let attachmentEntries = [];
     if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
-          `SELECT id FROM issue_screenshots
+          `SELECT id, content_type FROM issue_screenshots
             WHERE id = ANY($1::varchar[]) AND user_id = $2 AND issue_number IS NULL`,
           [screenshotIds, req.user?.id]
         );
         if (rows.length !== screenshotIds.length) {
           return res.status(400).json({ error: 'Unknown or already-used screenshot' });
         }
+        const byId = new Map(rows.map((row) => [row.id, row.content_type]));
+        // #3940: at most one video per report (the dialog offers only one
+        // slot for it); the server is the real gate, as with the count.
+        const videoCount = screenshotIds
+          .filter((id) => String(byId.get(id) || '').startsWith('video/')).length;
+        if (videoCount > 1) {
+          return res.status(400).json({ error: 'You can attach at most one video' });
+        }
+        attachmentEntries = screenshotIds.map((id) => ({ id, contentType: byId.get(id) }));
       } catch (err) {
         log.error('feedback', 'Screenshot lookup failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
@@ -692,11 +772,12 @@ function feedbackRoutes(config) {
         }
       };
 
-      // #683: server-appended embed line for the attached screenshot —
-      // the public /issue-images/:id URL GitHub's camo proxy, the in-app
-      // topic view, and the coding agents can all fetch. Appended after
-      // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
+      // #683: server-appended embed lines for the attached uploads (#3940:
+      // images as embeds, a video as a link) — the public
+      // /issue-images/:id URL GitHub's camo proxy, the in-app topic view,
+      // and the coding agents can all fetch. Appended after the
+      // description-length validation, so it never eats user budget.
+      const screenshotSuffix = buildAttachmentsEmbed(attachmentEntries, require('../services/caddy').USERNODE_DOMAIN);
       // #1054: one header line for an offline-queued message, empty for a
       // live submit (whose filing time IS its writing time).
       const queuedLine = queuedAt ? `**Saved offline:** ${queuedAt}\n` : '';
@@ -886,6 +967,11 @@ module.exports = {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  // #3940: video uploads — tests/issue-screenshots.test.js.
+  MAX_VIDEO_BYTES,
+  validateVideoUpload,
+  classifyAttachmentUpload,
+  buildAttachmentsEmbed,
   // #3027: several images per submit — tests/feedback-multi-screenshot-server.test.js.
   parseScreenshotIds,
   buildScreenshotsEmbed,

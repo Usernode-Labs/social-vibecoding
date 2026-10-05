@@ -17,7 +17,11 @@ const log = require('../services/logger');
 //
 // Rows are immutable (one upload, linked once), so the year-long
 // immutable cache header is safe; a GC'd orphan id just 404s for fresh
-// fetchers. No Range support — these are small images, not video.
+// fetchers. #3940: a row whose stored content type is video/* (a feedback
+// screen recording) answers Range requests — a <video> element seeks with
+// them — with Accept-Ranges set only there, so image responses stay
+// byte-identical to before. The block is the proven minimal single-range
+// handler from src/routes/visuals.js.
 function issueImageRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -31,13 +35,38 @@ function issueImageRoutes(config) {
         [id]
       );
       if (!rows.length || !rows[0].data) return res.status(404).end();
+      const contentType = rows[0].content_type || 'application/octet-stream';
+      const data = rows[0].data;
       // #2515: the type here is a STORED value, so a file whose recorded
       // content_type says image/* while its bytes are markup must not be
       // sniffed into HTML on the platform's own origin.
-      res.set('Content-Type', rows[0].content_type || 'application/octet-stream');
+      res.set('Content-Type', contentType);
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
-      res.send(rows[0].data);
+      // #3940: video only. Rows are small (a video is ≤ 16 MB), so slicing
+      // the in-memory Buffer is cheap; anything unparsable falls through to
+      // a plain 200 full-body response, which players also accept.
+      if (contentType.startsWith('video/')) {
+        res.set('Accept-Ranges', 'bytes');
+        const range = req.headers.range;
+        if (range) {
+          const m = range.match(/^bytes=(\d*)-(\d*)$/);
+          if (m && (m[1] !== '' || m[2] !== '')) {
+            const total = data.length;
+            let start = m[1] === '' ? Math.max(0, total - parseInt(m[2], 10)) : parseInt(m[1], 10);
+            let end = (m[1] !== '' && m[2] !== '') ? parseInt(m[2], 10) : total - 1;
+            if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < total) {
+              end = Math.min(end, total - 1);
+              res.status(206);
+              res.set('Content-Range', `bytes ${start}-${end}/${total}`);
+              return res.send(data.subarray(start, end + 1));
+            }
+            res.set('Content-Range', `bytes */${data.length}`);
+            return res.status(416).end();
+          }
+        }
+      }
+      res.send(data);
     } catch (err) {
       log.error('issue-images', 'Failed to serve issue screenshot', { id, err: err.message });
       res.status(500).end();

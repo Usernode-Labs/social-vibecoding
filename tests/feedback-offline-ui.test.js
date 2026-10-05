@@ -128,14 +128,26 @@ test('a captured screenshot survives a failed upload', () => {
   // The bug: resetScreenshotState() on a network failure threw the capture
   // away at the exact moment it could not be re-taken cheaply.
   // #3027: per image now — each thumbnail keeps its own bytes.
-  const uploadCatch = feedbackJs.slice(
-    feedbackJs.indexOf("shot.stateEl.textContent = 'Uploading…';"),
+  // #3940: a video entry is the same shape with `kind` set, and its own
+  // upload keeps the bytes on a network failure too — each pinned in its
+  // own catch, since the server-refusal branch above the catch does remove
+  // its thumbnail on purpose.
+  const attachImage = feedbackJs.slice(
+    feedbackJs.indexOf('const attachScreenshotBlob'),
     feedbackJs.indexOf('const waitForHiddenDialogPaint'),
   );
-  const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
+  const networkCatch = attachImage.slice(attachImage.indexOf('} catch {'), attachImage.indexOf('} finally {'));
   assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
   assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
-  assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
+  assert.match(feedbackJs, /const shot = \{ kind: 'image', blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
+  const attachVideo = feedbackJs.slice(
+    feedbackJs.indexOf('const attachVideoBlob'),
+    feedbackJs.indexOf('const VIDEO_DURATION_TIMEOUT_MS'),
+  );
+  const videoCatch = attachVideo.slice(attachVideo.indexOf('} catch {'), attachVideo.indexOf('} finally {'));
+  assert.doesNotMatch(videoCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the video bytes must be kept for the outbox too');
+  assert.match(videoCatch, /Saved with your feedback. It'll upload when you're back online/);
+  assert.match(feedbackJs, /const shot = \{ kind: 'video', blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
   assert.match(feedbackJs, /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);

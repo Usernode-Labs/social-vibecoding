@@ -991,6 +991,9 @@ const ADDED_IDS = {
   // ── The settings restructure: Account opens with a Profile part ─────
   'settings-profile-section': 'The Profile part at the head of Settings\' Account page (features/settings/sections/profile.tsx): who is signed in, and the way to Me\'s Edit profile sheet, where name, photo, bio and the public page are edited. Settings had no route to that sheet, so someone who came to Settings to change their name found only the username form. A settings-pane root with a stable id, like its siblings; it mounts on reveal, never in the prerender.',
   'settings-profile-card': 'The Profile part\'s one control: an anchor to #profile?edit (features/profile/profile.js opens the Edit profile sheet off that address, as #profile?friends opens Friends), showing the avatar, the name and the @handle. dapp.json selects on it to pin that a bare #settings now opens Account.',
+  // ── #3940: video attachments in the feedback dialog ────────────────
+  'feedback-video-btn': '#3940: the "Attach video" pill beside the screenshot ones — one short screen recording (MP4/WebM) per report, beside up to three images. Same pill classes; the controller hides it while the row is full or a video is already attached.',
+  'feedback-video-input': '#3940: the hidden file input the video pill opens, filtered to video/mp4,video/webm, single file. Ships hidden like #feedback-screenshot-input.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

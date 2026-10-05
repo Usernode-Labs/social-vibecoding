@@ -650,6 +650,11 @@ export function init() {
     const screenshotLabel = screenshotBtn.querySelector('[data-screenshot-label]');
     const screenshotPickerBtn = document.getElementById('feedback-screenshot-picker-btn');
     const screenshotInput = document.getElementById('feedback-screenshot-input');
+    // #3940: the video pill and its input. One recording per report, beside
+    // the images; the same three-slot list, upload gating and remove button
+    // carry it.
+    const videoBtn = document.getElementById('feedback-video-btn');
+    const videoInput = document.getElementById('feedback-video-input');
     // The thumbnail list. feedback.tsx renders it empty; the items inside are
     // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
@@ -665,9 +670,13 @@ export function init() {
     // as the thumbnail is shown. The upload mints the id, but the id only
     // exists on the server — so an offline submit has to carry the blob
     // itself into the outbox and upload it at flush time.
+    // #3940: a video entry is the same shape with `kind: 'video'` (`img`
+    // holds the <video> preview element then), so submit blocking, id
+    // collection, the offline save-for-later and the reset all read one list.
     let screenshots = [];
     const screenshotIds = () => screenshots.filter((shot) => shot.id).map((shot) => shot.id);
     const screenshotUploading = () => screenshots.some((shot) => shot.uploading);
+    const hasVideoAttached = () => screenshots.some((shot) => shot.kind === 'video');
     // #1284: true for the whole round trip of a native capture — from the
     // moment the dialog is suspended until the attempt has resolved one way
     // or the other. `suspendDialog()` closes the kit presentation, and the
@@ -824,13 +833,17 @@ export function init() {
         : (count ? 'Attach another' : 'Attach screenshot');
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
+      // #3940: one recording per report — the video pill steps aside once
+      // the row is full or a video is already attached.
+      videoBtn.classList.toggle('hidden', full || hasVideoAttached());
       // #3027: say how many fit, so the second picture is not a guess.
+      // #3940: the row holds images and one video now, so the line says so.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
-          ? `You can attach up to ${MAX_SCREENSHOTS} images.`
+          ? `You can attach up to ${MAX_SCREENSHOTS} images and one video.`
           : full
-            ? `${count} of ${MAX_SCREENSHOTS} images attached. Remove one to add another.`
-            : `${count} of ${MAX_SCREENSHOTS} images attached.`;
+            ? `${count} of ${MAX_SCREENSHOTS} attached. Remove one to add another.`
+            : `${count} of ${MAX_SCREENSHOTS} attached.`;
         screenshotCount.classList.remove('hidden');
       }
       screenshotPreview.classList.toggle('hidden', count === 0);
@@ -838,14 +851,16 @@ export function init() {
       // Numbered from what is on screen now, so removing the middle image
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
-        shot.img.alt = `Image ${i + 1} preview`;
-        shot.removeBtn.setAttribute('aria-label', `Remove image ${i + 1}`);
+        shot.removeBtn.setAttribute('aria-label',
+          `${shot.kind === 'video' ? 'Remove video' : 'Remove image'} ${i + 1}`);
+        if (shot.kind !== 'video') shot.img.alt = `Image ${i + 1} preview`;
       });
     };
 
     const setScreenshotActionsDisabled = (disabled) => {
       screenshotBtn.disabled = disabled;
       screenshotPickerBtn.disabled = disabled;
+      videoBtn.disabled = disabled;
     };
 
     // Forget one attachment client-side. An already uploaded (now orphaned)
@@ -866,19 +881,31 @@ export function init() {
       for (const shot of screenshots.slice()) discardScreenshot(shot);
       screenshots = [];
       screenshotInput.value = '';
+      videoInput.value = '';
       setScreenshotActionsDisabled(false);
       paintScreenshotActions();
     };
 
     // One thumbnail: the preview, a status line for this image alone, and a
     // 48px remove button. Class strings are complete literals, so Tailwind's
-    // scan of this file compiles them.
+    // scan of this file compiles them. #3940: a video entry's preview is a
+    // small inline <video> instead of an <img>, the same size class, so the
+    // recording can be played right there before the report is posted.
     const renderScreenshotThumb = (shot) => {
       const item = document.createElement('div');
       item.className = 'flex items-center gap-2';
       item.setAttribute('data-feedback-screenshot', '');
-      const img = document.createElement('img');
-      img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+      let img;
+      if (shot.kind === 'video') {
+        img = document.createElement('video');
+        img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+        img.controls = true;
+        img.playsInline = true;
+        img.muted = true;
+      } else {
+        img = document.createElement('img');
+        img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+      }
       img.src = shot.objectUrl;
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
@@ -906,7 +933,7 @@ export function init() {
       if (screenshots.length >= MAX_SCREENSHOTS) return;
       // Thumbnail immediately; upload in the background with Submit blocked
       // (screenshotUploading) until the id lands.
-      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
+      const shot = { kind: 'image', blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
       screenshots.push(shot);
       renderScreenshotThumb(shot);
       paintScreenshotActions();
@@ -934,6 +961,158 @@ export function init() {
         shot.uploading = false;
       }
     };
+
+    // ── #3940: the video attachment ────────────────────────────────
+    //
+    // One recording per report, stored like a screenshot (same upload
+    // route, same table, same outbox bytes) and previewed as a playable
+    // <video> before the report is posted. Three limits are checked BEFORE
+    // any upload, each saying which one was hit: the format (magic bytes,
+    // the rule the server applies too), the 16 MB size cap, and a
+    // 60-second duration read from the file's own metadata.
+
+    // XHR, not fetch, so the upload's own progress can fill the
+    // thumbnail's status line ("Uploading… 45%") as the bytes travel.
+    const uploadVideoBlob = (blob, onProgress) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/feedback/screenshot');
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e && e.lengthComputable && typeof onProgress === 'function') {
+          onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
+        }
+      });
+      xhr.addEventListener('load', () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText || '{}') || {}; } catch { data = {}; }
+        if (xhr.status >= 200 && xhr.status < 300 && data.id) {
+          resolve({ ok: true, id: data.id });
+        } else {
+          resolve({ ok: false, error: data.error || 'Video upload failed' });
+        }
+      });
+      xhr.addEventListener('error', () => reject(new TypeError('network')));
+      xhr.send(blob);
+    });
+
+    const attachVideoBlob = async (blob) => {
+      // Never a fourth, and never a second video: every caller checks both
+      // first, and this is the backstop behind them.
+      if (screenshots.length >= MAX_SCREENSHOTS || hasVideoAttached()) return;
+      const shot = { kind: 'video', blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
+      screenshots.push(shot);
+      renderScreenshotThumb(shot);
+      paintScreenshotActions();
+      shot.stateEl.textContent = 'Uploading…';
+      try {
+        const res = await uploadVideoBlob(blob, (pct) => {
+          // Removed mid-upload: the status element is detached with it.
+          if (screenshots.includes(shot)) shot.stateEl.textContent = `Uploading… ${pct}%`;
+        });
+        // Removed (or the dialog closed) while it was in flight: the answer
+        // belongs to nothing on screen any more.
+        if (!screenshots.includes(shot)) return;
+        if (res.ok && res.id) {
+          shot.id = res.id;
+          shot.stateEl.textContent = '';
+        } else {
+          removeScreenshot(shot);
+          showFeedbackNotice(res.error || 'Video upload failed', true);
+        }
+      } catch {
+        if (!screenshots.includes(shot)) return;
+        // #1054: keep the bytes when the network fails. The outbox uploads
+        // them at flush time, and an online submit retries first.
+        shot.stateEl.textContent = "Saved with your feedback. It'll upload when you're back online";
+        showFeedbackNotice("Couldn't upload the video yet. It'll be sent along with your feedback.", false);
+      } finally {
+        shot.uploading = false;
+      }
+    };
+
+    // The duration, read from the file's own metadata through a throwaway
+    // <video> element — the only way a browser can know a recording's
+    // length without playing it. Resolves null when the metadata never
+    // arrives (a slow disk, an exotic container); an unreadable duration is
+    // then the server's size cap to enforce, not a refusal.
+    const VIDEO_DURATION_TIMEOUT_MS = 3000;
+    const readVideoDuration = (file) => new Promise((resolve) => {
+      let url;
+      try { url = URL.createObjectURL(file); } catch { resolve(null); return; }
+      const probe = document.createElement('video');
+      const finish = (seconds) => {
+        try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+        try { probe.removeAttribute('src'); } catch { /* ignore */ }
+        resolve(seconds);
+      };
+      const timer = setTimeout(() => finish(null), VIDEO_DURATION_TIMEOUT_MS);
+      const clear = () => { clearTimeout(timer); };
+      probe.addEventListener('loadedmetadata', () => {
+        clear();
+        const d = probe.duration;
+        finish(Number.isFinite(d) ? d : null);
+      });
+      probe.addEventListener('error', () => { clear(); finish(null); });
+      probe.preload = 'metadata';
+      probe.muted = true;
+      probe.src = url;
+    });
+
+    // Magic bytes, before any upload — the same rule the server applies.
+    const isVideoFile = async (file) => {
+      try {
+        const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+        if (head.length >= 8 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) return true;
+        if (head.length >= 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return true;
+      } catch { /* unreadable head — refused below */ }
+      return false;
+    };
+
+    const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+    const MAX_VIDEO_SECONDS = 60;
+
+    videoBtn.addEventListener('click', () => {
+      if (videoBtn.disabled || videoBtn.classList.contains('hidden')) return;
+      if (screenshots.length >= MAX_SCREENSHOTS || hasVideoAttached()) return;
+      // The camera roll is a full-screen native surface and this tab can be
+      // evicted behind it, exactly as for the image picker above.
+      stashCaptureDraft();
+      videoInput.click();
+    });
+
+    videoInput.addEventListener('change', async () => {
+      const files = Array.from((videoInput.files) || []);
+      videoInput.value = '';
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      if (!files.length) { clearCaptureDraft(); return; }
+      // One recording per report: the input is not multiple and the button
+      // steps aside once one is attached; this is the backstop behind them.
+      const file = files[0];
+      const session = screenshotProbeSequence;
+      setScreenshotActionsDisabled(true);
+      try {
+        if (!await isVideoFile(file)) {
+          showFeedbackNotice('Video must be an MP4 or WebM file.', true);
+          return;
+        }
+        if (file.size > MAX_VIDEO_BYTES) {
+          showFeedbackNotice('That video is larger than 16 MB.', true);
+          return;
+        }
+        const seconds = await readVideoDuration(file);
+        if (session !== screenshotProbeSequence) return;
+        if (seconds != null && seconds > MAX_VIDEO_SECONDS) {
+          showFeedbackNotice('Videos can be up to 60 seconds.', true);
+          return;
+        }
+        await attachVideoBlob(file);
+      } finally {
+        clearCaptureDraft();
+        if (session === screenshotProbeSequence) setScreenshotActionsDisabled(false);
+        paintScreenshotActions();
+      }
+    });
+
 
     const waitForHiddenDialogPaint = () => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -1143,7 +1322,7 @@ export function init() {
     const queueRefusal = (code) => {
       if (code === 'duplicate') return "You've already saved this message. It'll send once you're back online.";
       if (code === 'full') return `Only ${window.FeedbackQueue?.MAX_ENTRIES || 10} messages can wait offline at once. The earlier ones send first.`;
-      if (code === 'too-large') return "There isn't room to keep another screenshot offline. Remove it and save the text.";
+      if (code === 'too-large') return "There isn't room to keep another attachment offline. Remove it and save the text.";
       return "Couldn't save this message on this device.";
     };
 

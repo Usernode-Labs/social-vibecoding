@@ -19,8 +19,9 @@
 //     survive. Where IndexedDB is unavailable we fall back to localStorage and
 //     keep the text only (screenshotDropped), because losing the words is much
 //     worse than losing the picture.
-//   * Caps before durability: 10 entries and ~12 MB of screenshot bytes, with
-//     an exact-duplicate guard. An outbox nobody can see must not be able to
+//   * Caps before durability: 10 entries and ~24 MB of attachment bytes
+//     (#3940: one 16 MB recording plus images must fit), with an
+//     exact-duplicate guard. An outbox nobody can see must not be able to
 //     fill a user's disk quota.
 //   * One flush at a time, sequentially, across tabs (BroadcastChannel + a
 //     `sendingSince` claim). Two tabs coming back online together must not
@@ -43,12 +44,14 @@
   // dialog is a deliberate, typed action) and small enough that the worst
   // case is bounded; the byte cap is what actually protects the origin's
   // storage quota, since one full-screen PNG can be several MB.
+  // #3940: a saved report can carry one 16 MB screen recording beside its
+  // images, so the budget clears the video cap with room for screenshots.
   const MAX_ENTRIES = 10;
-  const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
-  // #3027: images per message — the same limit POST /api/feedback enforces
-  // (MAX_SCREENSHOTS_PER_ISSUE in src/routes/feedback.js). The dialog never
-  // hands over more; this only keeps a stray caller from queueing a message
-  // the server is certain to refuse.
+  const MAX_SCREENSHOT_BYTES = 24 * 1024 * 1024;
+  // #3027: attachments per message — the same limit POST /api/feedback
+  // enforces (MAX_SCREENSHOTS_PER_ISSUE in src/routes/feedback.js). The
+  // dialog never hands over more; this only keeps a stray caller from
+  // queueing a message the server is certain to refuse.
   const MAX_SCREENSHOTS = 3;
 
   // Retry schedule: 30s, 1m, 2m, 4m, 8m, then flat 10m. Deliberately slow —
