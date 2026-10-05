@@ -52,6 +52,8 @@ export type InvitePreview = {
   inviter?: string | null;
   inviterName?: string | null;
   inviterMadeIt?: boolean;
+  /** Its first version is still on its way: "Maya is making Run Tracker". */
+  building?: boolean;
   /**
    * The community's own name, when it has one apart from its project's.
    * Communities and projects are one-to-one today and a community carries
@@ -101,13 +103,15 @@ export function madeForName(preview: InvitePreview): string | null {
  * The card's headline. "Maya made Run Tracker" when whoever sent the link
  * made the project — the gift the link is — or "Maya made this for Sunday
  * Run Club" when the community it was made for has a name of its own; the
- * plain invitation otherwise.
+ * plain invitation otherwise. While its first version is still on its way
+ * (`building`) it is "Maya is making Run Tracker": nothing is made yet.
  */
 export function madeLine(preview: InvitePreview): string {
   const name = preview.project?.name || 'a project';
   if (preview.inviterMadeIt && preview.inviterName) {
     const community = madeForName(preview);
-    return community ? `${preview.inviterName} made this for ${community}` : `${preview.inviterName} made ${name}`;
+    const made = preview.building ? 'is making' : 'made';
+    return community ? `${preview.inviterName} ${made} this for ${community}` : `${preview.inviterName} ${made} ${name}`;
   }
   return invitedLine(preview);
 }

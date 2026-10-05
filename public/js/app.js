@@ -4200,6 +4200,7 @@ const App = {
     // communities-first-run.js): somebody a link is bringing into a group is
     // asked to join it, not what to make. Resolves true once they are in.
     let joinedHere = false;
+    let held = false;
     let settle = () => {};
     App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
@@ -4210,6 +4211,17 @@ const App = {
         .then(() => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' }))
         .then(async (res) => ({ status: res.status, standing: await res.json().catch(() => ({})) }));
       standingRead.catch(() => {});
+      // Signed in from this invite's own page (Join, then the sheet): this
+      // runs in the tick the signed-in shell starts, and the standing that
+      // says whether to welcome them is a request away. "You're in"'s frame
+      // goes up first, drawn before this returns, so Home is never on screen
+      // between the sheet and the welcome (Evan, 5 October 2026; the make
+      // screen's hand-off, #3894, works the same way). The welcome fills it;
+      // any other ending takes it down (_endWelcomeHold).
+      const fromLanding = App._inviteLandingToken === token;
+      App._inviteLandingToken = null;
+      const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+      held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
       if (App._sessionFromSnapshot) {
         // Bounded: a reconcile that settles nothing (it reloads for another
         // account) must not hold the follow for good. Past it, the link's own
@@ -4242,7 +4254,10 @@ const App = {
       // "You're in" and the first-session tour (features/first-session), for
       // somebody this link has just let into the project. It answers false
       // when it will not show (already shown for this project, or the island
-      // is not there), and they land on the hub as before.
+      // is not there), and they land on the hub as before. Somebody who was
+      // signed in before following the link (the confirm below) had their
+      // account already, unless the join's answer says it is new: a test
+      // account on its first sign-in (routes/community-invites.js).
       const welcome = (standing, slug) => {
         const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
         if (!fs || typeof fs.welcome !== 'function' || !slug) return false;
@@ -4252,8 +4267,13 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
+          // The picture the invite page showed, and its one line, to fill
+          // "You're in" with the project rather than empty space.
+          description: project.description || null,
+          picture: project.picture || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
+          building: !!standing.building,
           newAccount: !!standing.newAccount,
         });
       };
@@ -4279,7 +4299,7 @@ const App = {
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} made it and invited you.`
+          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
           : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
@@ -4290,6 +4310,8 @@ const App = {
           pressed = sessionStorage.getItem('usernode:invite-join') === `/invite/${token}`;
           sessionStorage.removeItem('usernode:invite-join');
         } catch (_) { /* asked as before */ }
+        // A confirm is never asked under the held frame.
+        if (held && !pressed) { held = false; App._endWelcomeHold(); }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
           title: `Join ${name}?`,
           message: from
@@ -4318,7 +4340,7 @@ const App = {
         // run-through, 2026-10-04).
         if (result.status === 'joined') window.HomePanels?.ensureLoaded?.({ force: true });
         if (result.slug) {
-          if (welcome({ ...standing, newAccount: false }, result.slug)) return;
+          if (welcome({ ...standing, newAccount: result.newAccount === true }, result.slug)) return;
           toast(`You joined ${result.name || name}.`);
           openHub(result.slug);
         }
@@ -4327,7 +4349,15 @@ const App = {
       }
     } finally {
       settle(joinedHere);
+      // The held frame goes, unless "You're in" has taken its place.
+      if (held) App._endWelcomeHold();
     }
+  },
+
+  // "You're in"'s held frame (above), down; a welcome that took its place stays.
+  _endWelcomeHold() {
+    const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (island && typeof island.endHold === 'function') island.endHold();
   },
 
   _deepLinkTarget() {
@@ -4377,6 +4407,8 @@ const App = {
       const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
       if (inviteToken && window.AuthScreens) {
         if (!App.user) {
+          // A sign-in from here comes back to this link (_followInvite).
+          App._inviteLandingToken = inviteToken;
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;

@@ -556,6 +556,59 @@ function pictureUrls(token, picture) {
 }
 
 /**
+ * Whether the project's first version is still on its way: Homeroom bot
+ * builds it (homeroom_bot_first_versions) and no proposal for it has merged,
+ * the first gate of homeroom-bot-dm.js firstVersionState without its
+ * progress reads. While it is, the project is being made, not made: "Maya
+ * is making Page Turners" on the invite page, its link preview, the
+ * signed-in confirm and "You're in" (first-session run-through, 5 October
+ * 2026). False for a project made any other way, and for a read that fails:
+ * that is the line as it was.
+ */
+async function firstVersionPending(db, appId) {
+  try {
+    const { rows } = await db.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM homeroom_bot_first_versions f
+          WHERE f.app_id = $1 AND f.bot_builds = TRUE AND f.status IN ('waiting', 'filing', 'filed')
+            AND NOT EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+                JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+               WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+            )
+       ) AS pending`,
+      [appId]
+    );
+    return rows[0]?.pending === true;
+  } catch (err) {
+    log.warn('invites', 'Could not read whether a first version is on its way', { appId, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * The same picture for somebody who has just joined, at addresses that need
+ * no link ("You're in", frontend/src/features/first-session): the project's
+ * own sketch route, which serves a member, and the Discover card's image,
+ * which anyone may see. An after-shot is served only through a live link,
+ * so a member is shown none here. Null for no picture.
+ */
+function memberPicture(slug, picture) {
+  if (!picture || !slug) return null;
+  if (picture.kind === 'sketch') {
+    return { kind: 'sketch', url: `/api/apps/${encodeURIComponent(slug)}/sketch.html`, darkUrl: null };
+  }
+  if (picture.kind === 'illustration') {
+    return {
+      kind: 'illustration',
+      url: `/app-illustrations/${picture.id}`,
+      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
+    };
+  }
+  return null;
+}
+
+/**
  * What a link shows before anyone signs in. A live link discloses the
  * project's name, icon and one-line description, who invited you (and
  * whether they made it), their note, one picture of it (pictureFor) and how
@@ -567,9 +620,10 @@ async function preview(pool, token) {
   const invite = await loadInvite(pool, token);
   const reason = deadReason(invite);
   if (reason) return { live: false, reason };
-  const [count, picture] = await Promise.all([
+  const [count, picture, building] = await Promise.all([
     memberCount(pool, invite.community_id),
     pictureFor(pool, invite.app_id),
+    firstVersionPending(pool, invite.app_id),
   ]);
   return {
     live: true,
@@ -583,8 +637,11 @@ async function preview(pool, token) {
     },
     inviter: invite.inviter || null,
     inviterName: invite.inviter_display_name || invite.inviter || null,
-    // The person who sent it made the project: "Maya made Run Tracker".
+    // The person who sent it made the project: "Maya made Run Tracker", or,
+    // while its first version is on its way (`building`), "Maya is making
+    // Run Tracker".
     inviterMadeIt: invite.created_by != null && invite.created_by === invite.app_created_by,
+    building,
     note: invite.note || null,
     memberCount: count,
     expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
@@ -621,14 +678,16 @@ async function standing(pool, token, user) {
   // old link: only the first gets "You're in".
   const appliedAt = inIt && rows[0]?.status === 'joined' ? rows[0].applied_at : null;
   // Whether the account is about as old as its joining: made by the sign-up
-  // this link opened, so "You're in" tells it what Homeroom is.
+  // this link opened, so "You're in" tells it what Homeroom is. A test
+  // account, made ahead by an admin, is new on its first sign-in instead
+  // (test-accounts.js onFirstRun).
   let newAccount = false;
   if (appliedAt) {
     const { rows: u } = await pool.query(
       `SELECT created_at >= $2::timestamptz - INTERVAL '1 hour' AS fresh FROM users WHERE id = $1`,
       [user.id, appliedAt]
     );
-    newAccount = !!u[0]?.fresh;
+    newAccount = !!u[0]?.fresh || await require('./test-accounts').onFirstRun(pool, user.id, appliedAt);
   }
   return {
     ...base,
@@ -886,6 +945,9 @@ module.exports = {
   NOTE_MAX,
   cleanNote,
   pictureBytes,
+  pictureFor,
+  memberPicture,
+  firstVersionPending,
   sketchPage,
   joiningRule,
   joiningRuleText,

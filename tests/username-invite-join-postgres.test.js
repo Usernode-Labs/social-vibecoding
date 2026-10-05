@@ -187,7 +187,10 @@ test('an invite by username joins a group the way its link does, against the ful
       appSlug: 'page-turners',
       welcome: {
         slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', iconUrl: null,
-        inviterName: 'alex_t1005', inviterMadeIt: true, newAccount: false,
+        // Nothing to fill "You're in" with yet: no line, no picture, and no
+        // first version on its way.
+        description: null, picture: null,
+        inviterName: 'alex_t1005', inviterMadeIt: true, building: false, newAccount: false,
       },
     });
     assert.equal(await communities.isMember(pool, turners.id, mo.id), true, 'in the group');
@@ -222,5 +225,95 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.equal(pending.joins, false);
     const got = await call(reader, 'POST', `/api/invites/${lib.id}/accept`);
     assert.deepEqual(got.body, { ok: true, appSlug: 'open-library' }, 'already in its community: no "You joined"');
+  });
+
+  // First-session run-through, 5 October 2026. A test account
+  // (services/test-accounts.js) is made ahead of time by an admin, so its
+  // created_at said it was not new, and "You're in" gave it the welcome for
+  // an account that was already there. Its first sign-in is its sign-up.
+  async function testAccount(username, { daysOld = 2, signedInMinutesAgo = 1 } = {}) {
+    const made = await user(username, { daysOld });
+    await pool.query('UPDATE users SET test_account_created_at = created_at WHERE id = $1', [made.id]);
+    if (signedInMinutesAgo != null) {
+      await pool.query(
+        `INSERT INTO sessions (token, user_id, expires_at, created_at)
+         VALUES ($1, $2, NOW() + INTERVAL '1 day', NOW() - make_interval(mins => $3))`,
+        [crypto.randomBytes(24).toString('hex'), made.id, signedInMinutesAgo]);
+    }
+    return made;
+  }
+  const testAccounts = require('../src/services/test-accounts');
+
+  await t.test('a test account on its first sign-in is welcomed as new; a real account as before', async () => {
+    const fresh = await testAccount('tester_first_run');
+    const earlier = await testAccount('tester_seasoned', { signedInMinutesAgo: 3 * 24 * 60 });
+    const never = await testAccount('tester_never', { signedInMinutesAgo: null });
+    const real = await user('real_old_t1007', { daysOld: 2 });
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
+      [crypto.randomBytes(24).toString('hex'), real.id]);
+    assert.equal(await testAccounts.onFirstRun(pool, fresh.id), true, 'first signed in a minute ago');
+    assert.equal(await testAccounts.onFirstRun(pool, earlier.id), false, 'first signed in days ago');
+    assert.equal(await testAccounts.onFirstRun(pool, never.id), false, 'never signed in');
+    assert.equal(await testAccounts.onFirstRun(pool, real.id), false, 'a real account is never read as one');
+    assert.equal(await testAccounts.onFirstRun(pool, 'x'), false);
+
+    // An invite by username, accepted.
+    for (const [who, isNew] of [[fresh, true], [earlier, false], [real, false]]) {
+      await call(alex, 'POST', `/api/apps/${turners.slug}/invites`, { username: who.username });
+      const got = await call(who, 'POST', `/api/invites/${turners.id}/accept`);
+      assert.equal(got.status, 200);
+      assert.equal(got.body.welcome.newAccount, isNew, who.username);
+    }
+
+    // A link followed once signed in (App._followInvite's confirm, or Join
+    // pressed on the link's page before a password sign-in).
+    const link = await invites.createInvite(pool, { app: turners, user: { id: alex.id, isAdmin: false }, days: 0, maxUses: 0 });
+    const tester = await testAccount('tester_link');
+    const realOld = await user('real_link_t1008', { daysOld: 2 });
+    const viaTester = await call(tester, 'POST', `/api/invite-links/by-token/${link.link.token}/redeem`);
+    assert.deepEqual([viaTester.status, viaTester.body.status, viaTester.body.newAccount], [200, 'joined', true]);
+    const viaReal = await call(realOld, 'POST', `/api/invite-links/by-token/${link.link.token}/redeem`);
+    assert.deepEqual([viaReal.status, viaReal.body.status, viaReal.body.newAccount], [200, 'joined', false],
+      'a real account following a link signed in had its account before it, as the shell always said');
+    const again = await call(tester, 'POST', `/api/invite-links/by-token/${link.link.token}/redeem`);
+    assert.deepEqual([again.body.status, again.body.newAccount], ['member', false], 'nothing joined, nothing to welcome');
+    // And the link's standing for the test account, once in.
+    const standing = await invites.standing(pool, link.link.token, { id: tester.id });
+    assert.equal(standing.mine, 'joined');
+    assert.equal(standing.newAccount, true);
+  });
+
+  await t.test('"You\'re in" gets the project\'s picture at an address a member can read, and whether it is being made', async () => {
+    // Page Turners, still being built, with the sketch its maker was shown.
+    await pool.query(
+      `INSERT INTO app_sketches (app_id, user_id, status, design, html, ready_at)
+       VALUES ($1, $2, 'ready', '{}'::jsonb, '<main>Books</main>', NOW())`,
+      [turners.id, alex.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
+       VALUES ($1, $2, 'A book club that meets monthly', TRUE, 'filed', 1)`,
+      [turners.id, alex.id]);
+    await pool.query(`UPDATE apps SET manifest_snapshot = '{"description":"A book club that meets monthly"}'::jsonb WHERE id = $1`, [turners.id]);
+    const sam = await user('sam_sketch');
+    await call(alex, 'POST', `/api/apps/${turners.slug}/invites`, { username: 'sam_sketch' });
+    const got = await call(sam, 'POST', `/api/invites/${turners.id}/accept`);
+    assert.deepEqual(got.body.welcome.picture, { kind: 'sketch', url: '/api/apps/page-turners/sketch.html', darkUrl: null });
+    assert.equal(got.body.welcome.description, 'A book club that meets monthly');
+    assert.equal(got.body.welcome.building, true, 'its first version is on its way');
+    assert.equal(await invites.firstVersionPending(pool, turners.id), true);
+    // The link's own page says the same: "alex is making Page Turners".
+    const link = await invites.createInvite(pool, { app: turners, user: { id: alex.id, isAdmin: false }, days: 0, maxUses: 0 });
+    const preview = await invites.preview(pool, link.link.token);
+    assert.equal(preview.building, true);
+    assert.equal(preview.project.picture.kind, 'sketch');
+    // Once a proposal for it has merged, it is made.
+    const { rows: [session] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'merged') RETURNING id`, [turners.id, alex.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, 1, 'live', 'ready', $2)`,
+      [turners.id, session.id]);
+    assert.equal(await invites.firstVersionPending(pool, turners.id), false);
+    assert.equal((await invites.preview(pool, link.link.token)).building, false);
   });
 });

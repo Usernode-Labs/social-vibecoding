@@ -309,6 +309,12 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
   assert.equal(card.madeLine({ ...forGroup, inviterMadeIt: false }), '@maya invited you to join Run Tracker.');
   assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
+  // While its first version is on its way nothing is made yet (Evan, 5
+  // October 2026): "is making", in both of the gift's forms.
+  assert.equal(card.madeLine({ ...made, building: true }), 'jordan_t1004 is making Flat 4B Chores');
+  assert.equal(card.madeLine({ ...forGroup, building: true }), 'Maya is making this for Sunday Run Club');
+  assert.equal(card.madeLine({ ...made, building: true, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
+  assert.equal(card.underLine({ ...made, building: true }), 'and invited you to join · 4 people are in it');
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
@@ -397,6 +403,12 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   assert.doesNotMatch(sketched, /sketch\.html/);
   // The note is escaped like everything else.
   assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
+  // While its first version is on its way: "is making", as the page says.
+  assert.match(routes.previewTags({ ...live, building: true }, null), /og:title" content="Maya is making Sunday Run Club"/);
+  assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
+    /og:title" content="Maya is making this for Sunday Run Club"/);
+  // The signed-in confirm says the same.
+  assert.match(read('public/js/app.js'), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
