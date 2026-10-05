@@ -148,6 +148,11 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // A time-dependent change (a Thursday-evening reminder) is shot at the
+  // moment its author declared, on both copies (services/preview-clock.js).
+  assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);
+  assert.match(prompt, /set to previewAt\.at, to\s+intent\.startPath on the after address and on the before address alike/);
+  assert.match(prompt, /un-now=2026-10-08T18:00:00\.000Z/);
   // Each persona's demo data, and where the checks' data belongs: a member
   // story once 404'd on a check path whose fixture is the read-only admin's.
   assert.match(prompt, /availableFixtures\s+lists it: who it is for \(persona, alsoFor\), what it shows and its path/);

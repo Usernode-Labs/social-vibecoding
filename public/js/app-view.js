@@ -22071,6 +22071,9 @@ const AppView = {
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
         ...(typeof data.appName === 'string' ? { appName: data.appName } : {}),
+        // The moment a time-dependent change declared (services/preview-
+        // clock.js); swapToStaging opens the preview at it.
+        ...(data.previewAt ? { previewAt: data.previewAt } : {}),
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
@@ -22242,10 +22245,20 @@ const AppView = {
     // preview goes live when you vote it in, a group's is tried by members
     // before they vote (#16).
     staging.setAudience(AppView._stagingAudience(app));
+    // A change that only shows at certain times declared a moment to see it
+    // at (`opts.previewAt`, from the ensure answer). The preview opens there,
+    // a line under the bar says so, and its button switches to now and back.
+    // `clock` is this open's own: a later open makes its own. It opens at the
+    // moment only where that line is drawn (setClock answers true); the DOM
+    // fallback has no line, so there it opens as now rather than unexplained.
+    const declared = AppView._stagingClockFrom(opts && opts.previewAt);
+    const clock = declared && staging.setClock({ label: declared.label, asNow: false }) === true
+      ? declared : null;
+    if (!clock) staging.setClock(null);
     staging.open();
     AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null });
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null, onClockToggle: null });
     staging.setTestBtn({ hidden: true });
     staging.setTestPanelHidden(true);
     staging.clearSrc();
@@ -22300,12 +22313,42 @@ const AppView = {
       // parameter the app gives meaning to (the platform's own shell pins its
       // theme from a bare `?theme=`, which a preview must not do).
       url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+      // Namespaced like the two above. Only ever on a staging preview's
+      // address: the app frame (buildAppIframeSrc) never carries it, the
+      // bridge ignores it on a production host, and an app's server reads it
+      // only under USERNODE_ENV=staging.
+      if (clock && !clock.asNow) url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
     // Mutable so a "Test this change" click during the readiness poll
     // retargets the pending load instead of being clobbered by it.
     const pending = { src: buildSrc(jump ? safePath : null) };
+
+    // "See it as now" and back: the same address with `un-now` dropped or
+    // put back, so a deep link the preview was opened at survives. Before the
+    // first load it only retargets the pending one.
+    staging.setHandlers({
+      onClockToggle: clock ? () => {
+        if (!current() || !pending.src) return;
+        clock.asNow = !clock.asNow;
+        staging.setClock({ label: clock.label, asNow: clock.asNow });
+        let next;
+        try {
+          const url = new URL(pending.src);
+          if (clock.asNow) url.searchParams.delete(AppView.PREVIEW_NOW_PARAM);
+          else url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
+          next = url.toString();
+        } catch { return; }
+        pending.src = next;
+        const frame = staging.frame();
+        if (frame && frame.src) {
+          AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+          AppView._watchStagingIframeLoad(frame, loadId, null);
+          staging.setSrc(next);
+        }
+      } : null,
+    });
 
     AppView._renderTestingControls(buildSrc, pending, jump);
     const checksRunning = !!(opts && opts.checksRunning);
@@ -22823,6 +22866,9 @@ const AppView = {
     // The banner's wording by audience is the island's alone; without it the
     // shipped line stays as it is.
     setAudience() {},
+    // So is the line saying which moment a preview shows. Answering false
+    // tells swapToStaging it was not drawn, so the preview opens as now.
+    setClock() { return false; },
     setLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
       this._setHidden('staging-retry-btn', !visible || !retry);
       this._setText('staging-retry-btn', retryLabel || 'Retry sign-in');
@@ -23516,6 +23562,26 @@ const AppView = {
   // The bridge turns both into `usernode.theme` and a
   // `usernode:theme-changed` event. It reports; it never restyles the app.
   THEME_PARAM: 'un-theme',
+
+  // A staging preview shown as of a chosen moment (src/services/preview-
+  // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
+  // `?un-now=<at>` on the preview's address, which the bridge reads into
+  // `usernode.now()`, and the line under the bar ("Showing it as on Thursday
+  // 8 Oct, 7 pm"). Never on the app frame: production ignores it entirely.
+  PREVIEW_NOW_PARAM: 'un-now',
+
+  // The answer's moment, checked before it goes anywhere near an address: an
+  // exact ISO instant (what preview-clock writes) and a short label. Anything
+  // else opens the preview as now, as it always has.
+  _stagingClockFrom(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const at = typeof raw.at === 'string' ? raw.at : '';
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(at)) return null;
+    if (!Number.isFinite(Date.parse(at))) return null;
+    if (!label || label.length > 64) return null;
+    return { at, label, asNow: false };
+  },
 
   // The legacy copy of sameFrameSrc in
   // frontend/src/features/app-frame/app-frame-policy.js: a render compares

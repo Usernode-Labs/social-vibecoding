@@ -104,6 +104,15 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 - `controlledFailurePath` still lets an error state be shot. The shots
   agent makes that exact API GET fail on both builds, and the shots are
   labelled as a controlled test.
+- A change that only shows at certain times declares a preview moment in
+  its testing guidance (`<!-- usernode:preview-at 2026-10-08T19:00
+  Europe/London -->`, read by `src/services/preview-clock.js`). The brief
+  then carries `previewAt` (`at`, `label`, `zone`, `param`), and the agent
+  opens both copies with `?un-now=<at>` on the start path. Both copies run
+  as staging, so an app that reads "now" through `req.now` and
+  `usernode.now()` shows that moment on both sides; the before side simply
+  lacks the change. See "Time-dependent features" in
+  `src/prompts/app-conventions.md`.
 
 An agent-written replay plan (`visualEvidencePlan` on `submit_work`) is
 ignored, and `submit_visual_evidence_plan` no longer exists.

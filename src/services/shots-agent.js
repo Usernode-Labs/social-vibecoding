@@ -85,6 +85,14 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+If the brief has previewAt, the change only shows at certain times, and
+previewAt.label says when in plain words. Open both copies at that moment:
+add the query parameter named by previewAt.param, set to previewAt.at, to
+intent.startPath on the after address and on the before address alike,
+keeping any query the path already has (for example
+"/rota?un-now=2026-10-08T18:00:00.000Z"). Do this for every change, screen
+and clip, so the two sides differ only by the change.
+
 The copies hold demo data for each persona. The brief's availableFixtures
 lists it: who it is for (persona, alsoFor), what it shows and its path. Look
 there for a state the steps need before you decide a change cannot be
