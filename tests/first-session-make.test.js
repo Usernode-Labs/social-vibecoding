@@ -81,10 +81,16 @@ test('an account that signs in some other way is asked what to make in the join 
   // It comes before the suggestions are fetched, so the join screen is never drawn first.
   assert.ok(join.indexOf('firstSession.make()') < join.indexOf("fetch('/api/me/join-suggestions'"));
   assert.match(read('src/routes/onboarding.js'), /const answer = req\.body && req\.body\.via === 'sign_in' \? 'sign_in' : 'story';/);
-  // The island opens it once, whichever of the two asks first.
+  // The island opens it once, whichever of the two asks first, and draws it
+  // at once when asked from the shell's own start (sv:authed, or the join
+  // step in that tick), so Home is never painted before it.
   const island = read(`${DIR}/index.tsx`);
-  assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
-  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);/);
+  assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
+  assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
+  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // From the mount's own check it is an ordinary update: React is mid-effect
+  // there and cannot draw synchronously.
+  assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
 });
 
 test('the route records which way the first session was reached', async () => {

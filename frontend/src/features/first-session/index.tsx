@@ -29,7 +29,8 @@
  * and kept in state only when it moves.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -406,6 +407,20 @@ type Mode =
 // otherwise have seen (../auth/communities-first-run.js).
 const MAKE_FLAG = 'usernode:first-session:make';
 
+/**
+ * Open "What do you want to make?", unless something else is already up.
+ * `now` draws it before returning: asked from the signed-in shell's own
+ * start (`sv:authed`, or the join step in that same tick), that is before the
+ * browser paints the Home the shell has just shown, so the make screen is
+ * the first thing seen after the sign-in sheet leaves. Never from a render
+ * or an effect, where React cannot draw synchronously.
+ */
+function openMake(setMode: Dispatch<SetStateAction<Mode>>, now: boolean): void {
+  const open = () => setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+  if (now) flushSync(open);
+  else open();
+}
+
 function viewerName(): string {
   const user = legacy().App?.user;
   return user?.displayName || user?.username || '';
@@ -418,16 +433,17 @@ export function FirstSession() {
   // as soon as the shell has signed it in with access (`sv:authed` fires
   // only then; somebody still waiting is in the waiting room instead).
   useEffect(() => {
-    const check = () => {
+    const check = (now: boolean) => {
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
-      setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+      openMake(setMode, now);
     };
-    if (legacy().App?.user) check();
-    document.addEventListener('sv:authed', check);
-    return () => document.removeEventListener('sv:authed', check);
+    if (legacy().App?.user) check(false);
+    const onAuthed = () => check(true);
+    document.addEventListener('sv:authed', onAuthed);
+    return () => document.removeEventListener('sv:authed', onAuthed);
   }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
@@ -448,7 +464,7 @@ export function FirstSession() {
       // own flag got there first this leaves its screen as it is.
       make(): boolean {
         try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
-        setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+        openMake(setMode, true);
         return true;
       },
     };

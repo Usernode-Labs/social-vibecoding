@@ -82,16 +82,20 @@ const MESSAGES: Record<LoginCompletionFailure['code'], string> = {
 export function useSessionConfirmation() {
   const [failure, setFailure] = useState<SessionConfirmationDetails | null>(null);
   const [checking, setChecking] = useState(false);
-  const pending = useRef<Promise<void> | null>(null);
-  const finishLogin = useCallback((): Promise<void> => {
+  const pending = useRef<Promise<boolean> | null>(null);
+  // Resolves true once the session is open (or the page is on its way to
+  // the page that asked for the sign-in), false when the notice is up.
+  const finishLogin = useCallback((): Promise<boolean> => {
     if (pending.current) return pending.current;
     setChecking(true);
     const run = async () => {
       try {
         const result = await confirmSession();
         setFailure(result ? snapshot(result) : null);
+        return !result;
       } catch {
         setFailure(snapshot({ stage: 'open-session', status: null, code: 'client-error' }));
+        return false;
       } finally {
         setChecking(false);
         pending.current = null;
