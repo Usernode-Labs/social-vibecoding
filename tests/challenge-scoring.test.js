@@ -493,11 +493,53 @@ test('a skipped rule reports the reason instead of failing silently', async () =
   assert.equal(pool.inserted.length, 0);
 });
 
-test('the leaderboard is not rebuilt while its last snapshot is fresh', async () => {
-  const pool = scriptedPool();
-  const fresh = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR });
-  assert.equal(fresh, null, 'each rebuild ages out older history — do not do it every tick');
-});
+// The standings: a new snapshot (a chart point) every six hours, and the
+// latest one rewritten in place whenever the ledger is newer (#3650: a member
+// saw the challenge's points long before the leaderboard's).
+function standingsPool({ at, fresh, newer }) {
+  const seen = [];
+  return {
+    seen,
+    async query(sql, params) {
+      seen.push({ sql, params });
+      if (sql === scorer.LAST_AGGREGATE_SQL) return { rows: at ? [{ at: new Date(at), fresh: fresh ? new Date(fresh) : null }] : [] };
+      if (sql === scorer.LEDGER_NEWER_SQL) return { rows: [{ newer: newer(params[0]) }] };
+      throw new Error(`unexpected query: ${sql.slice(0, 60)}`);
+    },
+  };
+}
+function withBuilder(fn) {
+  const builder = require('../src/services/topochain/snapshot-builder');
+  const real = builder.buildSnapshots;
+  const calls = [];
+  builder.buildSnapshots = async (pool, opts = {}) => { calls.push(opts); return { events: [{}] }; };
+  return fn(calls).finally(() => { builder.buildSnapshots = real; });
+}
+
+test('the standings are left alone while nothing in the ledger is newer than them', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW + 10 * MIN, newer: () => false });
+  assert.equal(await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR }), null);
+  assert.equal(calls.length, 0);
+  assert.equal(pool.seen[1].params[0].getTime(), NOW + 10 * MIN,
+    'compared with when the snapshot was last WRITTEN, or a refresh would repeat on every check');
+}));
+
+test('a newer credit refreshes the latest snapshot in place, not a new chart point', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW, newer: () => true });
+  const result = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + 2 * HOUR });
+  assert.deepEqual(result, { events: 1, refreshed: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].now.getTime(), NOW, 'rebuilt AT the latest snapshot_at: the builder upserts, so the history keeps its points');
+}));
+
+test('a snapshot older than the cadence gets a new one, as before', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW - 7 * HOUR, fresh: NOW - 7 * HOUR, newer: () => true });
+  assert.deepEqual(await scorer.maybeAggregate(pool, { hours: 6, now: NOW }), { events: 1 });
+  assert.equal(calls[0].now, undefined, 'stamped now: a new point on the chart');
+  const none = standingsPool({ at: null, newer: () => false });
+  assert.deepEqual(await scorer.maybeAggregate(none, { hours: 6, now: NOW }), { events: 1 }, 'and with no snapshot at all');
+  assert.equal(await scorer.maybeAggregate(none, { hours: 0, now: NOW }), null, 'hours 0 leaves it to the admin button');
+}));
 
 // ─── Dates ─────────────────────────────────────────────────────────────
 
