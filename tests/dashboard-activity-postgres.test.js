@@ -257,6 +257,90 @@ test('active-user analytics count recorded human participation once per UTC day'
     [appId, actors.noise]
   );
 
+  // ── Homeroom bot ──────────────────────────────────────────
+  // The synthetic bot account is nobody's real use: it is dropped from every
+  // count whatever the admin box says, while the people behind its work are
+  // credited once, on the day the bot acted for them.
+  const { rows: botRows } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic, created_at)
+     VALUES ('activity_homeroom_bot', 'fixture', TRUE, CURRENT_DATE - INTERVAL '14 days')
+     RETURNING id`
+  );
+  const bot = botRows[0].id;
+  actors.botQueue = await user('bot-queue');
+  actors.botRuns = await user('bot-runs');
+  actors.both = await user('bot-and-direct');
+
+  // One of the bot's own sessions with a user-role turn. Before the synthetic
+  // exclusion this read as a person active through the session arm.
+  const { rows: botSessionRows } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name)
+     VALUES ($1, $2, 'activity-bot') RETURNING id`,
+    [appId, bot]
+  );
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content)
+     VALUES ($1, 'user', 'bot triage turn')`,
+    [botSessionRows[0].id]
+  );
+
+  // A queued request credits the person who asked for it; an automated
+  // refresh names nobody and counts for nobody.
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, requested_by, payer_user_id)
+     VALUES ($1, 7, $2, NULL)`,
+    [appId, actors.botQueue]
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, requested_by, payer_user_id)
+     VALUES ($1, 8, NULL, NULL)`,
+    [appId]
+  );
+
+  // A charged run whose payer was never recorded credits the requester of
+  // record, found only through homeroom_bot_requesters. An uncharged run
+  // (a restart re-read) counts for nobody even though a payer is named.
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id)
+     VALUES ($1, 9, 'live', 'ready', TRUE, NULL)`,
+    [appId]
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 9, $2)`,
+    [appId, actors.botRuns]
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id)
+     VALUES ($1, 10, 'live', 'ready', FALSE, $2)`,
+    [appId, actors.inactive]
+  );
+
+  // A person who both ran a direct session and had the bot build for them on
+  // the same day is still one active user that day.
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id)
+     VALUES ($1, 11, 'live', 'ready', TRUE, $2)`,
+    [appId, actors.both]
+  );
+  const { rows: bothSessionRows } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name)
+     VALUES ($1, $2, 'activity-both') RETURNING id`,
+    [appId, actors.both]
+  );
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content)
+     VALUES ($1, 'user', 'direct change beside the bot run')`,
+    [bothSessionRows[0].id]
+  );
+
+  // The bot's metered spend is not a person's spend: it leaves the spend
+  // charts through the same exclusion, in both checkbox states.
+  await pool.query(
+    `INSERT INTO llm_usage (user_id, date, total_cost_cents)
+     VALUES ($1, CURRENT_DATE, 12345)`,
+    [bot]
+  );
+
   // Mount the actual route against this disposable database.
   require('../src/db/pool').getPool = () => pool;
   delete require.cache[require.resolve('../src/routes/dashboard')];
@@ -284,28 +368,53 @@ test('active-user analytics count recorded human participation once per UTC day'
   const yesterday = (await pool.query(
     "SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 1, 'YYYY-MM-DD') AS day"
   )).rows[0].day;
-  assert.equal(general.daily.find((row) => row.day === today).dau, 12,
-    'each human-only surface counts, while duplicates and generated rows do not');
+  assert.equal(general.daily.find((row) => row.day === today).dau, 15,
+    'each human-only surface counts, the people behind bot work are credited, '
+    + 'and duplicates, generated rows and the synthetic bot do not');
   assert.equal(general.daily.find((row) => row.day === yesterday).dau, 1,
     'the message one second before midnight belongs to the previous UTC day');
 
   const withAdmins = await get('/api/admin/analytics/general-users?includeAdmins=true');
-  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 14,
-    'full and view-only admins enter together only when requested');
+  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 17,
+    'full and view-only admins enter together only when requested, and the bot never does');
 
   const overview = await get('/api/admin/analytics/overview');
-  assert.equal(overview.wau, 13);
-  assert.equal(overview.mau, 13);
+  assert.equal(overview.wau, 16);
+  assert.equal(overview.mau, 16);
   const overviewWithAdmins = await get('/api/admin/analytics/overview?includeAdmins=true');
-  assert.equal(overviewWithAdmins.wau, 15);
-  assert.equal(overviewWithAdmins.mau, 15);
+  assert.equal(overviewWithAdmins.wau, 18);
+  assert.equal(overviewWithAdmins.mau, 18);
 
   const retention = await get('/api/admin/analytics/retention');
   assert.equal(retention.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 13,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 16,
   'retention uses the same de-duplicated human-action surface');
   const retentionWithAdmins = await get('/api/admin/analytics/retention?includeAdmins=true');
   assert.equal(retentionWithAdmins.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 15,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 18,
   'retention applies the same full and view-only admin inclusion switch');
+
+  // The bot's own session leaves the session counters and the top-users
+  // list; the person who also worked directly still ranks with exactly
+  // that one session of their own.
+  const top = await get('/api/admin/analytics/top-users');
+  assert.ok(!top.users.some((row) => row.name === 'activity_homeroom_bot'),
+    'the synthetic bot is not a top user');
+  const bothRow = top.users.find((row) => /bot-and-direct/.test(row.name));
+  assert.ok(bothRow, 'the person behind a bot run and a direct session is counted');
+  assert.equal(bothRow.sessions, 1, 'and appears once, with only their own session');
+
+  // The bot's metered spend leaves the spend charts with the box off AND on.
+  const spend = await get('/api/admin/analytics/spend');
+  assert.equal(spend.days[spend.days.length - 1].platform_cents, 0,
+    'the bot\'s llm_usage spend is dropped with the box off');
+  const spendWithAdmins = await get('/api/admin/analytics/spend?includeAdmins=true');
+  assert.equal(spendWithAdmins.days[spendWithAdmins.days.length - 1].platform_cents, 0,
+    'the bot\'s llm_usage spend is dropped with the box on too');
+  const byBuilder = await get('/api/admin/analytics/spend-by-builder');
+  assert.ok(!byBuilder.builders.some((row) => row.name === 'activity_homeroom_bot'),
+    'the bot is not a spend-by-builder entry');
+  const byBuilderWithAdmins = await get('/api/admin/analytics/spend-by-builder?includeAdmins=true');
+  assert.ok(!byBuilderWithAdmins.builders.some((row) => row.name === 'activity_homeroom_bot'),
+    'the bot is not a spend-by-builder entry with the box on either');
 });

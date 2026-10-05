@@ -5,6 +5,10 @@
 // receipt does not prove complete client coverage, so the UI never calls a
 // missing dapp receipt abandonment. Historical opening backfills are excluded:
 // observed app opens carry source=app_tab, while live PR opens carry prNumber.
+// Test accounts and the synthetic Homeroom bot user are nobody's real use and
+// are in neither cohort; the bot's own sessions are not reattributed to the
+// person who asked for them — milestones are keyed to sessions and users as
+// they were recorded.
 
 const OBSERVATION_WINDOW_DAYS = 30;
 const COHORT_DAYS = Object.freeze({
@@ -33,6 +37,7 @@ WITH coverage AS (
      AND ($2::timestamptz IS NULL OR u.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
      AND u.test_account_created_at IS NULL
+     AND NOT u.is_synthetic
 ), journeys AS (
   SELECT b.*, opened.opened_at, returned.returned_at,
          engaged.engaged_at, creator.creator_at,
@@ -281,6 +286,7 @@ WITH coverage AS (
      AND ($2::timestamptz IS NULL OR cs.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
      AND u.test_account_created_at IS NULL
+     AND u.is_synthetic IS NOT TRUE
 ), opened AS (
   SELECT b.*, op.opened_recorded_at,
          promo_any.promoted_independent_at,

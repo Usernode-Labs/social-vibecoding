@@ -213,8 +213,11 @@ test('includeAdmins gates the SQL: NOT-IN admin filter present when off, dropped
     'with the box on, admins are included so the NOT-IN filter is dropped (the split FILTER does the work)');
 });
 
-test('test accounts are left out of the analytics whatever the admin box says', async () => {
-  const testsOut = /IS NULL OR [\w.]+ NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL\)/;
+test('test accounts and the synthetic bot are left out of the analytics whatever the admin box says', async () => {
+  // The NULL branch wraps BOTH always-on NOT-IN tests (test accounts and the
+  // synthetic Homeroom bot user), so a NULL-credited row keeps counting
+  // exactly where it did before.
+  const testsOut = /IS NULL OR \([\w.]+ NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL\)\s+AND [\w.]+ NOT IN \(SELECT id FROM users WHERE is_synthetic\)\)/;
   for (const flag of ['false', 'true']) {
     lastQueries = [];
     await get(`/api/admin/analytics/growth?includeAdmins=${flag}`);
@@ -228,6 +231,8 @@ test('test accounts are left out of the analytics whatever the admin box says', 
   const funnels = read('src/services/analytics-funnels.js');
   assert.equal((funnels.match(/AND u\.test_account_created_at IS NULL/g) || []).length, 2,
     'both funnels\' cohorts leave test accounts out');
+  assert.equal((funnels.match(/AND NOT u\.is_synthetic|AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
+    'both funnels\' cohorts leave the synthetic bot out');
 });
 
 // ── 2. Source guards — route SQL companions ──────────────────────────────

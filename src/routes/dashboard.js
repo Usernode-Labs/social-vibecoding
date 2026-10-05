@@ -32,15 +32,17 @@ const llm = require('../services/llm');
 // Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
 // is false (the default) every analytics query drops rows attributed to
 // an admin account (users.is_admin = TRUE — view-only admins included).
-// Test accounts (services/test-accounts.js) are dropped whatever the box
-// says: they are nobody's real use, and with the box on they would land in
-// the non-admin column. That half keeps a row with no user (a NULL `col`),
-// as the query did before it. `col` is the user-id column to test in the
-// calling query. Returns a fragment that begins with the given keyword (AND
-// by default) so it can be spliced into an existing WHERE clause or stand
-// alone.
+// Test accounts (services/test-accounts.js) and the synthetic Homeroom bot
+// user (services/homeroom-bot.js, users.is_synthetic) are dropped whatever
+// the box says: they are nobody's real use, and with the box on they would
+// land in the non-admin column. That half keeps a row with no user (a NULL
+// `col`), as the query did before it. `col` is the user-id column to test
+// in the calling query. Returns a fragment that begins with the given
+// keyword (AND by default) so it can be spliced into an existing WHERE
+// clause or stand alone.
 function adminFilter(col, includeAdmins, keyword = 'AND') {
-  const tests = `(${col} IS NULL OR ${col} NOT IN (SELECT id FROM users WHERE test_account_created_at IS NOT NULL))`;
+  const tests = `(${col} IS NULL OR (${col} NOT IN (SELECT id FROM users WHERE test_account_created_at IS NOT NULL)
+               AND ${col} NOT IN (SELECT id FROM users WHERE is_synthetic)))`;
   if (includeAdmins) return `${keyword} ${tests}`;
   return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin) AND ${tests}`;
 }
@@ -103,8 +105,20 @@ const UTC_TODAY_SQL = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
 // never from app_favorites state that non-user workflows also populate.
 // Actions removed before their event existed cannot be rebuilt.
 //
+// Two bot-mediated arms credit the human behind Homeroom bot work. A queued
+// request credits the person who asked for it (requested_by, falling back
+// to the payer), dated by when it was enqueued. A charged run credits its
+// recorded payer, falling back to the requester of record, dated by when
+// the run was created — the same attribution rule the weekly building
+// allowance applies (weeklySpentCents in services/homeroom-bot-dm.js), so
+// "whose building time is this" means the same thing in both places.
+// Uncharged runs (restart re-reads, its own failing-checks fixes, shadow
+// builds) and rows with no credited person count for nobody.
+//
 // Built per request so the same admin-exclusion predicate (users.is_admin,
-// which includes full and view-only admins) is present in every UNION arm.
+// which includes full and view-only admins; the synthetic bot) is present
+// in every UNION arm, applied to the credited person where a bot arm
+// credits one.
 function activityDaysSql(includeAdmins) {
   const aa = adminFilter('aa.user_id', includeAdmins);
   const cm = adminFilter('cm.user_id', includeAdmins);
@@ -116,6 +130,8 @@ function activityDaysSql(includeAdmins) {
   const issueVotes = adminFilter('iv.user_id', includeAdmins);
   const kudos = adminFilter('pk.giver_user_id', includeAdmins);
   const durable = adminFilter('e.user_id', includeAdmins);
+  const botQueue = adminFilter('COALESCE(q.requested_by, q.payer_user_id)', includeAdmins);
+  const botRuns = adminFilter('COALESCE(r.payer_user_id, q.user_id)', includeAdmins);
   return `
   SELECT aa.user_id, aa.date AS day
     FROM app_activity aa
@@ -167,6 +183,21 @@ function activityDaysSql(includeAdmins) {
        )
      )
      ${durable}
+  UNION
+  -- A person asked the bot to look at something. Automated refreshes and
+  -- the bot's own re-queues name nobody, so their NULL credit drops out.
+  SELECT COALESCE(q.requested_by, q.payer_user_id),
+         (q.enqueued_at AT TIME ZONE 'UTC')::date AS day
+    FROM homeroom_bot_queue q
+   WHERE COALESCE(q.requested_by, q.payer_user_id) IS NOT NULL ${botQueue}
+  UNION
+  -- The bot turned, or built, for somebody: charged runs only, payer
+  -- first, the requester of record as the fallback.
+  SELECT COALESCE(r.payer_user_id, q.user_id),
+         (r.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM homeroom_bot_runs r
+    LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+   WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) IS NOT NULL ${botRuns}
 `;
 }
 
@@ -177,6 +208,10 @@ function dashboardRoutes(config) {
   router.use('/api/admin/analytics', adminMiddleware);
 
   // ── Overview counters ──────────────────────────────────────
+  //
+  // WAU/MAU read the same activity surface as every other chart here,
+  // including the bot-mediated arms that credit the person behind
+  // Homeroom bot work.
   router.get('/api/admin/analytics/overview', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
@@ -362,8 +397,10 @@ function dashboardRoutes(config) {
   //
   // The classic signup-week retention triangle. For each signup cohort
   // and each week offset since signup, the share of the cohort that was
-  // active that week (active = recorded participation). Capped to the most
-  // recent 12 cohorts for readability. The frontend re-pivots this same
+  // active that week (active = recorded participation, including
+  // bot-mediated work credited to the person behind Homeroom bot). Capped
+  // to the most recent 12 cohorts for readability. The frontend re-pivots
+  // this same
   // payload into either a calendar-aligned or cohort-age-aligned grid;
   // the old WAU/MAU stickiness series it used to return is superseded by
   // the General-users daily charts (/api/admin/analytics/general-users).
@@ -441,7 +478,8 @@ function dashboardRoutes(config) {
   // "General user" = anyone counted active that day, using the same human-
   // action surface as retention/overview (activityDaysSql: project use;
   // human project, private/group/channel, change, Mayor, and Global Chat
-  // messages; proposal/request votes; proposal kudos; explicit favorites).
+  // messages; proposal/request votes; proposal kudos; explicit favorites;
+  // bot-mediated work credited to the person behind Homeroom bot).
   // There is no login/sign-in event, so these recorded actions are the best
   // available historical proxy for "signed in". Old idle-inclusive heartbeat
   // rows and actions removed before durable emission remain known limits;
