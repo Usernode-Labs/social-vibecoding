@@ -287,7 +287,12 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
 // application_name) and retry. Dumps always finish, so waiting in bounded,
 // observable slices strictly dominates one unbounded invisible wait.
 //
-// The statements are idempotent, so a mid-script timeout is safe to rerun:
+// Live queries can also lock these tables in a different order (for example,
+// reading apps before users while the schema alters users before apps).
+// PostgreSQL breaks that cycle by aborting a transaction with 40P01. Retry
+// that deadlock just like a lock timeout, within the same attempt budget.
+//
+// The statements are idempotent, so a timeout or deadlock is safe to rerun:
 // the simple-query protocol runs the whole multi-statement string in one
 // implicit transaction, and a failure rolls all of it back.
 const SCHEMA_LOCK_TIMEOUT = '10s';
@@ -302,18 +307,24 @@ async function applySchemaWithLockRetry(pool, schema) {
       await client.query(schema);
       return;
     } catch (err) {
-      if (err.code !== '55P03' || attempt >= SCHEMA_APPLY_RETRIES) throw err;
-      log.warn('db', 'Schema apply blocked on a table lock; retrying', {
-        attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
+      const retryable = err.code === '55P03' || err.code === '40P01';
+      if (!retryable || attempt >= SCHEMA_APPLY_RETRIES) throw err;
+      const message = err.code === '40P01'
+        ? 'Schema apply deadlocked; retrying'
+        : 'Schema apply blocked on a table lock; retrying';
+      log.warn('db', message, {
+        code: err.code, attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
         lockTimeout: SCHEMA_LOCK_TIMEOUT,
       });
-      await logSchemaApplyBlockers(pool);
-      await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
     } finally {
       // Destroy rather than release: the session-level lock_timeout must
       // not leak back into the shared pool.
       client.release(true);
     }
+    // Free the connection before diagnostics borrow from the same pool;
+    // keeping it checked out would stall forever with a one-connection pool.
+    await logSchemaApplyBlockers(pool);
+    await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
   }
 }
 
