@@ -141,7 +141,11 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
   const walk = (node: Node) => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === 3) decorateText(child as Text);
-      else if (child.nodeType === 1 && !/^(A|CODE|PRE)$/i.test((child as Element).tagName)) walk(child);
+      // A `gc-mention` span is renderMarkdown's own mention chip
+      // (DevChat._chipMentions): already decorated, so re-wrapping it would
+      // nest the chip.
+      else if (child.nodeType === 1 && !/^(A|CODE|PRE)$/i.test((child as Element).tagName)
+        && !/\bgc-mention\b/.test((child as Element).className)) walk(child);
     }
   };
   const decorateText = (textNode: Text) => {

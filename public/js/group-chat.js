@@ -4194,6 +4194,9 @@ function decorateMentionsAndRefs(node) {
     } else if (child.nodeType === 1) { // element
       const tag = (child.tagName || '').toUpperCase();
       if (GC_DECORATE_SKIP.has(tag)) continue;
+      // renderMarkdown chips mentions itself now (DevChat._chipMentions);
+      // re-wrapping one would nest the chip.
+      if (/\bgc-mention\b/.test(child.className || '')) continue;
       decorateMentionsAndRefs(child);
     }
   }

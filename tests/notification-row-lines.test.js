@@ -152,6 +152,21 @@ test('every kind names itself the same way for every row of that kind', async ()
   }
 });
 
+// #3952: a description mention references the change, not a chat message, so
+// its preview is the change's title; a chat mention keeps the message.
+test('a mention of a change previews the change, a chat mention previews the message', async () => {
+  const described = await lines({
+    kind: 'mention', messageContent: null, chatMessageId: null, sessionId: 901,
+    sessionTitle: 'Tidy the garden beds',
+  });
+  assert.equal(described.label, 'Mentioned you');
+  assert.equal(described.subject, 'Tidy the garden beds');
+  const chat = await lines({
+    kind: 'mention', messageContent: 'can you take a look?', sessionTitle: 'Tidy the garden beds',
+  });
+  assert.equal(chat.subject, 'can you take a look?');
+});
+
 // #3181: the row the bell shows when a dev-session turn stopped before
 // finishing. The app is on the meta line, never in the label; the subject
 // falls back the way session_done's does; and an agent session's change says

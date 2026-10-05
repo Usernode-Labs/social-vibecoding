@@ -2004,6 +2004,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch (err) {
           log.warn('sessions', 'Description broadcast failed', { sessionId: id, message: err.message });
         }
+        // Mentions in the saved text ring the people named — but only a save
+        // that CHANGED the text (an unchanged save, or the retry of a lost
+        // response, is a no-op) and never the save itself: a mention failure
+        // must not fail it, like the broadcast guard above.
+        if (result.body.changed) {
+          try {
+            const rows = await notifications.createSessionMentionNotifications(pool, {
+              appId: result.session.app_id,
+              sessionId: id,
+              senderId: req.user.id,
+              // What is parsed is what is stored: the description as saved
+              // (trimmed by parseEdit), which the edit leaves on the session.
+              content: result.session.pr_summary_md,
+            });
+            for (const row of rows) await notifications.hydrateAndPush(pool, row);
+          } catch (err) {
+            log.warn('sessions', 'Description mentions failed', { sessionId: id, message: err.message });
+          }
+        }
       }
       return res.status(result.status).json(result.body);
     } catch (err) {

@@ -9105,8 +9105,90 @@ const DevChat = {
         ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
       ALLOW_DATA_ATTR: false,
     });
-    if (cacheable && typeof out === 'string') DevChat._mdCachePut(text, flags, out);
-    return out;
+    // The @mention pass runs AFTER sanitize and BEFORE the cache put, so the
+    // cached HTML is the chipped HTML (see _chipMentions).
+    const chipped = DevChat._chipMentions(out);
+    if (cacheable && typeof chipped === 'string') DevChat._mdCachePut(text, flags, chipped);
+    return chipped;
+  },
+
+  // ── @mentions in rendered markdown ────────────────────────────────
+  //
+  // renderMarkdown is the one renderer issue bodies, issue comments, change
+  // descriptions, specs and the session discussion share, so it is where an
+  // `@name` written in any of them becomes the chat's mention chip
+  // (`.gc-mention`, self-tinted when it is the reader's own name). The token
+  // rules are the server mention parser's (src/services/notifications.js
+  // MENTION_RE) with the chat tokenizer's one display-form extension
+  // ("@Homeroom bot" is one mention, group-chat.js) — the chat surfaces
+  // re-decorate this output and would otherwise split the bot's chip.
+  //
+  // Like the chat's own decorate passes (group-chat.js
+  // decorateMentionsAndRefs, features/messages/channels.ts decorateRefs),
+  // the pass parses the sanitized HTML and walks TEXT NODES ONLY: no
+  // attribute value is ever rewritten, nothing under a link or code is
+  // entered, and a text node already inside a `gc-mention` span is left
+  // alone so those decorate passes render one chip, not nested ones. Names
+  // are chipped exactly as written and need not resolve to anyone. "Me"
+  // reads App.user the way group-chat.js does, and the pass is a no-op
+  // without a DOM (the SSG prerender evaluates this module in Node).
+  _MENTION_TOKEN_RE: /(^|[^\w])@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)/gi,
+
+  _chipMentions(html) {
+    if (typeof document === 'undefined' || !document.createElement) return html;
+    const me = (typeof App !== 'undefined' && App.user && App.user.username
+      ? App.user.username : '').toLowerCase();
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    const walk = (node) => {
+      for (const child of Array.prototype.slice.call(node.childNodes)) {
+        if (child.nodeType === 3) {
+          DevChat._chipMentionsInText(child, me);
+        } else if (child.nodeType === 1) {
+          const tag = (child.tagName || '').toUpperCase();
+          if (tag === 'A' || tag === 'CODE' || tag === 'PRE') continue;
+          if (/\bgc-mention\b/.test(child.className || '')) continue;
+          walk(child);
+        }
+      }
+    };
+    walk(root);
+    return root.innerHTML;
+  },
+
+  // Swap one text node for [text, span, text, …] around its `@name` tokens.
+  // Spans are built through DOM APIs, so no text is ever re-parsed as
+  // markup. A run with no tokens is left untouched.
+  _chipMentionsInText(textNode, me) {
+    const value = textNode.nodeValue || '';
+    const re = DevChat._MENTION_TOKEN_RE;
+    re.lastIndex = 0;
+    const parts = [];
+    let pos = 0;
+    let m;
+    while ((m = re.exec(value)) !== null) {
+      parts.push({ text: value.slice(pos, m.index) });
+      parts.push({ text: m[1] });
+      parts.push({ mention: m[2] });
+      pos = m.index + m[0].length;
+    }
+    if (!parts.length) return;
+    parts.push({ text: value.slice(pos) });
+    const parent = textNode.parentNode;
+    if (!parent) return;
+    const frag = document.createDocumentFragment();
+    for (const part of parts) {
+      if (part.mention != null) {
+        const span = document.createElement('span');
+        span.className = part.mention.toLowerCase() === me
+          ? 'gc-mention gc-mention-self' : 'gc-mention';
+        span.textContent = `@${part.mention}`;
+        frag.appendChild(span);
+      } else if (part.text) {
+        frag.appendChild(document.createTextNode(part.text));
+      }
+    }
+    parent.replaceChild(frag, textNode);
   },
 
   // ── The rendered-markdown cache ───────────────────────────────────

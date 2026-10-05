@@ -30,7 +30,7 @@ const SRC = fs.readFileSync(
   'utf8',
 ).replace(/^import \{ agoStamp \}.*$/m, '');
 
-function load({ controller = true, groupChat = true } = {}) {
+function load({ controller = true, groupChat = true, appTab = true } = {}) {
   const calls = [];
   const location = { search: '', hash: '' };
   const sandbox = {
@@ -48,7 +48,9 @@ function load({ controller = true, groupChat = true } = {}) {
     PlatformUI: { isTouch: () => false, toast() {} },
     App: {
       user: { id: 1 },
-      openAppTab: (slug, tab, opts) => { calls.push(['openAppTab', slug, tab, opts || null]); },
+      // `appTab: false` is the shell-still-starting case: openAppTab is not
+      // there yet and the router falls back to the hash.
+      ...(appTab ? { openAppTab: (slug, tab, opts) => { calls.push(['openAppTab', slug, tab, opts || null]); } } : {}),
       _isScreenVisible: () => false,
     },
   };
@@ -149,6 +151,30 @@ test('a proposal row still opens its proposal', () => {
   N.items = [row({ kind: 'pr_proposed', sessionId: 77 })];
   N._onItemClick(1);
   assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'proposals', ref: 77 }]]);
+});
+
+// #3952: a description mention references the CHANGE (session_id set, no
+// chat message), so the row opens that change's page like a proposal row —
+// not the discussion at the newest, which is all a row without a message id
+// could open. A chat mention keeps its message.
+test('a mention of a change opens the change; a chat mention keeps its message', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'mention', sessionId: 901, chatMessageId: null })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'proposals', ref: 901 }]]);
+
+  const chat = load();
+  chat.N.items = [row({ kind: 'mention', sessionId: null, chatMessageId: 5552 })];
+  chat.N._onItemClick(1);
+  assert.deepEqual(nav(chat.calls), [['reveal', 'garden-ab12', 5552], ['discussion', 'garden-ab12']],
+    'a chat mention still opens the discussion on its message');
+});
+
+test('before the Messages island publishes, a change mention hashes to the proposal route', () => {
+  const { N, calls, location } = load({ controller: false, appTab: false });
+  N.items = [row({ kind: 'mention', sessionId: 901, chatMessageId: null })];
+  N._onItemClick(1);
+  assert.equal(location.hash, '#app/garden-ab12/dev/proposals/901');
 });
 
 test('a saved app message opens the discussion on it, and stays saved', () => {

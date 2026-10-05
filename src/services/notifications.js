@@ -296,6 +296,57 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
   return rows;
 }
 
+// Mentions written in a CHANGE's description (PATCH /api/sessions/:id/
+// description). Modelled line-for-line on createMentionNotifications — the
+// same parse, retired-handle resolution, synthetic filter, collab-private
+// member filter and blocked-pair insert guard — but the row references the
+// CHANGE (session_id set, chat_message_id left NULL) so the bell opens the
+// change's page and its preview is the change's title: listForUser/
+// hydrateAndPush already join chat_sessions on session_id, and
+// CHAT_SENDER_ACCESS_SQL passes a NULL chat_message_id. Self-mentions are
+// not filtered, matching chat.
+async function createSessionMentionNotifications(pool, { appId, sessionId, senderId, content }) {
+  const names = parseMentions(content);
+  if (!names.length || !appId || !sessionId) return [];
+
+  let users = await resolveUsers(pool, names);
+  // B9: a platform account (the Homeroom bot) reads no notifications — the
+  // same synthetic filter the chat mention path applies.
+  if (users.length) {
+    const { rows: people } = await pool.query(
+      'SELECT id FROM users WHERE id = ANY($1::int[]) AND is_synthetic = FALSE', [users.map((u) => u.id)],
+    );
+    const real = new Set(people.map((r) => r.id));
+    users = users.filter((u) => real.has(u.id));
+  }
+  const allowedIds = new Set(
+    await filterToCollaborators(pool, appId, users.map((u) => u.id))
+  );
+  const recipients = users.filter((u) => allowedIds.has(u.id));
+  if (!recipients.length) return [];
+
+  const values = [];
+  const params = [];
+  recipients.forEach((u, i) => {
+    const base = i * 5;
+    values.push(`($${base + 1}::int, $${base + 2}::int, $${base + 3}::int, $${base + 4}::int, $${base + 5}::varchar)`);
+    params.push(u.id, appId, sessionId, senderId, 'mention');
+  });
+
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind
+       FROM (VALUES ${values.join(', ')}) AS v(user_id, app_id, session_id, source_user_id, kind)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = v.user_id AND blocked.blocked_user_id = v.source_user_id
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    params
+  );
+  return rows;
+}
+
 // #2387: a reply in an app-chat reply thread (chat_messages thread_type
 // 'message', thread_ref = the root). Addressed to the root's author and to
 // everybody who replied earlier, minus:
@@ -1802,6 +1853,7 @@ module.exports = {
   parseMentions,
   resolveUsers,
   createMentionNotifications,
+  createSessionMentionNotifications,
   createReplyNotification,
   createThreadReplyNotifications,
   createReactionNotification,

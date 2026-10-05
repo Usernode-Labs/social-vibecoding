@@ -1096,7 +1096,12 @@ const Notifications = {
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
       ]);
-      const toProposals = proposalKinds.has(item.kind);
+      // A description mention names its change, not a chat message: the row
+      // carries the session (no chatMessageId) and opens that change's page,
+      // like the proposal rows. A chat mention keeps opening the discussion
+      // on its message.
+      const toProposals = proposalKinds.has(item.kind)
+        || (item.kind === 'mention' && item.sessionId && !item.chatMessageId);
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
@@ -2791,7 +2796,10 @@ function rowView(n) {
         : n.kind === 'reply' ? 'Replied to you'
           // #2387: somebody answered in a reply thread you started or joined.
           : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
-      (n.messageContent || '').slice(0, 140),
+      // A description mention references the change, not a chat message, so
+      // its preview is the change's title (serialize carries sessionTitle
+      // for every session-scoped row).
+      ((n.messageContent || (n.kind === 'mention' ? n.sessionTitle : null)) || '').slice(0, 140),
     ),
   };
 }
