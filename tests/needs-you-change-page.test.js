@@ -137,16 +137,18 @@ test('the hero: the eyebrow with its state, the age, the title, the by-line, the
 
 // First-session run-through, 4 Oct 2026: a merged change's page read
 // "CHANGE · MERGED" over a filled green "✓ Merged". A newcomer's word is
-// live, and a done state is quiet: grey with a check, as "Joined" is.
-test('a merged change reads Live in the eyebrow and the pill, and the pill is quiet', () => {
+// live. #3848 also drew the pill grey, as a quiet done state; #3873 brought
+// the green back for Live, so the pill is the green "✓ Live".
+test('a merged change reads Live in the eyebrow and the pill, and the pill is green', () => {
   const av = context();
   const merged = { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', mergeRequirements: undefined };
   const { v, page } = render(av, merged);
   assert.equal(v.body.hero.status, 'Live');
   assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live<\/span>/);
   const hero = page.slice(page.indexOf('data-topic-sheet="hero"'));
-  assert.match(hero, /class="gc-vote-count gc-vote-count-neutral dev-status-pill[^"]*"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
-  assert.doesNotMatch(page, /Merged|gc-vote-count-ok/);
+  assert.match(hero, /class="gc-vote-count gc-vote-count-ok dev-status-pill[^"]*"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+  assert.doesNotMatch(hero, /gc-vote-count-neutral/, 'not the grey of #3848');
+  assert.doesNotMatch(page, /Merged/);
   // While the rollout is pending or failed the eyebrow does not claim it.
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'pending' }).status, 'Going live');
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'failed' }).status, 'Not live yet');

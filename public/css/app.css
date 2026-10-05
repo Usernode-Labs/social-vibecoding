@@ -13959,9 +13959,8 @@ body.is-offline [data-offline-disabled] {
 
    A LANDED CHANGE is a plain card too. It used to wear an emerald wash and
    a 3px left edge as the feed's "the stream crossed a line" marker; its bar
-   says "✓ Live" and its edge is the quiet grey of a done state (the card's
-   own `[data-edge="neutral"]`), which is the same fact said once instead of
-   three times. */
+   says "✓ Live" and its edge is green (the card's own `[data-edge="ok"]`,
+   #3873), which is the same fact said once instead of three times. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-entry {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
