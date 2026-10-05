@@ -46,6 +46,8 @@ export interface HomeroomBotMeta {
   live?: boolean;
   /** B4: an activity card's request, in the words its person asked for it. */
   askedText?: string;
+  /** #3870: a ready card's change, by its own title (its proposal's). */
+  changeTitle?: string;
   /** B5: the bot's hello, which leads the card it introduces. */
   hello?: string;
   /**

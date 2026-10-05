@@ -23,6 +23,9 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, Homer
  *   Change something  quotes the card in the composer, for the bot to
  *                     change it (its revise path).
  *
+ * Under its title it says what the change is (changeLine): the change's own
+ * title, else the request's, then what its person asked, if they did.
+ *
  * A change its before & after shots showed part of failing, which the bot
  * could not fix in its own round, says what does not work instead of
  * calling itself ready (brokenLine).
@@ -52,6 +55,21 @@ export function readyTitle(meta: HomeroomBotMeta): string {
   const app = meta.appName || meta.appSlug || 'Your project';
   const who = meta.ready?.group && !meta.firstVersion ? `Your change to ${app}` : app;
   return meta.ready?.broken?.length ? `${who} is built, but not everything works yet` : `${who} is ready to try`;
+}
+
+/** Pure: words compared loosely, so a title that only repeats what they asked is said once. */
+const same = (a: string, b: string) => a.trim().toLowerCase().replace(/[\s.!?]+$/, '') === b.trim().toLowerCase().replace(/[\s.!?]+$/, '');
+
+/**
+ * Pure (#3870): what the change is, under the title: its own title (the
+ * proposal's), else the request it answers. Null when there is neither, or
+ * when it only repeats what they asked ("You asked: …" says it already).
+ */
+export function changeLine(meta: HomeroomBotMeta): string | null {
+  const what = (meta.changeTitle || meta.issueTitle || '').trim();
+  if (!what) return null;
+  if (meta.askedText && same(what, meta.askedText)) return null;
+  return what;
 }
 
 /**
@@ -177,6 +195,7 @@ export function ReadyCardView({
   const waiting = state === 'open' ? waitingLine(meta.ready, canApprove) : null;
   const next = meta.goesLive || goesLive || goesLiveFromReady(meta.ready);
   const broken = state === 'open' ? brokenLine(meta.ready) : null;
+  const what = changeLine(meta);
   const line = readyLine(state, next, now || new Date(Date.now()), locale);
   return (
     <div
@@ -191,6 +210,7 @@ export function ReadyCardView({
         </IconTile>
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
+          {what ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-change="">{what}</p> : null}
           {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
           {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
