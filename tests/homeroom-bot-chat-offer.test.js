@@ -40,6 +40,126 @@ test('WP-C: the offer card, and the line under a first request', () => {
   assert.equal(STAYS_LINE, 'It stays in the project’s requests with your name on it.');
 });
 
+// 5 October 2026 (Evan, on his phone): "if you choose to submit it an idea,
+// it should also at that point share it with the group that homeroom bot is
+// looking at it? Not just stay private at that point". The room's sign is the
+// chip on the message, so Suggest it must put it there itself, in the same
+// request, rather than leave it to the bot's next moment; and the chip must
+// say in words that Homeroom bot has it. Without PostgreSQL: the pool answers
+// the path's own queries, and nothing but Suggest it runs.
+test('WP-C: Suggest it puts the chip on the message for the whole room at once, saying Homeroom bot has it', async (t) => {
+  const { BotStatusChip, BotRequestCardView, cardWords, sharedNow, SHARED_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const APP = { id: 7, slug: 'page-turners', name: 'Page Turners', repo_url: 'https://github.com/example/page-turners' };
+  const priya = { id: 21, username: 'priya', hasPlatformAccess: true };
+  const MSG = 501;
+  const TITLE = 'Keep a list of the books we have read';
+  const TEXT = 'Could it also keep a list of the books we have read, with star ratings?';
+  const suggest = async ({ held }) => {
+    const order = [];
+    const frames = [];
+    const pushed = [];
+    let request = {
+      chat_message_id: MSG, app_id: APP.id, requester_id: priya.id, kind: 'offer', title: TITLE, issue_number: null, session_id: null,
+    };
+    let chip = null;
+    const pool = {
+      async query(sql, params = []) {
+        const s = String(sql).replace(/\s+/g, ' ').trim();
+        if (s.startsWith('SELECT id, user_id, content, thread_type')) {
+          return { rows: [{ id: MSG, user_id: priya.id, content: TEXT, thread_type: null, msg_type: 'message', deleted_at: null, posted_via: null }] };
+        }
+        if (s.startsWith('SELECT * FROM chat_bot_requests WHERE chat_message_id')) return { rows: [request] };
+        if (s.startsWith('SELECT COUNT(*)::int AS n FROM chat_bot_requests')) return { rows: [{ n: 0 }] };
+        if (s.startsWith('INSERT INTO chat_bot_requests')) {
+          request = { ...request, kind: params[3], issue_number: params[4], title: params[5], session_id: params[6] };
+          order.push('recorded');
+          return { rows: [request] };
+        }
+        if (s.startsWith('SELECT n.id FROM notifications')) return { rows: [] };
+        if (s.includes("m.metadata->'botRequest' AS chip")) {
+          return {
+            rows: [{
+              chat_message_id: MSG, kind: request.kind, issue_number: request.issue_number, app_id: APP.id, chip,
+              queued: true, queue_waiting: true, queue_reason: 'chat_request', first_version: false, issue_status: 'open',
+              run_id: null, session_id: null, session_status: null, check_state: null,
+            }],
+          };
+        }
+        if (s.startsWith('SELECT MIN(github_issue_number)')) return { rows: [{ n: request.issue_number }] };
+        if (s.startsWith('UPDATE chat_messages SET metadata')) {
+          chip = params[2] ? JSON.parse(params[2]) : null;
+          order.push('chip');
+          return { rows: [{ id: MSG }] };
+        }
+        throw new Error(`a query Suggest it should not make: ${s.slice(0, 90)}`);
+      },
+    };
+    const deps = {
+      dm: { hasBot: () => true, botAccount: async () => ({ id: 1 }), typicalMinutes: async () => 10 },
+      botSvc: {
+        readSettings: async () => ({}),
+        firstVersionHolds: async () => new Set(held ? [APP.id] : []),
+        heldForFirstVersion: (holds, { appId }) => holds.has(Number(appId)),
+      },
+      liveSvc: { isLiveFor: () => true },
+      mayor: { fileRequest: async () => { order.push('filed'); return { issueNumber: 4, queueId: null }; } },
+      ws: {
+        broadcast: (appId, frame) => { order.push('broadcast'); frames.push({ appId, frame }); },
+        pushToUser: (userId, frame) => pushed.push({ userId, frame }),
+      },
+    };
+    const out = await botChat.requestFromMessage(pool, null, { app: APP, user: priya, messageId: MSG, deps });
+    return { out, order, frames, pushed, chip };
+  };
+
+  await t.test('the first version is live: Homeroom bot is looking at it', async () => {
+    const { out, order, frames, pushed, chip } = await suggest({ held: false });
+    assert.equal(out.ok, true);
+    assert.deepEqual([out.card.kind, out.card.issueNumber, out.card.first, out.card.state.stage], ['filed', 4, true, 'reading']);
+    // Filed, recorded, then the chip set and sent to everybody in the room,
+    // all before Suggest it answers.
+    assert.deepEqual(order, ['filed', 'recorded', 'chip', 'broadcast']);
+    assert.deepEqual(chip, { issueNumber: 4, status: 'reading' });
+    assert.deepEqual(frames, [{ appId: APP.id, frame: { type: 'bot_request_status', messageId: MSG, botRequest: { issueNumber: 4, status: 'reading' } } }]);
+    // The card is hers alone; the chip is the room's.
+    assert.deepEqual(pushed.map((p) => [p.userId, p.frame.type]), [[priya.id, 'bot_request_card']]);
+    const html = renderToHtml(createElement(BotStatusChip, { chip }));
+    assert.match(html, /<span[^>]*data-bot-request="reading"[^>]*>.*👀.*Homeroom bot is looking at this</);
+    // Her card says the room can see it, under what it said before.
+    assert.equal(cardWords(out.card), `Got it: ${TITLE}. Usually about 10 minutes. It stays in the project’s requests with your name on it.`);
+    assert.equal(sharedNow(out.card), true);
+    const card = renderToHtml(createElement(BotRequestCardView, { card: out.card }));
+    assert.match(card, /Only you can see this/);
+    assert.ok(card.includes(`data-bot-request-shared="">${SHARED_LINE}</p>`));
+  });
+
+  await t.test('the first version is still being built: Homeroom bot has it, never looking at it yet', async () => {
+    const { out, order, frames, chip } = await suggest({ held: true });
+    assert.equal(out.card.state.stage, 'waiting_first_version');
+    assert.deepEqual(order, ['filed', 'recorded', 'chip', 'broadcast']);
+    assert.deepEqual(chip, { issueNumber: 4, status: 'waiting_first_version' });
+    assert.equal(frames[0].frame.botRequest.status, 'waiting_first_version');
+    const html = renderToHtml(createElement(BotStatusChip, { chip }));
+    assert.match(html, /⏳.*Homeroom bot has this</);
+    assert.doesNotMatch(html, /looking at/);
+    assert.equal(sharedNow(out.card), true);
+  });
+});
+
+test('WP-C: the card says the room can see it only while the bot has it and has not started building', () => {
+  const { sharedNow, SHARED_LINE, BotRequestCardView } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  assert.equal(SHARED_LINE, 'Everyone here can see Homeroom bot has it.');
+  const filed = (stage) => ({ messageId: 5, kind: 'filed', title: 'Add tags', issueNumber: 3, ...(stage ? { state: { stage } } : {}) });
+  for (const stage of [null, 'reading', 'waiting', 'waiting_first_version']) assert.equal(sharedNow(filed(stage)), true, String(stage));
+  for (const stage of ['building', 'checking', 'proposed', 'live', 'stopped', 'question']) assert.equal(sharedNow(filed(stage)), false, stage);
+  // No chip, nothing to say: filed for the group, an offer, a fix (its chip says so itself).
+  assert.equal(sharedNow({ messageId: 5, kind: 'group', title: 'Add tags', issueNumber: 3 }), false);
+  assert.equal(sharedNow({ messageId: 5, kind: 'offer', title: 'Add tags', issueNumber: null }), false);
+  assert.equal(sharedNow({ messageId: 5, kind: 'revise', title: 'Add tags', issueNumber: 3, state: { stage: 'fixing' } }), false);
+  assert.doesNotMatch(renderToHtml(createElement(BotRequestCardView, { card: filed('building') })), /data-bot-request-shared/);
+  assert.doesNotMatch(SHARED_LINE, /—/);
+});
+
 test('WP-C: the reads behind offers are budgeted per person and per hour', () => {
   const budget = { people: new Map(), hour: { at: 0, n: 0 } };
   const t0 = 1_000_000_000;
