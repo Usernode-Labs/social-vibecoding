@@ -86,6 +86,37 @@ function formatActivityRow(r) {
   };
 }
 
+// ─── Text search over the activity's user ──────────────────────────────
+//
+// `?search=` narrows the list to activities whose user's username, display
+// name, email, Telegram or Discord handle contains the text, anywhere and
+// case-insensitively. The text only ever reaches SQL as one bound
+// parameter, with LIKE's own metacharacters escaped so a typed %, _ or \
+// matches itself (paired with ESCAPE '\' below, as admin/waitlist.js does).
+// An EXISTS rather than a join so the count query, which reads only
+// user_activities, shares the clause unchanged.
+const SEARCH_MAX = 320;
+
+function escapeLike(s) {
+  return s.replace(/([\\%_])/g, '\\$1');
+}
+
+function searchPattern(raw) {
+  if (typeof raw !== 'string') return null;
+  const q = raw.trim().slice(0, SEARCH_MAX);
+  return q ? `%${escapeLike(q)}%` : null;
+}
+
+function userSearchClause(p) {
+  return `EXISTS (SELECT 1 FROM users su
+                   WHERE su.id = ua.user_id
+                     AND (su.username ILIKE ${p} ESCAPE '\\'
+                          OR su.display_name ILIKE ${p} ESCAPE '\\'
+                          OR su.email ILIKE ${p} ESCAPE '\\'
+                          OR su.telegram ILIKE ${p} ESCAPE '\\'
+                          OR su.discord ILIKE ${p} ESCAPE '\\'))`;
+}
+
 // Fetches a challenge + its template category, used by create/update/
 // import to check "does this challenge belong to this event" and to
 // resolve the stored activity_type.
@@ -110,12 +141,14 @@ function userActivitiesAdminRoutes(config) {
       const seasonEventId = toIntId(req.query.season_event_id);
       const userId = toIntId(req.query.user_id);
       const activityType = typeof req.query.activity_type === 'string' ? req.query.activity_type : null;
+      const search = searchPattern(req.query.search);
 
       const clauses = [];
       const params = [];
       if (seasonEventId) { params.push(seasonEventId); clauses.push(`ua.season_event_id = $${params.length}`); }
       if (userId) { params.push(userId); clauses.push(`ua.user_id = $${params.length}`); }
       if (activityType) { params.push(activityType); clauses.push(`ua.activity_type = $${params.length}`); }
+      if (search) { params.push(search); clauses.push(userSearchClause(`$${params.length}`)); }
       const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
       const { rows: countRows } = await pool.query(

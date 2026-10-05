@@ -1195,3 +1195,22 @@ test('waitlist Export CSV renders only for a write admin and carries the active 
   assert.match(waitlist, /const query = filterParams\(\)\.toString\(\);/,
     'the download reuses the same status/only params as the page fetch');
 });
+
+// ─── User activities search (#3868) ────────────────────────────────────────
+
+// The list is a paged server query, so the search box commits on blur or
+// Enter (uncontrolled, defaultValue), sends `search`, and goes back to page 1,
+// the same rule as Challenge templates' box. A search with no hits says so
+// rather than claiming there are no activities at all.
+test('user activities search commits on blur/Enter, sends ?search= and resets to page 1', () => {
+  const src = stripAllComments(fs.readFileSync(path.join(REACT_DIR, 'user-activities.tsx'), 'utf8'));
+  assert.match(src, /id="admin-topo-act-search"/);
+  assert.match(src, /defaultValue=\{search\}/);
+  assert.doesNotMatch(src, /value=\{search\}/, 'the box stays uncontrolled');
+  assert.match(src, /onBlur=\{\(e\) => commitSearch\(e\.currentTarget\.value\)\}/);
+  assert.match(src, /if \(e\.key === 'Enter'\) commitSearch\(/);
+  assert.match(src, /if \(search\) params\.set\('search', search\);/);
+  assert.match(src, /\}, \[page, search\]\);/, 'load re-runs when the committed search changes');
+  assert.match(src, /const commitSearch = useCallback\(\(raw: string\) => \{[\s\S]*?setPage\(1\);/);
+  assert.match(src, /title="No matching activities"/);
+});

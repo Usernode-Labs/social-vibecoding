@@ -580,10 +580,23 @@ function filterActivitiesIndex(sql, params) {
   if (sql.includes('ua.season_event_id = $')) { seasonEventId = params[idx]; idx += 1; }
   if (sql.includes('ua.user_id = $')) { userId = params[idx]; idx += 1; }
   if (sql.includes('ua.activity_type = $')) { activityType = params[idx]; idx += 1; }
+  // ?search= — the route escapes LIKE metacharacters with a backslash, so
+  // undo that here to recover the literal needle the mock matches on.
+  let searchNeedle = null;
+  if (sql.includes('EXISTS (SELECT 1 FROM users su')) {
+    searchNeedle = params[idx].replace(/^%|%$/g, '').replace(/\\([\\%_])/g, '$1').toLowerCase();
+    idx += 1;
+  }
+  const userMatches = (userIdToCheck) => {
+    const u = db.users.find((x) => x.id === userIdToCheck) || {};
+    return [u.username, u.display_name, u.email, u.telegram, u.discord]
+      .some((v) => String(v || '').toLowerCase().includes(searchNeedle));
+  };
 
   let rows = db.userActivities.filter((a) => (!seasonEventId || a.season_event_id === seasonEventId)
     && (!userId || a.user_id === userId)
-    && (!activityType || a.activity_type === activityType));
+    && (!activityType || a.activity_type === activityType)
+    && (searchNeedle == null || userMatches(a.user_id)));
   rows = rows.slice().sort((a, b) => new Date(b.activity_at) - new Date(a.activity_at) || b.id - a.id);
   if (sql.includes('LIMIT')) {
     const limit = params[idx];
@@ -1440,6 +1453,75 @@ test('user-activities: import accepts challenge_id per row, runs in a transactio
     assert.equal(db.userActivities.length, 1);
     assert.ok(queryLog.includes('BEGIN'));
     assert.ok(queryLog.includes('COMMIT'));
+  } finally { server.close(); }
+});
+
+test('user-activities: ?search= narrows the list and its count to activities whose user matches', async () => {
+  seedActivityFixtures();
+  db.users.push({
+    id: 3, username: 'alice_w', display_name: 'Alice Wong', email: 'aw@x.com', telegram: '@alicetg', discord: 'alice#1',
+  });
+  db.users.push({ id: 4, username: 'bob', display_name: 'Bob 100%', email: 'bob@x.com' });
+  db.userActivities.push(
+    { id: 1, user_id: 1, season_event_id: 1, activity_type: 'onchain_tx', points: 10, activity_at: T(-5), challenge_id: 500, added_by: null, source: 'admin_ui' },
+    { id: 2, user_id: 3, season_event_id: 1, activity_type: 'onchain_tx', points: 5, activity_at: T(-4), challenge_id: 500, added_by: null, source: 'admin_ui' },
+    { id: 3, user_id: 3, season_event_id: 1, activity_type: 'onchain_tx', points: 7, activity_at: T(-3), challenge_id: 500, added_by: null, source: 'admin_ui' },
+    { id: 4, user_id: 4, season_event_id: 1, activity_type: 'onchain_tx', points: 1, activity_at: T(-2), challenge_id: 500, added_by: null, source: 'admin_ui' }
+  );
+
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    // Display name, case-insensitively, with surrounding whitespace trimmed.
+    let res = await fetch(`${base}/api/v4/admin/user-activities?search=${encodeURIComponent('  ALICE  ')}`);
+    assert.equal(res.status, 200);
+    let body = await res.json();
+    assert.deepEqual(body.data.map((a) => a.id), [3, 2]);
+    assert.equal(body.meta.total, 2, 'the count query applies the same search');
+
+    // Telegram handle reaches the same user.
+    res = await fetch(`${base}/api/v4/admin/user-activities?search=alicetg`);
+    body = await res.json();
+    assert.deepEqual(body.data.map((a) => a.id), [3, 2]);
+
+    // Email.
+    res = await fetch(`${base}/api/v4/admin/user-activities?search=u1%40x`);
+    body = await res.json();
+    assert.deepEqual(body.data.map((a) => a.id), [1]);
+
+    // The text reaches SQL as one bound, LIKE-escaped parameter in BOTH queries.
+    queryLog.length = 0;
+    res = await fetch(`${base}/api/v4/admin/user-activities?search=${encodeURIComponent('100%')}`);
+    body = await res.json();
+    assert.deepEqual(body.data.map((a) => a.id), [4]);
+    const searched = queryLog.filter((q) => q.includes('EXISTS (SELECT 1 FROM users su'));
+    assert.equal(searched.length, 2, 'list and count both carry the search clause');
+    for (const q of searched) {
+      assert.match(q, /su\.username ILIKE \$1 ESCAPE '\\'/);
+      assert.match(q, /su\.display_name ILIKE \$1/);
+      assert.match(q, /su\.discord ILIKE \$1/);
+      assert.doesNotMatch(q, /100/, 'the search text is never interpolated into the SQL');
+    }
+
+    // No match: an empty page with a zero total, not an error.
+    res = await fetch(`${base}/api/v4/admin/user-activities?search=nobody-here`);
+    body = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(body.data, []);
+    assert.equal(body.meta.total, 0);
+
+    // A blank search is no search.
+    queryLog.length = 0;
+    res = await fetch(`${base}/api/v4/admin/user-activities?search=%20%20`);
+    body = await res.json();
+    assert.equal(body.meta.total, 4);
+    assert.ok(!queryLog.some((q) => q.includes('EXISTS (SELECT 1 FROM users su')));
+
+    // Composes with the existing filters (search param numbered after them).
+    queryLog.length = 0;
+    res = await fetch(`${base}/api/v4/admin/user-activities?user_id=3&search=alice`);
+    body = await res.json();
+    assert.deepEqual(body.data.map((a) => a.id), [3, 2]);
+    assert.ok(queryLog.some((q) => q.includes('su.username ILIKE $2')));
   } finally { server.close(); }
 });
 

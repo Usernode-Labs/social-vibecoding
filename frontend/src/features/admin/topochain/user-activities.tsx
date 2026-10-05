@@ -490,6 +490,7 @@ type OpenPanel =
 
 function UserActivitiesScreen() {
   const write = canWrite();
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<Activity[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
@@ -508,6 +509,7 @@ function UserActivitiesScreen() {
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    if (search) params.set('search', search);
     const res = await fetchJson(`/api/v4/admin/user-activities?${params}`);
     if (!alive.current) return;
     if (res.ok && res.data?.success) {
@@ -519,9 +521,15 @@ function UserActivitiesScreen() {
     setItems([]);
     setMeta(null);
     setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [page]);
+  }, [page, search]);
 
   useEffect(() => { load(); }, [load]);
+
+  const commitSearch = useCallback((raw: string) => {
+    const next = raw.trim();
+    setSearch((current) => (current === next ? current : next));
+    setPage(1);
+  }, []);
 
   const remove = useCallback(async (id: number) => {
     if (!canWrite()) return;
@@ -546,6 +554,21 @@ function UserActivitiesScreen() {
         subtitle="Everything users have recorded against a challenge, and the points it scored."
         actions={(
           <>
+            {/* Commits on blur or Enter, not per keystroke — a paged server
+                query, same rule as the other search boxes in this console. */}
+            <Input
+              id="admin-topo-act-search"
+              type="text"
+              placeholder="Search users…"
+              aria-label="Search activities by user"
+              title="Username, name, email, Telegram or Discord"
+              className="sm:w-48"
+              defaultValue={search}
+              onBlur={(e) => commitSearch(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+              }}
+            />
             {write ? (
               <button
                 id="admin-topo-act-new"
@@ -602,7 +625,13 @@ function UserActivitiesScreen() {
             onRetry={load}
           />
         ) : null}
-        {items !== null && !error && !items.length ? (
+        {items !== null && !error && !items.length && search ? (
+          <EmptyState
+            title="No matching activities"
+            body={`No activity belongs to a user matching “${search}”.`}
+          />
+        ) : null}
+        {items !== null && !error && !items.length && !search ? (
           <EmptyState
             title="No activities yet"
             body="Activities are recorded when users complete challenges. You can also add one by hand."
