@@ -373,7 +373,9 @@ function chatRoutes(config) {
   //     &around=<id>                a permalink window centred on one message
   //   → { messages /* oldest first */, has_more_before, has_more_after,
   //       focus?: { message_id, thread_ref },   // around only
-  //       root?: Message }                      // thread_type=message only
+  //       root?: Message,                       // thread_type=message only
+  //       read?: { last_read_message_id, unread_count } }
+  //                                             // the general stream's first page
   //
   // At most one of before / after / around. `around` on a reply-thread
   // message while reading the general stream centres the window on the
@@ -507,6 +509,14 @@ function chatRoutes(config) {
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
       if (focus) body.focus = focus;
       if (root) body.root = root;
+      // The general stream's first page says where this reader's reading
+      // stood: read here, before the open marks it read, so the channel can
+      // open at its first unread message (public/js/group-chat.js
+      // _takeUnreadMark). Absent for a reader with no cursor.
+      if (!thread && before == null && after == null && around == null) {
+        const read = await appChat.readPosition(pool, appId, viewerId);
+        if (read) body.read = { last_read_message_id: read.lastReadMessageId, unread_count: read.unreadCount };
+      }
       res.json(body);
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });

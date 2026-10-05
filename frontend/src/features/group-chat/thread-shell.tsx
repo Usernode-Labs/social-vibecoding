@@ -56,9 +56,18 @@
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
 
+import { useRef } from 'react';
+
+import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 
 const SAFE_BAR = 'platform-safe-bar';
+
+/**
+ * How near the bottom a thread counts as followed: a live reply sticks to it
+ * within 80px (`_handleThreadIncoming` in public/js/group-chat.js).
+ */
+export const THREAD_FOLLOW_PX = 80;
 
 export interface ThreadShellProps {
   /** The topic sub-view's full-height layout; false is the boxed one. */
@@ -98,6 +107,7 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
 
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
+  const scroll = useRef<HTMLDivElement>(null);
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation
@@ -108,12 +118,16 @@ export function ThreadShell(props: ThreadShellProps) {
       // so reserving keyboard space there would be dead space mid-page.
       <div className="dev-thread dev-thread-fill platform-kb-column flex flex-col h-full min-h-0 dc-lift dc-lift-session">
         <div
+          ref={scroll}
           id="gc-thread-scroll"
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3"
         >
           {withHeader ? <div id="gc-thread-head" /> : null}
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />
         </div>
+        {/* A topic opens at its card (#363), so the way down is up from the
+            start whenever the discussion runs past the screen. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
         <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </div>

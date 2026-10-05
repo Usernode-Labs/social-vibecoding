@@ -344,6 +344,27 @@ async function unreadCount(db, appId, userId) {
 }
 
 /**
+ * Where this reader's reading of the general stream stands: the cursor and
+ * how much is unread behind it, or null for a reader with no cursor here
+ * (one who is not a member, or never had the channel listed). The first page
+ * of the stream carries it, read before the open moves the cursor, so the
+ * channel opens at the first message after it, under a "New" line
+ * (frontend/src/features/messages/unread-anchor.ts).
+ */
+async function readPosition(db, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await db.query(
+    `SELECT last_read_message_id FROM app_chat_reads WHERE app_id = $1 AND user_id = $2`,
+    [appId, userId]
+  );
+  if (!rows.length) return null;
+  return {
+    lastReadMessageId: Number(rows[0].last_read_message_id) || 0,
+    unreadCount: await unreadCount(db, appId, userId),
+  };
+}
+
+/**
  * Move the cursor forward to `messageId`, never back. The message must be in
  * this app's general stream — a thread reply or another app's id would move a
  * watermark it does not belong to. Returns { ok, unread_count } or
@@ -439,6 +460,7 @@ module.exports = {
   threadSummaryForRoom,
   deleteOwnMessage,
   unreadCount,
+  readPosition,
   markRead,
   markUnread,
   advanceReadCursor,

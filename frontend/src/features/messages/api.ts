@@ -67,6 +67,16 @@ export function strictId(value: unknown): number | null {
   return Number.isSafeInteger(id) && id <= MAX_ID ? id : null;
 }
 
+/**
+ * A read cursor: a message id, or 0 for "read nothing yet", which a strict
+ * id refuses. Null when the server did not say (an invitation, an older
+ * server), so the conversation opens at its newest message as it always did.
+ */
+function readCursor(value: unknown): number | null {
+  if (value === 0 || value === '0') return 0;
+  return strictId(value);
+}
+
 function dateText(value: unknown): string {
   const candidate = text(value);
   return candidate || new Date(0).toISOString();
@@ -429,6 +439,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     latestSummary: homeroomBot ? botRowPreview(summary) : summary,
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
+    lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),

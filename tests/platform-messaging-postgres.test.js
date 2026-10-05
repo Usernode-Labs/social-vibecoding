@@ -436,6 +436,10 @@ test('a channel notifies only the people a message @mentions', async (t) => {
     // The room still counts as unread in Messages; the bell holds only the
     // one mention.
     assert.equal((await conversations.getConversation(pool, ada, general)).unreadCount, 3);
+    // And where her reading stopped, beside the count: her own message, the
+    // last thing she posted in the main stream (a thread post moves nothing),
+    // so the room opens at lin's reply (features/messages/unread-anchor.ts).
+    assert.equal((await conversations.getConversation(pool, ada, general)).lastReadMessageId, root.messageId);
     assert.deepEqual((await pool.query(
       'SELECT kind FROM notifications WHERE user_id = $1', [ada.id]
     )).rows, [{ kind: 'conversation_mention' }]);

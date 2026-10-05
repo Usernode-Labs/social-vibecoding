@@ -141,6 +141,7 @@ import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 import { UserMessage } from './user-message';
+import { JumpToLatest } from '../messages/jump-to-latest';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -2327,6 +2328,9 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
         </div>
+        {/* The way down when the reader is up the transcript, within the
+            same 80px FollowOutput keeps them following at. */}
+        <JumpToLatest scroller={scroll} slack={80} />
         <Replies replies={empty ? starters(about, request) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}

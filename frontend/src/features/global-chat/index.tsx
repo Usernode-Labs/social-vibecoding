@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { JumpToLatest } from '../messages/jump-to-latest';
 import { GlobalChatResultBlock } from './renderers';
 import {
   closeGlobalChat,
@@ -425,6 +426,8 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
           </div>
         ) : null}
       </div>
+      {/* The way down when the reader is up the transcript, as every chat has. */}
+      <JumpToLatest scroller={scroll} />
 
       <Composer id={globalChatComposerId(embedded ? 'messages' : 'screen')} />
     </div>
