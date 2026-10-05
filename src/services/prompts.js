@@ -110,12 +110,16 @@ const FIRST_VERSION_SPEC_DESIGN_BRIEF = `DESIGN BRIEF (FIRST VERSION): the app h
 
 // #3699: the spec as a small HTML document that leads with pictures: before/
 // after screens on the User-facing tab, diagrams and tables on the Technical
-// tab. Given to the scout instead of the markdown format lines for apps in
-// config.htmlSpecApps. The dialect, and why the screens are drawn rather than
+// tab. Given to the scout and the Homeroom bot instead of the markdown format
+// lines, for apps in config.htmlSpecApps (every app by default). Two versions,
+// because the screens of the platform's own app draw with its real stylesheet
+// and every other app's draw with the native UI kit and their own <style>
+// blocks (spec-html.js, stampSpecStyles). The dialect, and why the screens are drawn rather than
 // captured, are in src/services/spec-html.js; the browser half is
 // frontend/src/lib/spec-html.ts. The server keeps a markdown copy of every
 // HTML spec for the readers that want text.
-const SPEC_HTML_CONTRACT = `HTML SPEC FORMAT: write the spec as ONE small HTML document, not markdown. The spec viewer shows it with the same two tabs, and it should lead with pictures: before/after screens on the User-facing tab, diagrams and tables on the Technical tab. Use exactly this shape:
+function specHtmlContract(platformStyles = true) {
+  return `HTML SPEC FORMAT: write the spec as ONE small HTML document, not markdown. The spec viewer shows it with the same two tabs, and it should lead with pictures: before/after screens on the User-facing tab, diagrams and tables on the Technical tab. Use exactly this shape:
 
 <article data-spec>
   <h1>Short title</h1>
@@ -138,11 +142,19 @@ BEFORE/AFTER SCREENS: when the change is visible, OPEN the "user" section with a
 </figure>
 
 - One to three changes, numbered; up to six screens. data-size "desktop" is 1280×800 and "phone" is 390×844; data-height makes a screen taller (up to 2400).
-- Draw each screen as real HTML using the app's OWN element structure and class names, copied from the components you read: it renders with the app's real stylesheet, so a faithful copy looks like the app. Draw the screen as it is today, and mark what differs in the same tree: data-side="before" on parts only today's app shows, data-side="after" on parts only the change shows, and data-change="N" on each changed part (its numbered outline goes there). Unchanged parts appear once and show on both sides.
+${platformStyles
+    ? "- Draw each screen as real HTML using the app's OWN element structure and class names, copied from the components you read: it renders with the app's real stylesheet, so a faithful copy looks like the app."
+    : "- Draw each screen as real HTML using the app's own element structure and class names, copied from the components you read. It renders with the platform's native UI kit stylesheet only (native.css, which every app shares), not with this app's own stylesheet or Tailwind, so put the styles each screen needs in a <style> block inside its template, copied from the app's CSS (for Tailwind utility classes, write the equivalent CSS rules), and the screen looks like the app."} Draw the screen as it is today, and mark what differs in the same tree: data-side="before" on parts only today's app shows, data-side="after" on parts only the change shows, and data-change="N" on each changed part (its numbered outline goes there). Unchanged parts appear once and show on both sides. A screen that does not exist yet (a first version, a new page) shows what is there today, or an empty state, on the before side, and the new screen is data-side="after".
 - data-focus="x y w h", in the screen's pixels, frames the close-up the viewer opens on: the part that changes plus enough around it to recognise the place. Draw only as much of the screen as that close-up and its surroundings need. data-persona says who is signed in (member, guest, read_only_admin, full_admin); member is the default.
-- Screens render in a sandboxed frame with scripts off and no network: no script, no external images or fonts. A class the app's stylesheet does not already define will not exist there, so style anything new with a <style> block inside the template or a style attribute.
+- Screens render in a sandboxed frame with scripts off and no network: no script, no external images or fonts.${platformStyles
+    ? " A class the app's stylesheet does not already define will not exist there, so style anything new with a <style> block inside the template or a style attribute."
+    : ''}
 
 DIAGRAMS AND TABLES: open the "tech" section with whatever explains the change fastest, such as a <figure> holding an inline <svg viewBox="…" role="img"> that has a <title>, and keep files touched, data model and tests as tables. SVG may use svg, g, path, rect, circle, ellipse, line, polyline, polygon, text, tspan, title and desc with presentation attributes (no ids, markers, gradients or style). Draw with these classes so it reads in light and dark mode: spec-box, spec-box-changed, spec-box-new (dashed, for new code), spec-line, spec-arrow (a small polygon arrowhead), spec-muted, spec-accent, spec-good, spec-bad. Text takes the theme's colour.`;
+}
+
+// The platform's own app: its screens draw with the shell's stylesheets.
+const SPEC_HTML_CONTRACT = specHtmlContract(true);
 
 // The offline excerpt carried inside a connector work order.
 //
@@ -442,6 +454,7 @@ module.exports = {
   SPEC_DESIGN_BRIEF,
   FIRST_VERSION_SPEC_DESIGN_BRIEF,
   SPEC_HTML_CONTRACT,
+  specHtmlContract,
   getLaunchpadInstructions,
   SPEC_HANDOFF_MAX_CHARS,
   getWorkOrderEssentials,

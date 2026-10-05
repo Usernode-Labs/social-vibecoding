@@ -86,7 +86,7 @@ test('captureSpecOutput: markdown as it always was; an HTML spec as its markdown
   assert.deepEqual(captureSpecOutput(''), { text: '', html: null });
 });
 
-test('the setting: HTML specs for the platform\'s own app by default; a list, `*` or `none` otherwise', () => {
+test('the setting: HTML specs for every app by default; a list of slugs or `none` otherwise', () => {
   const { htmlSpecsEnabledFor } = require('../src/services/spec-html.js');
   assert.equal(htmlSpecsEnabledFor({ htmlSpecApps: ['usernode-2d5619'] }, 'usernode-2d5619'), true);
   assert.equal(htmlSpecsEnabledFor({ htmlSpecApps: ['usernode-2d5619'] }, 'todo-list-b91765'), false);
@@ -94,15 +94,16 @@ test('the setting: HTML specs for the platform\'s own app by default; a list, `*
   assert.equal(htmlSpecsEnabledFor({ htmlSpecApps: [] }, 'usernode-2d5619'), false);
   assert.equal(htmlSpecsEnabledFor({}, 'usernode-2d5619'), false);
   const configSrc = read('src/config.js');
-  assert.match(configSrc, /htmlSpecApps: \(\(\) => \{\s*const raw = process\.env\.HTML_SPEC_APPS;\s*if \(raw == null \|\| raw\.trim\(\) === ''\) return \[SELF_APP_SLUG\];/);
+  assert.match(configSrc, /htmlSpecApps: \(\(\) => \{\s*const raw = process\.env\.HTML_SPEC_APPS;\s*if \(raw == null \|\| raw\.trim\(\) === ''\) return \['\*'\];\s*if \(raw\.trim\(\)\.toLowerCase\(\) === 'none'\) return \[\];/);
 });
 
-test('the scout is asked for HTML only on apps in the setting, and an HTML spec is revised as HTML', () => {
+test('the scout is asked for HTML on apps in the setting, with the right stylesheet, and an HTML spec is revised as HTML', () => {
   const src = read('src/routes/sessions.js');
   assert.match(src, /const htmlSpec = specHtml\.htmlSpecsEnabledFor\(config, session\.app_slug\);/);
   assert.match(src, /const existingShown = htmlSpec && existingDoc\.html \? existingDoc\.html\.trim\(\) : existingSpec;/);
   assert.match(src, /produce \$\{htmlSpec \? 'an HTML SPEC' : 'a MARKDOWN SPEC'\} for the change/);
-  assert.match(src, /\$\{htmlSpec \? SPEC_HTML_CONTRACT : `The spec is rendered as markdown/);
+  assert.match(src, /\$\{htmlSpec \? specHtmlContract\(platformStyles\) : `The spec is rendered as markdown/);
+  assert.match(src, /const platformStyles = specHtml\.specStylesFor\(\{ slug: session\.app_slug, self_hosted: session\.app_self_hosted \}\) === 'platform';/);
   // Each capture site stores the document beside its markdown copy.
   assert.equal((src.match(/const capturedSpec = captureSpecOutput\(result\.lastResultText\);/g) || []).length, 2);
   assert.equal((src.match(/contentHtml: capturedSpec\.html,/g) || []).length, 2);
@@ -148,4 +149,72 @@ test('the three surfaces render an HTML spec from its document and keep copying 
   for (const file of ['frontend/src/features/dev-chat/spec-viewer.tsx', 'frontend/src/features/group-chat/spec-panel.tsx', 'frontend/src/features/agent-session/index.tsx']) {
     assert.match(read(file), /useSpecFrames\(ref, /, `${file} fits the screens`);
   }
+});
+
+test('every app writes HTML specs; the platform\'s screens draw with its stylesheet, every other app\'s with the native kit', async () => {
+  const { specStylesFor, stampSpecStyles } = require('../src/services/spec-html.js');
+  assert.equal(specStylesFor({ slug: 'usernode-2d5619', self_hosted: false }), 'platform');
+  assert.equal(specStylesFor({ slug: 'my-fork-app', self_hosted: true }), 'platform');
+  assert.equal(specStylesFor({ slug: 'todo-list-b91765', self_hosted: false }), 'kit');
+  assert.equal(specStylesFor(null), 'kit', 'an app that cannot be read never borrows the shell\'s styles');
+  assert.equal(stampSpecStyles('<article data-spec><h1>T</h1></article>', 'kit'), '<article data-spec-styles="kit" data-spec><h1>T</h1></article>');
+  assert.equal(stampSpecStyles('<article data-spec-styles="platform" data-spec>', 'kit'), '<article data-spec-styles="kit" data-spec>', 'an author cannot pick the platform\'s styles');
+  assert.equal(stampSpecStyles('<article data-spec>', 'other'), '<article data-spec>');
+
+  // The publication stamps it from the session's app.
+  const { persistScoutPublication } = require('../src/routes/sessions.js');
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      if (/SELECT a\.slug, a\.self_hosted FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [{ slug: 'todo-list-b91765', self_hosted: false }] };
+      if (/INSERT INTO chat_session_specs/.test(sql)) return { rows: [{ version: 1 }] };
+      return { rows: [] };
+    },
+  };
+  await persistScoutPublication({ pool, sessionId: 5, content: '# T\n\n## User-facing changes\n\nx', contentHtml: '<article data-spec><h1>T</h1></article>' });
+  const update = calls.find((c) => /UPDATE chat_sessions SET spec_md = \$1, spec_html = \$3/.test(c.sql));
+  assert.equal(update.params[2], '<article data-spec-styles="kit" data-spec><h1>T</h1></article>');
+  const version = calls.find((c) => /INSERT INTO chat_session_specs/.test(c.sql));
+  assert.equal(version.params[2], update.params[2], 'the version keeps the same document');
+  // A markdown spec reads no app and stores no document.
+  calls.length = 0;
+  await persistScoutPublication({ pool, sessionId: 5, content: '# T' });
+  assert.ok(!calls.some((c) => /JOIN apps a/.test(c.sql)));
+  assert.equal(calls.find((c) => /UPDATE chat_sessions SET spec_md/.test(c.sql)).params[2], null);
+
+  // The instructions say which stylesheet the screens get.
+  const { specHtmlContract, SPEC_HTML_CONTRACT } = require('../src/services/prompts.js');
+  assert.equal(SPEC_HTML_CONTRACT, specHtmlContract(true));
+  assert.match(specHtmlContract(true), /it renders with the app's real stylesheet/);
+  assert.match(specHtmlContract(false), /native UI kit stylesheet only \(native\.css, which every app shares\), not with this app's own stylesheet or Tailwind/);
+  assert.match(specHtmlContract(false), /data-side="after"/);
+
+  // The browser loads only the kit for an app's screens, and treats an unstamped document the same way.
+  const lib = read('frontend/src/lib/spec-html.ts');
+  assert.match(lib, /\.filter\(\(href\) => styles === 'platform' \|\| href\.startsWith\(`\$\{origin\}\/usernode-native\/`\)\)/);
+  assert.match(lib, /const styles: SpecStyles = article\.getAttribute\('data-spec-styles'\) === 'platform' \? 'platform' : 'kit';/);
+});
+
+test('the Homeroom bot writes its spec as HTML where the setting says, and stores the document beside the markdown', () => {
+  const live = require('../src/services/homeroom-bot-live.js');
+  const html = live.specPrompt({ seed: 'SEED', buildNote: 'the plan', html: true, platformStyles: false });
+  assert.match(html, /an HTML document, in the format described below/);
+  assert.match(html, /native UI kit stylesheet only/);
+  assert.match(html, /End the "user" section with an <h3>Assumptions<\/h3>/);
+  assert.match(html, /your final message must be ONLY the HTML spec, starting with <article data-spec>/);
+  assert.match(html, /BLOCKED:/, 'the one way out is the same');
+  const md = live.specPrompt({ seed: 'SEED', buildNote: 'the plan' });
+  assert.match(md, /ONLY the markdown spec, as raw markdown/, 'the markdown prompt is unchanged when html is off');
+  const read = live.readSpec('<article data-spec><h1>Show the reason</h1><section data-spec-tab="user"><p>Now — clear</p><h3>Assumptions</h3><ul><li>x</li></ul></section><section data-spec-tab="tech"><p>t</p></section></article>');
+  assert.equal(read.ok, true);
+  assert.match(read.specMd, /^# Show the reason\n\n## User-facing changes\n\nNow\S* clear/);
+  assert.doesNotMatch(read.specMd, /\u2014/);
+  assert.match(read.specHtml, /<h1>Show the reason<\/h1>/);
+  assert.doesNotMatch(read.specHtml, /\u2014/, 'no em dashes in the document either');
+  assert.ok(!('specHtml' in live.readSpec('# T\n\n## User-facing changes\n\nx')), 'a markdown spec reads as it did');
+  const src = read2('src/services/homeroom-bot-live.js');
+  assert.match(src, /html: specHtml\.htmlSpecsEnabledFor\(config, session\.app_slug\),/);
+  assert.match(src, /\.\.\.\(html \? \{ contentHtml: html \} : \{\}\), hadSpec: false,/);
+  function read2(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 });

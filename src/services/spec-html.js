@@ -371,6 +371,32 @@ function specHtmlToMarkdown(html) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\*\*\s*\*\*/g, '').trim() + '\n';
 }
 
+// Which stylesheet a spec's screens are drawn with, stamped on the article at
+// publication (persistScoutPublication), where the app is known. The
+// platform's own app draws its screens with the shell's stylesheets, which
+// ARE that app's. Any other app's screens get only the native UI kit, which
+// every app shares: its own stylesheet lives on its own address (and is often
+// Tailwind run as a script, which the frames do not run), so its spec carries
+// the styles it needs in a <style> block of each screen. The browser half
+// reads the stamp (frontend/src/lib/spec-html.ts, frameDoc).
+const SPEC_STYLES = Object.freeze(['platform', 'kit']);
+// config.js SELF_APP_SLUG, which is never overridable; homeroom-bot.js keeps
+// the same constant. A self-hosted fork's own app is marked self_hosted.
+const PLATFORM_APP_SLUG = 'usernode-2d5619';
+
+/** 'platform' for the platform's own app, 'kit' for every other: `app` is { slug, self_hosted }. */
+function specStylesFor(app) {
+  return app && (app.self_hosted === true || app.slug === PLATFORM_APP_SLUG) ? 'platform' : 'kit';
+}
+
+function stampSpecStyles(html, mode) {
+  if (typeof html !== 'string' || !SPEC_STYLES.includes(mode)) return html;
+  return html.replace(/^(\s*<article\b)([^>]*)>/i, (whole, open, attrs) => {
+    const rest = attrs.replace(/\s+data-spec-styles\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    return `${open} data-spec-styles="${mode}"${rest}>`;
+  });
+}
+
 /** Whether the spec author for `appSlug` is asked for an HTML spec (config.htmlSpecApps). */
 function htmlSpecsEnabledFor(config, appSlug) {
   const list = config && Array.isArray(config.htmlSpecApps) ? config.htmlSpecApps : [];
@@ -403,4 +429,6 @@ module.exports = {
   tokenize,
   decodeEntities,
   htmlSpecsEnabledFor,
+  specStylesFor,
+  stampSpecStyles,
 };

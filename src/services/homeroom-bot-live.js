@@ -63,7 +63,8 @@ const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
 const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
-const { SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, getDesignGuidance } = require('./prompts');
+const { SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, getDesignGuidance, specHtmlContract } = require('./prompts');
+const specHtml = require('./spec-html');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
 
@@ -309,7 +310,12 @@ function screenshotNote(seed) {
 // #3737: `firstVersion` swaps the design brief for a first version's own
 // (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF); nothing else in the
 // spec prompt changes.
-function specPrompt({ seed, buildNote, firstVersion = false }) {
+// #3699: `html` asks for the spec as an HTML document (before/after screens
+// and diagrams; services/spec-html.js) for apps in config.htmlSpecApps;
+// `platformStyles` says whose stylesheet its screens draw with. The markdown
+// wording below stays the spec for every other case.
+function specPrompt({ seed, buildNote, firstVersion = false, html = false, platformStyles = false }) {
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles });
   return [
     seed,
     '',
@@ -359,6 +365,59 @@ function specPrompt({ seed, buildNote, firstVersion = false }) {
     '',
     'Otherwise your final message must be ONLY the markdown spec, as raw markdown: no preamble, and not wrapped',
     'in a code fence. It is captured verbatim.',
+  ].join('\n');
+}
+
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles }) {
+  return [
+    seed,
+    '',
+    ...screenshotNote(seed),
+    'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
+    '',
+    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    '',
+    'Before it is built, write the SPEC for it: an HTML document, in the format described below, that the app\'s',
+    'group can read and that the build that follows will work from. You are running in PLAN MODE: read and search',
+    'the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit,',
+    'create, delete, commit, or push anything; anything this run changes in the repository is discarded when it ends.',
+    '',
+    'The spec must be:',
+    '- Grounded in the real code: name actual files and describe current behaviour, not guesses.',
+    '- Two halves, the "user" and "tech" sections of the format below, standing for "## User-facing changes" then',
+    '  "## Technical implementation". Start with an <h1> title; keep everything else inside one of the two',
+    '  sections. "User-facing changes" is for a non-developer: what people will see and do differently, no file',
+    '  paths or code. "Technical implementation" holds the files, data, edge cases and tests.',
+    '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
+    '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
+    '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
+    '- As small as the request: the plan above, no refactoring or extra features.',
+    '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
+    '  changes" half can become the change\'s description.',
+    `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
+    '',
+    specHtmlContract(platformStyles),
+    '',
+    'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
+    'Where something is open, make the sensible choice yourself. End the "user" section with an <h3>Assumptions</h3>',
+    'subsection: every assumption listed in the plan above and every choice you made, one plain-language line each,',
+    'so the group can see them and object in review. Do not write a Questions subsection.',
+    '',
+    'Before you finish, read the two halves against each other. Every assumption, and everything the "user" section',
+    'says people will see (its screens included), must be true of what the "tech" section builds, and the technical',
+    'half must build nothing the user-facing half leaves out. Where they disagree, change one so they agree: the',
+    'build follows the technical half, so a promise only the other half makes is a promise the build breaks.',
+    '',
+    'There is one exception. If reading the code shows the request is IMPOSSIBLE as written (it depends on',
+    'something that does not exist and cannot be built here, or the code contradicts what it asks), do not write',
+    'a spec: reply with a single line that starts with "BLOCKED:" and says why in one sentence. That is for',
+    'impossible only. A choice, however unsure you are about it, is an assumption, never a BLOCKED.',
+    'A reported bug counts as impossible when the code does not show it: if the request reports a bug and you',
+    'cannot find where in the code it happens, reply "BLOCKED:" and say where you looked. A fix for a cause you',
+    'could not find is a guess, and the build does not guess.',
+    '',
+    'Otherwise your final message must be ONLY the HTML spec, starting with <article data-spec> and ending with',
+    '</article>: no preamble, and not wrapped in a code fence. It is captured verbatim.',
   ].join('\n');
 }
 
@@ -1501,7 +1560,11 @@ async function stampSessionModel(pool, session, model) {
  * the turn's journal.
  */
 function readSpec(text) {
-  const specMd = specFromTitle(stripSpecWrapperFence(String(text || '').trim()));
+  // #3699: an HTML spec reads as its markdown copy, the shape everything
+  // below and every reader after it parses; the document rides along as
+  // specHtml to be stored beside it.
+  const captured = specHtml.normalizeSpecOutput(stripSpecWrapperFence(String(text || '').trim()));
+  const specMd = specFromTitle(String(captured.markdown || '').trim());
   if (!specMd) return { ok: false, error: 'the spec turn returned nothing' };
   const blocked = specBlocked(specMd);
   if (blocked) return { ok: false, blocked, error: `blocked: ${blocked}` };
@@ -1511,7 +1574,9 @@ function readSpec(text) {
   // The spec is read by the group (its card, its GitHub comment) and its
   // user-facing half can become the change's description: no em dashes in
   // it either. Its code is left as it is.
-  return { ok: true, specMd: withoutEmDashes(specMd) };
+  return captured.html
+    ? { ok: true, specMd: withoutEmDashes(specMd), specHtml: withoutEmDashes(captured.html) }
+    : { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
 async function draftSpec({
@@ -1529,7 +1594,11 @@ async function draftSpec({
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = specPrompt({ seed, buildNote, firstVersion });
+  const prompt = specPrompt({
+    seed, buildNote, firstVersion,
+    html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
+    platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
+  });
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -1574,7 +1643,7 @@ async function draftSpec({
   const read = readSpec(routed.result?.lastResultText);
   if (!read.ok) return { ...read, costUsd };
   const { specMd } = read;
-  const version = await publishSpec({ pool, sessions, session, specMd, model });
+  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: read.specHtml, model });
   return { ok: true, specMd, version, costUsd };
 }
 
@@ -1584,10 +1653,10 @@ async function draftSpec({
  * session's own transcript. Resolves the version, or null when it could not
  * be stored (the build goes on from the spec either way).
  */
-async function publishSpec({ pool, sessions, session, specMd, model }) {
+async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model }) {
   try {
     const published = await sessions.persistScoutPublication({
-      pool, sessionId: session.id, content: specMd, hadSpec: false,
+      pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}), hadSpec: false,
       agentBackend: 'codex_openrouter', agentModel: model,
     });
     return published?.specVersion ?? null;
