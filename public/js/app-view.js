@@ -3976,6 +3976,7 @@ const AppView = {
     // are a pair and neither is useful on a topic page without the other.
     AppView._attrInit();
     AppView._cardMenuInit();
+    AppView._inlineImgInit();
 
     // #1085 chunk H: PARK the app frame, don't drop it. Dev mode takes
     // #app-content over, but the app the user was just looking at is still the
@@ -16996,6 +16997,45 @@ const AppView = {
       dataset: { attrField: field, attrTargetType: targetType, attrTargetRef: String(targetRef) },
       getBoundingClientRect: () => card.getBoundingClientRect(),
     };
+  },
+
+  // Install the one-time document-level click handler that opens a rendered
+  // screenshot in the shared image viewer (#3908). Idempotent, and bound on
+  // `document` from the top of renderDevView like _attrInit and _cardMenuInit
+  // above it, so a deep-linked topic page is wired the same as one reached
+  // through the card list (#1324's reasoning).
+  //
+  // The screenshots are DevChat.renderMarkdown's `dc-inline-img-link`
+  // anchors — an issue body's, a Discussion post's, a proposal description's.
+  // Each carries target="_blank", so a plain click on one used to leave the
+  // app for a bare image tab. Now a PLAIN click opens the viewer over the
+  // page (window.UsernodeReact.imageViewer — viewer-host.tsx, the same
+  // overlay Messages and group chat show) and every modified click keeps the
+  // link's own behaviour, exactly as openInViewer does for chat thumbnails:
+  // ctrl/cmd/shift/alt-click and the browser's own middle-click new tab fall
+  // through untouched, and so does "Open image in new tab" from the context
+  // menu. The controller is read at CLICK time, not here — useDialog's
+  // callers' tolerance — and a missing one (the React bundle failed to load)
+  // leaves the anchor to do what it always did.
+  _inlineImgInit() {
+    if (AppView._inlineImgInited) return;
+    AppView._inlineImgInited = true;
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest && e.target.closest('.dc-inline-img-link');
+      if (!link) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
+        || e.defaultPrevented) return;
+      const controller = window.UsernodeReact && window.UsernodeReact.imageViewer;
+      if (!controller || typeof controller.open !== 'function') return;
+      const href = link.getAttribute('href');
+      // DOMPurify strips a non-https, non-same-origin href; such an anchor
+      // has nowhere to go, so leave it as it is rather than open a viewer
+      // on nothing.
+      if (!href) return;
+      e.preventDefault();
+      const img = link.querySelector('img.dc-inline-img');
+      controller.open(href, img ? (img.getAttribute('alt') || '') : '');
+    });
   },
 
   // Install the one-time document-level handlers that open / close the

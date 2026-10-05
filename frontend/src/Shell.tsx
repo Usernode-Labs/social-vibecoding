@@ -94,6 +94,7 @@ import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
+import { ImageViewerHost } from './features/image-viewer/viewer-host';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LegacyPortals } from './lib/legacy-portals';
 import { Island } from './lib/island-boundary';
@@ -539,6 +540,16 @@ export function Shell() {
           out from under React and it may hold state.
       */}
       <Island name="VisualCompareOverlay"><VisualCompareOverlay /></Island>
+      {/*
+          The shared image viewer (#3908), for the screenshots a rendered
+          markdown body carries — an issue body's, a Discussion post's, a
+          proposal description's. Those are legacy markup written by
+          DevChat.renderMarkdown, so public/js/app-view.js opens this host by
+          name (window.UsernodeReact.imageViewer.open) from its one delegated
+          click handler. Renders nothing until opened, so it adds nothing to
+          the prerendered document — same shape as the two overlays above.
+      */}
+      <Island name="ImageViewerHost"><ImageViewerHost /></Island>
       {/*
           Every dialog in the shell (#1078 chunk A). One component per modal
           root, rendered in the same order they were spelled out here — see
