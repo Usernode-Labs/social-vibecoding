@@ -11521,36 +11521,6 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- WP-E: who has opened a maker's invite links to a project, so "N people
--- opened your invite" counts people, not page loads
--- (services/invite-activity.js). One row per person, per maker and project:
--- their account when they were signed in, else their browser, kept as the
--- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
--- nothing about where it is. A browser that later opens a link signed in,
--- or joins through one, is given its account, so the person stays one row.
--- `notification_id` is the open notice they are counted on. It goes NULL
--- when they join through the maker's link, whose own notice ("Joined
--- through your invite") replaces their open; the row stays, so opening the
--- link again later is still not news. staging:private: it says who looked
--- at whose link.
-CREATE TABLE IF NOT EXISTS community_invite_opens (
-  id              SERIAL PRIMARY KEY,
-  maker_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-  user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
-  browser         VARCHAR(64),
-  notification_id INTEGER REFERENCES notifications(id) ON DELETE SET NULL,
-  opened_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK (user_id IS NOT NULL OR browser IS NOT NULL)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_account
-  ON community_invite_opens (maker_id, app_id, user_id) WHERE user_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_browser
-  ON community_invite_opens (maker_id, app_id, browser) WHERE browser IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
-  ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
-COMMENT ON TABLE community_invite_opens IS 'staging:private';
-
 -- THE INVITE TREE: who let whom in. On unless an admin switches it off in
 -- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
 -- row (services/community-invites.js; no row is on).
@@ -11663,6 +11633,43 @@ BEGIN
       EXECUTE FUNCTION apply_queued_community_invites();
   END IF;
 END $$;
+
+-- ── Invite opens (WP-E) ───────────────────────────────────────────────
+--
+-- A section of its own, after "Communities, stage 6", not inside it:
+-- tests/community-invites-postgres.test.js runs that block as written in
+-- a scratch schema with only the tables it reads, and this one needs
+-- notifications.
+--
+-- WP-E: who has opened a maker's invite links to a project, so "N people
+-- opened your invite" counts people, not page loads
+-- (services/invite-activity.js). One row per person, per maker and project:
+-- their account when they were signed in, else their browser, kept as the
+-- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
+-- nothing about where it is. A browser that later opens a link signed in,
+-- or joins through one, is given its account, so the person stays one row.
+-- `notification_id` is the open notice they are counted on. It goes NULL
+-- when they join through the maker's link, whose own notice ("Joined
+-- through your invite") replaces their open; the row stays, so opening the
+-- link again later is still not news. staging:private: it says who looked
+-- at whose link.
+CREATE TABLE IF NOT EXISTS community_invite_opens (
+  id              SERIAL PRIMARY KEY,
+  maker_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  browser         VARCHAR(64),
+  notification_id INTEGER REFERENCES notifications(id) ON DELETE SET NULL,
+  opened_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (user_id IS NOT NULL OR browser IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_account
+  ON community_invite_opens (maker_id, app_id, user_id) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_browser
+  ON community_invite_opens (maker_id, app_id, browser) WHERE browser IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
+  ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
+COMMENT ON TABLE community_invite_opens IS 'staging:private';
 
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
