@@ -2,9 +2,9 @@
 
 // WP-E: what an invite link brings back to the person who made it.
 //
-//   invite_opened   Somebody opened the link (a count; never a name: most
-//                   are signed out, and nobody agreed to be named for
-//                   looking).
+//   invite_opened   Somebody opened the link (a count of people; never a
+//                   name: most are signed out, and nobody agreed to be
+//                   named for looking).
 //   member_joined   A signed-in person joined through it.
 //   first_message   Somebody who joined through it wrote in the project's
 //                   chat for the first time ("said hi").
@@ -20,9 +20,21 @@
 // bring it back unread without ringing again. The bell words the count
 // ("Sam and 2 others joined"), the push only ever the first.
 //
+// AN OPEN COUNTS A PERSON ONCE (5 October: one person opening a link four
+// times read "4 people opened your invite"). Who opened is remembered per
+// maker and project (community_invite_opens): an account when they were
+// signed in, on any device, else the browser, by a random HttpOnly cookie
+// kept only as its hash. Opening again changes nothing: no count, no unread,
+// no push. And an open is only news until the person joins: their join
+// through the maker's link takes them off the open notice (the notice goes
+// when nobody is left on it), and "Joined through your invite" says it
+// instead. A person who opens signed out in two browsers is still two until
+// one of them signs in or joins: nothing can tell them apart before then.
+//
 // Everything here is best-effort and never throws: a join, a page view or a
 // message must not fail because telling somebody about it did.
 
+const crypto = require('crypto');
 const events = require('./events');
 const log = require('./logger');
 
@@ -31,6 +43,46 @@ const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message'])
 // maker has long since heard they joined, and "said hi" would be news about
 // somebody who has been around for weeks.
 const HELLO_WITHIN_DAYS = 30;
+
+// The browser an open came from: a random value the invite page's reads set
+// once, HttpOnly, and only ever stored as its SHA-256. It names nobody and
+// says nothing about where the browser is; it only tells this browser's
+// second open from somebody else's first.
+const BROWSER_COOKIE = 'hr_iv';
+const BROWSER_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+const BROWSER_VALUE_RE = /^[A-Za-z0-9_-]{22,64}$/;
+// The cookie a browser was counted with before an open counted a person
+// once (one per link, valued '1'): that browser has been told about already.
+const LEGACY_COOKIE_PREFIX = 'hr_io_';
+
+/** This request's browser, as the hash an open is kept by, or null. */
+function browserFrom(req) {
+  const value = req?.cookies?.[BROWSER_COOKIE];
+  if (typeof value !== 'string' || !BROWSER_VALUE_RE.test(value)) return null;
+  return crypto.createHash('sha256').update(`invite-open:${value}`).digest('hex');
+}
+
+/** This request's browser, given a cookie first when it has none. */
+function ensureBrowser(req, res) {
+  const known = browserFrom(req);
+  if (known) return known;
+  const value = crypto.randomBytes(24).toString('base64url');
+  res.cookie(BROWSER_COOKIE, value, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure || req.headers?.['x-forwarded-proto'] === 'https',
+    maxAge: BROWSER_COOKIE_MAX_AGE_MS,
+    path: '/api',
+  });
+  // The rest of this request reads it as if it had arrived with it.
+  if (req.cookies) req.cookies[BROWSER_COOKIE] = value;
+  return browserFrom({ cookies: { [BROWSER_COOKIE]: value } });
+}
+
+/** Whether this browser was counted for the link `token` before. */
+function countedBefore(req, token) {
+  return !!(token && req?.cookies?.[`${LEGACY_COOKIE_PREFIX}${String(token).slice(0, 12)}`]);
+}
 
 function notifications() { return require('./notifications'); }
 
@@ -95,9 +147,11 @@ function mailFor(pool, result, { appName, appSlug, line }) {
 
 /**
  * A signed-in person joined through `inviteId`. Its maker hears it, by
- * name, unless they are the one who joined.
+ * name, unless they are the one who joined, and the open that brought them
+ * stops being news (settleOpen). `browser` is the browser they joined from
+ * (browserFrom), which may be the one they opened the link in signed out.
  */
-async function noteJoined(pool, { inviteId, user }) {
+async function noteJoined(pool, { inviteId, user, browser = null }) {
   try {
     const { rows } = await pool.query(
       `SELECT ci.created_by, ci.app_id, a.slug, a.name, u.username
@@ -109,6 +163,7 @@ async function noteJoined(pool, { inviteId, user }) {
     );
     const invite = rows[0];
     if (!invite || invite.created_by == null || !user?.id || Number(invite.created_by) === Number(user.id)) return null;
+    await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId: user.id, browser });
     const result = await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'member_joined', sourceUserId: user.id });
     mailFor(pool, result, {
       appName: invite.name, appSlug: invite.slug,
@@ -121,12 +176,136 @@ async function noteJoined(pool, { inviteId, user }) {
   }
 }
 
+// An open notice's push waits this long, so somebody who opens the link and
+// joins straight away (seconds signed in, a few minutes through signing up)
+// rings once, as a join, and not first as "Someone opened your invite". The
+// bell shows the open at once; only the phone waits. The push is
+// mobile_push_deliveries rows, which go with the notice when a join removes
+// it (ON DELETE CASCADE), so a withdrawn open never buzzes.
+const OPEN_PUSH_DELAY_MINUTES = 15;
+
+// One lock per maker and project for everything that writes their opens: an
+// open, and a join that takes somebody off the open notice. The same key
+// ring() takes for invite_opened.
+const opensLock = (makerId, appId) => `invite-activity:${makerId}:${appId}:invite_opened`;
+
 /**
- * Somebody opened the live link `token`: counted for its maker, never
- * named. `viewerId` is the signed-in visitor, when there is one: the maker
- * opening their own link, or somebody already in the community, is not news.
+ * The rows that are this person, by account or browser, for `makerId`'s
+ * links to `appId`, locked, the account's own row first.
  */
-async function noteOpened(pool, { token, viewerId = null }) {
+async function openersOf(client, { makerId, appId, userId = null, browser = null }) {
+  const { rows } = await client.query(
+    `SELECT id, user_id, browser, notification_id
+       FROM community_invite_opens
+      WHERE maker_id = $1 AND app_id = $2
+        AND (($3::int IS NOT NULL AND user_id = $3::int) OR ($4::text IS NOT NULL AND browser = $4::text))
+      ORDER BY COALESCE(user_id = $3::int, FALSE) DESC, id
+      FOR UPDATE`,
+    [makerId, appId, userId, browser],
+  );
+  return rows;
+}
+
+/**
+ * Make `rows` (openersOf) one row, the first, which learns the account and
+ * browser it was missing. Inside the caller's transaction. Resolves the ids
+ * of the open notices a removed row was counted on.
+ */
+async function mergeOpeners(client, rows, { userId = null, browser = null }) {
+  const [keep, ...rest] = rows;
+  const touched = new Set();
+  for (const extra of rest) {
+    await client.query('DELETE FROM community_invite_opens WHERE id = $1', [extra.id]);
+    if (extra.notification_id != null) touched.add(Number(extra.notification_id));
+  }
+  await client.query(
+    `UPDATE community_invite_opens
+        SET user_id = COALESCE(user_id, $2::int), browser = COALESCE(browser, $3::text)
+      WHERE id = $1`,
+    [keep.id, userId, browser],
+  );
+  return touched;
+}
+
+/**
+ * Set open notice `id` to the number of people on it; one nobody is left on
+ * is removed. Inside the caller's transaction. Resolves the count left.
+ */
+async function recountOpenNotice(client, id) {
+  const { rows } = await client.query(
+    'SELECT COUNT(*)::int AS n FROM community_invite_opens WHERE notification_id = $1',
+    [id],
+  );
+  const n = rows[0]?.n || 0;
+  if (n === 0) {
+    await client.query(`DELETE FROM notifications WHERE id = $1 AND kind = 'invite_opened'`, [id]);
+  } else {
+    await client.query(
+      `UPDATE notifications SET detail = $2 WHERE id = $1 AND kind = 'invite_opened'`,
+      [id, n > 1 ? String(n) : null],
+    );
+  }
+  return n;
+}
+
+/** The maker's bell, and their phone's badge, read again. */
+function bellChanged(userId) {
+  try {
+    require('./ws').pushNotificationToUser(userId, { type: 'notifications_changed' });
+  } catch (err) {
+    log.warn('invite-activity', 'Could not refresh a maker\'s bell', { err: err.message });
+  }
+}
+
+/**
+ * `userId` joined through a link of `makerId`'s to `appId`, so their open is
+ * not news any more: they come off the open notice they were counted on
+ * (which goes when nobody is left on it, its waiting push with it), and keep
+ * their row, with their account, so opening the link again stays quiet.
+ * Never throws. Resolves the ids of the notices it changed.
+ */
+async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
+  const touched = new Set();
+  let client = null;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [opensLock(makerId, appId)]);
+    const rows = await openersOf(client, { makerId, appId, userId, browser });
+    if (rows.length) {
+      for (const id of await mergeOpeners(client, rows, { userId, browser })) touched.add(id);
+      if (rows[0].notification_id != null) {
+        touched.add(Number(rows[0].notification_id));
+        await client.query('UPDATE community_invite_opens SET notification_id = NULL WHERE id = $1', [rows[0].id]);
+      }
+      for (const id of touched) await recountOpenNotice(client, id);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    log.warn('invite-activity', 'Could not settle an open on a join', { appId, err: err.message });
+    return [];
+  } finally {
+    if (client) client.release();
+  }
+  if (touched.size) bellChanged(makerId);
+  return [...touched];
+}
+
+/**
+ * Somebody opened the live link `token`: counted for its maker once per
+ * person, never named. `viewerId` is the signed-in visitor, when there is
+ * one: the maker opening their own link, or somebody already in the
+ * community, is not news. `browser` is the browser it was opened in
+ * (ensureBrowser); `seenBefore` says that browser was counted for this link
+ * before opens were kept by person (countedBefore), so it is remembered
+ * without being counted again.
+ *
+ * Resolves { row, fresh } when this was somebody new (`fresh`: it made the
+ * day's notice, whose push waits OPEN_PUSH_DELAY_MINUTES), { row: null,
+ * fresh: false } for somebody who had opened it before, or null.
+ */
+async function noteOpened(pool, { token, viewerId = null, browser = null, seenBefore = false }) {
   try {
     const { rows } = await pool.query(
       `SELECT ci.id, ci.created_by, ci.app_id, ci.community_id,
@@ -142,14 +321,98 @@ async function noteOpened(pool, { token, viewerId = null }) {
     const invite = rows[0];
     if (!invite || invite.created_by == null) return null;
     if (viewerId != null && (Number(viewerId) === Number(invite.created_by) || invite.viewer_is_member)) return null;
-    // The admin Journey's first session reads it too (journey.js firstSession).
+    // Nothing to know this person by again, so nothing to count once.
+    if (viewerId == null && !browser) return null;
+    const makerId = invite.created_by;
+    const appId = invite.app_id;
+    const person = { makerId, appId, userId: viewerId, browser };
+
+    const touched = new Set();
+    let row = null;
+    let fresh = false;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [opensLock(makerId, appId)]);
+      const known = await openersOf(client, person);
+      // Joined since the read above (a signed-in Join can follow the read
+      // that counted it within a second, and its join may have been settled
+      // first): remembered, and not news.
+      const { rows: joinedSince } = viewerId == null ? { rows: [] } : await client.query(
+        `SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2`,
+        [invite.community_id, viewerId],
+      );
+      if (known.length) {
+        // Opened before (here, on another device, or signed out in this
+        // browser): one person, told about once.
+        for (const id of await mergeOpeners(client, known, person)) touched.add(id);
+        for (const id of touched) await recountOpenNotice(client, id);
+      } else if (seenBefore || joinedSince.length) {
+        await client.query(
+          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser) VALUES ($1, $2, $3, $4)`,
+          [makerId, appId, viewerId, browser],
+        );
+      } else {
+        const { rows: latest } = await client.query(
+          `SELECT id FROM notifications
+            WHERE user_id = $1 AND app_id = $2 AND kind = 'invite_opened'
+              AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY id DESC LIMIT 1`,
+          [makerId, appId],
+        );
+        let noticeId = latest[0]?.id ?? null;
+        if (noticeId == null) {
+          fresh = true;
+          const { rows: made } = await client.query(
+            `INSERT INTO notifications (user_id, app_id, kind) VALUES ($1, $2, 'invite_opened') RETURNING id`,
+            [makerId, appId],
+          );
+          noticeId = made[0].id;
+          await client.query(
+            `UPDATE mobile_push_deliveries
+                SET available_at = NOW() + make_interval(mins => $2::int)
+              WHERE notification_id = $1 AND status = 'pending'`,
+            [noticeId, OPEN_PUSH_DELAY_MINUTES],
+          );
+        }
+        await client.query(
+          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser, notification_id)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [makerId, appId, viewerId, browser, noticeId],
+        );
+        if (!fresh) {
+          // Somebody new on today's notice: counted, and unread again,
+          // without ringing again.
+          await recountOpenNotice(client, noticeId);
+          await client.query('UPDATE notifications SET read_at = NULL WHERE id = $1', [noticeId]);
+        }
+        const { rows: shown } = await client.query(
+          `SELECT id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at
+             FROM notifications WHERE id = $1`,
+          [noticeId],
+        );
+        row = shown[0] || null;
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    if (touched.size) bellChanged(makerId);
+    if (!row) return { row: null, fresh: false };
+    // The admin Journey's first session reads it too (journey.js
+    // firstSession): one event per person, as the notice counts them.
     events.record(pool, {
       type: events.EVENT_TYPES.INVITE_OPENED,
       userId: viewerId ?? undefined,
-      appId: invite.app_id,
+      appId,
       metadata: { inviteId: invite.id, signedIn: viewerId != null },
     });
-    return await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'invite_opened' });
+    await notifications().hydrateAndPush(pool, row);
+    return { row, fresh };
   } catch (err) {
     log.warn('invite-activity', 'Could not count an invite opened', { err: err.message });
     return null;
@@ -200,8 +463,14 @@ async function noteFirstMessage(pool, { appId, userId, chatMessageId }) {
 module.exports = {
   KINDS,
   HELLO_WITHIN_DAYS,
+  OPEN_PUSH_DELAY_MINUTES,
+  BROWSER_COOKIE,
+  browserFrom,
+  ensureBrowser,
+  countedBefore,
   ring,
   noteJoined,
   noteOpened,
+  settleOpen,
   noteFirstMessage,
 };

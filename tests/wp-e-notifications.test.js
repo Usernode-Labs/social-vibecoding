@@ -106,13 +106,45 @@ test('the invite page says the maker sees a join; the made screen says how long'
   assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && !state\.ready \? \{ typicalMinutes: await botDm\.typicalMinutesCached\(pool\) \} : \{\}\),/);
 });
 
-test('opens are counted from the page\'s own reads, once per browser, never from the unfurled HTML', () => {
+test('the browser an open came from: a random HttpOnly cookie, kept only as its hash', () => {
+  const activity = require('../src/services/invite-activity');
+  const set = [];
+  const res = { cookie(name, value, opts) { set.push({ name, value, opts }); } };
+  const key = activity.ensureBrowser({ cookies: {}, headers: { 'x-forwarded-proto': 'https' } }, res);
+  assert.equal(set.length, 1);
+  assert.equal(set[0].name, 'hr_iv');
+  assert.match(set[0].value, /^[A-Za-z0-9_-]{32}$/, 'random, and nothing about the browser or where it is');
+  const { maxAge, ...rest } = set[0].opts;
+  assert.deepEqual(rest, { httpOnly: true, sameSite: 'lax', secure: true, path: '/api' });
+  assert.ok(maxAge >= 30 * 24 * 60 * 60 * 1000, 'kept for as long as a link is likely to be opened again');
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.ok(!key.includes(set[0].value), 'the database keeps a hash, never the cookie');
+  // The same browser next time: the same person, and no new cookie.
+  assert.equal(activity.ensureBrowser({ cookies: { hr_iv: set[0].value }, headers: {} }, res), key);
+  assert.equal(set.length, 1);
+  assert.equal(activity.browserFrom({ cookies: { hr_iv: 'x' } }), null, 'not one of ours');
+  assert.equal(activity.browserFrom({}), null);
+  // A browser counted for a link before opens were kept by person.
+  assert.equal(activity.countedBefore({ cookies: { hr_io_abcdefghijkl: '1' } }, 'abcdefghijklmnopqrstuv'), true);
+  assert.equal(activity.countedBefore({ cookies: {} }, 'abcdefghijklmnopqrstuv'), false);
+});
+
+test('opens are counted from the page\'s own reads, once per person, never from the unfurled HTML', () => {
   const routes = read('src/routes/community-invites.js');
   assert.match(routes, /if \(preview\.live\) countOpen\(req, res, req\.params\.token\);/);
   assert.match(routes, /if \(standing\.live && !standing\.mine\) countOpen\(req, res, req\.params\.token, req\.user\.id\);/);
+  // Every read is handed to the service with the browser it came from; the
+  // service decides whether it is somebody new (invite-activity-postgres).
+  assert.match(routes, /const browser = inviteActivity\.ensureBrowser\(req, res\);\s*void inviteActivity\.noteOpened\(pool, \{ token, viewerId, browser, seenBefore \}\);/);
   const page = routes.slice(routes.indexOf("router.get('/invite/:token'"));
   assert.doesNotMatch(page, /countOpen/);
-  assert.match(read('src/services/community-invites.js'), /void require\('\.\/invite-activity'\)\.noteJoined\(pool, \{ inviteId: invite\.id, user \}\);/);
+  assert.match(page, /inviteActivity\.ensureBrowser\(req, res\);/, 'the page sets the browser before its two reads race');
+  // A join is told with the browser it came from, so an open made signed
+  // out in that browser is replaced by it.
+  assert.match(routes, /token: req\.params\.token, user: req\.user, browser: inviteActivity\.browserFrom\(req\),/);
+  const service = read('src/services/community-invites.js');
+  assert.match(service, /void require\('\.\/invite-activity'\)\.noteJoined\(pool, \{ inviteId: invite\.id, user, browser \}\);/);
+  assert.match(service, /const browser = require\('\.\/invite-activity'\)\.browserFrom\(req\);\s*const result = await redeem\(pool, \{ token, user, browser \}\);/);
   // Not awaited where it starts: the small-group discussion ring waits for it
   // later, so the maker is not told about the same message twice
   // (services/group-channel-notify.js).

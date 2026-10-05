@@ -187,21 +187,15 @@ function communityInviteRoutes(config) {
     }
   });
 
-  // WP-E: a live link opened in a browser counts once per browser for its
-  // maker (services/invite-activity.js), never by name. Counted from the
-  // page's own reads below, not from the HTML route a link unfurler fetches.
-  // An HttpOnly cookie per link remembers that this browser was counted.
+  // WP-E: a live link opened counts once per PERSON for its maker
+  // (services/invite-activity.js), never by name: by account when they are
+  // signed in, on any device, else by browser (an HttpOnly cookie that names
+  // nothing). Counted from the page's own reads below, not from the HTML
+  // route a link unfurler fetches.
   const countOpen = (req, res, token, viewerId = null) => {
-    const name = `hr_io_${token.slice(0, 12)}`;
-    if (req.cookies?.[name]) return;
-    res.cookie(name, '1', {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/api',
-    });
-    void inviteActivity.noteOpened(pool, { token, viewerId });
+    const seenBefore = inviteActivity.countedBefore(req, token);
+    const browser = inviteActivity.ensureBrowser(req, res);
+    void inviteActivity.noteOpened(pool, { token, viewerId, browser, seenBefore });
   };
 
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
@@ -297,7 +291,9 @@ function communityInviteRoutes(config) {
   router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
-      const result = await invites.redeem(pool, { token: req.params.token, user: req.user });
+      const result = await invites.redeem(pool, {
+        token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
+      });
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
@@ -323,7 +319,12 @@ function communityInviteRoutes(config) {
       const preview = invites.isToken(token)
         ? await invites.preview(pool, token)
         : { live: false, reason: 'unknown' };
-      if (preview.live) invites.setInviteCookie(req, res, token);
+      if (preview.live) {
+        invites.setInviteCookie(req, res, token);
+        // The page's two reads (the preview and, signed in, the standing)
+        // may start together: both carry this browser, so it counts once.
+        inviteActivity.ensureBrowser(req, res);
+      }
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
       applyShellDocumentHeaders(res, INDEX_PATH);

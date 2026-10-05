@@ -242,7 +242,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
   // Only a live link leaves its token for sign-in to follow.
-  assert.match(src, /if \(preview\.live\) invites\.setInviteCookie\(req, res, token\);/);
+  assert.match(src, /if \(preview\.live\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
 });
 
 test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {
