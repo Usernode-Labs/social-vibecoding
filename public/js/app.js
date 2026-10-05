@@ -3928,12 +3928,53 @@ const App = {
     return m ? m[1] : null;
   },
 
+  // An invite's own read answered 401 to a shell that thinks it is signed in:
+  // the session it was painted for has ended on the server (expired, signed
+  // out elsewhere, a password reset, the account removed), and the shell
+  // only learned so from this read, as when the service worker answered
+  // /api/auth/me from its cached copy. That is not the link's fault, so it is
+  // never told as one. Drop what the ended session left on this device and
+  // load the invite's address again, which boots signed out onto the link's
+  // own page: its card and Join (first-session run-through, 2026-10-05).
+  //
+  // Once per address a minute. A reload that comes back signed in on the same
+  // stale answer says plainly what happened instead of reloading again, and
+  // so does a browser with no session storage to remember the first try in.
+  _INVITE_SESSION_ENDED_KEY: 'usernode:invite-session-ended',
+  _inviteSessionEnded(address) {
+    let reload = false;
+    try {
+      const prev = JSON.parse(sessionStorage.getItem(App._INVITE_SESSION_ENDED_KEY) || 'null');
+      const recent = !!prev && prev.address === address && Date.now() - Number(prev.at) < 60 * 1000;
+      sessionStorage.setItem(App._INVITE_SESSION_ENDED_KEY, JSON.stringify({ address, at: Date.now() }));
+      reload = !recent;
+    } catch (_) { /* nowhere to note the try: do not risk a reload loop */ }
+    App._dropCachedSession();
+    App._sessionFromSnapshot = false;
+    App._publishBootSession({ signedOut: true });
+    if (!reload) {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+      }
+      return;
+    }
+    try { history.replaceState(null, '', address); } catch (_) {}
+    location.reload();
+  },
+
   // Follow an invite link as a signed-in account with platform access
   // (services/community-invites.js). Home first, with the invite address
   // replaced so Back or a reload does not ask again; then, if the link is
   // live and the viewer is not in the project yet, one confirm naming it and
   // who invited them. In it — just now, or already — opens its hub. A dead
   // link says why, once.
+  //
+  // A shell painted from the session snapshot has not heard yet whether that
+  // session is alive, and the address is left alone until it has: when
+  // _reconcileSession finds it over, it reloads onto this same address, which
+  // boots signed out onto the invite's own page. Replacing the address first
+  // sent that reload to "/", and the link's 401 was told as "That invite link
+  // does not work." over the ended session's cached Home (2026-10-05).
   async _followInvite(token) {
     App._markNavigationVia?.('handed');
     // The first-run join step waits for this (frontend/src/features/auth/
@@ -3943,6 +3984,26 @@ const App = {
     let settle = () => {};
     App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
+      const address = `${location.pathname}${location.search || ''}`;
+      // Asked at once, beside the session check, so a live session waits on
+      // no extra round trip for its confirm. Read (and a failure told) below.
+      const standingRead = Promise.resolve()
+        .then(() => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' }))
+        .then(async (res) => ({ status: res.status, standing: await res.json().catch(() => ({})) }));
+      standingRead.catch(() => {});
+      if (App._sessionFromSnapshot) {
+        // Bounded: a reconcile that settles nothing (it reloads for another
+        // account) must not hold the follow for good. Past it, the link's own
+        // 401 below still catches an ended session.
+        let timer = null;
+        const outcome = await Promise.race([
+          App.bootSession(),
+          new Promise((resolve) => { timer = setTimeout(() => resolve(null), App.BOOT_SESSION_TIMEOUT_MS * 3); }),
+        ]);
+        clearTimeout(timer);
+        // _reconcileSession is reloading onto the invite address.
+        if (outcome && outcome.signedOut) return;
+      }
       try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
       App.restoreFromHash();
       const toast = (msg, error) => {
@@ -3978,8 +4039,13 @@ const App = {
         });
       };
       try {
-        const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-        const standing = await res.json().catch(() => ({}));
+        const { status, standing } = await standingRead;
+        // 401 is the viewer's session, not the link.
+        if (status === 401) { App._inviteSessionEnded(address); return; }
+        // Only the link's own answer says what is wrong with it: 200 with its
+        // state, or 404 for one that never existed. A 500 or a 429 is a read
+        // that did not land, and the link may be fine.
+        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
@@ -4020,6 +4086,7 @@ const App = {
         const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
